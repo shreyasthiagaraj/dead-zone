@@ -80,6 +80,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
   -webkit-tap-highlight-color: transparent; transition: background 0.15s, border-color 0.15s;
 }
 .menu-btn:hover, .menu-btn:active { background: rgba(255,255,255,0.15); border-color: #aaa; }
+.menu-btn { touch-action: auto; }
 .menu-btn.primary { border-color: #f0c040; color: #f0c040; }
 .menu-btn.primary:hover { background: rgba(240,192,64,0.15); }
 .menu-btn.danger { border-color: #f04040; color: #f04040; }
@@ -133,8 +134,8 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <h1>DEAD ZONE</h1>
   <div class="subtitle">ZOMBIE SHOOTER</div>
   <div style="margin-top:10px">
-    <div class="menu-btn primary" id="btn-solo">SOLO</div>
-    <div class="menu-btn" id="btn-multi">MULTIPLAYER</div>
+    <button class="menu-btn primary" id="btn-solo">SOLO</button>
+    <button class="menu-btn" id="btn-multi">MULTIPLAYER</button>
   </div>
   <div style="color:#666;font-size:11px;margin-top:30px" id="start-controls"></div>
 </div>
@@ -145,15 +146,15 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <div class="menu-label">YOUR NAME</div>
   <input class="menu-input" id="name-input" placeholder="Name" maxlength="16" value="">
   <div style="margin-top:20px">
-    <div class="menu-btn primary" id="btn-create">CREATE LOBBY</div>
+    <button class="menu-btn primary" id="btn-create">CREATE LOBBY</button>
   </div>
   <div class="menu-label" style="margin-top:24px">OR JOIN WITH CODE</div>
   <input class="menu-input" id="code-input" placeholder="CODE" maxlength="4">
   <div style="margin-top:8px">
-    <div class="menu-btn" id="btn-join">JOIN</div>
+    <button class="menu-btn" id="btn-join">JOIN</button>
   </div>
   <div class="menu-error" id="multi-error"></div>
-  <div class="menu-btn danger" id="btn-back-main" style="margin-top:24px;font-size:12px;padding:8px 20px">BACK</div>
+  <button class="menu-btn danger" id="btn-back-main" style="margin-top:24px;font-size:12px;padding:8px 20px">BACK</button>
 </div>
 
 <!-- ---- LOBBY SCREEN ---- -->
@@ -162,16 +163,16 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <div class="lobby-code" id="lobby-code">----</div>
   <div style="color:#666;font-size:11px">Share this code with friends</div>
   <ul class="lobby-players" id="lobby-players"></ul>
-  <div class="menu-btn primary" id="btn-start-game" style="display:none">START GAME</div>
+  <button class="menu-btn primary" id="btn-start-game" style="display:none">START GAME</button>
   <div class="lobby-waiting" id="lobby-waiting">Waiting for host to start...</div>
-  <div class="menu-btn danger" id="btn-leave" style="margin-top:16px;font-size:12px;padding:8px 20px">LEAVE</div>
+  <button class="menu-btn danger" id="btn-leave" style="margin-top:16px;font-size:12px;padding:8px 20px">LEAVE</button>
 </div>
 
 <!-- ---- DEATH SCREEN ---- -->
 <div class="screen-overlay" id="death-screen" style="display:none">
   <h1>DEAD</h1>
   <div class="stats" id="death-stats"></div>
-  <div class="menu-btn primary" id="btn-restart">PLAY AGAIN</div>
+  <button class="menu-btn primary" id="btn-restart">PLAY AGAIN</button>
   <div class="highscore" id="highscore-display"></div>
 </div>
 
@@ -430,25 +431,30 @@ function showDeathScreen() {
 }
 
 // ---- Button handlers ----
-document.getElementById('btn-solo').onclick = () => { isMultiplayer = false; startSoloGame(); };
-document.getElementById('btn-multi').onclick = () => { showScreen('multi-screen'); showMultiError(''); connectWS(); };
-document.getElementById('btn-back-main').onclick = () => { showScreen('start-screen'); if (ws) ws.close(); };
-document.getElementById('btn-create').onclick = () => {
+function addBtn(id, fn) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+  el.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+}
+addBtn('btn-solo', () => { isMultiplayer = false; startSoloGame(); });
+addBtn('btn-multi', () => { showScreen('multi-screen'); showMultiError(''); connectWS(); });
+addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); });
+addBtn('btn-create', () => {
   const name = document.getElementById('name-input').value.trim() || 'Player';
   sendMsg({ type: 'create_lobby', name });
-};
-document.getElementById('btn-join').onclick = () => {
+});
+addBtn('btn-join', () => {
   const name = document.getElementById('name-input').value.trim() || 'Player';
   const code = document.getElementById('code-input').value.trim().toUpperCase();
   if (code.length !== 4) { showMultiError('Enter a 4-character code'); return; }
   sendMsg({ type: 'join_lobby', code, name });
-};
-document.getElementById('btn-start-game').onclick = () => { sendMsg({ type: 'start_game' }); };
-document.getElementById('btn-leave').onclick = () => { if (ws) ws.close(); showScreen('start-screen'); };
-document.getElementById('btn-restart').onclick = () => {
+});
+addBtn('btn-start-game', () => { sendMsg({ type: 'start_game' }); });
+addBtn('btn-leave', () => { if (ws) ws.close(); showScreen('start-screen'); });
+addBtn('btn-restart', () => {
   if (isMultiplayer) { showScreen('start-screen'); if (ws) ws.close(); }
   else startSoloGame();
-};
+});
 document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); dash(); }, { passive: false });
 document.getElementById('btn-dash').addEventListener('mousedown', () => dash());
 document.getElementById('btn-reload').addEventListener('touchstart', (e) => { e.preventDefault(); reloadWeapon(); }, { passive: false });
