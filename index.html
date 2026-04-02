@@ -948,7 +948,11 @@ function render() {
   for(const b of bullets){if(b.tracer&&b.trail.length>1){ctx.strokeStyle=b.color;ctx.lineWidth=2;ctx.globalAlpha=0.4;ctx.beginPath();ctx.moveTo(b.trail[0].x,b.trail[0].y);for(let j=1;j<b.trail.length;j++)ctx.lineTo(b.trail[j].x,b.trail[j].y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.globalAlpha=1;}if(b.grenade){ctx.fillStyle='#555';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f80';ctx.fillRect(b.x-1.5,b.y-8,3,4);ctx.strokeStyle='#f80';ctx.lineWidth=1;ctx.stroke();}else if(b.flame){ctx.globalAlpha=Math.min(1,b.life/20);const gr=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.size);gr.addColorStop(0,'#ff4');gr.addColorStop(0.5,'#f80');gr.addColorStop(1,'rgba(255,0,0,0)');ctx.fillStyle=gr;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}else{ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=6;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}}
 
   // Zombies
-  for(const z of zombies){ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#232';ctx.lineWidth=2;ctx.stroke();
+  for(const z of zombies){
+    // Cast shadow away from nearest player (simple drop shadow)
+    const{player:np}=getNearestAlivePlayer(z.x,z.y);
+    if(np){const sdx=z.x-np.x,sdy=z.y-np.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd>0&&sd<400){const sLen=z.radius*1.5;const snx=sdx/sd,sny=sdy/sd;ctx.globalAlpha=Math.max(0,0.5-sd/800);ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(z.x+snx*sLen,z.y+sny*sLen,z.radius*0.8,z.radius*1.2,Math.atan2(sny,snx),0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}}
+    ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#232';ctx.lineWidth=2;ctx.stroke();
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     ctx.shadowColor=eyeC;ctx.shadowBlur=6;ctx.fillStyle=eyeC;
     ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
@@ -1048,8 +1052,8 @@ function render() {
         const gx = sx + ac * maxDist * 0.4, gy = sy + as2 * maxDist * 0.4;
         const gr = maxDist * 0.5;
         const ambGrad = fctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
-        ambGrad.addColorStop(0, 'rgba(0,0,0,0.3)');
-        ambGrad.addColorStop(0.5, 'rgba(0,0,0,0.15)');
+        ambGrad.addColorStop(0, 'rgba(0,0,0,0.1)');
+        ambGrad.addColorStop(0.5, 'rgba(0,0,0,0.05)');
         ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
         ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = ambGrad;
@@ -1066,8 +1070,8 @@ function render() {
         // Check LOS from player to this beam point — skip if wall blocks it
         const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
         if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
-        const r = 25 + spotRadius * t * 0.25;
-        const alpha = 1.0 - t * 0.15;
+        const r = 40 + spotRadius * t * 0.35;
+        const alpha = 1.0 - t * 0.1;
         const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
         grad.addColorStop(0.7, `rgba(0,0,0,${alpha * 0.8})`);
