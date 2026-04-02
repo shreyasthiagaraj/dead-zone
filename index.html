@@ -132,7 +132,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div class="joystick-zone" id="joystick-right"></div>
 <div id="wave-announce"><div class="wave-num" id="wave-num"></div><div class="wave-sub" id="wave-sub"></div></div>
 <div id="pickup-msg"></div>
-<button id="btn-menu" style="position:fixed;top:12px;right:12px;z-index:25;background:rgba(0,0,0,0.6);border:2px solid #555;color:#aaa;font-family:'Courier New',monospace;font-size:12px;padding:8px 14px;cursor:pointer;display:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;border-radius:4px;">MENU</button>
+<button id="btn-menu" style="position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:25;background:rgba(0,0,0,0.6);border:2px solid #555;color:#aaa;font-family:'Courier New',monospace;font-size:11px;padding:6px 12px;cursor:pointer;display:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;border-radius:4px;">MENU</button>
 
 <!-- ---- MAIN MENU ---- -->
 <div class="screen-overlay" id="start-screen">
@@ -228,7 +228,7 @@ let remoteInputs = {}; // id -> { dx, dy, angle, firing, dash, reload, weapon }
 const keys = {};
 let mouse = { x: 0, y: 0, down: false, worldX: 0, worldY: 0 };
 let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0 };
-let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, firing: false };
+let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 
 // ---- CAMERA ----
 let camera = { x: 0, y: 0 };
@@ -562,8 +562,8 @@ window.addEventListener('contextmenu', e => e.preventDefault());
 
 // Touch
 function handleTouchStart(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; const hw=window.innerWidth/2; if (tx<hw&&!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (tx>=hw&&!rightJoystick.active) { rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false; } } }
-function handleTouchMove(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_MAX;leftJoystick.ny=dy/JOYSTICK_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_MAX;rightJoystick.ny=dy/JOYSTICK_MAX;rightJoystick.firing=(Math.abs(rightJoystick.nx)>0.25||Math.abs(rightJoystick.ny)>0.25); } } }
-function handleTouchEnd(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false;} } }
+function handleTouchMove(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_MAX;leftJoystick.ny=dy/JOYSTICK_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_MAX;rightJoystick.ny=dy/JOYSTICK_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
+function handleTouchEnd(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } }
 if (isMobile) {
   document.getElementById('joystick-left').addEventListener('touchstart', handleTouchStart, {passive:false});
   document.getElementById('joystick-right').addEventListener('touchstart', handleTouchStart, {passive:false});
@@ -703,7 +703,7 @@ function update() {
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
-    if(isMobile){if(rightJoystick.active&&rightJoystick.firing)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
+    if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot
     if(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
@@ -1016,7 +1016,10 @@ function render() {
 
 function renderJoysticks(){
   if(leftJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
-  if(rightJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle=rightJoystick.firing?'#f04040':'#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=0.4;ctx.fillStyle=rightJoystick.firing?'#f04040':'#fff';ctx.beginPath();ctx.arc(rightJoystick.cx+rightJoystick.dx,rightJoystick.cy+rightJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+  if(rightJoystick.active){const jColor=rightJoystick.firing?'#f04040':rightJoystick.aiming?'#f0c040':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
+    // Draw fire threshold ring
+    ctx.globalAlpha=0.1;ctx.strokeStyle='#f04040';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+    ctx.globalAlpha=0.4;ctx.fillStyle=jColor;ctx.beginPath();ctx.arc(rightJoystick.cx+rightJoystick.dx,rightJoystick.cy+rightJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
 }
 
 function renderMinimap(){
