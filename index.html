@@ -60,6 +60,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 .mobile-btn.dash-cooldown { border-color: #333; color: #444; }
 .mobile-btn.gren-ready { border-color: #f80; color: #f80; }
 .mobile-btn.gren-cooldown { border-color: #333; color: #444; }
+.mobile-btn.reload-btn { border-color: #a7f; color: #a7f; }
 
 #minimap { position: fixed; top: 10px; left: 10px; width: 90px; height: 90px; border: 1px solid #333; background: rgba(0,0,0,0.5); z-index: 20; pointer-events: none; }
 body.desktop #minimap { width: 130px; height: 130px; }
@@ -125,7 +126,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="weapon-slots"></div>
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash">DASH</div>
-  <div class="mobile-btn" id="btn-reload">RLD</div>
+  <div class="mobile-btn reload-btn" id="btn-reload">RLD</div>
   <div class="mobile-btn gren-ready" id="btn-grenade">GRN</div>
 </div>
 <div class="joystick-zone" id="joystick-left"></div>
@@ -203,7 +204,7 @@ const ARENA_W = 1800, ARENA_H = 1800, CELL_SIZE = 40;
 const GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
 const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
-const PICKUP_RANGE = 50, JOYSTICK_MAX = 60;
+const PICKUP_RANGE = 50, JOYSTICK_MAX = 75;
 const PLAYER_COLORS = ['#4af','#f44','#4f4','#fa4'];
 const NET_SEND_RATE = 3; // send state every N frames (~20fps)
 
@@ -248,6 +249,7 @@ function createPlayerObj(id, name, color, x, y) {
     invincible: 0, damageFlash: 0, alive: true,
     burstLeft: 0, burstTimer: 0,
     moveAngle: 0, grenades: 3, grenadeCooldown: 0,
+    reviveProgress: 0, reviveTime: 360, // 6 seconds at 60fps
   };
 }
 
@@ -732,27 +734,27 @@ function update() {
     }
   }
 
+  // ---- Bullet physics (all clients run this for smooth visuals) ----
+  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}b.x+=b.vx;b.y+=b.vy;b.life--;
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){bullets.splice(i,1);continue;}if(obstacleCollision(b.x,b.y,b.size)){if(b.explosive&&isHost)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}if(b.life<=0){if(b.explosive&&isHost)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
+    // Only host does damage calculations
+    if(isHost){
+      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
+                  for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
+                  decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
+                  for(let k=0;k<6;k++){const a2=Math.random()*Math.PI*2,sd=12+Math.random()*30;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});}
+                  playSound(120,0.12,'sawtooth',0.15);playSound(80,0.15,'square',0.08);screenShake.intensity=Math.max(screenShake.intensity,5);
+                  if(Math.random()<0.12)pickups.push({type:'health',amount:15,x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});else if(Math.random()<0.25)pickups.push({type:'ammo',x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});else if(Math.random()<0.08)pickups.push({type:'grenade',x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
+      // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
+      else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
+    }
+  }
+
   // ---- Host runs simulation ----
   if (isHost) {
     // Wave spawning
     if(waveActive){waveTimer++;const sr=Math.max(5,30-wave*2);if(waveZombiesLeft>0&&waveTimer%sr===0){spawnZombie();waveZombiesLeft--;if(Math.random()<0.03)spawnWeaponPickup();}if(waveZombiesLeft<=0&&zombies.length===0){waveActive=false;waveTimer=0;}}else{waveTimer++;if(waveTimer>120)nextWave();}
-
-    // Bullets
-    for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}b.x+=b.vx;b.y+=b.vy;b.life--;
-      if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){bullets.splice(i,1);continue;}if(obstacleCollision(b.x,b.y,b.size)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}if(b.life<=0){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
-      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
-                    // Bloody death explosion — big spray
-                    for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
-                    // Gore chunks — bigger, more
-                    for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
-                    // Large blood pool
-                    decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
-                    // Wider splatter ring
-                    for(let k=0;k<6;k++){const a2=Math.random()*Math.PI*2,sd=12+Math.random()*30;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});}
-                    playSound(120,0.12,'sawtooth',0.15);playSound(80,0.15,'square',0.08);screenShake.intensity=Math.max(screenShake.intensity,5);
-                    if(Math.random()<0.12)pickups.push({type:'health',amount:15,x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});else if(Math.random()<0.25)pickups.push({type:'ammo',x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});else if(Math.random()<0.08)pickups.push({type:'grenade',x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
-      else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
-    }
 
     // Zombies
     for(const z of zombies){
@@ -786,6 +788,20 @@ function update() {
     }
   }
 
+  // ---- Revive mechanic: stand near dead players to revive them ----
+  if (isHost && isMultiplayer) {
+    for (const dp of players) {
+      if (dp.alive) continue;
+      let reviver = false;
+      for (const ap of players) {
+        if (!ap.alive || ap === dp) continue;
+        if (Math.sqrt((ap.x-dp.x)**2+(ap.y-dp.y)**2) < 50) { reviver = true; break; }
+      }
+      if (reviver) { dp.reviveProgress = (dp.reviveProgress||0) + 1; if (dp.reviveProgress >= dp.reviveTime) { dp.alive = true; dp.hp = 50; dp.invincible = 1000; dp.reviveProgress = 0; } }
+      else { dp.reviveProgress = Math.max(0, (dp.reviveProgress||0) - 2); }
+    }
+  }
+
   // ---- Smooth interpolation for remote players (non-host clients) ----
   if (isMultiplayer) {
     for (const p of players) {
@@ -793,6 +809,13 @@ function update() {
       if (p._targetX !== undefined) {
         p.x = lerp(p.x, p._targetX + (p._targetVx||0), 0.2);
         p.y = lerp(p.y, p._targetY + (p._targetVy||0), 0.2);
+      }
+      // Smooth gun angle interpolation
+      if (p._targetAngle !== undefined) {
+        let diff = p._targetAngle - p.angle;
+        while (diff > Math.PI) diff -= Math.PI*2;
+        while (diff < -Math.PI) diff += Math.PI*2;
+        p.angle += diff * 0.3;
       }
     }
   }
@@ -813,7 +836,7 @@ function update() {
 
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
-    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name }));
+    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360 }));
     const zs = zombies.map(z => ({ x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash }));
     sendMsg({ type: 'game_state', players: ps, zombies: zs, score, kills, wave, waveActive });
   }
@@ -832,8 +855,9 @@ function applyHostState(msg) {
       // Store target for smooth interpolation
       p._targetX = pd.x; p._targetY = pd.y;
       p._targetVx = pd.vx||0; p._targetVy = pd.vy||0;
-      p.angle = pd.angle; p.moveAngle = pd.moveAngle||0;
+      p._targetAngle = pd.angle; p.moveAngle = pd.moveAngle||0;
       p.hp = pd.hp; p.alive = pd.alive;
+      p.reviveProgress = pd.reviveProgress||0; p.reviveTime = pd.reviveTime||360;
       if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
     }
   }
@@ -953,6 +977,28 @@ function render() {
     // Dash cooldown (desktop only, local player only)
     if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
   }
+  // Dead player markers with revive progress
+  for(const p of players){
+    if(p.alive) continue;
+    ctx.save();ctx.translate(p.x,p.y);ctx.globalAlpha=0.5;
+    ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS,0,Math.PI*2);ctx.stroke();
+    // X mark
+    ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-6,-6);ctx.lineTo(6,6);ctx.moveTo(6,-6);ctx.lineTo(-6,6);ctx.stroke();
+    ctx.globalAlpha=1;
+    // Revive progress bar
+    if(p.reviveProgress>0){
+      const pct=p.reviveProgress/p.reviveTime;
+      ctx.fillStyle='#333';ctx.fillRect(-20,PLAYER_RADIUS+4,40,5);
+      ctx.fillStyle='#4f4';ctx.fillRect(-20,PLAYER_RADIUS+4,40*pct,5);
+      ctx.font='8px monospace';ctx.fillStyle='#4f4';ctx.textAlign='center';ctx.fillText('REVIVING',0,PLAYER_RADIUS+18);
+    } else {
+      ctx.font='8px monospace';ctx.fillStyle='#aaa';ctx.textAlign='center';ctx.fillText('STAND NEAR',0,PLAYER_RADIUS+14);
+    }
+    // Name tag
+    ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.strokeStyle='#000';ctx.lineWidth=3;
+    ctx.strokeText(p.name,0,-PLAYER_RADIUS-10);ctx.fillStyle='#888';ctx.fillText(p.name,0,-PLAYER_RADIUS-10);
+    ctx.restore();
+  }
 
   // Particles
   for(const p of particles){ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
@@ -965,26 +1011,46 @@ function render() {
   // ---- Fog of war / spotlights (one per alive player) ----
   // Draw fog on an offscreen canvas, then overlay it
   {
-    const spotRadius = 280;
+    const spotRadius = 340;
     if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
     const fc = window._fogCanvas, fctx = window._fogCtx;
     fc.width = canvas.width; fc.height = canvas.height;
     // Fill with darkness
-    fctx.fillStyle = 'rgba(0,0,0,0.85)';
+    fctx.fillStyle = 'rgba(0,0,0,0.88)';
     fctx.fillRect(0, 0, fc.width, fc.height);
-    // Cut out spotlight circles
     fctx.globalCompositeOperation = 'destination-out';
     const ox = -camera.x + canvas.width/2 + screenShake.x;
     const oy = -camera.y + canvas.height/2 + screenShake.y;
     for (const p of players) {
       if (!p.alive) continue;
       const sx = p.x + ox, sy = p.y + oy;
-      const grad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
-      grad.addColorStop(0, 'rgba(0,0,0,1)');
-      grad.addColorStop(0.6, 'rgba(0,0,0,0.5)');
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      fctx.fillStyle = grad;
-      fctx.fillRect(sx - spotRadius, sy - spotRadius, spotRadius * 2, spotRadius * 2);
+      // Dim ambient glow around player
+      const ambientR = spotRadius * 0.6;
+      const ambGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, ambientR);
+      ambGrad.addColorStop(0, 'rgba(0,0,0,0.6)');
+      ambGrad.addColorStop(0.7, 'rgba(0,0,0,0.25)');
+      ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      fctx.fillStyle = ambGrad;
+      fctx.fillRect(sx - ambientR, sy - ambientR, ambientR * 2, ambientR * 2);
+      // Flashlight cone in movement direction
+      const flAngle = p.moveAngle || 0;
+      const flLen = spotRadius;
+      const flSpread = 0.45; // radians half-angle (~25 degrees)
+      const flTipX = sx + Math.cos(flAngle) * flLen;
+      const flTipY = sy + Math.sin(flAngle) * flLen;
+      const flGrad = fctx.createRadialGradient(sx, sy, 10, sx + Math.cos(flAngle) * flLen * 0.5, sy + Math.sin(flAngle) * flLen * 0.5, flLen * 0.6);
+      flGrad.addColorStop(0, 'rgba(0,0,0,1)');
+      flGrad.addColorStop(0.6, 'rgba(0,0,0,0.5)');
+      flGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      fctx.save();
+      fctx.beginPath();
+      fctx.moveTo(sx, sy);
+      fctx.arc(sx, sy, flLen, flAngle - flSpread, flAngle + flSpread);
+      fctx.closePath();
+      fctx.clip();
+      fctx.fillStyle = flGrad;
+      fctx.fillRect(sx - flLen, sy - flLen, flLen * 2, flLen * 2);
+      fctx.restore();
     }
     fctx.globalCompositeOperation = 'source-over';
     // Composite fog onto main canvas
@@ -1029,7 +1095,14 @@ function renderJoysticks(){
 function renderMinimap(){
   const mw=minimapCanvas.width,mh=minimapCanvas.height,sx=mw/ARENA_W,sy=mh/ARENA_H;
   minimapCtx.clearRect(0,0,mw,mh);minimapCtx.fillStyle='#111';minimapCtx.fillRect(0,0,mw,mh);
-  if(dungeonGrid){minimapCtx.fillStyle='#2a2a2a';const step=Math.max(1,Math.floor(3/sx));for(let y=0;y<GRID_H;y+=step)for(let x=0;x<GRID_W;x+=step)if(dungeonGrid[y][x])minimapCtx.fillRect(x*CELL_SIZE*sx,y*CELL_SIZE*sy,Math.max(1,CELL_SIZE*sx*step),Math.max(1,CELL_SIZE*sy*step));}
+  if(dungeonGrid){const step=Math.max(1,Math.floor(3/sx));for(let y=0;y<GRID_H;y+=step)for(let x=0;x<GRID_W;x+=step){
+    if(dungeonGrid[y][x]){minimapCtx.fillStyle='#2a2a2a';}else{
+      // Only draw wall cells that border a floor cell (visible walls)
+      let border=false;if(y>0&&dungeonGrid[y-1]&&dungeonGrid[y-1][x])border=true;if(!border&&y<GRID_H-1&&dungeonGrid[y+1]&&dungeonGrid[y+1][x])border=true;if(!border&&x>0&&dungeonGrid[y][x-1])border=true;if(!border&&x<GRID_W-1&&dungeonGrid[y][x+1])border=true;
+      if(!border)continue;minimapCtx.fillStyle='#3a3530';
+    }
+    minimapCtx.fillRect(x*CELL_SIZE*sx,y*CELL_SIZE*sy,Math.max(1,CELL_SIZE*sx*step),Math.max(1,CELL_SIZE*sy*step));
+  }}
   minimapCtx.fillStyle='#a44';for(const z of zombies)minimapCtx.fillRect(z.x*sx-1,z.y*sy-1,2,2);
   for(const pk of pickups){
     if(pk.type==='weapon'){
