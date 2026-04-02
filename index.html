@@ -690,7 +690,12 @@ function update() {
   // ---- Local player input ----
   if (lp.alive) {
     let dx=0,dy=0;
-    if(isMobile){dx=leftJoystick.nx;dy=leftJoystick.ny;}else{if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;}
+    if(isMobile){
+      // Left joystick: light touch = turn flashlight only, full push = move
+      const lMag=Math.sqrt(leftJoystick.nx*leftJoystick.nx+leftJoystick.ny*leftJoystick.ny);
+      if(leftJoystick.active&&lMag>0.1) lp.moveAngle=Math.atan2(leftJoystick.ny,leftJoystick.nx);
+      if(lMag>0.45){dx=leftJoystick.nx;dy=leftJoystick.ny;}else{dx=0;dy=0;}
+    }else{if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;}
     if(lp.dashTimer>0){lp.dashTimer-=16.67;lp.vx=Math.cos(lp.dashAngle)*DASH_SPEED;lp.vy=Math.sin(lp.dashAngle)*DASH_SPEED;if(gameTime%2===0)particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS,color:lp.color,type:'dashtrail'});}else{
       let moveSpeed=lp.speed;
       // Sprint: holding space (desktop) or dash button increases speed (works even during cooldown)
@@ -706,8 +711,8 @@ function update() {
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
-    // Track movement angle for the direction dot
-    if(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
+    // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
+    if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
     if(lp.grenadeCooldown>0)lp.grenadeCooldown-=16.67;
     if(isMobile&&gameTime%5===0)tryPickup();
@@ -1056,10 +1061,10 @@ function render() {
         const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
         if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
         const r = 30 + spotRadius * t * 0.3;
-        const alpha = 1.0 - t * 0.4;
+        const alpha = 1.0 - t * 0.25;
         const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
-        grad.addColorStop(0.6, `rgba(0,0,0,${alpha * 0.6})`);
+        grad.addColorStop(0.5, `rgba(0,0,0,${alpha * 0.7})`);
         grad.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = grad;
         fctx.fillRect(cx - r, cy - r, r * 2, r * 2);
@@ -1104,7 +1109,9 @@ function render() {
 }
 
 function renderJoysticks(){
-  if(leftJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+  if(leftJoystick.active){const lMag=Math.sqrt(leftJoystick.nx*leftJoystick.nx+leftJoystick.ny*leftJoystick.ny);const lColor=lMag>0.45?'#4af':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=lColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
+    ctx.globalAlpha=0.1;ctx.strokeStyle='#4af';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX*0.45,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+    ctx.globalAlpha=0.4;ctx.fillStyle=lColor;ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
   if(rightJoystick.active){const jColor=rightJoystick.firing?'#f04040':rightJoystick.aiming?'#f0c040':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
     // Draw fire threshold ring
     ctx.globalAlpha=0.1;ctx.strokeStyle='#f04040';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
