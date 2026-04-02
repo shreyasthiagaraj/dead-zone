@@ -1024,15 +1024,27 @@ function render() {
     for (const p of players) {
       if (!p.alive) continue;
       const sx = p.x + ox, sy = p.y + oy;
-      // Dim ambient glow around player
-      const ambientR = spotRadius * 0.6;
-      const ambGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, ambientR);
-      ambGrad.addColorStop(0, 'rgba(0,0,0,0.6)');
-      ambGrad.addColorStop(0.7, 'rgba(0,0,0,0.25)');
-      ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      fctx.fillStyle = ambGrad;
-      fctx.fillRect(sx - ambientR, sy - ambientR, ambientR * 2, ambientR * 2);
-      // Soft flashlight beam — overlapping offset radial gradients
+      // Ambient glow with LOS — sample 16 directions, only light where visible
+      const ambientR = spotRadius * 0.55;
+      const ambDirs = 16;
+      for (let d = 0; d < ambDirs; d++) {
+        const a = (d / ambDirs) * Math.PI * 2;
+        const ac = Math.cos(a), as2 = Math.sin(a);
+        // Find how far light reaches in this direction
+        let maxDist = ambientR;
+        for (let probe = CELL_SIZE; probe < ambientR; probe += CELL_SIZE * 0.5) {
+          if (!hasLineOfSight(p.x, p.y, p.x + ac * probe, p.y + as2 * probe)) { maxDist = probe; break; }
+        }
+        const gx = sx + ac * maxDist * 0.4, gy = sy + as2 * maxDist * 0.4;
+        const gr = maxDist * 0.5;
+        const ambGrad = fctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+        ambGrad.addColorStop(0, 'rgba(0,0,0,0.4)');
+        ambGrad.addColorStop(0.7, 'rgba(0,0,0,0.15)');
+        ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        fctx.fillStyle = ambGrad;
+        fctx.fillRect(gx - gr, gy - gr, gr * 2, gr * 2);
+      }
+      // Soft flashlight beam with simple shadow casting
       const flAngle = p.moveAngle || 0;
       const flCos = Math.cos(flAngle), flSin = Math.sin(flAngle);
       const steps = 7;
@@ -1040,7 +1052,10 @@ function render() {
         const t = (s + 1) / steps;
         const dist = spotRadius * t * 0.75;
         const cx = sx + flCos * dist, cy = sy + flSin * dist;
-        const r = 30 + spotRadius * t * 0.3; // tighter spread
+        // Check LOS from player to this beam point — skip if wall blocks it
+        const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
+        if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
+        const r = 30 + spotRadius * t * 0.3;
         const alpha = 1.0 - t * 0.5;
         const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0, `rgba(0,0,0,${alpha})`);
