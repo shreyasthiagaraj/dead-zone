@@ -237,7 +237,7 @@ function getLocalPlayer() { return players[localPlayerIdx]; }
 function createPlayerObj(id, name, color, x, y) {
   return {
     id, name, color, x, y, vx: 0, vy: 0, angle: 0,
-    hp: 100, maxHp: 100, speed: 3.5,
+    hp: 100, maxHp: 100, speed: 4.5,
     weapons: [createWeapon('pistol')], currentWeapon: 0,
     dashCooldown: 0, dashTimer: 0, dashAngle: 0,
     invincible: 0, damageFlash: 0, alive: true,
@@ -638,7 +638,15 @@ function update() {
   if (lp.alive) {
     let dx=0,dy=0;
     if(isMobile){dx=leftJoystick.nx;dy=leftJoystick.ny;}else{if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;}
-    if(lp.dashTimer>0){lp.dashTimer-=16.67;lp.vx=Math.cos(lp.dashAngle)*DASH_SPEED;lp.vy=Math.sin(lp.dashAngle)*DASH_SPEED;if(gameTime%2===0)particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS,color:lp.color,type:'dashtrail'});}else{if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}lp.vx=dx*lp.speed;lp.vy=dy*lp.speed;}
+    if(lp.dashTimer>0){lp.dashTimer-=16.67;lp.vx=Math.cos(lp.dashAngle)*DASH_SPEED;lp.vy=Math.sin(lp.dashAngle)*DASH_SPEED;if(gameTime%2===0)particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS,color:lp.color,type:'dashtrail'});}else{
+      let moveSpeed=lp.speed;
+      if(isMobile&&(dx!==0||dy!==0)){
+        // Joystick magnitude controls speed — further from center = faster
+        const mag=Math.sqrt(dx*dx+dy*dy);
+        moveSpeed=lp.speed*Math.min(1,mag);
+        if(mag>0.01){dx/=mag;dy/=mag;}
+      } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
+      lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     if(isMobile){if(rightJoystick.active&&rightJoystick.firing)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot
