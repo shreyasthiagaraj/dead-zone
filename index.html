@@ -427,14 +427,37 @@ function showScreen(id) {
 }
 
 function showLobbyScreen() { showScreen('lobby-screen'); document.getElementById('lobby-code').textContent = lobbyCode; updateLobbyUI(); }
+// Periodically request lobby state as fallback
+setInterval(() => { if (gameState === 'menu' && document.getElementById('lobby-screen').style.display !== 'none' && ws && ws.readyState === 1) sendMsg({ type: 'request_lobby_update' }); }, 3000);
 
 function updateLobbyUI() {
   const ul = document.getElementById('lobby-players');
-  ul.innerHTML = lobbyPlayers.map(p =>
-    `<li><span class="dot" style="background:${p.color}"></span>${p.name} ${p.id === myId ? '(You)' : ''} ${isHost && p.id === myId ? '<span class="host-tag">HOST</span>' : ''}</li>`
-  ).join('');
-  document.getElementById('btn-start-game').style.display = isHost && lobbyPlayers.length >= 2 ? 'inline-block' : 'none';
-  document.getElementById('lobby-waiting').style.display = isHost ? 'none' : 'block';
+  let html = '';
+  // Filled slots
+  for (let i = 0; i < lobbyPlayers.length; i++) {
+    const p = lobbyPlayers[i];
+    const you = p.id === myId ? ' (You)' : '';
+    const host = p.id === myId && isHost ? ' <span class="host-tag">HOST</span>' : '';
+    html += `<li><span class="dot" style="background:${p.color}"></span>${p.name}${you}${host}</li>`;
+  }
+  // Empty slots
+  for (let i = lobbyPlayers.length; i < 4; i++) {
+    html += `<li style="color:#444"><span class="dot" style="background:#333"></span>Empty slot</li>`;
+  }
+  ul.innerHTML = html;
+  // Show start button for host when 2+ players, or waiting message for non-host
+  const startBtn = document.getElementById('btn-start-game');
+  const waitMsg = document.getElementById('lobby-waiting');
+  if (isHost) {
+    startBtn.style.display = lobbyPlayers.length >= 2 ? 'inline-block' : 'none';
+    waitMsg.textContent = lobbyPlayers.length < 2 ? 'Waiting for players to join...' : '';
+    waitMsg.style.display = lobbyPlayers.length < 2 ? 'block' : 'none';
+  } else {
+    startBtn.style.display = 'none';
+    waitMsg.textContent = 'Waiting for host to start...';
+    waitMsg.style.display = 'block';
+  }
+  document.getElementById('lobby-code').textContent = lobbyCode;
 }
 
 function showDeathScreen() {

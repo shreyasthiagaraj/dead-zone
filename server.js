@@ -133,6 +133,12 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'request_lobby_update': {
+        const info = playerToLobby.get(ws);
+        if (info) sendLobbyUpdate(info.code);
+        break;
+      }
+
       // ---- In-game message relay ----
       case 'game_state':
       case 'player_input':
