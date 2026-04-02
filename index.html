@@ -960,49 +960,53 @@ function render() {
   // Floating texts
   for(const ft of floatingTexts){ctx.globalAlpha=ft.life/ft.maxLife;ctx.fillStyle=ft.color;ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.fillText(ft.text,ft.x,ft.y);}ctx.globalAlpha=1;
 
+  ctx.restore();
+
   // ---- Fog of war / spotlights (one per alive player) ----
+  // Draw fog on an offscreen canvas, then overlay it
   {
     const spotRadius = 280;
-    const fogAlpha = 0.85;
-    // Use an offscreen canvas for the fog mask
-    const vL=camera.x-canvas.width/2-screenShake.x, vT=camera.y-canvas.height/2-screenShake.y;
-    ctx.save();
-    // Draw full dark overlay
-    ctx.fillStyle=`rgba(0,0,0,${fogAlpha})`;
-    ctx.fillRect(vL,vT,canvas.width,canvas.height);
-    // Cut out circles for each alive player using destination-out
-    ctx.globalCompositeOperation='destination-out';
-    for(const p of players){
-      if(!p.alive) continue;
-      const grad=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,spotRadius);
-      grad.addColorStop(0,`rgba(0,0,0,${fogAlpha})`);
-      grad.addColorStop(0.5,`rgba(0,0,0,${fogAlpha*0.6})`);
-      grad.addColorStop(1,'rgba(0,0,0,0)');
-      ctx.fillStyle=grad;
-      ctx.fillRect(p.x-spotRadius,p.y-spotRadius,spotRadius*2,spotRadius*2);
+    if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
+    const fc = window._fogCanvas, fctx = window._fogCtx;
+    fc.width = canvas.width; fc.height = canvas.height;
+    // Fill with darkness
+    fctx.fillStyle = 'rgba(0,0,0,0.85)';
+    fctx.fillRect(0, 0, fc.width, fc.height);
+    // Cut out spotlight circles
+    fctx.globalCompositeOperation = 'destination-out';
+    const ox = -camera.x + canvas.width/2 + screenShake.x;
+    const oy = -camera.y + canvas.height/2 + screenShake.y;
+    for (const p of players) {
+      if (!p.alive) continue;
+      const sx = p.x + ox, sy = p.y + oy;
+      const grad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(0.6, 'rgba(0,0,0,0.5)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      fctx.fillStyle = grad;
+      fctx.fillRect(sx - spotRadius, sy - spotRadius, spotRadius * 2, spotRadius * 2);
     }
-    ctx.globalCompositeOperation='source-over';
-    ctx.restore();
+    fctx.globalCompositeOperation = 'source-over';
+    // Composite fog onto main canvas
+    ctx.drawImage(fc, 0, 0);
 
     // Glowing zombie eyes visible through darkness
-    const lp3=getLocalPlayer();
-    for(const z of zombies){
-      // Check if zombie is outside ALL player spotlights
-      let inLight=false;
-      for(const p of players){if(!p.alive)continue;const d=Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);if(d<spotRadius*0.6){inLight=true;break;}}
-      if(!inLight){
-        ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
-        const eyeColor=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
-        ctx.shadowColor=eyeColor;ctx.shadowBlur=10;
-        ctx.fillStyle=eyeColor;
-        ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,3,0,Math.PI*2);ctx.fill();
-        ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,3,0,Math.PI*2);ctx.fill();
-        ctx.shadowBlur=0;ctx.restore();
+    const ox2 = -camera.x + canvas.width/2 + screenShake.x;
+    const oy2 = -camera.y + canvas.height/2 + screenShake.y;
+    for (const z of zombies) {
+      let inLight = false;
+      for (const p of players) { if (!p.alive) continue; const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2); if (d < spotRadius*0.6) { inLight = true; break; } }
+      if (!inLight) {
+        ctx.save(); ctx.translate(z.x + ox2, z.y + oy2); ctx.rotate(z.angle);
+        const eyeColor = !z.aware ? '#aa4' : (z.type==='spitter' ? '#5fa' : '#f44');
+        ctx.shadowColor = eyeColor; ctx.shadowBlur = 10;
+        ctx.fillStyle = eyeColor;
+        ctx.beginPath(); ctx.arc(z.radius*0.4, -z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(z.radius*0.4, z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0; ctx.restore();
       }
     }
   }
-
-  ctx.restore();
 
   // Damage vignette
   const lp2=getLocalPlayer();if(lp2&&lp2.damageFlash>0){ctx.fillStyle=`rgba(255,0,0,${lp2.damageFlash/15*0.4})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
