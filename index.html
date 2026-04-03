@@ -400,9 +400,12 @@ function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx
 
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
-const gl = lightCanvas.getContext('webgl') || lightCanvas.getContext('experimental-webgl');
+const GL_ATTRS = { alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false };
+const gl = lightCanvas.getContext('webgl', GL_ATTRS) || lightCanvas.getContext('experimental-webgl', GL_ATTRS);
 let glReady = false;
 const webglSupported = (gl !== null);
+lightCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); glReady = false; });
+lightCanvas.addEventListener('webglcontextrestored', () => { initGL(); });
 
 // Shaders
 const LIGHT_VS = `
@@ -418,85 +421,100 @@ precision mediump float;
 varying vec2 vUV;
 uniform sampler2D uGrid;
 uniform vec2 uResolution;
-uniform vec2 uPlayerPos;   // world coords
-uniform vec2 uCameraPos;   // world coords
-uniform float uPlayerAngle;
-uniform float uSpotRadius;
+uniform vec2 uCameraPos;
 uniform float uCellSize;
-uniform vec2 uGridSize;    // GRID_W, GRID_H
-uniform vec2 uArenaSize;   // ARENA_W, ARENA_H
+uniform vec2 uGridSize;
+uniform vec2 uArenaSize;
+
+const int MAX_LIGHTS = 4;
+uniform int uNumLights;
+uniform vec2 uLightPos[4];
+uniform float uLightAngle[4];
+uniform float uLightRadius[4];
 
 bool isWall(vec2 worldPos) {
   vec2 gridUV = worldPos / uArenaSize;
   if (gridUV.x < 0.0 || gridUV.x > 1.0 || gridUV.y < 0.0 || gridUV.y > 1.0) return true;
-  float val = texture2D(uGrid, gridUV).r;
-  return val < 0.5;
+  return texture2D(uGrid, gridUV).r < 0.5;
 }
 
 bool rayHitsWall(vec2 from, vec2 to) {
   vec2 dir = to - from;
   float len = length(dir);
   if (len < 1.0) return false;
-  float stepSize = uCellSize * 0.4;
+  float stepSize = uCellSize * (len > 225.0 ? 0.8 : 0.4);
   int steps = int(ceil(len / stepSize));
   if (steps > 200) steps = 200;
   for (int i = 1; i <= 200; i++) {
     if (i > steps) break;
     float t = float(i) / float(steps);
-    vec2 pt = from + dir * t;
-    if (isWall(pt)) return true;
+    if (isWall(from + dir * t)) return true;
   }
   return false;
 }
 
+float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRadius) {
+  vec2 diff = worldPos - lightPos;
+  float dist = length(diff);
+  if (dist >= lightRadius) return 0.0;
+
+  if (rayHitsWall(lightPos, worldPos)) return 0.0;
+
+  float distFactor = dist / lightRadius;
+
+  // Ambient glow (all visible directions)
+  float ambient = 0.0;
+  if (distFactor < 0.25) ambient = 0.45;
+  else if (distFactor < 0.6) ambient = 0.45 - (distFactor - 0.25) * 0.7;
+  else ambient = 0.2 * (1.0 - (distFactor - 0.6) / 0.4);
+
+  // Flashlight cone
+  float angle = atan(diff.y, diff.x);
+  float angleDiff = angle - lightAngle;
+  angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
+  float coneHalf = 0.5;
+  float cone = 0.0;
+  float absDiff = abs(angleDiff);
+  if (absDiff < coneHalf) {
+    float edgeFade = 1.0 - smoothstep(coneHalf * 0.6, coneHalf, absDiff);
+    float dFade = max(1.0 - distFactor * 0.6, 0.0);
+    cone = edgeFade * dFade;
+  }
+
+  return max(ambient, cone);
+}
+
 void main() {
-  // Screen pixel -> world position (flip Y: WebGL bottom-left vs canvas top-left)
   vec2 screenPos = vec2(vUV.x, 1.0 - vUV.y) * uResolution;
   vec2 worldPos = screenPos + uCameraPos - uResolution * 0.5;
 
-  vec2 diff = worldPos - uPlayerPos;
-  float dist = length(diff);
-  float angle = atan(diff.y, diff.x);
+  float totalLight = 0.0;
+  float bestConeAngleDiff = 999.0;
+  float bestConeLight = 0.0;
 
-  float angleDiff = angle - uPlayerAngle;
-  angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
+  for (int i = 0; i < 4; i++) {
+    if (i >= uNumLights) break;
+    float l = computeLight(worldPos, uLightPos[i], uLightAngle[i], uLightRadius[i]);
+    totalLight = max(totalLight, l);
 
-  // Output: light intensity (0=dark, 1=fully lit)
-  // Will be composited as multiply blend on the 2D canvas
-  float light = 0.15; // base darkness level — not fully black
-
-  if (dist < uSpotRadius) {
-    bool blocked = rayHitsWall(uPlayerPos, worldPos);
-
-    if (!blocked) {
-      float distFactor = dist / uSpotRadius;
-
-      // Ambient glow (all visible directions)
-      float ambient = 0.0;
-      if (distFactor < 0.25) ambient = 0.45;
-      else if (distFactor < 0.6) ambient = 0.45 - (distFactor - 0.25) * 0.7;
-      else ambient = 0.2 * (1.0 - (distFactor - 0.6) / 0.4);
-
-      // Flashlight cone
-      float coneHalf = 0.5;
-      float cone = 0.0;
-      float absDiff = abs(angleDiff);
-      if (absDiff < coneHalf) {
-        float edgeFade = 1.0 - smoothstep(coneHalf * 0.6, coneHalf, absDiff);
-        float dFade = 1.0 - distFactor * 0.6;
-        dFade = max(dFade, 0.0);
-        cone = edgeFade * dFade;
-      }
-
-      light = 0.15 + max(ambient, cone) * 0.85;
+    // Track closest flashlight cone for warm tint
+    vec2 diff = worldPos - uLightPos[i];
+    float angle = atan(diff.y, diff.x);
+    float ad = angle - uLightAngle[i];
+    ad = mod(ad + 3.14159265, 6.28318530) - 3.14159265;
+    if (abs(ad) < 0.5 && abs(ad) < bestConeAngleDiff) {
+      bestConeAngleDiff = abs(ad);
+      bestConeLight = l;
     }
   }
+
+  float light = 0.15 + totalLight * 0.85;
 
   // Warm tint in flashlight cone
   float warmR = light;
   float warmG = light;
   float warmB = light;
-  if (light > 0.5 && abs(angleDiff) < 0.5) {
+  if (light > 0.5 && bestConeAngleDiff < 0.5) {
     warmR += (light - 0.5) * 0.12;
     warmG += (light - 0.5) * 0.08;
   }
@@ -506,26 +524,32 @@ void main() {
 
 // GL state holders
 let lightProg, quadBuf, gridTex;
-let uGrid, uResolution, uPlayerPos, uCameraPos, uPlayerAngle, uSpotRadius, uCellSize, uGridSize, uArenaSize;
+let uGrid, uResolution, uCameraPos, uCellSize, uGridSize, uArenaSize;
+let uNumLights, uLightPos, uLightAngle, uLightRadius;
 
 function createShader(type, src) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
   gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error('Shader:', gl.getShaderInfoLog(s)); return null; }
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error('Shader compile error:', gl.getShaderInfoLog(s));
+    console.error('Source:\n' + src.split('\n').map((l,i) => (i+1)+': '+l).join('\n'));
+    gl.deleteShader(s);
+    return null;
+  }
   return s;
 }
 
 function initGL() {
-  if (!webglSupported) { console.log('WebGL not supported, using canvas fallback'); return; }
+  if (!webglSupported) { console.log('[Lighting] WebGL not supported, using canvas fallback'); return; }
   const vs = createShader(gl.VERTEX_SHADER, LIGHT_VS);
   const fs = createShader(gl.FRAGMENT_SHADER, LIGHT_FS);
-  if (!vs || !fs) { console.error('Shader compile failed'); glReady = false; return; }
+  if (!vs || !fs) { console.error('[Lighting] Shader compile failed'); glReady = false; return; }
   lightProg = gl.createProgram();
   gl.attachShader(lightProg, vs);
   gl.attachShader(lightProg, fs);
   gl.linkProgram(lightProg);
-  if (!gl.getProgramParameter(lightProg, gl.LINK_STATUS)) { console.error('Link:', gl.getProgramInfoLog(lightProg)); return; }
+  if (!gl.getProgramParameter(lightProg, gl.LINK_STATUS)) { console.error('[Lighting] Link:', gl.getProgramInfoLog(lightProg)); return; }
 
   quadBuf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
@@ -533,13 +557,17 @@ function initGL() {
 
   uGrid = gl.getUniformLocation(lightProg, 'uGrid');
   uResolution = gl.getUniformLocation(lightProg, 'uResolution');
-  uPlayerPos = gl.getUniformLocation(lightProg, 'uPlayerPos');
   uCameraPos = gl.getUniformLocation(lightProg, 'uCameraPos');
-  uPlayerAngle = gl.getUniformLocation(lightProg, 'uPlayerAngle');
-  uSpotRadius = gl.getUniformLocation(lightProg, 'uSpotRadius');
   uCellSize = gl.getUniformLocation(lightProg, 'uCellSize');
   uGridSize = gl.getUniformLocation(lightProg, 'uGridSize');
   uArenaSize = gl.getUniformLocation(lightProg, 'uArenaSize');
+  uNumLights = gl.getUniformLocation(lightProg, 'uNumLights');
+  uLightPos = []; uLightAngle = []; uLightRadius = [];
+  for (let i = 0; i < 4; i++) {
+    uLightPos.push(gl.getUniformLocation(lightProg, 'uLightPos['+i+']'));
+    uLightAngle.push(gl.getUniformLocation(lightProg, 'uLightAngle['+i+']'));
+    uLightRadius.push(gl.getUniformLocation(lightProg, 'uLightRadius['+i+']'));
+  }
 
   gridTex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
@@ -549,8 +577,8 @@ function initGL() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
   glReady = true;
-  // Re-upload grid if it exists
   if (dungeonGrid) uploadDungeonGrid();
+  console.log('[Lighting] WebGL lighting ready');
 }
 
 function uploadDungeonGrid() {
@@ -563,12 +591,14 @@ function uploadDungeonGrid() {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, GRID_W, GRID_H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, data);
 }
 
-function renderLighting(playerX, playerY, playerAngle, camX, camY) {
-  if (!glReady) return;
-  // Resize triggers full GL re-init
-  if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
-    lightCanvas.width = canvas.width;
-    lightCanvas.height = canvas.height;
+function renderLighting(lights, camX, camY) {
+  if (!glReady || gl.isContextLost()) return;
+  // Half-resolution for performance; bilinear upscale softens shadows naturally
+  const targetW = Math.ceil(canvas.width / 2);
+  const targetH = Math.ceil(canvas.height / 2);
+  if (lightCanvas.width !== targetW || lightCanvas.height !== targetH) {
+    lightCanvas.width = targetW;
+    lightCanvas.height = targetH;
     initGL();
   }
   gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
@@ -580,14 +610,20 @@ function renderLighting(playerX, playerY, playerAngle, camX, camY) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
   gl.uniform1i(uGrid, 0);
-  gl.uniform2f(uResolution, lightCanvas.width, lightCanvas.height);
-  gl.uniform2f(uPlayerPos, playerX, playerY);
+  // Pass full canvas resolution so shader maps screen coords correctly
+  gl.uniform2f(uResolution, canvas.width, canvas.height);
   gl.uniform2f(uCameraPos, camX, camY);
-  gl.uniform1f(uPlayerAngle, playerAngle);
-  gl.uniform1f(uSpotRadius, 450.0);
   gl.uniform1f(uCellSize, CELL_SIZE);
   gl.uniform2f(uGridSize, GRID_W, GRID_H);
   gl.uniform2f(uArenaSize, ARENA_W, ARENA_H);
+
+  const n = Math.min(lights.length, 4);
+  gl.uniform1i(uNumLights, n);
+  for (let i = 0; i < n; i++) {
+    gl.uniform2f(uLightPos[i], lights[i].x, lights[i].y);
+    gl.uniform1f(uLightAngle[i], lights[i].angle);
+    gl.uniform1f(uLightRadius[i], lights[i].radius);
+  }
 
   const aPos = gl.getAttribLocation(lightProg, 'aPos');
   gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
@@ -595,6 +631,8 @@ function renderLighting(playerX, playerY, playerAngle, camX, camY) {
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
+
+let debugLighting = false;
 
 // Initial GL setup
 initGL();
@@ -806,7 +844,7 @@ function startMultiplayerGame() {
 // ============================================================
 // INPUT
 // ============================================================
-function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(); if (e.key === ' ') { e.preventDefault(); dash(); } } }
+function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(); if (e.key === ' ') { e.preventDefault(); dash(); } } }
 function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
@@ -1519,11 +1557,18 @@ function render() {
   {
     var spotRadius = 450;
     const lp3 = getLocalPlayer();
-    if (glReady && lp3 && lp3.alive) {
-      renderLighting(lp3.x, lp3.y, lp3.angle || 0, camera.x - screenShake.x, camera.y - screenShake.y);
+    // Gather all alive players as light sources
+    const lights = [];
+    for (const p of players) {
+      if (p.alive && isFinite(p.x) && isFinite(p.y)) {
+        lights.push({ x: p.x, y: p.y, angle: p.angle || 0, radius: spotRadius });
+      }
+    }
+    if (glReady && lights.length > 0) {
+      renderLighting(lights, camera.x - screenShake.x, camera.y - screenShake.y);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(lightCanvas, 0, 0);
+      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
@@ -1536,7 +1581,7 @@ function render() {
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(lightCanvas, 0, 0);
+      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     } else {
       // Canvas 2D fallback when WebGL unavailable
@@ -1624,6 +1669,19 @@ function render() {
 
   // Spectating text
   if(lp2&&!lp2.alive&&gameState==='playing'){ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,canvas.width,40);ctx.fillStyle='#f04040';ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.fillText('SPECTATING',canvas.width/2,26);}
+
+  // F9 debug overlay: show raw lightCanvas in corner
+  if (debugLighting && glReady) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    const dbgH = 150, dbgW = dbgH * lightCanvas.width / lightCanvas.height;
+    ctx.drawImage(lightCanvas, 10, canvas.height - dbgH - 10, dbgW, dbgH);
+    ctx.strokeStyle = '#ff0'; ctx.lineWidth = 1;
+    ctx.strokeRect(10, canvas.height - dbgH - 10, dbgW, dbgH);
+    ctx.fillStyle = '#ff0'; ctx.font = '10px monospace';
+    ctx.fillText('LIGHT MAP ' + lightCanvas.width + 'x' + lightCanvas.height, 14, canvas.height - dbgH - 14);
+    ctx.restore();
+  }
 
   if(isMobile&&gameState==='playing')renderJoysticks();
   renderMinimap();
