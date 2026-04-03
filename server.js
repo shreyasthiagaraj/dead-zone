@@ -10,7 +10,7 @@ const server = http.createServer((req, res) => {
   let filePath = req.url === '/' ? '/index.html' : req.url;
   filePath = path.join(__dirname, filePath);
   const ext = path.extname(filePath);
-  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json' };
+  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg' };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
   fs.readFile(filePath, (err, data) => {

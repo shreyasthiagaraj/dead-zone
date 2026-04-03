@@ -298,16 +298,69 @@ const ZOMBIE_TYPES = {
 // ---- AUDIO ----
 let audioCtx = null;
 function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+
+// Synthesizer fallback
 function playSound(freq, dur, type='square', vol=0.15) {
   if (!audioCtx) return;
   try { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(freq*0.5, audioCtx.currentTime+dur); g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); } catch(e) {}
 }
-function playHitSound() { playSound(300,0.05,'sine',0.1); }
-function playDeathSound() { playSound(100,0.2,'sawtooth',0.12); }
-function playPickupSound() { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); }
-function playDashSound() { playSound(400,0.1,'sine',0.1); }
-function playHurtSound() { playSound(200,0.15,'sawtooth',0.15); }
-function playExplosionSound() { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); }
+
+// ---- ElevenLabs Generated Sound Effects ----
+const sfxBuffers = {};
+const WEAPON_SFX_MAP = {
+  pistol: 'pistol_fire', revolver: 'revolver_fire', smg: 'smg_fire',
+  burst: 'burst_fire', shotgun: 'shotgun_fire', rifle: 'rifle_fire',
+  minigun: 'minigun_fire', flamethrower: 'flamethrower_fire', laser: 'laser_fire',
+  lightning: 'lightning_fire', rpg: 'rpg_fire', grenade_launcher: 'grenade_fire',
+};
+const SFX_FILES = [
+  ...Object.values(WEAPON_SFX_MAP),
+  'hit', 'death', 'pickup', 'dash', 'hurt', 'explosion', 'reload',
+  'zombie_attack', 'level_complete', 'game_over', 'footstep',
+];
+
+function loadSfx() {
+  if (!audioCtx) return;
+  for (const name of SFX_FILES) {
+    fetch(`sounds/${name}.mp3`).then(r => {
+      if (!r.ok) throw new Error('not found');
+      return r.arrayBuffer();
+    }).then(buf => audioCtx.decodeAudioData(buf))
+      .then(decoded => { sfxBuffers[name] = decoded; })
+      .catch(() => {});
+  }
+}
+
+function playSfx(name, vol = 0.5) {
+  if (!audioCtx || !sfxBuffers[name]) return false;
+  try {
+    const src = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    src.buffer = sfxBuffers[name];
+    gain.gain.value = vol;
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start();
+  } catch(e) {}
+  return true;
+}
+
+function playWeaponSound(weaponType, fallbackSound) {
+  const sfxName = WEAPON_SFX_MAP[weaponType];
+  if (sfxName && playSfx(sfxName, 0.4)) return;
+  if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, 0.12);
+}
+
+function playHitSound() { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); }
+function playDeathSound() { if (!playSfx('death', 0.4)) playSound(100,0.2,'sawtooth',0.12); }
+function playPickupSound() { if (!playSfx('pickup', 0.5)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } }
+function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); }
+function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); }
+function playExplosionSound() { if (!playSfx('explosion', 0.6)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } }
+function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
+function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.3)) playSound(300,0.05,'sine',0.06); }
+function playLevelCompleteSound() { playSfx('level_complete', 0.6); }
+function playGameOverSound() { playSfx('game_over', 0.6); }
 
 // ============================================================
 // DUNGEON GENERATOR (seeded)
@@ -756,7 +809,7 @@ function showDeathScreen() {
   document.getElementById('death-stats').innerHTML = `Score: <span class="val">${score.toLocaleString()}</span><br>Level: <span class="val">${level}</span><br>Kills: <span class="val">${kills}</span>`;
   document.getElementById('highscore-display').textContent = `HIGH SCORE: ${highScore.toLocaleString()}`;
   showScreen('death-screen');
-  playDeathSound(); screenShake.intensity = 15;
+  playGameOverSound(); screenShake.intensity = 15;
 }
 
 // ---- Button handlers ----
@@ -810,7 +863,7 @@ document.getElementById('btn-reload').addEventListener('mousedown', () => reload
 // START GAME
 // ============================================================
 function startSoloGame() {
-  initAudio(); isMultiplayer = false; isHost = true;
+  initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0;
   window._currentLevelSeed = Date.now();
   generateDungeon(window._currentLevelSeed);
@@ -825,7 +878,7 @@ function startSoloGame() {
 }
 
 function startMultiplayerGame() {
-  initAudio(); isMultiplayer = true; gameState = 'playing';
+  initAudio(); loadSfx(); isMultiplayer = true; gameState = 'playing';
   score = 0; kills = 0; gameTime = 0; spawnTimer = 0;
   window._currentLevelSeed = lobbySeed;
   generateDungeon(lobbySeed);
@@ -887,7 +940,7 @@ document.getElementById('weapon-slots').addEventListener('touchstart', e => { co
 // GAME ACTIONS
 // ============================================================
 function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length){lp.currentWeapon=idx;lp.weapons[idx].reloading=false;} }
-function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; w.reloading=true;w.reloadTimer=d.reloadTime;playSound(400,0.05,'sine',0.08); }
+function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
   const w=p.weapons[p.currentWeapon],d=WEAPON_DEFS[w.type],now=performance.now();
@@ -899,7 +952,7 @@ function fireSingleShot(p,w,d) {
   w.lastFired=performance.now();w.ammo--;w.muzzleFlash=6;
   const pellets=d.pellets||1;
   for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a); bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:d.damage,color:d.bulletColor,size:d.bulletSize,knockback:d.knockback,pierce:d.pierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:d.explosionRadius||0,tracer:d.tracer||false,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,laserGlow:d.laserGlow||false,grenade:d.grenade||false,owner:'player',ownerId:p.id,trail:[]});}
-  playSound(d.sound.freq,d.sound.duration,d.sound.type,0.12);
+  playWeaponSound(w.type,d.sound);
   if(p===getLocalPlayer()) screenShake.intensity=Math.max(screenShake.intensity,d.shakeIntensity);
   const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
   for(let i=0;i<3;i++) particles.push({x:p.x+c2*24,y:p.y+s2*24,vx:c2*(3+Math.random()*3)+(Math.random()-0.5)*2,vy:s2*(3+Math.random()*3)+(Math.random()-0.5)*2,life:8+Math.random()*6,maxLife:14,size:2+Math.random()*2,color:d.bulletColor,type:'spark'});
@@ -945,6 +998,7 @@ function placeExit() {
 function advanceLevel() {
   level++;
   score += 500 * level;
+  playLevelCompleteSound();
   addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `LEVEL ${level}!`, '#f0c040');
   document.getElementById('wave-num').textContent = `LEVEL ${level}`;
   document.getElementById('wave-sub').textContent = 'Find the exit...';
@@ -1063,7 +1117,7 @@ function update() {
     }
 
     const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
-    if(w.reloading){w.reloadTimer-=16.67;if(w.reloadTimer<=0){const needed=def.magSize-w.ammo;if(def.infinite)w.ammo=def.magSize;else{const fill=Math.min(needed,w.reserveAmmo);w.ammo+=fill;w.reserveAmmo-=fill;}w.reloading=false;playSound(600,0.05,'sine',0.1);}}
+    if(w.reloading){w.reloadTimer-=16.67;if(w.reloadTimer<=0){const needed=def.magSize-w.ammo;if(def.infinite)w.ammo=def.magSize;else{const fill=Math.min(needed,w.reserveAmmo);w.ammo+=fill;w.reserveAmmo-=fill;}w.reloading=false;playReloadSound();}}
     if(w.muzzleFlash>0)w.muzzleFlash--;
     if(w.burstLeft>0){w.burstTimer-=16.67;if(w.burstTimer<=0&&w.ammo>0){fireSingleShot(lp,w,def);w.burstLeft--;w.burstTimer=def.burstDelay||50;}}
     const shouldFire=isMobile?rightJoystick.firing:mouse.down;
@@ -1112,12 +1166,12 @@ function update() {
                   for(let li=0;li<3;li++){const lx1=lastZ.x+(Math.random()-0.5)*4,ly1=lastZ.y+(Math.random()-0.5)*4,lx2=nz.x+(Math.random()-0.5)*4,ly2=nz.y+(Math.random()-0.5)*4;particles.push({x:(lx1+lx2)/2,y:(ly1+ly2)/2,vx:0,vy:0,life:6,maxLife:6,size:2,color:'#4ff',type:'spark'});}
                   // Lightning line stored as particle pair
                   particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:8,maxLife:8,size:1,color:'#4ff',type:'lightning',tx:nz.x,ty:nz.y});
-                  damageZombie(nz,b.damage*0.7,0,0);playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  damageZombie(nz,b.damage*0.7,0,0);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
                   for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
                   decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
                   for(let k=0;k<6;k++){const a2=Math.random()*Math.PI*2,sd=12+Math.random()*30;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});}
-                  playSound(120,0.12,'sawtooth',0.15);playSound(80,0.15,'square',0.08);screenShake.intensity=Math.max(screenShake.intensity,5);
+                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);
                   if(Math.random()<0.12)pickups.push({type:'health',amount:15,x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});else if(Math.random()<0.25)pickups.push({type:'ammo',x:z.x,y:z.y,bobTimer:Math.random()*Math.PI*2});zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
@@ -1151,7 +1205,7 @@ function update() {
 
       if(z.aware){
         z.angle=Math.atan2(zdy,zdx);
-        if(z.ranged&&zd<300){if(zd<150){z.vx=-zdx/zd*z.speed*0.5;z.vy=-zdy/zd*z.speed*0.5;}else{z.vx*=0.9;z.vy*=0.9;}const now=performance.now();if(now-z.lastFired>z.fireRate){z.lastFired=now;bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});playSound(300,0.05,'sine',0.06);}}
+        if(z.ranged&&zd<300){if(zd<150){z.vx=-zdx/zd*z.speed*0.5;z.vy=-zdy/zd*z.speed*0.5;}else{z.vx*=0.9;z.vy*=0.9;}const now=performance.now();if(now-z.lastFired>z.fireRate){z.lastFired=now;bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});playZombieAttackSound();}}
         else{z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;}
       } else {
         z.wanderTimer--;
