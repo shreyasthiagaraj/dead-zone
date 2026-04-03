@@ -295,17 +295,33 @@ const ZOMBIE_TYPES = {
   exploder: { hp: 60, speed: 1.8, radius: 14, color: '#a55', damage: 30, score: 250, explodeOnDeath: true, explosionRadius: 60 },
 };
 
-// ---- AUDIO ----
+// ---- AUDIO ENGINE ----
 let audioCtx = null;
-function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+let masterGain = null;
+let sfxBus = null;
+let musicBus = null;
 
-// Synthesizer fallback
-function playSound(freq, dur, type='square', vol=0.15) {
-  if (!audioCtx) return;
-  try { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(freq*0.5, audioCtx.currentTime+dur); g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur); o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); } catch(e) {}
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 1.0;
+  masterGain.connect(audioCtx.destination);
+  sfxBus = audioCtx.createGain();
+  sfxBus.gain.value = 0.8;
+  sfxBus.connect(masterGain);
+  musicBus = audioCtx.createGain();
+  musicBus.gain.value = 0.35;
+  musicBus.connect(masterGain);
 }
 
-// ---- ElevenLabs Generated Sound Effects ----
+// Synthesizer fallback for when mp3s aren't loaded
+function playSound(freq, dur, type='square', vol=0.15) {
+  if (!audioCtx) return;
+  try { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(freq*0.5, audioCtx.currentTime+dur); g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur); o.connect(g); g.connect(sfxBus||audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); } catch(e) {}
+}
+
+// ---- Sound Effects System ----
 const sfxBuffers = {};
 const WEAPON_SFX_MAP = {
   pistol: 'pistol_fire', revolver: 'revolver_fire', smg: 'smg_fire',
@@ -323,10 +339,12 @@ const SFX_FILES = [
   'health_low', 'health_pickup', 'armor_pickup', 'player_death',
   'menu_select', 'menu_hover', 'countdown', 'wave_start',
 ];
+const MUSIC_FILES = ['music_ambient', 'music_combat', 'music_menu', 'music_gameover'];
 
 function loadSfx() {
   if (!audioCtx) return;
-  for (const name of SFX_FILES) {
+  const allFiles = [...SFX_FILES, ...MUSIC_FILES];
+  for (const name of allFiles) {
     fetch(`sounds/${name}.mp3`).then(r => {
       if (!r.ok) throw new Error('not found');
       return r.arrayBuffer();
@@ -344,35 +362,147 @@ function playSfx(name, vol = 0.5) {
     src.buffer = sfxBuffers[name];
     gain.gain.value = vol;
     src.connect(gain);
-    gain.connect(audioCtx.destination);
+    gain.connect(sfxBus || audioCtx.destination);
     src.start();
   } catch(e) {}
   return true;
 }
 
+// Spatial sound — volume attenuates with distance from player
+function playSfxSpatial(name, x, y, vol = 0.5, maxDist = 600) {
+  if (!audioCtx || !sfxBuffers[name]) return false;
+  const lp = getLocalPlayer();
+  if (!lp) return playSfx(name, vol);
+  const dx = x - lp.x, dy = y - lp.y;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > maxDist) return false;
+  const attenuation = 1 - (dist / maxDist);
+  const finalVol = vol * attenuation * attenuation; // quadratic falloff
+  if (finalVol < 0.01) return false;
+  return playSfx(name, finalVol);
+}
+
+// ---- Music System with Crossfading ----
+let currentMusic = null; // { name, source, gain }
+let musicFadeInterval = null;
+
+function playMusic(name, fadeIn = 2.0) {
+  if (!audioCtx || !musicBus) return;
+  // Already playing this track
+  if (currentMusic && currentMusic.name === name) return;
+  // Stop current music with fade
+  stopMusic(1.0);
+  // Wait for buffer or start immediately if available
+  const startTrack = () => {
+    if (!sfxBuffers[name]) return;
+    try {
+      const src = audioCtx.createBufferSource();
+      const gain = audioCtx.createGain();
+      src.buffer = sfxBuffers[name];
+      src.loop = true;
+      gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(1.0, audioCtx.currentTime + fadeIn);
+      src.connect(gain);
+      gain.connect(musicBus);
+      src.start();
+      currentMusic = { name, source: src, gain };
+    } catch(e) {}
+  };
+  if (sfxBuffers[name]) startTrack();
+  else setTimeout(startTrack, 2000); // retry after load
+}
+
+function stopMusic(fadeOut = 1.5) {
+  if (!currentMusic || !audioCtx) return;
+  const { source, gain } = currentMusic;
+  currentMusic = null;
+  try {
+    const now = audioCtx.currentTime;
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + fadeOut);
+    setTimeout(() => { try { source.stop(); } catch(e) {} }, fadeOut * 1000 + 100);
+  } catch(e) { try { source.stop(); } catch(e2) {} }
+}
+
+// ---- Ambient Sound Layer ----
+let ambientDripTimer = 0;
+let zombieGroanTimer = 0;
+let healthLowTimer = 0;
+
+function updateAmbientAudio() {
+  if (gameState !== 'playing') return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+
+  // Occasional ambient drip sounds
+  ambientDripTimer--;
+  if (ambientDripTimer <= 0) {
+    playSfx('ambient_drip', 0.08 + Math.random() * 0.1);
+    ambientDripTimer = 300 + Math.floor(Math.random() * 400); // every 5-12 seconds
+  }
+
+  // Random zombie groans from nearby zombies
+  zombieGroanTimer--;
+  if (zombieGroanTimer <= 0) {
+    const nearbyZombies = zombies.filter(z => {
+      const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
+      return d < 500;
+    });
+    if (nearbyZombies.length > 0) {
+      const z = nearbyZombies[Math.floor(Math.random() * nearbyZombies.length)];
+      playSfxSpatial('zombie_groan', z.x, z.y, 0.15 + Math.random() * 0.1, 500);
+    }
+    zombieGroanTimer = 180 + Math.floor(Math.random() * 300); // every 3-8 seconds
+  }
+
+  // Low health heartbeat (repeating warning)
+  if (lp.hp <= lp.maxHp * 0.25) {
+    healthLowTimer--;
+    if (healthLowTimer <= 0) {
+      playSfx('health_low', 0.25);
+      healthLowTimer = 90; // every 1.5 seconds
+    }
+  } else {
+    healthLowTimer = 0;
+  }
+
+  // Dynamic music: switch to combat when zombies are near
+  const combatRange = 350;
+  const nearCombat = zombies.some(z => {
+    const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
+    return d < combatRange && z.aware;
+  });
+  if (nearCombat) {
+    playMusic('music_combat', 1.5);
+  } else {
+    playMusic('music_ambient', 3.0);
+  }
+}
+
+// ---- Sound Effect Wrappers ----
 function playWeaponSound(weaponType, fallbackSound) {
   const sfxName = WEAPON_SFX_MAP[weaponType];
-  if (sfxName && playSfx(sfxName, 0.4)) return;
+  if (sfxName && playSfx(sfxName, 0.5)) return;
   if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, 0.12);
 }
 
 function playHitSound() { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); }
-function playDeathSound() { if (!playSfx('death', 0.4)) playSound(100,0.2,'sawtooth',0.12); }
-function playPickupSound() { if (!playSfx('pickup', 0.5)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } }
+function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); }
+function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } }
 function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); }
 function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); }
-function playExplosionSound() { if (!playSfx('explosion', 0.6)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } }
+function playExplosionSound() { if (!playSfx('explosion', 0.7)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } }
 function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
-function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.3)) playSound(300,0.05,'sine',0.06); }
+function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.4)) playSound(300,0.05,'sine',0.06); }
 function playLevelCompleteSound() { playSfx('level_complete', 0.6); }
-function playGameOverSound() { playSfx('game_over', 0.6); }
+function playGameOverSound() { playSfx('game_over', 0.7); stopMusic(0.5); setTimeout(() => playMusic('music_gameover', 2.0), 1000); }
 function playHeadshotSound() { if (!playSfx('headshot', 0.5)) playSound(1200,0.06,'square',0.15); }
 function playEmptyClipSound() { if (!playSfx('empty_clip', 0.3)) playSound(200,0.03,'square',0.08); }
 function playWeaponSwitchSound() { if (!playSfx('weapon_switch', 0.3)) playSound(500,0.04,'sine',0.1); }
 function playKillstreakSound() { if (!playSfx('killstreak', 0.5)) { playSound(800,0.08,'square',0.12); playSound(1000,0.08,'square',0.1); } }
-function playZombieGroanSound() { if (!playSfx('zombie_groan', 0.2)) playSound(80,0.3,'sawtooth',0.04); }
+function playZombieGroanSound() { if (!playSfx('zombie_groan', 0.15)) playSound(80,0.3,'sawtooth',0.04); }
 function playZombieSpawnSound() { if (!playSfx('zombie_spawn', 0.3)) playSound(150,0.15,'square',0.06); }
-function playZombieBossSound() { if (!playSfx('zombie_boss', 0.5)) playSound(60,0.4,'sawtooth',0.15); }
+function playZombieBossSound() { if (!playSfx('zombie_boss', 0.6)) playSound(60,0.4,'sawtooth',0.15); }
 function playDoorOpenSound() { if (!playSfx('door_open', 0.4)) playSound(200,0.2,'sine',0.1); }
 function playExitFoundSound() { if (!playSfx('exit_found', 0.5)) { playSound(600,0.1,'sine',0.12); playSound(900,0.1,'sine',0.1); } }
 function playHealthLowSound() { if (!playSfx('health_low', 0.3)) playSound(400,0.1,'square',0.1); }
@@ -909,7 +1039,7 @@ function addBtn(id, fn) {
 }
 addBtn('btn-solo', () => { isMultiplayer = false; startSoloGame(); });
 addBtn('btn-multi', () => { showScreen('multi-screen'); showMultiError(''); connectWS(); });
-addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); });
+addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); playMusic('music_menu', 2.0); });
 addBtn('btn-create', () => {
   const name = document.getElementById('name-input').value.trim() || 'Player';
   sendMsg({ type: 'create_lobby', name });
@@ -931,6 +1061,7 @@ addBtn('btn-menu', () => {
   if (ws) ws.close();
   document.getElementById('btn-menu').style.display = 'none';
   showScreen('start-screen');
+  playMusic('music_menu', 2.0);
 });
 // Action buttons: trigger action AND activate right joystick so user can hold+drag to aim
 function activateRightJoystickFromButton(touch) {
@@ -963,6 +1094,8 @@ function startSoloGame() {
   camera.x = c.x; camera.y = c.y;
   placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
+  ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
+  playMusic('music_ambient', 2.0);
   document.activeElement?.blur(); canvas.focus(); startLevel();
 }
 
@@ -1150,7 +1283,7 @@ function damagePlayerObj(p,damage) {
   if(p.hp<=0){p.alive=false;p.hp=0;playPlayerDeathSound();
     // Check if all players dead
     if(!players.some(pp=>pp.alive)){if(isHost&&isMultiplayer)sendMsg({type:'game_over'});showDeathScreen();}
-  } else if(p===getLocalPlayer()&&p.hp<=p.maxHp*0.25){playHealthLowSound();}
+  }
 }
 function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,color,vy:-1.5,life:40,maxLife:40});}
 
@@ -1164,6 +1297,8 @@ function lerp(a,b,t){return a+(b-a)*t;}
 function update() {
   if (gameState !== 'playing') return;
   gameTime++;
+  // Update ambient audio and dynamic music every frame
+  updateAmbientAudio();
 
   const lp = getLocalPlayer();
   if (!lp) return;
@@ -1288,8 +1423,8 @@ function update() {
       const zdx=np.x-z.x,zdy=np.y-z.y;
 
       if(!z.aware){
-        if(gameTime%10===0&&zd<400&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;if(Math.random()<0.3)playZombieGroanSound();for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200)oz.aware=true;}}
-        if(zd<120){if(!z.aware&&Math.random()<0.4)playZombieGroanSound();z.aware=true;}
+        if(gameTime%10===0&&zd<400&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;if(Math.random()<0.3)playSfxSpatial('zombie_groan',z.x,z.y,0.2,500);for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200)oz.aware=true;}}
+        if(zd<120){if(!z.aware&&Math.random()<0.4)playSfxSpatial('zombie_groan',z.x,z.y,0.25,400);z.aware=true;}
       }
 
       if(z.aware){
@@ -1917,6 +2052,17 @@ function renderMinimap(){
 // GAME LOOP
 // ============================================================
 function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
+// Start menu music on first user interaction
+document.addEventListener('click', function startMenuMusic() {
+  initAudio(); loadSfx();
+  setTimeout(() => playMusic('music_menu', 3.0), 1500);
+  document.removeEventListener('click', startMenuMusic);
+}, { once: true });
+document.addEventListener('touchstart', function startMenuMusicTouch() {
+  initAudio(); loadSfx();
+  setTimeout(() => playMusic('music_menu', 3.0), 1500);
+  document.removeEventListener('touchstart', startMenuMusicTouch);
+}, { once: true });
 gameLoop();
 </script>
 </body>
