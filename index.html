@@ -374,6 +374,7 @@ function generateDungeon(seed) {
   }
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
 }
 function carveRoom(r) { for (let y = r.y; y < r.y+r.h && y < GRID_H; y++) for (let x = r.x; x < r.x+r.w && x < GRID_W; x++) if (y >= 0 && x >= 0) dungeonGrid[y][x] = true; }
 function carveCorridor(a, b) {
@@ -397,80 +398,195 @@ function pushOutOfObstacles(e, r) {
 }
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy][gx]) return false; } return true; }
 
-// ---- RAYCASTING VISIBILITY ----
-function castRayDist(ox,oy,cs,sn,maxDist) {
-  const step=CELL_SIZE*0.35;
-  const steps=Math.ceil(maxDist/step);
-  for(let i=1;i<=steps;i++){
-    const d=Math.min(i*step,maxDist);
-    const gx=Math.floor((ox+cs*d)/CELL_SIZE),gy=Math.floor((oy+sn*d)/CELL_SIZE);
-    if(gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return d;
-    if(!dungeonGrid[gy][gx]) return d;
-  }
-  return maxDist;
+// ---- WEBGL LIGHTING ----
+const lightCanvas = document.createElement('canvas');
+const gl = lightCanvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
+
+// Shaders
+const LIGHT_VS = `
+attribute vec2 aPos;
+varying vec2 vUV;
+void main(){
+  vUV = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const LIGHT_FS = `
+precision mediump float;
+varying vec2 vUV;
+uniform sampler2D uGrid;
+uniform vec2 uResolution;
+uniform vec2 uPlayerPos;   // world coords
+uniform vec2 uCameraPos;   // world coords
+uniform float uPlayerAngle;
+uniform float uSpotRadius;
+uniform float uCellSize;
+uniform vec2 uGridSize;    // GRID_W, GRID_H
+uniform vec2 uArenaSize;   // ARENA_W, ARENA_H
+
+bool isWall(vec2 worldPos) {
+  vec2 gridUV = worldPos / uArenaSize;
+  if (gridUV.x < 0.0 || gridUV.x > 1.0 || gridUV.y < 0.0 || gridUV.y > 1.0) return true;
+  float val = texture2D(uGrid, gridUV).r;
+  return val < 0.5;
 }
 
-// Build a 1D shadow map: for N evenly spaced angles, store the ray hit distance
-function buildShadowMap(px,py,maxDist,numRays) {
-  const map=new Float32Array(numRays);
-  for(let i=0;i<numRays;i++){
-    const angle=(i/numRays)*Math.PI*2;
-    map[i]=castRayDist(px,py,Math.cos(angle),Math.sin(angle),maxDist);
+bool rayHitsWall(vec2 from, vec2 to) {
+  vec2 dir = to - from;
+  float len = length(dir);
+  if (len < 1.0) return false;
+  float stepSize = uCellSize * 0.4;
+  int steps = int(ceil(len / stepSize));
+  // Cap steps to avoid infinite loops
+  if (steps > 200) steps = 200;
+  for (int i = 1; i <= 200; i++) {
+    if (i > steps) break;
+    float t = float(i) / float(steps);
+    vec2 pt = from + dir * t;
+    if (isWall(pt)) return true;
   }
-  return map;
+  return false;
 }
 
-// Draw a triangle fan from player using the shadow map (erases fog)
-function drawShadowMapFan(ctx,px,py,ox,oy,shadowMap,maxDist,alphaFn) {
-  const n=shadowMap.length;
-  const sx=px+ox,sy=py+oy;
-  for(let i=0;i<n;i++){
-    const i2=(i+1)%n;
-    const a1=(i/n)*Math.PI*2, a2=(i2/n)*Math.PI*2;
-    const d1=shadowMap[i], d2=shadowMap[i2];
-    const x1=sx+Math.cos(a1)*d1, y1=sy+Math.sin(a1)*d1;
-    const x2=sx+Math.cos(a2)*d2, y2=sy+Math.sin(a2)*d2;
-    // Average distance for alpha
-    const avgD=(d1+d2)*0.5;
-    const alpha=alphaFn(avgD/maxDist);
-    if(alpha<0.005)continue;
-    ctx.globalAlpha=1;
-    ctx.fillStyle=`rgba(0,0,0,${alpha})`;
-    ctx.beginPath();
-    ctx.moveTo(sx,sy);
-    ctx.lineTo(x1,y1);
-    ctx.lineTo(x2,y2);
-    ctx.closePath();
-    ctx.fill();
+void main() {
+  // Screen pixel -> world position
+  vec2 screenPos = vUV * uResolution;
+  vec2 worldPos = screenPos + uCameraPos - uResolution * 0.5;
+
+  vec2 diff = worldPos - uPlayerPos;
+  float dist = length(diff);
+  float angle = atan(diff.y, diff.x);
+
+  // Angle difference to player facing direction
+  float angleDiff = angle - uPlayerAngle;
+  angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
+
+  // Base: full darkness
+  float darkness = 0.85;
+  float light = 0.0;
+
+  if (dist < uSpotRadius) {
+    // Check line of sight
+    bool blocked = rayHitsWall(uPlayerPos, worldPos);
+
+    if (!blocked) {
+      float distFactor = dist / uSpotRadius;
+
+      // Ambient glow (all visible directions)
+      float ambient = 0.0;
+      if (distFactor < 0.3) ambient = 0.35;
+      else if (distFactor < 0.7) ambient = 0.35 * (1.0 - (distFactor - 0.3) / 0.4);
+      else ambient = 0.14 * (1.0 - (distFactor - 0.7) / 0.3);
+
+      // Flashlight cone
+      float coneHalf = 0.45;
+      float cone = 0.0;
+      float absDiff = abs(angleDiff);
+      if (absDiff < coneHalf) {
+        // Soft edge falloff at cone boundary
+        float edgeFade = 1.0 - smoothstep(coneHalf * 0.7, coneHalf, absDiff);
+        // Distance falloff
+        float dFade = 1.0;
+        if (distFactor < 0.1) dFade = 1.0;
+        else if (distFactor < 0.4) dFade = 1.0;
+        else if (distFactor < 0.7) dFade = 1.0 - (distFactor - 0.4) * 0.8;
+        else dFade = 0.76 - (distFactor - 0.7) * 2.5;
+        dFade = max(dFade, 0.0);
+        cone = edgeFade * dFade;
+      }
+
+      light = max(ambient, cone);
+    }
   }
+
+  // Warm tint in flashlight cone
+  float warmth = 0.0;
+  if (light > 0.3 && abs(angleDiff) < 0.45) {
+    warmth = (light - 0.3) * 0.08;
+  }
+
+  float alpha = darkness * (1.0 - light);
+  gl_FragColor = vec4(warmth, warmth * 0.8, 0.0, alpha);
+}`;
+
+// Compile shaders and create program
+function createShader(gl, type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.error('Shader:', gl.getShaderInfoLog(s)); return null; }
+  return s;
+}
+const lightVS = createShader(gl, gl.VERTEX_SHADER, LIGHT_VS);
+const lightFS = createShader(gl, gl.FRAGMENT_SHADER, LIGHT_FS);
+const lightProg = gl.createProgram();
+gl.attachShader(lightProg, lightVS);
+gl.attachShader(lightProg, lightFS);
+gl.linkProgram(lightProg);
+if (!gl.getProgramParameter(lightProg, gl.LINK_STATUS)) console.error('Link:', gl.getProgramInfoLog(lightProg));
+
+// Fullscreen quad
+const quadBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(lightProg, 'aPos');
+
+// Uniforms
+const uGrid = gl.getUniformLocation(lightProg, 'uGrid');
+const uResolution = gl.getUniformLocation(lightProg, 'uResolution');
+const uPlayerPos = gl.getUniformLocation(lightProg, 'uPlayerPos');
+const uCameraPos = gl.getUniformLocation(lightProg, 'uCameraPos');
+const uPlayerAngle = gl.getUniformLocation(lightProg, 'uPlayerAngle');
+const uSpotRadius = gl.getUniformLocation(lightProg, 'uSpotRadius');
+const uCellSize = gl.getUniformLocation(lightProg, 'uCellSize');
+const uGridSize = gl.getUniformLocation(lightProg, 'uGridSize');
+const uArenaSize = gl.getUniformLocation(lightProg, 'uArenaSize');
+
+// Grid texture
+const gridTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, gridTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+function uploadDungeonGrid() {
+  if (!dungeonGrid) return;
+  const data = new Uint8Array(GRID_W * GRID_H);
+  for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) {
+    data[y * GRID_W + x] = dungeonGrid[y][x] ? 255 : 0;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, gridTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, GRID_W, GRID_H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, data);
 }
 
-// Draw flashlight cone fan — same idea but limited angle range
-function drawConeFan(ctx,px,py,ox,oy,shadowMap,maxDist,coneAngle,coneHalf,alphaFn) {
-  const n=shadowMap.length;
-  const sx=px+ox,sy=py+oy;
-  for(let i=0;i<n;i++){
-    const i2=(i+1)%n;
-    const a1=(i/n)*Math.PI*2, a2=(i2/n)*Math.PI*2;
-    // Check if this slice is within the cone
-    let da1=a1-coneAngle; while(da1>Math.PI)da1-=Math.PI*2; while(da1<-Math.PI)da1+=Math.PI*2;
-    let da2=a2-coneAngle; while(da2>Math.PI)da2-=Math.PI*2; while(da2<-Math.PI)da2+=Math.PI*2;
-    if(Math.abs(da1)>coneHalf&&Math.abs(da2)>coneHalf)continue;
-    const d1=shadowMap[i], d2=shadowMap[i2];
-    const x1=sx+Math.cos(a1)*d1, y1=sy+Math.sin(a1)*d1;
-    const x2=sx+Math.cos(a2)*d2, y2=sy+Math.sin(a2)*d2;
-    const avgD=(d1+d2)*0.5;
-    const alpha=alphaFn(avgD/maxDist);
-    if(alpha<0.005)continue;
-    ctx.globalAlpha=1;
-    ctx.fillStyle=`rgba(0,0,0,${alpha})`;
-    ctx.beginPath();
-    ctx.moveTo(sx,sy);
-    ctx.lineTo(x1,y1);
-    ctx.lineTo(x2,y2);
-    ctx.closePath();
-    ctx.fill();
-  }
+function renderLighting(playerX, playerY, playerAngle, camX, camY) {
+  lightCanvas.width = canvas.width;
+  lightCanvas.height = canvas.height;
+  gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
+
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(lightProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, gridTex);
+  gl.uniform1i(uGrid, 0);
+  gl.uniform2f(uResolution, lightCanvas.width, lightCanvas.height);
+  gl.uniform2f(uPlayerPos, playerX, playerY);
+  gl.uniform2f(uCameraPos, camX, camY);
+  gl.uniform1f(uPlayerAngle, playerAngle);
+  gl.uniform1f(uSpotRadius, 450.0);
+  gl.uniform1f(uCellSize, CELL_SIZE);
+  gl.uniform2f(uGridSize, GRID_W, GRID_H);
+  gl.uniform2f(uArenaSize, ARENA_W, ARENA_H);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
 // ---- RESIZE ----
@@ -1389,72 +1505,20 @@ function render() {
 
   ctx.restore();
 
-  // ---- Fog of war / raycasting visibility ----
+  // ---- WebGL Lighting ----
   {
     var spotRadius = 450;
-    if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
-    const fc = window._fogCanvas, fctx = window._fogCtx;
-    fc.width = canvas.width; fc.height = canvas.height;
-    // Fill with darkness
-    fctx.fillStyle = 'rgba(0,0,0,0.82)';
-    fctx.fillRect(0, 0, fc.width, fc.height);
-    fctx.globalCompositeOperation = 'destination-out';
-    const ox = -camera.x + canvas.width/2 + screenShake.x;
-    const oy = -camera.y + canvas.height/2 + screenShake.y;
-
-    for (const p of players) {
-      if (!p.alive) continue;
-      const sx = p.x + ox, sy = p.y + oy;
-      const flAngle = p.angle || 0;
-
-      // Build shadow map (1D array of ray distances)
-      const shadowMap = buildShadowMap(p.x, p.y, spotRadius, 360);
-
-      // Ambient glow — dim triangle fan in all visible directions
-      drawShadowMapFan(fctx, p.x, p.y, ox, oy, shadowMap, spotRadius, function(t) {
-        if (t < 0.3) return 0.45;
-        if (t < 0.6) return 0.45 - (t - 0.3) / 0.3 * 0.25;
-        return 0.2 * (1 - (t - 0.6) / 0.4);
-      });
-
-      // Flashlight cone — bright beam, each triangle drawn individually
-      const coneHalf = 0.45;
-      drawConeFan(fctx, p.x, p.y, ox, oy, shadowMap, spotRadius, flAngle, coneHalf, function(t) {
-        if (t < 0.15) return 1;
-        if (t < 0.5) return 1 - (t - 0.15) / 0.35 * 0.2;
-        if (t < 0.8) return 0.8 - (t - 0.5) / 0.3 * 0.4;
-        return 0.4 * (1 - (t - 0.8) / 0.2);
-      });
+    const lp3 = getLocalPlayer();
+    if (lp3 && lp3.alive) {
+      renderLighting(lp3.x, lp3.y, lp3.angle || 0, camera.x - screenShake.x, camera.y - screenShake.y);
+    } else {
+      lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
+      gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
+      gl.clearColor(0, 0, 0, 0.85);
+      gl.clear(gl.COLOR_BUFFER_BIT);
     }
-    fctx.globalCompositeOperation = 'source-over';
-    // Composite fog onto main canvas
-    ctx.drawImage(fc, 0, 0);
-
-    // Warm additive light overlay along flashlight beam
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    for (const p of players) {
-      if (!p.alive) continue;
-      const sx = p.x + ox, sy = p.y + oy;
-      const flAngle = p.angle || 0;
-      const flCos = Math.cos(flAngle), flSin = Math.sin(flAngle);
-      for (let s = 0; s < 6; s++) {
-        const t = (s + 1) / 6;
-        const wd = 50 + 160 * t;
-        const cx = sx + flCos * wd, cy = sy + flSin * wd;
-        const worldX = p.x + flCos * wd, worldY = p.y + flSin * wd;
-        if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
-        const r = 35 + 70 * t;
-        const alpha = 0.04 * (1 - t * 0.7);
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        grad.addColorStop(0, `rgba(255,240,200,${alpha})`);
-        grad.addColorStop(0.6, `rgba(255,230,180,${alpha * 0.5})`);
-        grad.addColorStop(1, 'rgba(255,220,160,0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-      }
-    }
-    ctx.restore();
+    // Composite WebGL lighting onto main 2D canvas
+    ctx.drawImage(lightCanvas, 0, 0);
 
     // Glowing zombie eyes visible through darkness
     const ox2 = -camera.x + canvas.width/2 + screenShake.x;
