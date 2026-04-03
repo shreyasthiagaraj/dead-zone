@@ -50,9 +50,9 @@ const SOUND_DEFS = [
   ['footstep', '8-bit retro footstep tap, short arcade character movement blip', 0.5, 0.5],
 
   // --- New: Combat feedback ---
-  ['headshot', '8-bit retro critical hit, sharp arcade high-pitched ding, satisfying chiptune bonus kill sound', 0.4, 0.6],
-  ['empty_clip', '8-bit retro empty gun click, dry arcade trigger pull, chiptune hollow click no ammo', 0.3, 0.6],
-  ['weapon_switch', 'Retro arcade weapon swap, 8-bit quick mechanical toggle click, chiptune equip sound', 0.3, 0.6],
+  ['headshot', '8-bit retro critical hit, sharp arcade high-pitched ding, satisfying chiptune bonus kill sound', 0.5, 0.6],
+  ['empty_clip', '8-bit retro empty gun click, dry arcade trigger pull, chiptune hollow click no ammo', 0.5, 0.6],
+  ['weapon_switch', 'Retro arcade weapon swap, 8-bit quick mechanical toggle click, chiptune equip sound', 0.5, 0.6],
   ['killstreak', '8-bit retro combo bonus, ascending arcade chiptune notes rapid killstreak jingle', 0.6, 0.6],
 
   // --- New: Zombie sounds ---
@@ -72,9 +72,9 @@ const SOUND_DEFS = [
   ['player_death', 'Retro arcade player death, 8-bit dramatic descending spiral game over sting, chiptune hero falls', 1.0, 0.6],
 
   // --- New: UI / Menu ---
-  ['menu_select', '8-bit retro menu select blip, short arcade UI confirm beep, chiptune button press', 0.2, 0.6],
-  ['menu_hover', 'Retro arcade menu hover tick, tiny 8-bit UI cursor move blip, soft chiptune navigation', 0.15, 0.5],
-  ['countdown', '8-bit retro countdown beep, arcade ready set go tick, chiptune timer pulse', 0.3, 0.6],
+  ['menu_select', '8-bit retro menu select blip, short arcade UI confirm beep, chiptune button press', 0.5, 0.6],
+  ['menu_hover', 'Retro arcade menu hover tick, tiny 8-bit UI cursor move blip, soft chiptune navigation', 0.5, 0.5],
+  ['countdown', '8-bit retro countdown beep, arcade ready set go tick, chiptune timer pulse', 0.5, 0.6],
   ['wave_start', 'Retro arcade new wave alarm, 8-bit warning siren blare, chiptune incoming enemies klaxon', 1.0, 0.6],
 ];
 
