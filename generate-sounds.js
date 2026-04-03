@@ -20,19 +20,24 @@ const SOUNDS_DIR = path.join(__dirname, 'sounds');
 
 // Each entry: [filename, prompt, duration_seconds, prompt_influence]
 const SOUND_DEFS = [
-  // --- Weapon fire sounds (gritty, punchy, visceral) ---
-  ['pistol_fire', 'Quick sharp handgun gunshot, punchy 9mm pistol pop with snappy crack, indoor echo, close range shooting', 0.5, 0.5],
+  // --- Weapon fire sounds: per-shot (gritty, punchy, visceral) ---
+  ['pistol_fire', 'Snappy compact pistol gunshot, tight percussive handgun crack with sharp metallic bite, punchy close quarters pop', 0.5, 0.6],
   ['revolver_fire', 'Heavy magnum revolver gunshot, deep booming handcannon blast with reverb, powerful single shot', 0.6, 0.5],
   ['smg_fire', 'Short submachine gun burst, rapid metallic rattling gunfire, compact automatic weapon pop', 0.5, 0.5],
   ['burst_fire', 'Three round burst fire, triple tap assault rifle shots, tactical burst with shell casings', 0.5, 0.5],
   ['shotgun_fire', 'Loud pump shotgun blast, deep chunky bassy boom with pellet spread, devastating close range', 0.6, 0.5],
   ['rifle_fire', 'High powered sniper rifle crack, sharp supersonic snap with heavy recoil thud, echoing shot', 0.6, 0.5],
-  ['minigun_fire', 'Rapid minigun whirring burst, buzzing high speed rotary gunfire, brass casings raining', 0.5, 0.5],
-  ['flamethrower_fire', 'Flamethrower ignition burst, roaring fire whoosh with hissing gas, crackling flames spreading', 0.7, 0.5],
-  ['laser_fire', 'Sci-fi energy weapon discharge, sizzling plasma bolt with electric hum, burning ionized air', 0.5, 0.5],
-  ['lightning_fire', 'Electric tesla arc discharge, sharp crackling lightning zap with buzzing static, ozone snap', 0.5, 0.5],
+  ['lightning_fire', 'Loud violent electrical arc discharge, high voltage sparking with sharp crackling thunder snap, raw dangerous electricity jumping between conductors', 0.6, 0.6],
   ['rpg_fire', 'Rocket launcher firing, deep whooshing rocket propulsion blast with backblast, heavy ordnance', 0.8, 0.5],
   ['grenade_fire', 'Grenade launcher thump, hollow metallic tube launch thud, lobbed projectile whoosh', 0.5, 0.5],
+
+  // --- Weapon loop sounds: sustained fire for high-RPM weapons ---
+  ['minigun_loop', 'Sustained heavy minigun barrage, continuous rotary cannon roaring with high speed mechanical whirring and brass casings raining, nonstop automatic fire', 4.0, 0.6],
+  ['minigun_spinup', 'Minigun barrel spinning up, accelerating mechanical whir getting faster and higher pitched, motor revving', 0.8, 0.6],
+  ['flamethrower_loop', 'Sustained flamethrower roaring fire stream, continuous intense rushing flames with hissing pressurized gas and crackling fire, burning inferno', 4.0, 0.6],
+  ['flamethrower_ignite', 'Flamethrower pilot light ignition, sharp gas hiss with clicking igniter then fire catching whoosh', 0.6, 0.5],
+  ['laser_loop', 'Sustained sci-fi laser beam firing, continuous buzzing energy beam with high pitched electrical hum and sizzling ionized air, plasma stream', 4.0, 0.6],
+  ['smg_loop', 'Sustained automatic submachine gun fire, continuous rapid rattling gunshots with metallic cycling and shell casings, nonstop compact automatic', 4.0, 0.6],
 
   // --- Combat feedback (visceral, satisfying) ---
   ['hit', 'Wet flesh impact thud, bullet hitting meat with squelchy punch, gore splat', 0.5, 0.5],

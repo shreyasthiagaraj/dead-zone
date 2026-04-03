@@ -323,14 +323,23 @@ function playSound(freq, dur, type='square', vol=0.15) {
 
 // ---- Sound Effects System ----
 const sfxBuffers = {};
+// Per-shot weapon sounds (slow fire rate weapons)
 const WEAPON_SFX_MAP = {
-  pistol: 'pistol_fire', revolver: 'revolver_fire', smg: 'smg_fire',
+  pistol: 'pistol_fire', revolver: 'revolver_fire',
   burst: 'burst_fire', shotgun: 'shotgun_fire', rifle: 'rifle_fire',
-  minigun: 'minigun_fire', flamethrower: 'flamethrower_fire', laser: 'laser_fire',
   lightning: 'lightning_fire', rpg: 'rpg_fire', grenade_launcher: 'grenade_fire',
+};
+// Looping weapon sounds (high fire rate weapons) — fade in/out instead of per-shot
+const WEAPON_LOOP_MAP = {
+  smg: { loop: 'smg_loop', vol: 0.5 },
+  minigun: { loop: 'minigun_loop', spinup: 'minigun_spinup', vol: 0.5 },
+  flamethrower: { loop: 'flamethrower_loop', spinup: 'flamethrower_ignite', vol: 0.5 },
+  laser: { loop: 'laser_loop', vol: 0.4 },
 };
 const SFX_FILES = [
   ...Object.values(WEAPON_SFX_MAP),
+  'smg_fire', 'minigun_loop', 'minigun_spinup', 'flamethrower_loop', 'flamethrower_ignite',
+  'laser_loop', 'smg_loop', 'laser_fire',
   'hit', 'death', 'pickup', 'dash', 'hurt', 'explosion', 'reload',
   'zombie_attack', 'level_complete', 'game_over', 'footstep',
   'headshot', 'empty_clip', 'weapon_switch', 'killstreak',
@@ -380,6 +389,50 @@ function playSfxSpatial(name, x, y, vol = 0.5, maxDist = 600) {
   const finalVol = vol * attenuation * attenuation; // quadratic falloff
   if (finalVol < 0.01) return false;
   return playSfx(name, finalVol);
+}
+
+// ---- Weapon Loop Audio System ----
+// For high fire-rate weapons: plays a looping sound that fades in/out with firing
+let activeWeaponLoop = null; // { name, source, gain }
+
+function startWeaponLoop(weaponType) {
+  if (!audioCtx || !sfxBus) return;
+  const loopDef = WEAPON_LOOP_MAP[weaponType];
+  if (!loopDef) return;
+  // Already playing this loop
+  if (activeWeaponLoop && activeWeaponLoop.name === loopDef.loop) return;
+  // Stop any existing loop
+  stopWeaponLoop(0.05);
+  // Play spinup sound if defined
+  if (loopDef.spinup && sfxBuffers[loopDef.spinup]) {
+    playSfx(loopDef.spinup, 0.4);
+  }
+  if (!sfxBuffers[loopDef.loop]) return;
+  try {
+    const src = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    src.buffer = sfxBuffers[loopDef.loop];
+    src.loop = true;
+    const fadeIn = 0.15;
+    gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(loopDef.vol, audioCtx.currentTime + fadeIn);
+    src.connect(gain);
+    gain.connect(sfxBus);
+    src.start();
+    activeWeaponLoop = { name: loopDef.loop, source: src, gain };
+  } catch(e) {}
+}
+
+function stopWeaponLoop(fadeOut = 0.2) {
+  if (!activeWeaponLoop || !audioCtx) return;
+  const { source, gain } = activeWeaponLoop;
+  activeWeaponLoop = null;
+  try {
+    const now = audioCtx.currentTime;
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + fadeOut);
+    setTimeout(() => { try { source.stop(); } catch(e) {} }, fadeOut * 1000 + 50);
+  } catch(e) { try { source.stop(); } catch(e2) {} }
 }
 
 // ---- Music System with Crossfading ----
@@ -482,6 +535,12 @@ function updateAmbientAudio() {
 
 // ---- Sound Effect Wrappers ----
 function playWeaponSound(weaponType, fallbackSound) {
+  // Loop weapons: start/maintain the loop instead of per-shot sounds
+  if (WEAPON_LOOP_MAP[weaponType]) {
+    startWeaponLoop(weaponType);
+    return;
+  }
+  // Per-shot weapons
   const sfxName = WEAPON_SFX_MAP[weaponType];
   if (sfxName && playSfx(sfxName, 0.5)) return;
   if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, 0.12);
@@ -1160,8 +1219,8 @@ document.getElementById('weapon-slots').addEventListener('touchstart', e => { co
 // ============================================================
 // GAME ACTIONS
 // ============================================================
-function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
-function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
+function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){stopWeaponLoop();lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
+function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
   const w=p.weapons[p.currentWeapon],d=WEAPON_DEFS[w.type],now=performance.now();
@@ -1308,7 +1367,7 @@ function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);}
-  if(p.hp<=0){p.alive=false;p.hp=0;playPlayerDeathSound();
+  if(p.hp<=0){p.alive=false;p.hp=0;stopWeaponLoop();playPlayerDeathSound();
     // Check if all players dead
     if(!players.some(pp=>pp.alive)){if(isHost&&isMultiplayer)sendMsg({type:'game_over'});showDeathScreen();}
   }
@@ -1374,6 +1433,9 @@ function update() {
     if(w.burstLeft>0){w.burstTimer-=16.67;if(w.burstTimer<=0&&w.ammo>0){fireSingleShot(lp,w,def);w.burstLeft--;w.burstTimer=def.burstDelay||50;}}
     const shouldFire=isMobile?rightJoystick.firing:mouse.down;
     if(shouldFire)fireWeaponForPlayer(lp);
+    else stopWeaponLoop(); // stop loop sound when not firing
+    // Stop loop if reloading or out of ammo
+    if(w.reloading || (w.ammo<=0 && !shouldFire)) stopWeaponLoop();
   }
 
   // ---- Send input to host (non-host multiplayer) ----
