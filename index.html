@@ -662,12 +662,10 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
 
   float distFactor = dist / lightRadius;
 
-  // Ambient glow
-  float ambient = 0.0;
-  if (distFactor < 0.15) ambient = 0.25;
-  else if (distFactor < 0.4) ambient = 0.25 * (1.0 - (distFactor - 0.15) / 0.25);
+  // Smooth ambient glow — no banding, continuous falloff
+  float ambient = 0.3 * (1.0 - smoothstep(0.0, 0.45, distFactor));
 
-  // Flashlight cone — CRANKED
+  // Flashlight cone — bright near player, dimmer at range
   float angle = atan(diff.y, diff.x);
   float angleDiff = angle - lightAngle;
   angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
@@ -675,8 +673,8 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
   float cone = 0.0;
   float absDiff = abs(angleDiff);
   if (absDiff < coneHalf) {
-    float edgeFade = 1.0 - smoothstep(coneHalf * 0.5, coneHalf, absDiff);
-    float dFade = max(1.0 - distFactor * distFactor * 0.2, 0.0);
+    float edgeFade = 1.0 - smoothstep(coneHalf * 0.45, coneHalf, absDiff);
+    float dFade = 1.0 - smoothstep(0.0, 1.0, distFactor) * 0.65;
     cone = edgeFade * dFade;
   }
 
@@ -706,7 +704,7 @@ void main() {
     }
   }
 
-  float light = 0.12 + min(totalLight * 1.15, 1.0) * 0.88;
+  float light = 0.15 + min(totalLight * 1.1, 1.0) * 0.85;
 
   float warmR = light;
   float warmG = light;
@@ -855,7 +853,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  gl.clearColor(0.12, 0.12, 0.12, 1.0);
+  gl.clearColor(0.15, 0.15, 0.15, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   gl.useProgram(lightProg);
@@ -1900,7 +1898,7 @@ function render() {
       }
       gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
       gl.disable(gl.BLEND);
-      gl.clearColor(0.12, 0.12, 0.12, 1.0);
+      gl.clearColor(0.15, 0.15, 0.15, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
