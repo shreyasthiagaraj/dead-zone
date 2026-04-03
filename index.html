@@ -462,23 +462,25 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
 
   float distFactor = dist / lightRadius;
 
-  // Ambient glow (all visible directions)
+  // Faint ambient glow — just enough to see walls near you
   float ambient = 0.0;
-  if (distFactor < 0.25) ambient = 0.45;
-  else if (distFactor < 0.6) ambient = 0.45 - (distFactor - 0.25) * 0.7;
-  else ambient = 0.2 * (1.0 - (distFactor - 0.6) / 0.4);
+  if (distFactor < 0.15) ambient = 0.15;
+  else if (distFactor < 0.35) ambient = 0.15 * (1.0 - (distFactor - 0.15) / 0.2);
 
-  // Flashlight cone
+  // Flashlight cone — bright, dominant beam
   float angle = atan(diff.y, diff.x);
   float angleDiff = angle - lightAngle;
   angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
-  float coneHalf = 0.5;
+  float coneHalf = 0.55;
   float cone = 0.0;
   float absDiff = abs(angleDiff);
   if (absDiff < coneHalf) {
-    float edgeFade = 1.0 - smoothstep(coneHalf * 0.6, coneHalf, absDiff);
-    float dFade = max(1.0 - distFactor * 0.6, 0.0);
-    cone = edgeFade * dFade;
+    float edgeFade = 1.0 - smoothstep(coneHalf * 0.5, coneHalf, absDiff);
+    // Bright center hotspot that holds intensity over distance
+    float dFade = max(1.0 - distFactor * distFactor * 0.7, 0.0);
+    // Tighter hotspot in center of beam
+    float hotspot = 1.0 - smoothstep(0.0, coneHalf * 0.4, absDiff) * 0.25;
+    cone = edgeFade * dFade * hotspot;
   }
 
   return max(ambient, cone);
@@ -508,15 +510,17 @@ void main() {
     }
   }
 
-  float light = 0.15 + totalLight * 0.85;
+  float light = 0.04 + totalLight * 0.96;
 
-  // Warm tint in flashlight cone
+  // Warm tint in flashlight cone — stronger for realistic torch feel
   float warmR = light;
   float warmG = light;
   float warmB = light;
-  if (light > 0.5 && bestConeAngleDiff < 0.5) {
-    warmR += (light - 0.5) * 0.12;
-    warmG += (light - 0.5) * 0.08;
+  if (light > 0.3 && bestConeAngleDiff < 0.55) {
+    float warmth = (light - 0.3) * 0.7;
+    warmR += warmth * 0.18;
+    warmG += warmth * 0.08;
+    warmB -= warmth * 0.06;
   }
 
   gl_FragColor = vec4(warmR, warmG, warmB, 1.0);
@@ -606,7 +610,7 @@ function renderLighting(lights, camX, camY) {
   }
   gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
   gl.disable(gl.BLEND);
-  gl.clearColor(0.15, 0.15, 0.15, 1.0);
+  gl.clearColor(0.04, 0.04, 0.04, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   gl.useProgram(lightProg);
@@ -1581,7 +1585,7 @@ function render() {
       }
       gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
       gl.disable(gl.BLEND);
-      gl.clearColor(0.15, 0.15, 0.15, 1.0);
+      gl.clearColor(0.04, 0.04, 0.04, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
