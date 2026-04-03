@@ -398,118 +398,79 @@ function pushOutOfObstacles(e, r) {
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy][gx]) return false; } return true; }
 
 // ---- RAYCASTING VISIBILITY ----
-function castRay(ox,oy,angle,maxDist) {
-  const cs=Math.cos(angle),sn=Math.sin(angle);
+function castRayDist(ox,oy,cs,sn,maxDist) {
   const step=CELL_SIZE*0.35;
   const steps=Math.ceil(maxDist/step);
   for(let i=1;i<=steps;i++){
     const d=Math.min(i*step,maxDist);
-    const cx=ox+cs*d,cy=oy+sn*d;
-    const gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE);
-    if(gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return {x:cx,y:cy,d,a:angle};
-    if(!dungeonGrid[gy][gx]) return {x:cx,y:cy,d,a:angle};
+    const gx=Math.floor((ox+cs*d)/CELL_SIZE),gy=Math.floor((oy+sn*d)/CELL_SIZE);
+    if(gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return d;
+    if(!dungeonGrid[gy][gx]) return d;
   }
-  return {x:ox+cs*maxDist,y:oy+sn*maxDist,d:maxDist,a:angle};
+  return maxDist;
 }
 
-function getWallCornerAngles(px,py,maxDist) {
-  const angles=[];
-  const cellR=Math.ceil(maxDist/CELL_SIZE)+1;
-  const pgx=Math.floor(px/CELL_SIZE),pgy=Math.floor(py/CELL_SIZE);
-  const minGx=Math.max(0,pgx-cellR),maxGx=Math.min(GRID_W,pgx+cellR);
-  const minGy=Math.max(0,pgy-cellR),maxGy=Math.min(GRID_H,pgy+cellR);
-  for(let gy=minGy;gy<=maxGy;gy++) for(let gx=minGx;gx<=maxGx;gx++){
-    if(dungeonGrid[gy]&&dungeonGrid[gy][gx]) continue;
-    let bordersFloor=false;
-    if(gy>0&&dungeonGrid[gy-1]&&dungeonGrid[gy-1][gx])bordersFloor=true;
-    if(!bordersFloor&&gy<GRID_H-1&&dungeonGrid[gy+1]&&dungeonGrid[gy+1][gx])bordersFloor=true;
-    if(!bordersFloor&&gx>0&&dungeonGrid[gy][gx-1])bordersFloor=true;
-    if(!bordersFloor&&gx<GRID_W-1&&dungeonGrid[gy][gx+1])bordersFloor=true;
-    if(!bordersFloor)continue;
-    const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE;
-    const corners=[[wx,wy],[wx+CELL_SIZE,wy],[wx,wy+CELL_SIZE],[wx+CELL_SIZE,wy+CELL_SIZE]];
-    for(const[cx,cy] of corners){
-      const dx=cx-px,dy=cy-py;
-      if(dx*dx+dy*dy>maxDist*maxDist||dx*dx+dy*dy<1)continue;
-      angles.push(Math.atan2(dy,dx));
-    }
+// Build a 1D shadow map: for N evenly spaced angles, store the ray hit distance
+function buildShadowMap(px,py,maxDist,numRays) {
+  const map=new Float32Array(numRays);
+  for(let i=0;i<numRays;i++){
+    const angle=(i/numRays)*Math.PI*2;
+    map[i]=castRayDist(px,py,Math.cos(angle),Math.sin(angle),maxDist);
   }
-  return angles;
+  return map;
 }
 
-function buildVisPolygon(px,py,maxDist,numBaseRays,minAngle,maxAngle) {
-  // minAngle/maxAngle: null for full circle, or radians for a cone
-  const fullCircle = (minAngle == null);
-  const points=[];
-  // Base rays
-  if(fullCircle){
-    for(let i=0;i<numBaseRays;i++){
-      const angle=(i/numBaseRays)*Math.PI*2;
-      points.push(castRay(px,py,angle,maxDist));
-    }
-  } else {
-    // Distribute rays within the cone
-    for(let i=0;i<=numBaseRays;i++){
-      const angle=minAngle+(i/numBaseRays)*(maxAngle-minAngle);
-      points.push(castRay(px,py,angle,maxDist));
-    }
+// Draw a triangle fan from player using the shadow map (erases fog)
+function drawShadowMapFan(ctx,px,py,ox,oy,shadowMap,maxDist,alphaFn) {
+  const n=shadowMap.length;
+  const sx=px+ox,sy=py+oy;
+  for(let i=0;i<n;i++){
+    const i2=(i+1)%n;
+    const a1=(i/n)*Math.PI*2, a2=(i2/n)*Math.PI*2;
+    const d1=shadowMap[i], d2=shadowMap[i2];
+    const x1=sx+Math.cos(a1)*d1, y1=sy+Math.sin(a1)*d1;
+    const x2=sx+Math.cos(a2)*d2, y2=sy+Math.sin(a2)*d2;
+    // Average distance for alpha
+    const avgD=(d1+d2)*0.5;
+    const alpha=alphaFn(avgD/maxDist);
+    if(alpha<0.005)continue;
+    ctx.globalAlpha=1;
+    ctx.fillStyle=`rgba(0,0,0,${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(sx,sy);
+    ctx.lineTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    ctx.closePath();
+    ctx.fill();
   }
-  // Corner rays
-  const cornerAngles=getWallCornerAngles(px,py,maxDist);
-  for(const ca of cornerAngles){
-    if(!fullCircle){
-      // Normalize angle into cone range
-      let da=ca-minAngle;
-      while(da>Math.PI)da-=Math.PI*2;
-      while(da<-Math.PI)da+=Math.PI*2;
-      const span=maxAngle-minAngle;
-      let da2=ca-minAngle;
-      while(da2<0)da2+=Math.PI*2;
-      while(da2>Math.PI*2)da2-=Math.PI*2;
-      let spanN=span;
-      while(spanN<0)spanN+=Math.PI*2;
-      if(da2>spanN)continue;
-    }
-    points.push(castRay(px,py,ca-0.0005,maxDist));
-    points.push(castRay(px,py,ca,maxDist));
-    points.push(castRay(px,py,ca+0.0005,maxDist));
-  }
-  // Sort by angle from player
-  points.sort((a,b)=>a.a-b.a);
-  return points;
 }
 
-function getVisibilityPolygon(px,py,maxDist,numRays) {
-  return buildVisPolygon(px,py,maxDist,numRays,null,null);
-}
-
-function getConePolygon(px,py,maxDist,coneAngle,coneHalf,numRays) {
-  let minA=coneAngle-coneHalf, maxA=coneAngle+coneHalf;
-  // Normalize
-  while(minA<-Math.PI)minA+=Math.PI*2;
-  while(minA>Math.PI)minA-=Math.PI*2;
-  while(maxA<-Math.PI)maxA+=Math.PI*2;
-  while(maxA>Math.PI)maxA-=Math.PI*2;
-  // Cast all rays for the cone using the range
-  const points=[];
-  for(let i=0;i<=numRays;i++){
-    const t=i/numRays;
-    const angle=coneAngle-coneHalf+t*coneHalf*2;
-    points.push(castRay(px,py,angle,maxDist));
+// Draw flashlight cone fan — same idea but limited angle range
+function drawConeFan(ctx,px,py,ox,oy,shadowMap,maxDist,coneAngle,coneHalf,alphaFn) {
+  const n=shadowMap.length;
+  const sx=px+ox,sy=py+oy;
+  for(let i=0;i<n;i++){
+    const i2=(i+1)%n;
+    const a1=(i/n)*Math.PI*2, a2=(i2/n)*Math.PI*2;
+    // Check if this slice is within the cone
+    let da1=a1-coneAngle; while(da1>Math.PI)da1-=Math.PI*2; while(da1<-Math.PI)da1+=Math.PI*2;
+    let da2=a2-coneAngle; while(da2>Math.PI)da2-=Math.PI*2; while(da2<-Math.PI)da2+=Math.PI*2;
+    if(Math.abs(da1)>coneHalf&&Math.abs(da2)>coneHalf)continue;
+    const d1=shadowMap[i], d2=shadowMap[i2];
+    const x1=sx+Math.cos(a1)*d1, y1=sy+Math.sin(a1)*d1;
+    const x2=sx+Math.cos(a2)*d2, y2=sy+Math.sin(a2)*d2;
+    const avgD=(d1+d2)*0.5;
+    const alpha=alphaFn(avgD/maxDist);
+    if(alpha<0.005)continue;
+    ctx.globalAlpha=1;
+    ctx.fillStyle=`rgba(0,0,0,${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(sx,sy);
+    ctx.lineTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    ctx.closePath();
+    ctx.fill();
   }
-  // Corner rays within cone
-  const cornerAngles=getWallCornerAngles(px,py,maxDist);
-  for(const ca of cornerAngles){
-    let da=ca-coneAngle;
-    while(da>Math.PI)da-=Math.PI*2;
-    while(da<-Math.PI)da+=Math.PI*2;
-    if(Math.abs(da)>coneHalf)continue;
-    points.push(castRay(px,py,ca-0.0005,maxDist));
-    points.push(castRay(px,py,ca,maxDist));
-    points.push(castRay(px,py,ca+0.0005,maxDist));
-  }
-  points.sort((a,b)=>a.a-b.a);
-  return points;
 }
 
 // ---- RESIZE ----
@@ -1446,43 +1407,24 @@ function render() {
       const sx = p.x + ox, sy = p.y + oy;
       const flAngle = p.angle || 0;
 
-      // Cast visibility polygon from player position (ambient light)
-      const visPoly = getVisibilityPolygon(p.x, p.y, spotRadius, 180);
+      // Build shadow map (1D array of ray distances)
+      const shadowMap = buildShadowMap(p.x, p.y, spotRadius, 360);
 
-      // Draw ambient visibility polygon (dim glow in all visible areas)
-      fctx.beginPath();
-      for (let i = 0; i < visPoly.length; i++) {
-        const pt = visPoly[i];
-        if (i === 0) fctx.moveTo(pt.x + ox, pt.y + oy); else fctx.lineTo(pt.x + ox, pt.y + oy);
-      }
-      fctx.closePath();
-      const ambGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
-      ambGrad.addColorStop(0, 'rgba(0,0,0,0.45)');
-      ambGrad.addColorStop(0.4, 'rgba(0,0,0,0.3)');
-      ambGrad.addColorStop(0.7, 'rgba(0,0,0,0.12)');
-      ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      fctx.fillStyle = ambGrad;
-      fctx.fill();
+      // Ambient glow — dim triangle fan in all visible directions
+      drawShadowMapFan(fctx, p.x, p.y, ox, oy, shadowMap, spotRadius, function(t) {
+        if (t < 0.3) return 0.45;
+        if (t < 0.6) return 0.45 - (t - 0.3) / 0.3 * 0.25;
+        return 0.2 * (1 - (t - 0.6) / 0.4);
+      });
 
-      // Flashlight cone — cast its own rays for clean edges
+      // Flashlight cone — bright beam, each triangle drawn individually
       const coneHalf = 0.45;
-      const conePoly = getConePolygon(p.x, p.y, spotRadius, flAngle, coneHalf, 60);
-      if (conePoly.length > 0) {
-        fctx.beginPath();
-        fctx.moveTo(sx, sy);
-        for (let i = 0; i < conePoly.length; i++) {
-          fctx.lineTo(conePoly[i].x + ox, conePoly[i].y + oy);
-        }
-        fctx.closePath();
-        const beamGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
-        beamGrad.addColorStop(0, 'rgba(0,0,0,1)');
-        beamGrad.addColorStop(0.15, 'rgba(0,0,0,1)');
-        beamGrad.addColorStop(0.5, 'rgba(0,0,0,0.8)');
-        beamGrad.addColorStop(0.8, 'rgba(0,0,0,0.4)');
-        beamGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        fctx.fillStyle = beamGrad;
-        fctx.fill();
-      }
+      drawConeFan(fctx, p.x, p.y, ox, oy, shadowMap, spotRadius, flAngle, coneHalf, function(t) {
+        if (t < 0.15) return 1;
+        if (t < 0.5) return 1 - (t - 0.15) / 0.35 * 0.2;
+        if (t < 0.8) return 0.8 - (t - 0.5) / 0.3 * 0.4;
+        return 0.4 * (1 - (t - 0.8) / 0.2);
+      });
     }
     fctx.globalCompositeOperation = 'source-over';
     // Composite fog onto main canvas
