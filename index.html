@@ -397,6 +397,62 @@ function pushOutOfObstacles(e, r) {
 }
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy][gx]) return false; } return true; }
 
+// ---- RAYCASTING VISIBILITY ----
+function castRay(ox,oy,angle,maxDist) {
+  const cs=Math.cos(angle),sn=Math.sin(angle);
+  const step=CELL_SIZE*0.4;
+  const steps=Math.ceil(maxDist/step);
+  for(let i=1;i<=steps;i++){
+    const d=Math.min(i*step,maxDist);
+    const cx=ox+cs*d,cy=oy+sn*d;
+    const gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE);
+    if(gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return {x:cx,y:cy,d};
+    if(!dungeonGrid[gy][gx]) return {x:cx,y:cy,d};
+  }
+  const fd=maxDist;
+  return {x:ox+cs*fd,y:oy+sn*fd,d:fd};
+}
+
+function getVisibilityPolygon(px,py,maxDist,numRays) {
+  const points=[];
+  // Cast rays at regular intervals
+  for(let i=0;i<numRays;i++){
+    const angle=(i/numRays)*Math.PI*2;
+    points.push(castRay(px,py,angle,maxDist));
+  }
+  // Cast extra rays toward nearby wall corners for sharp shadow edges
+  const cellR=Math.ceil(maxDist/CELL_SIZE)+1;
+  const pgx=Math.floor(px/CELL_SIZE),pgy=Math.floor(py/CELL_SIZE);
+  const minGx=Math.max(0,pgx-cellR),maxGx=Math.min(GRID_W,pgx+cellR);
+  const minGy=Math.max(0,pgy-cellR),maxGy=Math.min(GRID_H,pgy+cellR);
+  for(let gy=minGy;gy<=maxGy;gy++) for(let gx=minGx;gx<=maxGx;gx++){
+    if(dungeonGrid[gy]&&dungeonGrid[gy][gx]) continue; // skip floor
+    // Check if this wall borders a floor cell
+    let bordersFloor=false;
+    if(gy>0&&dungeonGrid[gy-1]&&dungeonGrid[gy-1][gx])bordersFloor=true;
+    if(!bordersFloor&&gy<GRID_H-1&&dungeonGrid[gy+1]&&dungeonGrid[gy+1][gx])bordersFloor=true;
+    if(!bordersFloor&&gx>0&&dungeonGrid[gy][gx-1])bordersFloor=true;
+    if(!bordersFloor&&gx<GRID_W-1&&dungeonGrid[gy][gx+1])bordersFloor=true;
+    if(!bordersFloor)continue;
+    // Cast rays to the 4 corners of this wall cell
+    const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE;
+    const corners=[[wx,wy],[wx+CELL_SIZE,wy],[wx,wy+CELL_SIZE],[wx+CELL_SIZE,wy+CELL_SIZE]];
+    for(const[cx,cy] of corners){
+      const dx=cx-px,dy=cy-py;
+      const cd=Math.sqrt(dx*dx+dy*dy);
+      if(cd>maxDist||cd<1)continue;
+      const ca=Math.atan2(dy,dx);
+      // Cast at the corner angle plus tiny offsets for edge precision
+      points.push(castRay(px,py,ca-0.001,maxDist));
+      points.push(castRay(px,py,ca,maxDist));
+      points.push(castRay(px,py,ca+0.001,maxDist));
+    }
+  }
+  // Sort by angle
+  points.sort((a,b)=>Math.atan2(a.y-py,a.x-px)-Math.atan2(b.y-py,b.x-px));
+  return points;
+}
+
 // ---- RESIZE ----
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; minimapCanvas.width = isMobile ? 90 : 130; minimapCanvas.height = isMobile ? 90 : 130; }
 window.addEventListener('resize', resize); resize();
@@ -1313,68 +1369,78 @@ function render() {
 
   ctx.restore();
 
-  // ---- Fog of war / spotlights (one per alive player) ----
-  // Draw fog on an offscreen canvas, then overlay it
+  // ---- Fog of war / raycasting visibility ----
   {
     var spotRadius = 450;
     if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
     const fc = window._fogCanvas, fctx = window._fogCtx;
     fc.width = canvas.width; fc.height = canvas.height;
-    // Fill with thick darkness for high contrast
-    fctx.fillStyle = 'rgba(0,0,0,0.78)';
+    // Fill with darkness
+    fctx.fillStyle = 'rgba(0,0,0,0.82)';
     fctx.fillRect(0, 0, fc.width, fc.height);
     fctx.globalCompositeOperation = 'destination-out';
     const ox = -camera.x + canvas.width/2 + screenShake.x;
     const oy = -camera.y + canvas.height/2 + screenShake.y;
+
     for (const p of players) {
       if (!p.alive) continue;
       const sx = p.x + ox, sy = p.y + oy;
-      // Dim ambient glow around player
-      const ambR = spotRadius * 0.8;
-      const ambGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, ambR);
-      ambGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
-      ambGrad.addColorStop(0.3, 'rgba(0,0,0,0.3)');
-      ambGrad.addColorStop(0.6, 'rgba(0,0,0,0.1)');
+      const flAngle = p.angle || 0;
+
+      // Cast visibility polygon from player position
+      const visPoly = getVisibilityPolygon(p.x, p.y, spotRadius, 120);
+
+      // Draw ambient visibility polygon (dim glow in all visible areas)
+      fctx.beginPath();
+      for (let i = 0; i < visPoly.length; i++) {
+        const pt = visPoly[i];
+        const vx = pt.x + ox, vy = pt.y + oy;
+        if (i === 0) fctx.moveTo(vx, vy); else fctx.lineTo(vx, vy);
+      }
+      fctx.closePath();
+      // Radial gradient so edges of visibility fade out
+      const ambGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
+      ambGrad.addColorStop(0, 'rgba(0,0,0,0.45)');
+      ambGrad.addColorStop(0.4, 'rgba(0,0,0,0.3)');
+      ambGrad.addColorStop(0.7, 'rgba(0,0,0,0.12)');
       ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
       fctx.fillStyle = ambGrad;
-      fctx.fillRect(sx - ambR, sy - ambR, ambR * 2, ambR * 2);
-      const flAngle = p.angle || 0;
-      const flCos = Math.cos(flAngle), flSin = Math.sin(flAngle);
-      // Near-field hotspot — fully erase darkness in front of player (not behind)
-      for (let h = 0; h < 5; h++) {
-        const hDist = 50 + h * 35;
-        const hcx = sx + flCos * hDist, hcy = sy + flSin * hDist;
-        const hwx = p.x + flCos * hDist, hwy = p.y + flSin * hDist;
-        if (!hasLineOfSight(p.x, p.y, hwx, hwy)) continue;
-        const hr = 40 + h * 15;
-        const hGrad = fctx.createRadialGradient(hcx, hcy, 0, hcx, hcy, hr);
-        hGrad.addColorStop(0, 'rgba(0,0,0,1)');
-        hGrad.addColorStop(0.75, 'rgba(0,0,0,1)');
-        hGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        fctx.fillStyle = hGrad;
-        fctx.fillRect(hcx - hr, hcy - hr, hr * 2, hr * 2);
+      fctx.fill();
+
+      // Flashlight cone — bright directional beam within visibility
+      const coneHalf = 0.45; // radians (~25 degrees half-angle)
+      // Filter visibility points within flashlight cone
+      fctx.beginPath();
+      fctx.moveTo(sx, sy);
+      let hasConePts = false;
+      for (let i = 0; i < visPoly.length; i++) {
+        const pt = visPoly[i];
+        const pa = Math.atan2(pt.y - p.y, pt.x - p.x);
+        let da = pa - flAngle;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        if (Math.abs(da) < coneHalf) {
+          fctx.lineTo(pt.x + ox, pt.y + oy);
+          hasConePts = true;
+        }
       }
-      // Extended beam reaching further out
-      const steps = 12;
-      for (let s = 0; s < steps; s++) {
-        const t = (s + 1) / steps;
-        const dist = 40 + spotRadius * t * 0.85;
-        const cx = sx + flCos * dist, cy = sy + flSin * dist;
-        const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
-        if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
-        const r = 35 + spotRadius * t * 0.6;
-        const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        grad.addColorStop(0, 'rgba(0,0,0,1)');
-        grad.addColorStop(0.7, 'rgba(0,0,0,0.95)');
-        grad.addColorStop(1, 'rgba(0,0,0,0)');
-        fctx.fillStyle = grad;
-        fctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+      fctx.closePath();
+      if (hasConePts) {
+        const beamGrad = fctx.createRadialGradient(sx, sy, 0, sx, sy, spotRadius);
+        beamGrad.addColorStop(0, 'rgba(0,0,0,1)');
+        beamGrad.addColorStop(0.15, 'rgba(0,0,0,1)');
+        beamGrad.addColorStop(0.5, 'rgba(0,0,0,0.8)');
+        beamGrad.addColorStop(0.8, 'rgba(0,0,0,0.4)');
+        beamGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        fctx.fillStyle = beamGrad;
+        fctx.fill();
       }
     }
     fctx.globalCompositeOperation = 'source-over';
     // Composite fog onto main canvas
     ctx.drawImage(fc, 0, 0);
-    // Warm additive light overlay — gives a real "illuminated" look
+
+    // Warm additive light overlay along flashlight beam
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const p of players) {
@@ -1382,15 +1448,14 @@ function render() {
       const sx = p.x + ox, sy = p.y + oy;
       const flAngle = p.angle || 0;
       const flCos = Math.cos(flAngle), flSin = Math.sin(flAngle);
-      // Warm glow cone along beam direction
-      for (let s = 0; s < 8; s++) {
-        const t = (s + 1) / 8;
-        const dist = 50 + 140 * t;
-        const cx = sx + flCos * dist, cy = sy + flSin * dist;
-        const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
+      for (let s = 0; s < 6; s++) {
+        const t = (s + 1) / 6;
+        const wd = 50 + 160 * t;
+        const cx = sx + flCos * wd, cy = sy + flSin * wd;
+        const worldX = p.x + flCos * wd, worldY = p.y + flSin * wd;
         if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
-        const r = 40 + 80 * t;
-        const alpha = 0.045 * (1 - t * 0.7);
+        const r = 35 + 70 * t;
+        const alpha = 0.04 * (1 - t * 0.7);
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0, `rgba(255,240,200,${alpha})`);
         grad.addColorStop(0.6, `rgba(255,230,180,${alpha * 0.5})`);
