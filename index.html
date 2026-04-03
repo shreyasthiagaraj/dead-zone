@@ -400,8 +400,9 @@ function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx
 
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
-const gl = lightCanvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
+const gl = lightCanvas.getContext('webgl', { alpha: true, premultipliedAlpha: true }) || lightCanvas.getContext('experimental-webgl', { alpha: true, premultipliedAlpha: true });
 let glReady = false;
+const webglSupported = (gl !== null);
 
 // Shaders
 const LIGHT_VS = `
@@ -507,7 +508,8 @@ void main() {
   }
 
   float alpha = darkness * (1.0 - light);
-  gl_FragColor = vec4(warmth, warmth * 0.8, 0.0, alpha);
+  // Premultiplied alpha output
+  gl_FragColor = vec4(warmth * alpha, warmth * 0.8 * alpha, 0.0, alpha);
 }`;
 
 // GL state holders
@@ -523,9 +525,10 @@ function createShader(type, src) {
 }
 
 function initGL() {
+  if (!webglSupported) { console.log('WebGL not supported, using canvas fallback'); return; }
   const vs = createShader(gl.VERTEX_SHADER, LIGHT_VS);
   const fs = createShader(gl.FRAGMENT_SHADER, LIGHT_FS);
-  if (!vs || !fs) { console.error('Shader compile failed'); return; }
+  if (!vs || !fs) { console.error('Shader compile failed'); glReady = false; return; }
   lightProg = gl.createProgram();
   gl.attachShader(lightProg, vs);
   gl.attachShader(lightProg, fs);
@@ -559,7 +562,7 @@ function initGL() {
 }
 
 function uploadDungeonGrid() {
-  if (!dungeonGrid || !glReady) return;
+  if (!dungeonGrid || !webglSupported) return;
   const data = new Uint8Array(GRID_W * GRID_H);
   for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) {
     data[y * GRID_W + x] = dungeonGrid[y][x] ? 255 : 0;
@@ -1520,23 +1523,59 @@ function render() {
 
   ctx.restore();
 
-  // ---- WebGL Lighting ----
+  // ---- Lighting (WebGL with canvas 2D fallback) ----
   {
     var spotRadius = 450;
     const lp3 = getLocalPlayer();
-    if (lp3 && lp3.alive) {
+    if (glReady && lp3 && lp3.alive) {
       renderLighting(lp3.x, lp3.y, lp3.angle || 0, camera.x - screenShake.x, camera.y - screenShake.y);
-    } else {
+      ctx.drawImage(lightCanvas, 0, 0);
+    } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
         lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
+        initGL();
       }
       gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
       gl.disable(gl.BLEND);
       gl.clearColor(0, 0, 0, 0.85);
       gl.clear(gl.COLOR_BUFFER_BIT);
+      ctx.drawImage(lightCanvas, 0, 0);
+    } else {
+      // Canvas 2D fallback when WebGL unavailable
+      if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
+      const fc = window._fogCanvas, fctx = window._fogCtx;
+      fc.width = canvas.width; fc.height = canvas.height;
+      fctx.fillStyle = 'rgba(0,0,0,0.82)';
+      fctx.fillRect(0, 0, fc.width, fc.height);
+      fctx.globalCompositeOperation = 'destination-out';
+      const fox = -camera.x + canvas.width/2 + screenShake.x;
+      const foy = -camera.y + canvas.height/2 + screenShake.y;
+      if (lp3 && lp3.alive) {
+        const fsx = lp3.x + fox, fsy = lp3.y + foy;
+        const flA = lp3.angle || 0, flC = Math.cos(flA), flS = Math.sin(flA);
+        // Ambient glow
+        const ambR = spotRadius * 0.8;
+        const ambG = fctx.createRadialGradient(fsx, fsy, 0, fsx, fsy, ambR);
+        ambG.addColorStop(0, 'rgba(0,0,0,0.5)'); ambG.addColorStop(0.3, 'rgba(0,0,0,0.3)');
+        ambG.addColorStop(0.6, 'rgba(0,0,0,0.1)'); ambG.addColorStop(1, 'rgba(0,0,0,0)');
+        fctx.fillStyle = ambG; fctx.fillRect(fsx - ambR, fsy - ambR, ambR * 2, ambR * 2);
+        // Flashlight beam
+        const steps = 12;
+        for (let s = 0; s < steps; s++) {
+          const t = (s + 1) / steps;
+          const fd = 40 + spotRadius * t * 0.85;
+          const cx = fsx + flC * fd, cy = fsy + flS * fd;
+          if (!hasLineOfSight(lp3.x, lp3.y, lp3.x + flC * fd, lp3.y + flS * fd)) continue;
+          const r = 35 + spotRadius * t * 0.6;
+          const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(0.7, 'rgba(0,0,0,0.95)');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          fctx.fillStyle = grad; fctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+        }
+      }
+      fctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(fc, 0, 0);
     }
-    // Composite WebGL lighting onto main 2D canvas
-    ctx.drawImage(lightCanvas, 0, 0);
 
     // Glowing zombie eyes visible through darkness
     const ox2 = -camera.x + canvas.width/2 + screenShake.x;
