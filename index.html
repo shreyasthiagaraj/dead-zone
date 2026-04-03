@@ -200,7 +200,7 @@ if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move
 else controlsEl.innerHTML = 'Left thumb: Move | Right thumb: Aim+Shoot';
 
 // ---- CONSTANTS ----
-const ARENA_W = 1800, ARENA_H = 1800, CELL_SIZE = 40;
+const ARENA_W = 2400, ARENA_H = 2400, CELL_SIZE = 40;
 const GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
 const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
@@ -210,8 +210,8 @@ const NET_SEND_RATE = 3; // send state every N frames (~20fps)
 
 // ---- GAME STATE ----
 let gameState = 'menu'; // menu, multi_menu, lobby, playing, dead
-let score = 0, kills = 0, wave = 1, waveTimer = 0, waveZombiesLeft = 0, waveActive = false;
-let level = 1, exitPos = null;
+let score = 0, kills = 0;
+let level = 1, exitPos = null, spawnTimer = 0;
 let highScore = parseInt(localStorage.getItem('deadzone_highscore') || '0');
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
 let gameTime = 0;
@@ -265,6 +265,7 @@ const WEAPON_DEFS = {
   minigun: { name: 'Minigun', color: '#aaf', bulletColor: '#adf', damage: 8, fireRate: 35, bulletSpeed: 18, spread: 0.18, magSize: 100, reloadTime: 2000, bulletSize: 2, knockback: 0.5, pierce: 0, infinite: false, totalAmmo: 300, shakeIntensity: 1, sound: { freq: 900, duration: 0.02, type: 'square' } },
   flamethrower: { name: 'Flame', color: '#f60', bulletColor: '#f80', damage: 5, fireRate: 40, bulletSpeed: 7, spread: 0.3, magSize: 100, reloadTime: 1500, bulletSize: 6, knockback: 0.5, pierce: 1, infinite: false, totalAmmo: 200, shakeIntensity: 0.5, flame: true, bulletLife: 20, sound: { freq: 100, duration: 0.02, type: 'sawtooth' } },
   laser: { name: 'Laser', color: '#f4f', bulletColor: '#f4f', damage: 3, fireRate: 20, bulletSpeed: 30, spread: 0.02, magSize: 80, reloadTime: 1200, bulletSize: 2, knockback: 0, pierce: 99, tracer: true, infinite: false, totalAmmo: 240, shakeIntensity: 0.3, sound: { freq: 1200, duration: 0.01, type: 'sine' } },
+  lightning: { name: 'Tesla', color: '#4ff', bulletColor: '#4ff', damage: 35, fireRate: 500, bulletSpeed: 20, spread: 0.03, magSize: 8, reloadTime: 1800, bulletSize: 3, knockback: 1, pierce: 0, infinite: false, totalAmmo: 40, shakeIntensity: 3, chain: true, chainRange: 150, chainCount: 4, tracer: true, sound: { freq: 1000, duration: 0.08, type: 'sine' } },
   rpg: { name: 'RPG', color: '#f44', bulletColor: '#f00', damage: 150, fireRate: 1500, bulletSpeed: 8, spread: 0.02, magSize: 1, reloadTime: 1200, bulletSize: 6, knockback: 15, pierce: 0, infinite: false, totalAmmo: 8, shakeIntensity: 10, explosive: true, explosionRadius: 80, sound: { freq: 80, duration: 0.2, type: 'sawtooth' } },
 };
 function createWeapon(type) { const d = WEAPON_DEFS[type]; return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
@@ -311,8 +312,8 @@ function generateDungeon(seed) {
   // Exit room in bottom-right corner
   const er = { x: GRID_W - 12, y: GRID_H - 12, w: 10, h: 10 };
   carveRoom(er); rooms.push(er);
-  // 4-6 additional rooms
-  const numRooms = 4 + Math.floor(rng() * 3);
+  // 6-9 additional rooms for larger map
+  const numRooms = 6 + Math.floor(rng() * 4);
   for (let att = 0; att < 300 && rooms.length < numRooms + 1; att++) {
     const w = 7+Math.floor(rng()*6), h = 7+Math.floor(rng()*6);
     const x = 2+Math.floor(rng()*(GRID_W-w-4)), y = 2+Math.floor(rng()*(GRID_H-h-4));
@@ -524,7 +525,7 @@ document.getElementById('btn-grenade').addEventListener('mousedown', () => throw
 // ============================================================
 function startSoloGame() {
   initAudio(); isMultiplayer = false; isHost = true;
-  gameState = 'playing'; score = 0; kills = 0; wave = 0; gameTime = 0; level = 1;
+  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0;
   generateDungeon(Date.now());
   const c = getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
@@ -533,12 +534,12 @@ function startSoloGame() {
   camera.x = c.x; camera.y = c.y;
   placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
-  document.activeElement?.blur(); canvas.focus(); nextWave();
+  document.activeElement?.blur(); canvas.focus(); startLevel();
 }
 
 function startMultiplayerGame() {
   initAudio(); isMultiplayer = true; gameState = 'playing';
-  score = 0; kills = 0; wave = 0; gameTime = 0;
+  score = 0; kills = 0; gameTime = 0; spawnTimer = 0;
   generateDungeon(lobbySeed);
   const c = getRoomCenter(rooms[0]);
   players = [];
@@ -556,7 +557,7 @@ function startMultiplayerGame() {
   placeExit(); level = 1;
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   document.activeElement?.blur(); canvas.focus();
-  if (isHost) nextWave();
+  if (isHost) startLevel();
 }
 
 // ============================================================
@@ -609,7 +610,7 @@ function fireWeaponForPlayer(p) {
 function fireSingleShot(p,w,d) {
   w.lastFired=performance.now();w.ammo--;w.muzzleFlash=6;
   const pellets=d.pellets||1;
-  for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a); bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:d.damage,color:d.bulletColor,size:d.bulletSize,knockback:d.knockback,pierce:d.pierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:d.explosionRadius||0,tracer:d.tracer||false,owner:'player',ownerId:p.id,trail:[]});}
+  for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a); bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:d.damage,color:d.bulletColor,size:d.bulletSize,knockback:d.knockback,pierce:d.pierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:d.explosionRadius||0,tracer:d.tracer||false,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,owner:'player',ownerId:p.id,trail:[]});}
   playSound(d.sound.freq,d.sound.duration,d.sound.type,0.12);
   if(p===getLocalPlayer()) screenShake.intensity=Math.max(screenShake.intensity,d.shakeIntensity);
   const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
@@ -658,40 +659,45 @@ function advanceLevel() {
   level++;
   score += 500 * level;
   addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `LEVEL ${level}!`, '#f0c040');
-  announceWave(0); // reuse wave announce
   document.getElementById('wave-num').textContent = `LEVEL ${level}`;
   document.getElementById('wave-sub').textContent = 'Find the exit...';
   document.getElementById('wave-announce').style.opacity = '1';
-  setTimeout(() => document.getElementById('wave-announce').style.opacity = '0', 2000);
+  setTimeout(() => document.getElementById('wave-announce').style.opacity = '0', 2500);
   // Generate new dungeon
   generateDungeon(Date.now() + level);
   const c = getRoomCenter(rooms[0]);
   for (const p of players) { if (p.alive) { p.x = c.x + (Math.random() - 0.5) * 40; p.y = c.y + (Math.random() - 0.5) * 40; } }
   camera.x = c.x; camera.y = c.y;
   bullets = []; zombies = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
-  wave = 0;
+  spawnTimer = 0;
   placeExit();
-  nextWave();
+  startLevel();
   playPickupSound();
 }
 
-function nextWave() { wave++;waveActive=true;waveZombiesLeft=5+wave*3+Math.floor(wave*wave*0.3);waveTimer=0;announceWave(wave);if(wave>1&&wave%2===0)spawnWeaponPickup();spawnHealthPickup(); }
-function announceWave(n) { const el=document.getElementById('wave-announce');document.getElementById('wave-num').textContent=`WAVE ${n}`;const s=['Here they come...','Stay alive.','Lock and load.','No mercy.','They\'re hungry...','Hold the line.'];document.getElementById('wave-sub').textContent=s[Math.floor(Math.random()*s.length)];el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000); }
+function startLevel() {
+  const el=document.getElementById('wave-announce');
+  document.getElementById('wave-num').textContent=`LEVEL ${level}`;
+  const subs=['Here they come...','Stay alive.','Lock and load.','No mercy.','They\'re hungry...','Hold the line.','Find the exit.','Survive.'];
+  document.getElementById('wave-sub').textContent=subs[Math.floor(Math.random()*subs.length)];
+  el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000);
+  spawnHealthPickup(); if(level>1) spawnWeaponPickup();
+}
 function showPickupMsg(t) { const el=document.getElementById('pickup-msg');el.textContent=t;el.style.opacity='1';setTimeout(()=>el.style.opacity='0',1500); }
 
-function spawnWeaponPickup() { const ts=['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','rpg'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
+function spawnWeaponPickup() { const ts=['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 function spawnHealthPickup() { const p=getRandomFloorPos();pickups.push({type:'health',amount:25,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 
 function getNearestAlivePlayer(x,y) { let best=null,bd=Infinity; for(const p of players){if(!p.alive)continue;const d=Math.sqrt((p.x-x)**2+(p.y-y)**2);if(d<bd){bd=d;best=p;}} return {player:best,dist:bd}; }
 
 function spawnZombie() {
-  const ts=getZombieTypesForWave(wave),tk=ts[Math.floor(Math.random()*ts.length)],t=ZOMBIE_TYPES[tk];
+  const ts=getZombieTypesForLevel(level),tk=ts[Math.floor(Math.random()*ts.length)],t=ZOMBIE_TYPES[tk];
   let br=null; for(let i=1;i<rooms.length;i++){const c=getRoomCenter(rooms[i]);const{dist:d}=getNearestAlivePlayer(c.x,c.y);if(d>400&&(br===null||Math.random()<0.3))br=rooms[i];}
   if(!br) br=rooms[1+Math.floor(Math.random()*(rooms.length-1))]||rooms[0];
-  const x=(br.x+1+Math.random()*(br.w-2))*CELL_SIZE,y=(br.y+1+Math.random()*(br.h-2))*CELL_SIZE,sc=1+(wave-1)*0.08;
-  zombies.push({x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(wave-1)*0.02,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
+  const x=(br.x+1+Math.random()*(br.w-2))*CELL_SIZE,y=(br.y+1+Math.random()*(br.h-2))*CELL_SIZE,sc=1+(level-1)*0.12;
+  zombies.push({x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(level-1)*0.03,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
-function getZombieTypesForWave(w) { const t=['normal'];if(w>=2)t.push('fast');if(w>=3)t.push('tank');if(w>=4)t.push('spitter');if(w>=5)t.push('exploder');if(w<5){t.push('normal');t.push('normal');}return t; }
+function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank');if(lv>=4)t.push('spitter');if(lv>=5)t.push('exploder');if(lv<5){t.push('normal');t.push('normal');}return t; }
 
 function createExplosion(x,y,radius,damage,source='player') {
   explosions.push({x,y,radius,life:15,maxLife:15});screenShake.intensity=Math.max(screenShake.intensity,12);playExplosionSound();
@@ -760,8 +766,14 @@ function update() {
     if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
     if(lp.grenadeCooldown>0)lp.grenadeCooldown-=16.67;
     if(isMobile&&gameTime%5===0)tryPickup();
-    // Check if player reached the exit
-    if(exitPos&&isHost){const ed=Math.sqrt((lp.x-exitPos.x)**2+(lp.y-exitPos.y)**2);if(ed<30){advanceLevel();return;}}
+    // Check exit — all alive players must be near exit to advance
+    if(exitPos&&isHost){
+      const alivePlayers=players.filter(p=>p.alive);
+      const allAtExit=alivePlayers.length>0&&alivePlayers.every(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
+      const someAtExit=alivePlayers.some(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
+      exitPos._someWaiting=someAtExit&&!allAtExit;
+      if(allAtExit){advanceLevel();return;}
+    }
 
     const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
     if(w.reloading){w.reloadTimer-=16.67;if(w.reloadTimer<=0){const needed=def.magSize-w.ammo;if(def.infinite)w.ammo=def.magSize;else{const fill=Math.min(needed,w.reserveAmmo);w.ammo+=fill;w.reserveAmmo-=fill;}w.reloading=false;playSound(600,0.05,'sine',0.1);}}
@@ -790,7 +802,14 @@ function update() {
     if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){bullets.splice(i,1);continue;}if(obstacleCollision(b.x,b.y,b.size)){if(b.explosive&&isHost)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}if(b.life<=0){if(b.explosive&&isHost)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
     // Only host does damage calculations
     if(isHost){
-      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+                  // Chain lightning
+                  if(b.chain){const hitSet=new Set([j]);let lastZ=z;for(let ci=0;ci<(b.chainCount||3);ci++){let bestD=b.chainRange||150,bestIdx=-1;for(let k=0;k<zombies.length;k++){if(hitSet.has(k))continue;const cz=zombies[k];const cd=Math.sqrt((cz.x-lastZ.x)**2+(cz.y-lastZ.y)**2);if(cd<bestD){bestD=cd;bestIdx=k;}}if(bestIdx===-1)break;hitSet.add(bestIdx);const nz=zombies[bestIdx];
+                  // Draw lightning arc
+                  for(let li=0;li<3;li++){const lx1=lastZ.x+(Math.random()-0.5)*4,ly1=lastZ.y+(Math.random()-0.5)*4,lx2=nz.x+(Math.random()-0.5)*4,ly2=nz.y+(Math.random()-0.5)*4;particles.push({x:(lx1+lx2)/2,y:(ly1+ly2)/2,vx:0,vy:0,life:6,maxLife:6,size:2,color:'#4ff',type:'spark'});}
+                  // Lightning line stored as particle pair
+                  particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:8,maxLife:8,size:1,color:'#4ff',type:'lightning',tx:nz.x,ty:nz.y});
+                  damageZombie(nz,b.damage*0.7,0,0);playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
                   for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
                   decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
@@ -804,8 +823,15 @@ function update() {
 
   // ---- Host runs simulation ----
   if (isHost) {
-    // Wave spawning
-    if(waveActive){waveTimer++;const sr=Math.max(5,30-wave*2);if(waveZombiesLeft>0&&waveTimer%sr===0){spawnZombie();waveZombiesLeft--;if(Math.random()<0.03)spawnWeaponPickup();}if(waveZombiesLeft<=0&&zombies.length===0){waveActive=false;waveTimer=0;}}else{waveTimer++;if(waveTimer>120)nextWave();}
+    // Continuous zombie spawning based on level
+    spawnTimer++;
+    const maxZombies = 5 + level * 3; // cap active zombies
+    const spawnRate = Math.max(20, 60 - level * 5); // faster spawns at higher levels
+    if(spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
+      spawnZombie();
+      if(Math.random()<0.04) spawnWeaponPickup();
+      if(Math.random()<0.06) spawnHealthPickup();
+    }
 
     // Zombies
     for(const z of zombies){
@@ -889,7 +915,7 @@ function update() {
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360 }));
     const zs = zombies.map(z => ({ x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash }));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, score, kills, wave, waveActive });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, score, kills, level, exitPos });
   }
 
   updateHUD();
@@ -897,7 +923,7 @@ function update() {
 
 // ---- Apply host state (non-host client) ----
 function applyHostState(msg) {
-  score = msg.score; kills = msg.kills; wave = msg.wave;
+  score = msg.score; kills = msg.kills; level = msg.level||level; if(msg.exitPos) exitPos = msg.exitPos;
   // Update remote players with smooth interpolation
   for (const pd of msg.players) {
     if (pd.id === myId) continue;
@@ -929,7 +955,7 @@ function updateHUD() {
   if(w.reloading){ae.innerHTML=`RELOADING ${Math.floor((1-w.reloadTimer/def.reloadTime)*100)}%`;ae.className='ammo reloading';}
   else{ae.innerHTML=`${w.ammo} <span class="slash">/</span> <span class="reserve">${def.infinite?'∞':w.reserveAmmo}</span>`;ae.className='ammo';}
   document.getElementById('score').textContent=score.toLocaleString();
-  document.getElementById('wave-display').textContent=`LVL ${level} — WAVE ${wave}`;
+  document.getElementById('wave-display').textContent=`LEVEL ${level}`;
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
@@ -989,22 +1015,21 @@ function render() {
 
   // Exit portal
   if(exitPos){
+    const waiting=exitPos._someWaiting;
+    const eColor=waiting?'#fa0':'#0ff';
     const pulse=0.7+Math.sin(gameTime*0.08)*0.3;
     ctx.save();ctx.translate(exitPos.x,exitPos.y);
-    // Outer glow
     ctx.globalAlpha=0.2*pulse;const eg=ctx.createRadialGradient(0,0,5,0,0,35);
-    eg.addColorStop(0,'#0ff');eg.addColorStop(1,'rgba(0,255,255,0)');
+    eg.addColorStop(0,eColor);eg.addColorStop(1,'rgba(0,0,0,0)');
     ctx.fillStyle=eg;ctx.fillRect(-35,-35,70,70);
-    // Ring
-    ctx.globalAlpha=0.6*pulse;ctx.strokeStyle='#0ff';ctx.lineWidth=3;
+    ctx.globalAlpha=0.6*pulse;ctx.strokeStyle=eColor;ctx.lineWidth=3;
     ctx.beginPath();ctx.arc(0,0,18+pulse*4,0,Math.PI*2);ctx.stroke();
-    // Inner
-    ctx.globalAlpha=0.8;ctx.fillStyle='#0ff';ctx.shadowColor='#0ff';ctx.shadowBlur=15;
+    ctx.globalAlpha=0.8;ctx.fillStyle=eColor;ctx.shadowColor=eColor;ctx.shadowBlur=15;
     ctx.beginPath();ctx.arc(0,0,8,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
-    // Label
     ctx.globalAlpha=1;ctx.font='bold 10px monospace';ctx.textAlign='center';
-    ctx.strokeStyle='#000';ctx.lineWidth=3;ctx.strokeText('EXIT',0,-28);
-    ctx.fillStyle='#0ff';ctx.fillText('EXIT',0,-28);
+    ctx.strokeStyle='#000';ctx.lineWidth=3;
+    const label=waiting?'WAITING...':'EXIT';
+    ctx.strokeText(label,0,-28);ctx.fillStyle=eColor;ctx.fillText(label,0,-28);
     ctx.restore();
   }
 
@@ -1090,7 +1115,13 @@ function render() {
   }
 
   // Particles
-  for(const p of particles){ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+  for(const p of particles){ctx.globalAlpha=p.life/p.maxLife;
+    if(p.type==='lightning'&&p.tx!==undefined){
+      // Draw jagged lightning arc
+      ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.shadowColor='#4ff';ctx.shadowBlur=8;ctx.beginPath();ctx.moveTo(p.x,p.y);
+      const segs=4;for(let s=1;s<=segs;s++){const t=s/segs;const mx=p.x+(p.tx-p.x)*t+(Math.random()-0.5)*20;const my=p.y+(p.ty-p.y)*t+(Math.random()-0.5)*20;ctx.lineTo(s===segs?p.tx:mx,s===segs?p.ty:my);}
+      ctx.stroke();ctx.shadowBlur=0;
+    } else {ctx.fillStyle=p.color;const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();}}ctx.globalAlpha=1;
 
   // Floating texts
   for(const ft of floatingTexts){ctx.globalAlpha=ft.life/ft.maxLife;ctx.fillStyle=ft.color;ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.fillText(ft.text,ft.x,ft.y);}ctx.globalAlpha=1;
