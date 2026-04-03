@@ -207,7 +207,7 @@ const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
 const PICKUP_RANGE = 50, JOYSTICK_LEFT_MAX = 65, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#4af','#f44','#4f4','#fa4'];
 const NET_SEND_RATE = 3; // send state every N frames (~20fps)
-const MAX_WEAPONS = 2; // player can only carry 2 guns at a time
+const MAX_WEAPONS = 3; // player can only carry 3 guns at a time
 
 // ---- GAME STATE ----
 let gameState = 'menu'; // menu, multi_menu, lobby, playing, dead
@@ -664,11 +664,12 @@ function tryPickup() {
   const lp=getLocalPlayer(); if(!lp||!lp.alive) return;
   for(let i=pickups.length-1;i>=0;i--){ const p=pickups[i],dx=lp.x-p.x,dy=lp.y-p.y;
     if(Math.sqrt(dx*dx+dy*dy)<PICKUP_RANGE){
+      if(p.dropCooldown>0) continue;
       if(p.type==='weapon'){const ex=lp.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`);}else if(lp.weapons.length<MAX_WEAPONS){lp.weapons.push(createWeapon(p.weaponType));lp.currentWeapon=lp.weapons.length-1;showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} ACQUIRED`);}else{
         // At max weapons — drop currently equipped weapon and pick up new one
         const droppedWeapon=lp.weapons[lp.currentWeapon];
-        // Spawn dropped weapon as pickup (unless it's pistol with infinite ammo — still drop it)
-        pickups.push({type:'weapon',weaponType:droppedWeapon.type,x:lp.x,y:lp.y,bobTimer:Math.random()*Math.PI*2});
+        // Spawn dropped weapon as pickup with cooldown so it's not immediately re-picked
+        pickups.push({type:'weapon',weaponType:droppedWeapon.type,x:lp.x,y:lp.y,bobTimer:Math.random()*Math.PI*2,dropCooldown:90});
         lp.weapons[lp.currentWeapon]=createWeapon(p.weaponType);
         showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} SWAPPED`);
       }playPickupSound();pickups.splice(i,1);}
@@ -947,7 +948,7 @@ function update() {
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;if(p.gravity)p.vy+=p.gravity;p.vx*=0.95;p.vy*=0.95;p.life--;if(p.life<=0)particles.splice(i,1);}
   for(let i=floatingTexts.length-1;i>=0;i--){floatingTexts[i].y+=floatingTexts[i].vy;floatingTexts[i].life--;if(floatingTexts[i].life<=0)floatingTexts.splice(i,1);}
   for(let i=explosions.length-1;i>=0;i--){explosions[i].life--;if(explosions[i].life<=0)explosions.splice(i,1);}
-  for(const p of pickups)p.bobTimer+=0.05;
+  for(const p of pickups){p.bobTimer+=0.05;if(p.dropCooldown>0)p.dropCooldown--;}
   if(decals.length>200)decals.splice(0,decals.length-200);
 
   // Camera follows local player (or spectate alive player)
