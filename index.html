@@ -495,13 +495,12 @@ bool rayHitsWall(vec2 from, vec2 to) {
   vec2 dir = to - from;
   float len = length(dir);
   if (len < 1.0) return false;
-  float stepSize = uCellSize * (len > 225.0 ? 0.8 : 0.4);
+  float stepSize = uCellSize * 0.4;
   int steps = int(ceil(len / stepSize));
   if (steps > 200) steps = 200;
   for (int i = 1; i <= 200; i++) {
     if (i > steps) break;
-    float t = float(i) / float(steps);
-    if (isWall(from + dir * t)) return true;
+    if (isWall(from + dir * (float(i) / float(steps)))) return true;
   }
   return false;
 }
@@ -510,16 +509,7 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
   vec2 diff = worldPos - lightPos;
   float dist = length(diff);
   if (dist >= lightRadius) return 0.0;
-
-  // Soft shadow: sample 3 rays with perpendicular offsets for smooth edges
-  vec2 dir = worldPos - lightPos;
-  vec2 perp = normalize(vec2(-dir.y, dir.x));
-  float spread = min(dist * 0.06, 12.0);
-  float shadow = 0.0;
-  if (!rayHitsWall(lightPos, worldPos)) shadow += 0.5;
-  if (!rayHitsWall(lightPos, worldPos + perp * spread)) shadow += 0.25;
-  if (!rayHitsWall(lightPos, worldPos - perp * spread)) shadow += 0.25;
-  if (shadow < 0.01) return 0.0;
+  if (rayHitsWall(lightPos, worldPos)) return 0.0;
 
   float distFactor = dist / lightRadius;
 
@@ -537,14 +527,12 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
   float absDiff = abs(angleDiff);
   if (absDiff < coneHalf) {
     float edgeFade = 1.0 - smoothstep(coneHalf * 0.5, coneHalf, absDiff);
-    // Bright center hotspot that holds intensity over distance
     float dFade = max(1.0 - distFactor * distFactor * 0.7, 0.0);
-    // Tighter hotspot in center of beam
     float hotspot = 1.0 - smoothstep(0.0, coneHalf * 0.4, absDiff) * 0.25;
     cone = edgeFade * dFade * hotspot;
   }
 
-  return max(ambient, cone) * shadow;
+  return max(ambient, cone);
 }
 
 void main() {
@@ -560,7 +548,6 @@ void main() {
     float l = computeLight(worldPos, uLightPos[i], uLightAngle[i], uLightRadius[i]);
     totalLight = max(totalLight, l);
 
-    // Track closest flashlight cone for warm tint
     vec2 diff = worldPos - uLightPos[i];
     float angle = atan(diff.y, diff.x);
     float ad = angle - uLightAngle[i];
@@ -573,7 +560,6 @@ void main() {
 
   float light = 0.04 + totalLight * 0.96;
 
-  // Warm tint in flashlight cone — stronger for realistic torch feel
   float warmR = light;
   float warmG = light;
   float warmB = light;
@@ -587,10 +573,39 @@ void main() {
   gl_FragColor = vec4(warmR, warmG, warmB, 1.0);
 }`;
 
+// Blur shader — 17-tap disc blur for smooth shadow edges
+const BLUR_FS = `
+precision mediump float;
+varying vec2 vUV;
+uniform sampler2D uTex;
+uniform vec2 uTexelSize;
+void main() {
+  vec4 sum = vec4(0.0);
+  sum += texture2D(uTex, vUV) * 0.1;
+  sum += texture2D(uTex, vUV + vec2( 1.5, 0.0) * uTexelSize) * 0.08;
+  sum += texture2D(uTex, vUV + vec2(-1.5, 0.0) * uTexelSize) * 0.08;
+  sum += texture2D(uTex, vUV + vec2(0.0,  1.5) * uTexelSize) * 0.08;
+  sum += texture2D(uTex, vUV + vec2(0.0, -1.5) * uTexelSize) * 0.08;
+  sum += texture2D(uTex, vUV + vec2( 1.8, 1.8) * uTexelSize) * 0.06;
+  sum += texture2D(uTex, vUV + vec2(-1.8, 1.8) * uTexelSize) * 0.06;
+  sum += texture2D(uTex, vUV + vec2( 1.8,-1.8) * uTexelSize) * 0.06;
+  sum += texture2D(uTex, vUV + vec2(-1.8,-1.8) * uTexelSize) * 0.06;
+  sum += texture2D(uTex, vUV + vec2( 4.0, 0.0) * uTexelSize) * 0.04;
+  sum += texture2D(uTex, vUV + vec2(-4.0, 0.0) * uTexelSize) * 0.04;
+  sum += texture2D(uTex, vUV + vec2(0.0,  4.0) * uTexelSize) * 0.04;
+  sum += texture2D(uTex, vUV + vec2(0.0, -4.0) * uTexelSize) * 0.04;
+  sum += texture2D(uTex, vUV + vec2( 3.5, 3.5) * uTexelSize) * 0.02;
+  sum += texture2D(uTex, vUV + vec2(-3.5, 3.5) * uTexelSize) * 0.02;
+  sum += texture2D(uTex, vUV + vec2( 3.5,-3.5) * uTexelSize) * 0.02;
+  sum += texture2D(uTex, vUV + vec2(-3.5,-3.5) * uTexelSize) * 0.02;
+  gl_FragColor = sum;
+}`;
+
 // GL state holders
-let lightProg, quadBuf, gridTex;
+let lightProg, blurProg, quadBuf, gridTex;
 let uGrid, uResolution, uCameraPos, uCellSize, uGridSize, uArenaSize;
 let uNumLights, uLightPos, uLightAngle, uLightRadius;
+let lightFBO, lightFBOTex, uBlurTex, uTexelSize;
 
 function createShader(type, src) {
   const s = gl.createShader(type);
@@ -641,6 +656,31 @@ function initGL() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+  // Blur shader + FBO for smooth shadow edges
+  const blurVs = createShader(gl.VERTEX_SHADER, LIGHT_VS);
+  const blurFs = createShader(gl.FRAGMENT_SHADER, BLUR_FS);
+  if (blurVs && blurFs) {
+    blurProg = gl.createProgram();
+    gl.attachShader(blurProg, blurVs); gl.attachShader(blurProg, blurFs);
+    gl.linkProgram(blurProg);
+    if (gl.getProgramParameter(blurProg, gl.LINK_STATUS)) {
+      uBlurTex = gl.getUniformLocation(blurProg, 'uTex');
+      uTexelSize = gl.getUniformLocation(blurProg, 'uTexelSize');
+    } else { blurProg = null; }
+  }
+  // FBO: render lighting to texture, then blur to canvas
+  lightFBO = gl.createFramebuffer();
+  lightFBOTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, lightCanvas.width || 1, lightCanvas.height || 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, lightFBO);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
   glReady = true;
   if (dungeonGrid) uploadDungeonGrid();
   console.log('[Lighting] WebGL lighting ready');
@@ -661,12 +701,22 @@ function uploadDungeonGrid() {
 
 function renderLighting(lights, camX, camY) {
   if (!glReady || gl.isContextLost()) return;
-  if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
-    lightCanvas.width = canvas.width;
-    lightCanvas.height = canvas.height;
+  // Half-res for performance; GPU blur pass handles smoothing
+  const targetW = Math.ceil(canvas.width / 2);
+  const targetH = Math.ceil(canvas.height / 2);
+  if (lightCanvas.width !== targetW || lightCanvas.height !== targetH) {
+    lightCanvas.width = targetW;
+    lightCanvas.height = targetH;
     initGL();
   }
-  gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
+  const w = lightCanvas.width, h = lightCanvas.height;
+
+  // Pass 1: Render lighting to FBO texture
+  gl.bindFramebuffer(gl.FRAMEBUFFER, lightFBO);
+  // Resize FBO texture to match canvas
+  gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
   gl.clearColor(0.04, 0.04, 0.04, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -675,7 +725,7 @@ function renderLighting(lights, camX, camY) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
   gl.uniform1i(uGrid, 0);
-  gl.uniform2f(uResolution, lightCanvas.width, lightCanvas.height);
+  gl.uniform2f(uResolution, canvas.width, canvas.height);
   gl.uniform2f(uCameraPos, camX, camY);
   gl.uniform1f(uCellSize, CELL_SIZE);
   gl.uniform2f(uGridSize, GRID_W, GRID_H);
@@ -694,6 +744,22 @@ function renderLighting(lights, camX, camY) {
   gl.enableVertexAttribArray(aPos);
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+  // Pass 2: Blur from FBO texture to canvas for smooth shadow edges
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, w, h);
+  if (blurProg) {
+    gl.useProgram(blurProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
+    gl.uniform1i(uBlurTex, 0);
+    gl.uniform2f(uTexelSize, 1.0 / w, 1.0 / h);
+    const aPos2 = gl.getAttribLocation(blurProg, 'aPos');
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+    gl.enableVertexAttribArray(aPos2);
+    gl.vertexAttribPointer(aPos2, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
 }
 
 let debugLighting = false;
@@ -1633,7 +1699,8 @@ function render() {
       renderLighting(lights, camera.x - screenShake.x, camera.y - screenShake.y);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(lightCanvas, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
@@ -1646,7 +1713,7 @@ function render() {
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(lightCanvas, 0, 0);
+      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
     } else {
       // Canvas 2D fallback when WebGL unavailable
