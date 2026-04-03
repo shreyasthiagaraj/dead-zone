@@ -204,7 +204,7 @@ const ARENA_W = 1800, ARENA_H = 1800, CELL_SIZE = 40;
 const GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
 const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
-const PICKUP_RANGE = 50, JOYSTICK_MAX = 75;
+const PICKUP_RANGE = 50, JOYSTICK_MAX = 110;
 const PLAYER_COLORS = ['#4af','#f44','#4f4','#fa4'];
 const NET_SEND_RATE = 3; // send state every N frames (~20fps)
 
@@ -704,11 +704,9 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile joystick overrides if active
+    // Mobile left joystick: movement only (no flashlight — that's right joystick)
     if(isMobile&&leftJoystick.active){
-      const lMag=Math.sqrt(leftJoystick.nx*leftJoystick.nx+leftJoystick.ny*leftJoystick.ny);
-      if(lMag>0.1) lp.moveAngle=Math.atan2(leftJoystick.ny,leftJoystick.nx);
-      if(lMag>0.45){dx=leftJoystick.nx;dy=leftJoystick.ny;}else{dx=0;dy=0;}
+      dx=leftJoystick.nx;dy=leftJoystick.ny;
     }
     if(lp.dashTimer>0){lp.dashTimer-=16.67;lp.vx=Math.cos(lp.dashAngle)*DASH_SPEED;lp.vy=Math.sin(lp.dashAngle)*DASH_SPEED;if(gameTime%2===0)particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS,color:lp.color,type:'dashtrail'});}else{
       let moveSpeed=lp.speed;
@@ -998,7 +996,7 @@ function render() {
     ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS,0,Math.PI*2);ctx.fill();
     ctx.strokeStyle='#888';ctx.lineWidth=2;ctx.stroke();
     // Direction dot faces movement direction
-    const dotAngle=p.moveAngle||0;
+    const dotAngle=isMobile?(p.angle||0):(p.moveAngle||0);
     ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(Math.cos(dotAngle)*PLAYER_RADIUS*0.5,Math.sin(dotAngle)*PLAYER_RADIUS*0.5,3,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=1;ctx.restore();
 
@@ -1074,15 +1072,14 @@ function render() {
         const gx = sx + ac * maxDist * 0.4, gy = sy + as2 * maxDist * 0.4;
         const gr = maxDist * 0.5;
         const ambGrad = fctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
-        ambGrad.addColorStop(0, 'rgba(0,0,0,0.1)');
-        ambGrad.addColorStop(0.5, 'rgba(0,0,0,0.05)');
-        ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ambGrad.addColorStop(0, 'rgba(0,0,0,0.3)');
+        ambGrad.addColorStop(0.5, 'rgba(0,0,0,0.15)');
         ambGrad.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = ambGrad;
         fctx.fillRect(gx - gr, gy - gr, gr * 2, gr * 2);
       }
       // Flashlight beam — bright near player, fading at range
-      const flAngle = p.moveAngle || 0;
+      const flAngle = p.angle || 0;
       const flCos = Math.cos(flAngle), flSin = Math.sin(flAngle);
       const steps = 8;
       for (let s = 0; s < steps; s++) {
@@ -1091,7 +1088,7 @@ function render() {
         const cx = sx + flCos * dist, cy = sy + flSin * dist;
         const worldX = p.x + flCos * dist, worldY = p.y + flSin * dist;
         if (!hasLineOfSight(p.x, p.y, worldX, worldY)) continue;
-        const r = 15 + spotRadius * t * 0.4;
+        const r = 25 + spotRadius * t * 0.5;
         const alpha = 1.0; // full brightness entire beam
         const grad = fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
         grad.addColorStop(0, 'rgba(0,0,0,1)');
@@ -1153,9 +1150,8 @@ function render() {
 }
 
 function renderJoysticks(){
-  if(leftJoystick.active){const lMag=Math.sqrt(leftJoystick.nx*leftJoystick.nx+leftJoystick.ny*leftJoystick.ny);const lColor=lMag>0.45?'#4af':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=lColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
-    ctx.globalAlpha=0.1;ctx.strokeStyle='#4af';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX*0.45,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
-    ctx.globalAlpha=0.4;ctx.fillStyle=lColor;ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+  if(leftJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
+    ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,22,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
   if(rightJoystick.active){const jColor=rightJoystick.firing?'#f04040':rightJoystick.aiming?'#f0c040':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
     // Draw fire threshold ring
     ctx.globalAlpha=0.1;ctx.strokeStyle='#f04040';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
