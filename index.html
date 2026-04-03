@@ -1561,6 +1561,37 @@ function render() {
     const{player:np}=getNearestAlivePlayer(z.x,z.y);
     if(np){const sdx=z.x-np.x,sdy=z.y-np.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd>0&&sd<400){const snx=sdx/sd,sny=sdy/sd;const sa=Math.max(0,0.65-sd/700);const scx=z.x+snx*z.radius,scy=z.y+sny*z.radius;const sr=z.radius*2.5;const sg=ctx.createRadialGradient(scx,scy,z.radius*0.3,scx,scy,sr);sg.addColorStop(0,`rgba(0,0,0,${sa})`);sg.addColorStop(0.5,`rgba(0,0,0,${sa*0.4})`);sg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=sg;ctx.fillRect(scx-sr,scy-sr,sr*2,sr*2);}}
   }
+  // Zombie flashlight shadows — drawn under bodies
+  for (const z of zombies) {
+    let nearP = null, nearD = Infinity;
+    for (const p of players) {
+      if (!p.alive) continue;
+      const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
+      if (d < 700 && d < nearD) { nearD = d; nearP = p; }
+    }
+    if (nearP && nearD < 560 && hasLineOfSight(nearP.x, nearP.y, z.x, z.y)) {
+      const dx = z.x - nearP.x, dy = z.y - nearP.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 1) continue;
+      const nx = dx/dist, ny = dy/dist;
+      const sx = z.x, sy = z.y;
+      const shadowLen = z.radius * 3 + dist * 0.4;
+      const shadowAlpha = Math.max(0, 0.5 - nearD / 700 * 0.4);
+      const endX = sx + nx * shadowLen, endY = sy + ny * shadowLen;
+      const grad = ctx.createLinearGradient(sx, sy, endX, endY);
+      grad.addColorStop(0, `rgba(0,0,0,${shadowAlpha})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.save(); ctx.fillStyle = grad;
+      const pw = z.radius * 1.2, ew = z.radius * 0.3 + dist * 0.05;
+      const perpX = -ny, perpY = nx;
+      ctx.beginPath();
+      ctx.moveTo(sx - perpX*pw, sy - perpY*pw);
+      ctx.lineTo(sx + perpX*pw, sy + perpY*pw);
+      ctx.lineTo(endX + perpX*ew, endY + perpY*ew);
+      ctx.lineTo(endX - perpX*ew, endY - perpY*ew);
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+  }
   // Zombie bodies
   for(const z of zombies){
     ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#232';ctx.lineWidth=2;ctx.stroke();
@@ -1775,43 +1806,6 @@ function render() {
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
-    }
-
-    // Zombie shadows cast by flashlights
-    const ox2 = -camera.x + canvas.width/2 + screenShake.x;
-    const oy2 = -camera.y + canvas.height/2 + screenShake.y;
-    for (const z of zombies) {
-      // Find nearest alive player light source
-      let nearP = null, nearD = Infinity;
-      for (const p of players) {
-        if (!p.alive) continue;
-        const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
-        if (d < spotRadius && d < nearD) { nearD = d; nearP = p; }
-      }
-      if (nearP && nearD < spotRadius * 0.8 && hasLineOfSight(nearP.x, nearP.y, z.x, z.y)) {
-        const cx = z.x + ox2, cy = z.y + oy2;
-        const dx = z.x - nearP.x, dy = z.y - nearP.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 1) continue;
-        const nx = dx/dist, ny = dy/dist;
-        // Start shadow from the back edge of the zombie body, not the center
-        const sx = cx + nx * z.radius, sy = cy + ny * z.radius;
-        const shadowLen = z.radius * 2.5 + dist * 0.4;
-        const shadowAlpha = Math.max(0, 0.5 - nearD / spotRadius * 0.4);
-        const endX = sx + nx * shadowLen, endY = sy + ny * shadowLen;
-        const grad = ctx.createLinearGradient(sx, sy, endX, endY);
-        grad.addColorStop(0, `rgba(0,0,0,${shadowAlpha})`);
-        grad.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.save(); ctx.fillStyle = grad;
-        const pw = z.radius * 1.1, ew = z.radius * 0.2 + dist * 0.04;
-        const px2 = -ny, py2 = nx;
-        ctx.beginPath();
-        ctx.moveTo(sx - px2*pw, sy - py2*pw);
-        ctx.lineTo(sx + px2*pw, sy + py2*pw);
-        ctx.lineTo(endX + px2*ew, endY + py2*ew);
-        ctx.lineTo(endX - px2*ew, endY - py2*ew);
-        ctx.closePath(); ctx.fill(); ctx.restore();
-      }
     }
 
     // Glowing zombie eyes visible through darkness
