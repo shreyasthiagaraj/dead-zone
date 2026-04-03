@@ -511,7 +511,15 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
   float dist = length(diff);
   if (dist >= lightRadius) return 0.0;
 
-  if (rayHitsWall(lightPos, worldPos)) return 0.0;
+  // Soft shadow: sample 3 rays with perpendicular offsets for smooth edges
+  vec2 dir = worldPos - lightPos;
+  vec2 perp = normalize(vec2(-dir.y, dir.x));
+  float spread = min(dist * 0.06, 12.0);
+  float shadow = 0.0;
+  if (!rayHitsWall(lightPos, worldPos)) shadow += 0.5;
+  if (!rayHitsWall(lightPos, worldPos + perp * spread)) shadow += 0.25;
+  if (!rayHitsWall(lightPos, worldPos - perp * spread)) shadow += 0.25;
+  if (shadow < 0.01) return 0.0;
 
   float distFactor = dist / lightRadius;
 
@@ -536,7 +544,7 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
     cone = edgeFade * dFade * hotspot;
   }
 
-  return max(ambient, cone);
+  return max(ambient, cone) * shadow;
 }
 
 void main() {
@@ -653,12 +661,9 @@ function uploadDungeonGrid() {
 
 function renderLighting(lights, camX, camY) {
   if (!glReady || gl.isContextLost()) return;
-  // Half-resolution for performance; bilinear upscale softens shadows naturally
-  const targetW = Math.ceil(canvas.width / 2);
-  const targetH = Math.ceil(canvas.height / 2);
-  if (lightCanvas.width !== targetW || lightCanvas.height !== targetH) {
-    lightCanvas.width = targetW;
-    lightCanvas.height = targetH;
+  if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
+    lightCanvas.width = canvas.width;
+    lightCanvas.height = canvas.height;
     initGL();
   }
   gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
@@ -670,8 +675,7 @@ function renderLighting(lights, camX, camY) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
   gl.uniform1i(uGrid, 0);
-  // Pass full canvas resolution so shader maps screen coords correctly
-  gl.uniform2f(uResolution, canvas.width, canvas.height);
+  gl.uniform2f(uResolution, lightCanvas.width, lightCanvas.height);
   gl.uniform2f(uCameraPos, camX, camY);
   gl.uniform1f(uCellSize, CELL_SIZE);
   gl.uniform2f(uGridSize, GRID_W, GRID_H);
@@ -1629,8 +1633,7 @@ function render() {
       renderLighting(lights, camera.x - screenShake.x, camera.y - screenShake.y);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.filter = 'blur(6px)';
-      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(lightCanvas, 0, 0);
       ctx.restore();
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
@@ -1643,7 +1646,7 @@ function render() {
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(lightCanvas, 0, 0);
       ctx.restore();
     } else {
       // Canvas 2D fallback when WebGL unavailable
@@ -1682,9 +1685,44 @@ function render() {
       ctx.drawImage(fc, 0, 0);
     }
 
-    // Glowing zombie eyes visible through darkness
+    // Zombie shadows cast by flashlights
     const ox2 = -camera.x + canvas.width/2 + screenShake.x;
     const oy2 = -camera.y + canvas.height/2 + screenShake.y;
+    for (const z of zombies) {
+      // Find nearest alive player light source
+      let nearP = null, nearD = Infinity;
+      for (const p of players) {
+        if (!p.alive) continue;
+        const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
+        if (d < spotRadius && d < nearD) { nearD = d; nearP = p; }
+      }
+      if (nearP && nearD < spotRadius * 0.8 && hasLineOfSight(nearP.x, nearP.y, z.x, z.y)) {
+        const sx = z.x + ox2, sy = z.y + oy2;
+        const dx = z.x - nearP.x, dy = z.y - nearP.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 1) continue;
+        const nx = dx/dist, ny = dy/dist;
+        // Shadow length grows with distance from light, fades at far range
+        const shadowLen = z.radius * 3 + dist * 0.4;
+        const shadowAlpha = Math.max(0, 0.5 - nearD / spotRadius * 0.4);
+        const endX = sx + nx * shadowLen, endY = sy + ny * shadowLen;
+        const grad = ctx.createLinearGradient(sx, sy, endX, endY);
+        grad.addColorStop(0, `rgba(0,0,0,${shadowAlpha})`);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.save(); ctx.fillStyle = grad;
+        // Draw shadow as a trapezoid behind the zombie
+        const pw = z.radius * 1.2, ew = z.radius * 0.3 + dist * 0.05;
+        const px2 = -ny, py2 = nx;
+        ctx.beginPath();
+        ctx.moveTo(sx - px2*pw, sy - py2*pw);
+        ctx.lineTo(sx + px2*pw, sy + py2*pw);
+        ctx.lineTo(endX + px2*ew, endY + py2*ew);
+        ctx.lineTo(endX - px2*ew, endY - py2*ew);
+        ctx.closePath(); ctx.fill(); ctx.restore();
+      }
+    }
+
+    // Glowing zombie eyes visible through darkness
     for (const z of zombies) {
       let inLight = false;
       for (const p of players) { if (!p.alive) continue; const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2); if (d < spotRadius*0.6) { inLight = true; break; } }
