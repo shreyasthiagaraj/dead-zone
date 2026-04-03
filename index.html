@@ -573,31 +573,20 @@ void main() {
   gl_FragColor = vec4(warmR, warmG, warmB, 1.0);
 }`;
 
-// Blur shader — 17-tap disc blur for smooth shadow edges
+// Two-pass separable Gaussian blur (sigma=4, radius=10 texels)
+// At half-res this covers ~20px at full res — smooths 40px grid cells
 const BLUR_FS = `
 precision mediump float;
 varying vec2 vUV;
 uniform sampler2D uTex;
-uniform vec2 uTexelSize;
+uniform vec2 uDir;
 void main() {
-  vec4 sum = vec4(0.0);
-  sum += texture2D(uTex, vUV) * 0.1;
-  sum += texture2D(uTex, vUV + vec2( 1.5, 0.0) * uTexelSize) * 0.08;
-  sum += texture2D(uTex, vUV + vec2(-1.5, 0.0) * uTexelSize) * 0.08;
-  sum += texture2D(uTex, vUV + vec2(0.0,  1.5) * uTexelSize) * 0.08;
-  sum += texture2D(uTex, vUV + vec2(0.0, -1.5) * uTexelSize) * 0.08;
-  sum += texture2D(uTex, vUV + vec2( 1.8, 1.8) * uTexelSize) * 0.06;
-  sum += texture2D(uTex, vUV + vec2(-1.8, 1.8) * uTexelSize) * 0.06;
-  sum += texture2D(uTex, vUV + vec2( 1.8,-1.8) * uTexelSize) * 0.06;
-  sum += texture2D(uTex, vUV + vec2(-1.8,-1.8) * uTexelSize) * 0.06;
-  sum += texture2D(uTex, vUV + vec2( 4.0, 0.0) * uTexelSize) * 0.04;
-  sum += texture2D(uTex, vUV + vec2(-4.0, 0.0) * uTexelSize) * 0.04;
-  sum += texture2D(uTex, vUV + vec2(0.0,  4.0) * uTexelSize) * 0.04;
-  sum += texture2D(uTex, vUV + vec2(0.0, -4.0) * uTexelSize) * 0.04;
-  sum += texture2D(uTex, vUV + vec2( 3.5, 3.5) * uTexelSize) * 0.02;
-  sum += texture2D(uTex, vUV + vec2(-3.5, 3.5) * uTexelSize) * 0.02;
-  sum += texture2D(uTex, vUV + vec2( 3.5,-3.5) * uTexelSize) * 0.02;
-  sum += texture2D(uTex, vUV + vec2(-3.5,-3.5) * uTexelSize) * 0.02;
+  vec4 sum = texture2D(uTex, vUV) * 0.201;
+  sum += (texture2D(uTex, vUV + uDir * 2.0) + texture2D(uTex, vUV - uDir * 2.0)) * 0.177;
+  sum += (texture2D(uTex, vUV + uDir * 4.0) + texture2D(uTex, vUV - uDir * 4.0)) * 0.122;
+  sum += (texture2D(uTex, vUV + uDir * 6.0) + texture2D(uTex, vUV - uDir * 6.0)) * 0.065;
+  sum += (texture2D(uTex, vUV + uDir * 8.0) + texture2D(uTex, vUV - uDir * 8.0)) * 0.027;
+  sum += (texture2D(uTex, vUV + uDir *10.0) + texture2D(uTex, vUV - uDir *10.0)) * 0.009;
   gl_FragColor = sum;
 }`;
 
@@ -605,7 +594,7 @@ void main() {
 let lightProg, blurProg, quadBuf, gridTex;
 let uGrid, uResolution, uCameraPos, uCellSize, uGridSize, uArenaSize;
 let uNumLights, uLightPos, uLightAngle, uLightRadius;
-let lightFBO, lightFBOTex, uBlurTex, uTexelSize;
+let lightFBO, lightFBOTexA, lightFBOTexB, uBlurTex, uBlurDir;
 
 function createShader(type, src) {
   const s = gl.createShader(type);
@@ -665,20 +654,22 @@ function initGL() {
     gl.linkProgram(blurProg);
     if (gl.getProgramParameter(blurProg, gl.LINK_STATUS)) {
       uBlurTex = gl.getUniformLocation(blurProg, 'uTex');
-      uTexelSize = gl.getUniformLocation(blurProg, 'uTexelSize');
+      uBlurDir = gl.getUniformLocation(blurProg, 'uDir');
     } else { blurProg = null; }
   }
-  // FBO: render lighting to texture, then blur to canvas
+  // FBO + two textures for ping-pong blur
+  const w = lightCanvas.width || 1, h = lightCanvas.height || 1;
   lightFBO = gl.createFramebuffer();
-  lightFBOTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, lightCanvas.width || 1, lightCanvas.height || 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, lightFBO);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTex, 0);
+  lightFBOTexA = gl.createTexture();
+  lightFBOTexB = gl.createTexture();
+  [lightFBOTexA, lightFBOTexB].forEach(tex => {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  });
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
   glReady = true;
@@ -711,11 +702,9 @@ function renderLighting(lights, camX, camY) {
   }
   const w = lightCanvas.width, h = lightCanvas.height;
 
-  // Pass 1: Render lighting to FBO texture
+  // Pass 1: Render lighting to FBO texA
   gl.bindFramebuffer(gl.FRAMEBUFFER, lightFBO);
-  // Resize FBO texture to match canvas
-  gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
   gl.clearColor(0.08, 0.08, 0.08, 1.0);
@@ -745,20 +734,32 @@ function renderLighting(lights, camX, camY) {
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-  // Pass 2: Blur from FBO texture to canvas for smooth shadow edges
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.viewport(0, 0, w, h);
   if (blurProg) {
+    const blurAPos = gl.getAttribLocation(blurProg, 'aPos');
+
+    // Pass 2: Horizontal blur — read texA, write texB
+    gl.bindFramebuffer(gl.FRAMEBUFFER, lightFBO);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexB, 0);
+    gl.viewport(0, 0, w, h);
     gl.useProgram(blurProg);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, lightFBOTex);
+    gl.bindTexture(gl.TEXTURE_2D, lightFBOTexA);
     gl.uniform1i(uBlurTex, 0);
-    gl.uniform2f(uTexelSize, 1.0 / w, 1.0 / h);
-    const aPos2 = gl.getAttribLocation(blurProg, 'aPos');
+    gl.uniform2f(uBlurDir, 1.0 / w, 0.0);
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-    gl.enableVertexAttribArray(aPos2);
-    gl.vertexAttribPointer(aPos2, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(blurAPos);
+    gl.vertexAttribPointer(blurAPos, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Pass 3: Vertical blur — read texB, write to canvas
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.bindTexture(gl.TEXTURE_2D, lightFBOTexB);
+    gl.uniform2f(uBlurDir, 0.0, 1.0 / h);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  } else {
+    // Fallback: copy FBO directly to canvas without blur
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 }
 
