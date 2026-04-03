@@ -204,7 +204,7 @@ const ARENA_W = 1800, ARENA_H = 1800, CELL_SIZE = 40;
 const GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
 const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
-const PICKUP_RANGE = 50, JOYSTICK_MAX = 110;
+const PICKUP_RANGE = 50, JOYSTICK_LEFT_MAX = 65, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#4af','#f44','#4f4','#fa4'];
 const NET_SEND_RATE = 3; // send state every N frames (~20fps)
 
@@ -305,11 +305,14 @@ function generateDungeon(seed) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Large center room
-  const cr = { x: Math.floor(GRID_W/2)-6, y: Math.floor(GRID_H/2)-6, w: 12, h: 12 };
+  // Spawn room in top-left corner
+  const cr = { x: 2, y: 2, w: 10, h: 10 };
   carveRoom(cr); rooms.push(cr);
-  // 5-7 large rooms
-  const numRooms = 5 + Math.floor(rng() * 3);
+  // Exit room in bottom-right corner
+  const er = { x: GRID_W - 12, y: GRID_H - 12, w: 10, h: 10 };
+  carveRoom(er); rooms.push(er);
+  // 4-6 additional rooms
+  const numRooms = 4 + Math.floor(rng() * 3);
   for (let att = 0; att < 300 && rooms.length < numRooms + 1; att++) {
     const w = 7+Math.floor(rng()*6), h = 7+Math.floor(rng()*6);
     const x = 2+Math.floor(rng()*(GRID_W-w-4)), y = 2+Math.floor(rng()*(GRID_H-h-4));
@@ -577,7 +580,7 @@ canvas.addEventListener('mousedown', () => canvas.focus());
 
 // Touch
 function handleTouchStart(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; const hw=window.innerWidth/2; if (tx<hw&&!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (tx>=hw&&!rightJoystick.active) { rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false; } } }
-function handleTouchMove(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_MAX;leftJoystick.ny=dy/JOYSTICK_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_MAX;rightJoystick.ny=dy/JOYSTICK_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
+function handleTouchMove(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_RIGHT_MAX){dx=dx/d*JOYSTICK_RIGHT_MAX;dy=dy/d*JOYSTICK_RIGHT_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_RIGHT_MAX;rightJoystick.ny=dy/JOYSTICK_RIGHT_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
 function handleTouchEnd(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } }
 if (isMobile) {
   // Listen on canvas and joystick zones for touch start
@@ -639,23 +642,16 @@ function tryPickup() {
   for(let i=pickups.length-1;i>=0;i--){ const p=pickups[i],dx=lp.x-p.x,dy=lp.y-p.y;
     if(Math.sqrt(dx*dx+dy*dy)<PICKUP_RANGE){
       if(p.type==='weapon'){const ex=lp.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`);}else{lp.weapons.push(createWeapon(p.weaponType));lp.currentWeapon=lp.weapons.length-1;showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} ACQUIRED`);}playPickupSound();pickups.splice(i,1);}
-      else if(p.type==='health'){if(lp.hp<lp.maxHp){lp.hp=Math.min(lp.maxHp,lp.hp+p.amount);showPickupMsg(`+${p.amount} HP`);playPickupSound();pickups.splice(i,1);}}
-      else if(p.type==='ammo'){const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;showPickupMsg(`+AMMO`);playPickupSound();pickups.splice(i,1);}}
+      else if(p.type==='health'){if(lp.hp<lp.maxHp){lp.hp=Math.min(lp.maxHp,lp.hp+p.amount);showPickupMsg(`+${p.amount} HP`);playPickupSound();pickups.splice(i,1);}else{showPickupMsg('HEALTH FULL');}}
+      else if(p.type==='ammo'){const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;showPickupMsg(`+AMMO`);playPickupSound();pickups.splice(i,1);}else{showPickupMsg('AMMO FULL');}}
       else if(p.type==='grenade'){lp.grenades=Math.min(lp.grenades+2,8);showPickupMsg(`+2 GRENADES`);playPickupSound();pickups.splice(i,1);}
     }
   }
 }
 
 function placeExit() {
-  // Place exit in the room farthest from spawn (rooms[0])
-  const spawn = getRoomCenter(rooms[0]);
-  let bestDist = 0, bestRoom = rooms[rooms.length - 1];
-  for (let i = 1; i < rooms.length; i++) {
-    const c = getRoomCenter(rooms[i]);
-    const d = Math.sqrt((c.x - spawn.x) ** 2 + (c.y - spawn.y) ** 2);
-    if (d > bestDist) { bestDist = d; bestRoom = rooms[i]; }
-  }
-  exitPos = getRoomCenter(bestRoom);
+  // Exit is always in rooms[1] (opposite corner from spawn rooms[0])
+  exitPos = getRoomCenter(rooms[1]);
 }
 
 function advanceLevel() {
@@ -1198,11 +1194,15 @@ function render() {
 }
 
 function renderJoysticks(){
-  if(leftJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
-    ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,22,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
-  if(rightJoystick.active){const jColor=rightJoystick.firing?'#f04040':rightJoystick.aiming?'#f0c040':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX,0,Math.PI*2);ctx.stroke();
-    // Draw fire threshold ring
-    ctx.globalAlpha=0.1;ctx.strokeStyle='#f04040';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+  if(leftJoystick.active){ctx.globalAlpha=0.2;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_LEFT_MAX,0,Math.PI*2);ctx.stroke();
+    ctx.globalAlpha=0.4;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,18,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
+  if(rightJoystick.active){const jColor=rightJoystick.firing?'#f04040':rightJoystick.aiming?'#f0c040':'#fff';ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_RIGHT_MAX,0,Math.PI*2);ctx.stroke();
+    // Flashlight aim zone (inner yellow dotted circle with tint)
+    const aimR=JOYSTICK_RIGHT_MAX*0.15;
+    ctx.globalAlpha=0.04;ctx.fillStyle='#ff4';ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,aimR,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=0.15;ctx.strokeStyle='#ff4';ctx.lineWidth=1.5;ctx.setLineDash([4,6]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,aimR,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
+    // Fire threshold ring
+    ctx.globalAlpha=0.1;ctx.strokeStyle='#f04040';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_RIGHT_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
     ctx.globalAlpha=0.4;ctx.fillStyle=jColor;ctx.beginPath();ctx.arc(rightJoystick.cx+rightJoystick.dx,rightJoystick.cy+rightJoystick.dy,20,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}
 }
 
