@@ -662,23 +662,21 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
 
   float distFactor = dist / lightRadius;
 
-  // Smooth ambient glow — no banding, continuous falloff
-  float ambient = 0.3 * (1.0 - smoothstep(0.0, 0.45, distFactor));
+  // Ambient glow — very smooth exponential falloff, no hard edges
+  float ambient = 0.25 * exp(-distFactor * distFactor * 8.0);
 
-  // Flashlight cone — bright near player, dimmer at range
+  // Flashlight cone — smooth in all dimensions
   float angle = atan(diff.y, diff.x);
   float angleDiff = angle - lightAngle;
   angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
   float coneHalf = 0.7;
-  float cone = 0.0;
   float absDiff = abs(angleDiff);
-  if (absDiff < coneHalf) {
-    float edgeFade = 1.0 - smoothstep(coneHalf * 0.45, coneHalf, absDiff);
-    float dFade = 1.0 - smoothstep(0.0, 1.0, distFactor) * 0.65;
-    cone = edgeFade * dFade;
-  }
+  float angularFade = exp(-absDiff * absDiff / (coneHalf * coneHalf * 0.35));
+  float distanceFade = exp(-distFactor * distFactor * 1.2);
+  float cone = angularFade * distanceFade;
 
-  return max(ambient, cone);
+  // Additive blend — no max() crossover seam
+  return min(ambient + cone, 1.0);
 }
 
 void main() {
