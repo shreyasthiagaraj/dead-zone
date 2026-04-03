@@ -14,7 +14,7 @@ html, body {
   -webkit-touch-callout: none; position: fixed; width: 100%; height: 100%;
 }
 body.desktop { cursor: crosshair; }
-canvas#game { display: block; position: fixed; top: 0; left: 0; }
+canvas#game { display: block; position: fixed; top: 0; left: 0; outline: none; z-index: 1; }
 
 #top-hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; z-index: 20; pointer-events: none; text-shadow: 1px 1px 3px #000; }
 #top-hud .score { font-size: 28px; font-weight: bold; color: #fff; }
@@ -117,7 +117,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="game" tabindex="0"></canvas>
 <canvas id="minimap"></canvas>
 
 <div id="top-hud"><div class="score" id="score">0</div><div class="wave" id="wave-display">WAVE 1</div><div class="kills" id="kills-display">0 KILLS</div></div>
@@ -527,7 +527,8 @@ function startSoloGame() {
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
   camera.x = c.x; camera.y = c.y;
-  showScreen(null); document.getElementById('btn-menu').style.display = 'block'; nextWave();
+  showScreen(null); document.getElementById('btn-menu').style.display = 'block';
+  document.activeElement?.blur(); canvas.focus(); nextWave();
 }
 
 function startMultiplayerGame() {
@@ -548,6 +549,7 @@ function startMultiplayerGame() {
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
   camera.x = c.x; camera.y = c.y;
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
+  document.activeElement?.blur(); canvas.focus();
   if (isHost) nextWave();
 }
 
@@ -561,12 +563,15 @@ window.addEventListener('mousedown', e => { if (e.button === 0) mouse.down = tru
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
 window.addEventListener('wheel', e => { if (gameState !== 'playing') return; const lp = getLocalPlayer(); if (!lp) return; switchWeapon((lp.currentWeapon + (e.deltaY > 0 ? 1 : -1) + lp.weapons.length) % lp.weapons.length); });
 window.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', () => canvas.focus());
 
 // Touch
 function handleTouchStart(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; const hw=window.innerWidth/2; if (tx<hw&&!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (tx>=hw&&!rightJoystick.active) { rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false; } } }
 function handleTouchMove(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_MAX;leftJoystick.ny=dy/JOYSTICK_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_MAX){dx=dx/d*JOYSTICK_MAX;dy=dy/d*JOYSTICK_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_MAX;rightJoystick.ny=dy/JOYSTICK_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
 function handleTouchEnd(e) { e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } }
 if (isMobile) {
+  // Listen on canvas and joystick zones for touch start
+  canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
   document.getElementById('joystick-left').addEventListener('touchstart', handleTouchStart, {passive:false});
   document.getElementById('joystick-right').addEventListener('touchstart', handleTouchStart, {passive:false});
   document.addEventListener('touchmove', handleTouchMove, {passive:false});
