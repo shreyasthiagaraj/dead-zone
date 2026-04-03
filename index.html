@@ -400,7 +400,7 @@ function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx
 
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
-const gl = lightCanvas.getContext('webgl', { alpha: true, premultipliedAlpha: true }) || lightCanvas.getContext('experimental-webgl', { alpha: true, premultipliedAlpha: true });
+const gl = lightCanvas.getContext('webgl') || lightCanvas.getContext('experimental-webgl');
 let glReady = false;
 const webglSupported = (gl !== null);
 
@@ -427,7 +427,7 @@ uniform vec2 uGridSize;    // GRID_W, GRID_H
 uniform vec2 uArenaSize;   // ARENA_W, ARENA_H
 
 bool isWall(vec2 worldPos) {
-  vec2 gridUV = vec2(worldPos.x / uArenaSize.x, 1.0 - worldPos.y / uArenaSize.y);
+  vec2 gridUV = worldPos / uArenaSize;
   if (gridUV.x < 0.0 || gridUV.x > 1.0 || gridUV.y < 0.0 || gridUV.y > 1.0) return true;
   float val = texture2D(uGrid, gridUV).r;
   return val < 0.5;
@@ -439,7 +439,6 @@ bool rayHitsWall(vec2 from, vec2 to) {
   if (len < 1.0) return false;
   float stepSize = uCellSize * 0.4;
   int steps = int(ceil(len / stepSize));
-  // Cap steps to avoid infinite loops
   if (steps > 200) steps = 200;
   for (int i = 1; i <= 200; i++) {
     if (i > steps) break;
@@ -451,7 +450,7 @@ bool rayHitsWall(vec2 from, vec2 to) {
 }
 
 void main() {
-  // Screen pixel -> world position (flip Y: WebGL origin is bottom-left, canvas is top-left)
+  // Screen pixel -> world position (flip Y: WebGL bottom-left vs canvas top-left)
   vec2 screenPos = vec2(vUV.x, 1.0 - vUV.y) * uResolution;
   vec2 worldPos = screenPos + uCameraPos - uResolution * 0.5;
 
@@ -459,16 +458,14 @@ void main() {
   float dist = length(diff);
   float angle = atan(diff.y, diff.x);
 
-  // Angle difference to player facing direction
   float angleDiff = angle - uPlayerAngle;
   angleDiff = mod(angleDiff + 3.14159265, 6.28318530) - 3.14159265;
 
-  // Base: full darkness
-  float darkness = 0.85;
-  float light = 0.0;
+  // Output: light intensity (0=dark, 1=fully lit)
+  // Will be composited as multiply blend on the 2D canvas
+  float light = 0.15; // base darkness level — not fully black
 
   if (dist < uSpotRadius) {
-    // Check line of sight
     bool blocked = rayHitsWall(uPlayerPos, worldPos);
 
     if (!blocked) {
@@ -476,40 +473,35 @@ void main() {
 
       // Ambient glow (all visible directions)
       float ambient = 0.0;
-      if (distFactor < 0.3) ambient = 0.35;
-      else if (distFactor < 0.7) ambient = 0.35 * (1.0 - (distFactor - 0.3) / 0.4);
-      else ambient = 0.14 * (1.0 - (distFactor - 0.7) / 0.3);
+      if (distFactor < 0.25) ambient = 0.45;
+      else if (distFactor < 0.6) ambient = 0.45 - (distFactor - 0.25) * 0.7;
+      else ambient = 0.2 * (1.0 - (distFactor - 0.6) / 0.4);
 
       // Flashlight cone
-      float coneHalf = 0.45;
+      float coneHalf = 0.5;
       float cone = 0.0;
       float absDiff = abs(angleDiff);
       if (absDiff < coneHalf) {
-        // Soft edge falloff at cone boundary
-        float edgeFade = 1.0 - smoothstep(coneHalf * 0.7, coneHalf, absDiff);
-        // Distance falloff
-        float dFade = 1.0;
-        if (distFactor < 0.1) dFade = 1.0;
-        else if (distFactor < 0.4) dFade = 1.0;
-        else if (distFactor < 0.7) dFade = 1.0 - (distFactor - 0.4) * 0.8;
-        else dFade = 0.76 - (distFactor - 0.7) * 2.5;
+        float edgeFade = 1.0 - smoothstep(coneHalf * 0.6, coneHalf, absDiff);
+        float dFade = 1.0 - distFactor * 0.6;
         dFade = max(dFade, 0.0);
         cone = edgeFade * dFade;
       }
 
-      light = max(ambient, cone);
+      light = 0.15 + max(ambient, cone) * 0.85;
     }
   }
 
   // Warm tint in flashlight cone
-  float warmth = 0.0;
-  if (light > 0.3 && abs(angleDiff) < 0.45) {
-    warmth = (light - 0.3) * 0.08;
+  float warmR = light;
+  float warmG = light;
+  float warmB = light;
+  if (light > 0.5 && abs(angleDiff) < 0.5) {
+    warmR += (light - 0.5) * 0.12;
+    warmG += (light - 0.5) * 0.08;
   }
 
-  float alpha = darkness * (1.0 - light);
-  // Premultiplied alpha output
-  gl_FragColor = vec4(warmth * alpha, warmth * 0.8 * alpha, 0.0, alpha);
+  gl_FragColor = vec4(warmR, warmG, warmB, 1.0);
 }`;
 
 // GL state holders
@@ -581,7 +573,7 @@ function renderLighting(playerX, playerY, playerAngle, camX, camY) {
   }
   gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
   gl.disable(gl.BLEND);
-  gl.clearColor(0, 0, 0, 0.85);
+  gl.clearColor(0.15, 0.15, 0.15, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   gl.useProgram(lightProg);
@@ -1529,7 +1521,10 @@ function render() {
     const lp3 = getLocalPlayer();
     if (glReady && lp3 && lp3.alive) {
       renderLighting(lp3.x, lp3.y, lp3.angle || 0, camera.x - screenShake.x, camera.y - screenShake.y);
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
       ctx.drawImage(lightCanvas, 0, 0);
+      ctx.restore();
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
         lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
@@ -1537,9 +1532,12 @@ function render() {
       }
       gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
       gl.disable(gl.BLEND);
-      gl.clearColor(0, 0, 0, 0.85);
+      gl.clearColor(0.15, 0.15, 0.15, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
       ctx.drawImage(lightCanvas, 0, 0);
+      ctx.restore();
     } else {
       // Canvas 2D fallback when WebGL unavailable
       if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
