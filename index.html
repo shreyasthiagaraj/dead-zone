@@ -208,7 +208,7 @@ const MAX_WEAPONS = 3; // player can only carry 3 guns at a time
 
 // ---- GAME STATE ----
 let gameState = 'menu'; // menu, multi_menu, lobby, playing, dead
-let score = 0, kills = 0;
+let score = 0, kills = 0, rapidKills = 0, lastKillTime = 0;
 let level = 1, exitPos = null, spawnTimer = 0;
 let highScore = parseInt(localStorage.getItem('deadzone_highscore') || '0');
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
@@ -317,6 +317,11 @@ const SFX_FILES = [
   ...Object.values(WEAPON_SFX_MAP),
   'hit', 'death', 'pickup', 'dash', 'hurt', 'explosion', 'reload',
   'zombie_attack', 'level_complete', 'game_over', 'footstep',
+  'headshot', 'empty_clip', 'weapon_switch', 'killstreak',
+  'zombie_groan', 'zombie_spawn', 'zombie_boss',
+  'door_open', 'exit_found', 'ambient_drip',
+  'health_low', 'health_pickup', 'armor_pickup', 'player_death',
+  'menu_select', 'menu_hover', 'countdown', 'wave_start',
 ];
 
 function loadSfx() {
@@ -361,6 +366,20 @@ function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'si
 function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.3)) playSound(300,0.05,'sine',0.06); }
 function playLevelCompleteSound() { playSfx('level_complete', 0.6); }
 function playGameOverSound() { playSfx('game_over', 0.6); }
+function playHeadshotSound() { if (!playSfx('headshot', 0.5)) playSound(1200,0.06,'square',0.15); }
+function playEmptyClipSound() { if (!playSfx('empty_clip', 0.3)) playSound(200,0.03,'square',0.08); }
+function playWeaponSwitchSound() { if (!playSfx('weapon_switch', 0.3)) playSound(500,0.04,'sine',0.1); }
+function playKillstreakSound() { if (!playSfx('killstreak', 0.5)) { playSound(800,0.08,'square',0.12); playSound(1000,0.08,'square',0.1); } }
+function playZombieGroanSound() { if (!playSfx('zombie_groan', 0.2)) playSound(80,0.3,'sawtooth',0.04); }
+function playZombieSpawnSound() { if (!playSfx('zombie_spawn', 0.3)) playSound(150,0.15,'square',0.06); }
+function playZombieBossSound() { if (!playSfx('zombie_boss', 0.5)) playSound(60,0.4,'sawtooth',0.15); }
+function playDoorOpenSound() { if (!playSfx('door_open', 0.4)) playSound(200,0.2,'sine',0.1); }
+function playExitFoundSound() { if (!playSfx('exit_found', 0.5)) { playSound(600,0.1,'sine',0.12); playSound(900,0.1,'sine',0.1); } }
+function playHealthLowSound() { if (!playSfx('health_low', 0.3)) playSound(400,0.1,'square',0.1); }
+function playHealthPickupSound() { if (!playSfx('health_pickup', 0.5)) playSound(700,0.1,'sine',0.12); }
+function playPlayerDeathSound() { if (!playSfx('player_death', 0.6)) playSound(80,0.4,'sawtooth',0.2); }
+function playWaveStartSound() { if (!playSfx('wave_start', 0.5)) playSound(500,0.2,'square',0.12); }
+function playMenuSelectSound() { if (!playSfx('menu_select', 0.4)) playSound(800,0.04,'square',0.1); }
 
 // ============================================================
 // DUNGEON GENERATOR (seeded)
@@ -1009,12 +1028,12 @@ document.getElementById('weapon-slots').addEventListener('touchstart', e => { co
 // ============================================================
 // GAME ACTIONS
 // ============================================================
-function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length){lp.currentWeapon=idx;lp.weapons[idx].reloading=false;} }
+function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
   const w=p.weapons[p.currentWeapon],d=WEAPON_DEFS[w.type],now=performance.now();
-  if(w.reloading) return; if(w.ammo<=0){if(p===getLocalPlayer())reloadWeapon();return;} if(now-w.lastFired<d.fireRate) return;
+  if(w.reloading) return; if(w.ammo<=0){if(p===getLocalPlayer()){playEmptyClipSound();reloadWeapon();}return;} if(now-w.lastFired<d.fireRate) return;
   if(d.burst&&d.burst>1){w.burstLeft=d.burst-1;w.burstTimer=d.burstDelay;}
   fireSingleShot(p,w,d);
 }
@@ -1054,7 +1073,7 @@ function tryPickup() {
         lp.weapons[lp.currentWeapon]=createWeapon(p.weaponType);
         showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} SWAPPED`);
       }playPickupSound();pickups.splice(i,1);}
-      else if(p.type==='health'){if(lp.hp<lp.maxHp){lp.hp=Math.min(lp.maxHp,lp.hp+p.amount);showPickupMsg(`+${p.amount} HP`);playPickupSound();pickups.splice(i,1);}else{showPickupMsg('HEALTH FULL');}}
+      else if(p.type==='health'){if(lp.hp<lp.maxHp){lp.hp=Math.min(lp.maxHp,lp.hp+p.amount);showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();pickups.splice(i,1);}else{showPickupMsg('HEALTH FULL');}}
       else if(p.type==='ammo'){const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;showPickupMsg(`+AMMO`);playPickupSound();pickups.splice(i,1);}else{showPickupMsg('AMMO FULL');}}
     }
   }
@@ -1068,7 +1087,7 @@ function placeExit() {
 function advanceLevel() {
   level++;
   score += 500 * level;
-  playLevelCompleteSound();
+  playLevelCompleteSound(); playExitFoundSound();
   addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `LEVEL ${level}!`, '#f0c040');
   document.getElementById('wave-num').textContent = `LEVEL ${level}`;
   document.getElementById('wave-sub').textContent = 'Find the exit...';
@@ -1128,10 +1147,10 @@ function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);}
-  if(p.hp<=0){p.alive=false;p.hp=0;
+  if(p.hp<=0){p.alive=false;p.hp=0;playPlayerDeathSound();
     // Check if all players dead
     if(!players.some(pp=>pp.alive)){if(isHost&&isMultiplayer)sendMsg({type:'game_over'});showDeathScreen();}
-  }
+  } else if(p===getLocalPlayer()&&p.hp<=p.maxHp*0.25){playHealthLowSound();}
 }
 function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,color,vy:-1.5,life:40,maxLife:40});}
 
@@ -1236,7 +1255,7 @@ function update() {
                   for(let li=0;li<3;li++){const lx1=lastZ.x+(Math.random()-0.5)*4,ly1=lastZ.y+(Math.random()-0.5)*4,lx2=nz.x+(Math.random()-0.5)*4,ly2=nz.y+(Math.random()-0.5)*4;particles.push({x:(lx1+lx2)/2,y:(ly1+ly2)/2,vx:0,vy:0,life:6,maxLife:6,size:2,color:'#4ff',type:'spark'});}
                   // Lightning line stored as particle pair
                   particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:8,maxLife:8,size:1,color:'#4ff',type:'lightning',tx:nz.x,ty:nz.y});
-                  damageZombie(nz,b.damage*0.7,0,0);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  damageZombie(nz,b.damage*0.7,0,0);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
                   for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
                   decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
@@ -1269,8 +1288,8 @@ function update() {
       const zdx=np.x-z.x,zdy=np.y-z.y;
 
       if(!z.aware){
-        if(gameTime%10===0&&zd<400&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200)oz.aware=true;}}
-        if(zd<120)z.aware=true;
+        if(gameTime%10===0&&zd<400&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;if(Math.random()<0.3)playZombieGroanSound();for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200)oz.aware=true;}}
+        if(zd<120){if(!z.aware&&Math.random()<0.4)playZombieGroanSound();z.aware=true;}
       }
 
       if(z.aware){
