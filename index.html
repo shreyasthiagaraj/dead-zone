@@ -233,6 +233,7 @@ let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0
 // ---- CAMERA ----
 let camera = { x: 0, y: 0 };
 let cameraOffset = { x: 0, y: 0 }; // smooth aim-look-ahead offset
+let aimLineAlpha = 0; // smooth fade for aim line visibility
 
 // ---- PLAYERS (multiplayer array) ----
 let players = []; // array of player objects; index 0 is always local in solo
@@ -963,17 +964,13 @@ function update() {
   let camTarget = lp;
   if (!lp.alive) { const alive = players.find(p => p.alive); if (alive) camTarget = alive; }
   // Aim-based camera offset: more vertical shift (landscape has less vertical space), less horizontal
-  const aimOffsetMax = 120;
+  const aimOffsetMax = 70;
   const aimCosA = Math.cos(camTarget.angle), aimSinA = Math.sin(camTarget.angle);
   const targetOffX = aimCosA * aimOffsetMax * 0.35;
   const targetOffY = aimSinA * aimOffsetMax;
-  // Smooth easing: use squared lerp factor so it starts slow and accelerates
-  const offDx = targetOffX - cameraOffset.x, offDy = targetOffY - cameraOffset.y;
-  const offDist = Math.sqrt(offDx*offDx + offDy*offDy);
-  const baseLerp = 0.04;
-  const lerpFactor = baseLerp + baseLerp * Math.min(offDist / aimOffsetMax, 1);
-  cameraOffset.x = lerp(cameraOffset.x, targetOffX, lerpFactor);
-  cameraOffset.y = lerp(cameraOffset.y, targetOffY, lerpFactor);
+  // Very gentle easing so direction changes don't feel jarring
+  cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.018);
+  cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.018);
   camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,0.1);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,0.1);
 
   if(screenShake.intensity>0.1){screenShake.x=(Math.random()-0.5)*screenShake.intensity*2;screenShake.y=(Math.random()-0.5)*screenShake.intensity*2;screenShake.intensity*=screenShake.decay;}else{screenShake.x=0;screenShake.y=0;screenShake.intensity=0;}
@@ -1221,8 +1218,11 @@ function render() {
     if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
   }
 
-  // ---- Aim line (mobile only, local player, when right joystick aiming) ----
-  if(isMobile&&rightJoystick.active&&rightJoystick.aiming){
+  // ---- Aim line (mobile only, local player, fades in/out smoothly) ----
+  if(isMobile){
+    const aimTarget = rightJoystick.active && rightJoystick.aiming ? 1 : 0;
+    aimLineAlpha = lerp(aimLineAlpha, aimTarget, aimTarget > aimLineAlpha ? 0.15 : 0.08);
+    if(aimLineAlpha > 0.01){
     const lp=getLocalPlayer();
     if(lp&&lp.alive){
       const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
@@ -1230,61 +1230,49 @@ function render() {
       const jColor=rightJoystick.firing?'#f04040':'#f0c040';
       const a=lp.angle,cos=Math.cos(a),sin=Math.sin(a);
       const startDist=PLAYER_RADIUS+14;
+      const af=aimLineAlpha; // fade multiplier
       ctx.save();
+      // Helper: draw a line that fades out along its length
+      function drawFadingAimLine(sx,sy,ex,ey,lineW,alpha,dashed){
+        const grad=ctx.createLinearGradient(sx,sy,ex,ey);
+        grad.addColorStop(0,jColor);
+        grad.addColorStop(0.6,jColor);
+        grad.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.strokeStyle=grad;ctx.lineWidth=lineW;ctx.globalAlpha=alpha*af;
+        if(dashed)ctx.setLineDash(dashed);
+        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.stroke();
+        if(dashed)ctx.setLineDash([]);
+      }
       if(aimType==='sniper'){
-        // Long single dotted line — rifle/laser
-        const len=280;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.globalAlpha=0.5;
-        ctx.setLineDash([6,8]);ctx.beginPath();
-        ctx.moveTo(lp.x+cos*startDist,lp.y+sin*startDist);
-        ctx.lineTo(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len));
-        ctx.stroke();ctx.setLineDash([]);
-        // Crosshair dot at end
-        ctx.globalAlpha=0.6;ctx.fillStyle=jColor;ctx.beginPath();
-        ctx.arc(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),3,0,Math.PI*2);ctx.fill();
+        const len=280;
+        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.5,[6,8]);
       } else if(aimType==='cone'){
-        // Spread cone — shotgun/flamethrower
         const len=120,spread=def.spread;
-        ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.globalAlpha=0.35;ctx.setLineDash([4,6]);
         for(let i=-1;i<=1;i++){
-          const sa=a+spread*i*1.2;
-          ctx.beginPath();ctx.moveTo(lp.x+Math.cos(sa)*startDist,lp.y+Math.sin(sa)*startDist);
-          ctx.lineTo(lp.x+Math.cos(sa)*(startDist+len),lp.y+Math.sin(sa)*(startDist+len));ctx.stroke();
+          const sa=a+spread*i*1.2,sc=Math.cos(sa),ss=Math.sin(sa);
+          drawFadingAimLine(lp.x+sc*startDist,lp.y+ss*startDist,lp.x+sc*(startDist+len),lp.y+ss*(startDist+len),1.5,0.35,[4,6]);
         }
-        ctx.setLineDash([]);
       } else if(aimType==='wide'){
-        // Wide spray zone — minigun
         const len=100,spread=def.spread;
-        ctx.strokeStyle=jColor;ctx.lineWidth=1;ctx.globalAlpha=0.25;ctx.setLineDash([3,5]);
         for(let i=-2;i<=2;i++){
-          const sa=a+spread*i*0.8;
-          ctx.beginPath();ctx.moveTo(lp.x+Math.cos(sa)*startDist,lp.y+Math.sin(sa)*startDist);
-          ctx.lineTo(lp.x+Math.cos(sa)*(startDist+len),lp.y+Math.sin(sa)*(startDist+len));ctx.stroke();
+          const sa=a+spread*i*0.8,sc=Math.cos(sa),ss=Math.sin(sa);
+          drawFadingAimLine(lp.x+sc*startDist,lp.y+ss*startDist,lp.x+sc*(startDist+len),lp.y+ss*(startDist+len),1,0.25,[3,5]);
         }
-        ctx.setLineDash([]);
       } else if(aimType==='arc'){
-        // Arcing trajectory — RPG/Grenade Launcher
-        const len=160;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.globalAlpha=0.4;ctx.setLineDash([8,6]);
-        ctx.beginPath();ctx.moveTo(lp.x+cos*startDist,lp.y+sin*startDist);
-        ctx.lineTo(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len));ctx.stroke();ctx.setLineDash([]);
+        const len=160;
+        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),2,0.4,[8,6]);
         // Explosion radius preview
-        ctx.globalAlpha=0.15;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
+        ctx.globalAlpha=0.15*af;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
         ctx.beginPath();ctx.arc(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),def.explosionRadius||80,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
       } else if(aimType==='medium'){
-        // Medium dotted line — revolver/burst/tesla
-        const len=160;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.globalAlpha=0.4;
-        ctx.setLineDash([5,7]);ctx.beginPath();
-        ctx.moveTo(lp.x+cos*startDist,lp.y+sin*startDist);
-        ctx.lineTo(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len));
-        ctx.stroke();ctx.setLineDash([]);
+        const len=160;
+        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.4,[5,7]);
       } else {
-        // Short dotted line — pistol/smg
-        const len=90;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.globalAlpha=0.35;
-        ctx.setLineDash([4,6]);ctx.beginPath();
-        ctx.moveTo(lp.x+cos*startDist,lp.y+sin*startDist);
-        ctx.lineTo(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len));
-        ctx.stroke();ctx.setLineDash([]);
+        const len=90;
+        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.35,[4,6]);
       }
       ctx.globalAlpha=1;ctx.restore();
+    }
     }
   }
 
