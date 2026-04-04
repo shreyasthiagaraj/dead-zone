@@ -1926,6 +1926,7 @@ function update() {
     if(w.muzzleFlash>0)w.muzzleFlash--;
     if(w.burstLeft>0){w.burstTimer-=16.67;if(w.burstTimer<=0&&w.ammo>0){fireSingleShot(lp,w,def);w.burstLeft--;w.burstTimer=def.burstDelay||50;}}
     const shouldFire=isMobile?rightJoystick.firing:mouse.down;
+    lp._firing=shouldFire;
     if(shouldFire)fireWeaponForPlayer(lp);
     else stopWeaponLoop(); // stop loop sound when not firing
     // Stop loop if reloading or out of ammo
@@ -1962,6 +1963,7 @@ function update() {
           }
         }
         if (inp.weapon !== undefined && inp.weapon < p.weapons.length) p.currentWeapon = inp.weapon;
+        p._firing = !!inp.firing;
         if (inp.firing) fireWeaponForPlayer(p);
         // Host runs pickup collection for remote players
         if (gameTime % 3 === 0) tryPickupForPlayer(p, false);
@@ -2018,13 +2020,13 @@ function update() {
       else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
     }
     // Non-host: visual-only bullet collision — remove local bullets on zombie contact with hit sparks
-    else if(b.owner==='player'&&b.ownerId===myId){
+    else if(b.owner==='player'){
       for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
         const _vhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_vhit){
         if(b.chain){
           // Visual-only chain lightning arcs (mirrors host chain logic)
-          const fp=getLocalPlayer();
+          const fp=players.find(pp=>pp.id===b.ownerId)||getLocalPlayer();
           const gunX=fp?fp.x+Math.cos(fp.angle)*22:_bpx,gunY=fp?fp.y+Math.sin(fp.angle)*22:_bpy;
           particles.push({x:gunX,y:gunY,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
           particles.push({x:gunX,y:gunY,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:z.x,ty:z.y});
@@ -2129,6 +2131,33 @@ function update() {
       }
       // Tick down remote dash timer locally for smooth visuals
       if (p.dashTimer > 0) p.dashTimer -= 16.67;
+      // Generate visual-only bullets for remote players who are firing
+      if (p._remoteFiring && !p._remoteReloading && p.alive) {
+        const wt = p._remoteWeaponType || 'pistol';
+        const wd = WEAPON_DEFS[wt];
+        if (!p._lastVisualFire) p._lastVisualFire = 0;
+        const now = performance.now();
+        // Respect weapon fire rate for visual bullet spawning
+        const pFireRate = wd.fireRate / (1 + getPlayerPerkCount(p, 'lead_storm') * 0.2);
+        if (now - p._lastVisualFire >= pFireRate) {
+          p._lastVisualFire = now;
+          const pSpreadMult = Math.pow(0.5, getPlayerPerkCount(p, 'steady_aim'));
+          const pPierce = wd.pierce + getPlayerPerkCount(p, 'ricochet');
+          const pellets = wd.pellets || 1;
+          for (let pi = 0; pi < pellets; pi++) {
+            const sp = (Math.random() - 0.5) * wd.spread * 2 * pSpreadMult;
+            const ba = p.angle + sp, bc = Math.cos(ba), bs = Math.sin(ba);
+            const isCrit = Math.random() < (0.05 + getPlayerPerkCount(p, 'critical') * 0.15);
+            bullets.push({ x: p.x + bc * 22, y: p.y + bs * 22, vx: bc * wd.bulletSpeed, vy: bs * wd.bulletSpeed, damage: 0, color: isCrit ? '#f0f' : wd.bulletColor, size: isCrit ? wd.bulletSize + 2 : wd.bulletSize, knockback: 0, pierce: pPierce, pierced: 0, life: wd.bulletLife || 60, flame: wd.flame || false, explosive: wd.explosive || false, explosionRadius: wd.explosionRadius || 0, tracer: wd.tracer || isCrit, chain: wd.chain || false, chainRange: wd.chainRange || 0, chainCount: wd.chainCount || 0, laserGlow: wd.laserGlow || false, grenade: wd.grenade || false, owner: 'player', ownerId: p.id, trail: [], crit: isCrit, visualOnly: true });
+          }
+          // Muzzle flash and sound
+          p.weapons[p.currentWeapon].muzzleFlash = 6;
+          playWeaponSound(wt, wd.sound);
+          // Muzzle sparks
+          const mc = Math.cos(p.angle), ms = Math.sin(p.angle);
+          for (let mi = 0; mi < 3; mi++) particles.push({ x: p.x + mc * 24, y: p.y + ms * 24, vx: mc * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, vy: ms * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, life: 8 + Math.random() * 6, maxLife: 14, size: 2 + Math.random() * 2, color: wd.bulletColor, type: 'spark' });
+        }
+      }
     }
   }
 
@@ -2156,13 +2185,13 @@ function update() {
 
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
-    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false }));
+    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false }));
     const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
-    // Sync bullets so remote players see all shots including other remote players' bullets
-    const bs = bullets.map(b => ({ x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color,size:b.size,life:b.life,flame:b.flame||false,grenade:b.grenade||false,tracer:b.tracer||false,chain:b.chain||false,explosive:b.explosive||false,explosionRadius:b.explosionRadius||0,laserGlow:b.laserGlow||false,crit:b.crit||false,owner:b.owner,ownerId:b.ownerId }));
+    // Player bullets are local-only; only sync zombie projectiles (spitters)
+    const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, bullets: bs, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState });
   }
 
   updateHUD();
@@ -2222,6 +2251,8 @@ function applyHostState(msg) {
     p.reviveProgress = pd.reviveProgress||0; p.reviveTime = pd.reviveTime||360;
     p.dashTimer = pd.dashTimer||0; p.dashAngle = pd.dashAngle||0;
     p._remoteReloading = pd.reloading||false;
+    p._remoteFiring = pd.firing||false;
+    p._remoteWeaponType = pd.weaponType||'pistol';
     if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
   }
   // Sync zombies from host — detect damage and deaths for visual effects
@@ -2254,14 +2285,13 @@ function applyHostState(msg) {
     }
   }
   zombies = newZombies;
-  // Sync bullets from host — keep local player's bullets for smooth visuals, add remote bullets
-  if (msg.bullets) {
-    const localId = myId;
-    // Keep locally-created bullets (from local player firing)
-    const localBullets = bullets.filter(b => b.ownerId === localId);
-    // Add all bullets from other players from host
-    const remoteBullets = msg.bullets.filter(b => b.ownerId !== localId).map(b => ({...b, pierced:0, pierce:0, knockback:0, trail:[{x:b.x-b.vx*2,y:b.y-b.vy*2},{x:b.x-b.vx,y:b.y-b.vy},{x:b.x,y:b.y}] }));
-    bullets = localBullets.concat(remoteBullets);
+  // Player bullets are local. Only sync zombie projectiles from host.
+  if (msg.zBullets) {
+    // Remove old zombie bullets and replace with host state
+    bullets = bullets.filter(b => b.owner !== 'zombie');
+    for (const zb of msg.zBullets) {
+      bullets.push({...zb, pierced:0, pierce:0, knockback:0, trail:[{x:zb.x-zb.vx*2,y:zb.y-zb.vy*2},{x:zb.x-zb.vx,y:zb.y-zb.vy},{x:zb.x,y:zb.y}]});
+    }
   }
   // Sync pickups from host
   if (msg.pickups) { pickups = msg.pickups; }
