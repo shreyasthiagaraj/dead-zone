@@ -302,6 +302,15 @@ function activatePowerUp(id) {
 }
 
 function hasPowerUp(id) { return activePowerUp && activePowerUp.id === id; }
+// Player-aware power-up check (local or remote)
+function playerHasPowerUp(p, id) { if (p === getLocalPlayer()) return hasPowerUp(id); return p._remotePowerUp === id; }
+// Player-aware synergy check
+function playerHasSynergy(p, name) {
+  if (p === getLocalPlayer()) return hasSynergy(name);
+  if (!p._remotePerks) return false;
+  for (const syn of PERK_SYNERGIES) { if (syn.name === name && syn.perks.every(pid => (p._remotePerks[pid]||0) > 0)) return true; }
+  return false;
+}
 
 // ---- WEAPON EVOLUTION SYSTEM ----
 const WEAPON_EVOLUTIONS = {
@@ -564,7 +573,7 @@ const WEAPON_DEFS = {
   // Grenade Launcher: lobs grenades over walls, auto-explode on landing
   grenade_launcher: { name: 'Grenade', color: '#f80', bulletColor: '#fa0', damage: 120, fireRate: 1200, bulletSpeed: 7, spread: 0.03, magSize: 4, reloadTime: 1800, bulletSize: 5, knockback: 12, pierce: 0, infinite: false, totalAmmo: 20, shakeIntensity: 6, explosive: true, explosionRadius: 100, grenade: true, bulletLife: 28, aimLine: 'arc', sound: { freq: 500, duration: 0.08, type: 'sine' } },
 };
-function createWeapon(type) { const d = WEAPON_DEFS[type]; return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
+function createWeapon(type) { const d = WEAPON_DEFS[type]; if(!d) return createWeapon('pistol'); return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
 
 // ---- ENTITIES ----
 let bullets = [], zombies = [], particles = [], pickups = [], decals = [], floatingTexts = [], explosions = [], obstacles = [], barrels = [];
@@ -1758,14 +1767,14 @@ function fireWeaponForPlayer(p) {
   const w=p.weapons[p.currentWeapon],d=WEAPON_DEFS[w.type],now=performance.now();
   if(w.reloading) return;
   // Overcharge: infinite ammo
-  if(hasPowerUp('overcharge')&&p===getLocalPlayer()) { /* skip ammo check */ }
+  if(playerHasPowerUp(p,'overcharge')) { /* skip ammo check */ }
   else if(w.ammo<=0){if(p===getLocalPlayer()){playEmptyClipSound();reloadWeapon();}return;}
   let effectiveFireRate = d.fireRate/(1+getPlayerPerkCount(p,'lead_storm')*0.2);
   // Overcharge: 3x fire rate. Rage: 1.5x fire rate.
-  if(hasPowerUp('overcharge')&&p===getLocalPlayer()) effectiveFireRate /= 3;
-  else if(hasPowerUp('rage')&&p===getLocalPlayer()) effectiveFireRate /= 1.5;
+  if(playerHasPowerUp(p,'overcharge')) effectiveFireRate /= 3;
+  else if(playerHasPowerUp(p,'rage')) effectiveFireRate /= 1.5;
   // Carpet Bomb synergy: explosive weapons 2x faster
-  if(hasSynergy('CARPET BOMB')&&(d.explosive||d.grenade)) effectiveFireRate /= 2;
+  if(playerHasSynergy(p,'CARPET BOMB')&&(d.explosive||d.grenade)) effectiveFireRate /= 2;
   if(now-w.lastFired<effectiveFireRate) return;
   if(d.burst&&d.burst>1){w.burstLeft=d.burst-1;w.burstTimer=d.burstDelay;}
   fireSingleShot(p,w,d);
@@ -1773,7 +1782,7 @@ function fireWeaponForPlayer(p) {
 function fireSingleShot(p,w,d) {
   w.lastFired=performance.now();
   // Overcharge: don't consume ammo
-  if(!(hasPowerUp('overcharge')&&p===getLocalPlayer())) w.ammo--;
+  if(!playerHasPowerUp(p,'overcharge')) w.ammo--;
   w.muzzleFlash=6;
   const spreadMult=Math.pow(0.5,getPlayerPerkCount(p,'steady_aim'));
   const extraPierce=getPlayerPerkCount(p,'ricochet');
@@ -1782,7 +1791,7 @@ function fireSingleShot(p,w,d) {
   for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2*spreadMult,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a);
     let dmg=d.damage, isCrit=false;
     // Rage power-up: 2x damage
-    if(hasPowerUp('rage')&&p===getLocalPlayer()) dmg*=2;
+    if(playerHasPowerUp(p,'rage')) dmg*=2;
     if(playerHasPerk(p,'berserker')&&p.hp<p.maxHp*0.3) dmg*=1+getPlayerPerkCount(p,'berserker')*0.4;
     // Base 5% crit chance + 15% per crit perk stack
     const critChance=0.05+getPlayerPerkCount(p,'critical')*0.15;
@@ -1826,7 +1835,11 @@ function tryPickupForPlayer(pl, isLocalUI) {
       }if(isLocalUI)playPickupSound();pickups.splice(i,1);}
       else if(p.type==='health'){if(pl.hp<pl.maxHp){pl.hp=Math.min(pl.maxHp,pl.hp+p.amount);if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='ammo'){const w=pl.weapons[pl.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;if(isLocalUI){showPickupMsg('+AMMO');playPickupSound();}pickups.splice(i,1);}}
-      else if(p.type==='powerup'){if(isLocalUI){activatePowerUp(p.powerupId);playPickupSound();}pickups.splice(i,1);}
+      else if(p.type==='powerup'){
+        if(isLocalUI){activatePowerUp(p.powerupId);playPickupSound();}
+        // Nuke: always kill zombies on host regardless of who picked it up
+        if(p.powerupId==='nuke'&&isHost){for(const z of zombies){z.hp=0;}}
+        pickups.splice(i,1);}
     }
   }
 }
@@ -2265,7 +2278,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -2293,11 +2306,15 @@ function update() {
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
         if (inp.maxHp) p.maxHp = inp.maxHp;
         if (inp.perks) p._remotePerks = inp.perks;
+        p._remotePowerUp = inp.powerUp || null;
         // Sync remote player's weapons so host can fire them properly
         if (inp.weaponTypes && inp.weaponTypes.length > 0) {
           // Rebuild weapon list if it changed
           if (p.weapons.length !== inp.weaponTypes.length || p.weapons.some((w,i) => w.type !== inp.weaponTypes[i])) {
-            p.weapons = inp.weaponTypes.map((t,i) => { const w = createWeapon(t); if(inp.weaponAmmo&&inp.weaponAmmo[i]){w.ammo=inp.weaponAmmo[i].ammo;w.reserveAmmo=inp.weaponAmmo[i].reserveAmmo;} return w; });
+            p.weapons = inp.weaponTypes.map((t,i) => {
+              // Ensure evolved weapon types exist (remote player may have evolved weapons we haven't seen)
+              if(!WEAPON_DEFS[t]){const evo=Object.values(WEAPON_EVOLUTIONS).find(e=>e.to===t);if(evo){const base=Object.keys(WEAPON_EVOLUTIONS).find(k=>WEAPON_EVOLUTIONS[k].to===t);if(base&&WEAPON_DEFS[base])WEAPON_DEFS[t]={...WEAPON_DEFS[base],...evo.changes,name:evo.name,_evolved:true,_baseType:base};}}
+              const w = createWeapon(t); if(inp.weaponAmmo&&inp.weaponAmmo[i]){w.ammo=inp.weaponAmmo[i].ammo;w.reserveAmmo=inp.weaponAmmo[i].reserveAmmo;} return w; });
           } else if (inp.weaponAmmo) {
             // Always sync ammo from client so host weapon state stays in sync
             for (let wi = 0; wi < p.weapons.length && wi < inp.weaponAmmo.length; wi++) {
@@ -2358,8 +2375,8 @@ function update() {
                   damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
                   // Track per-player kills for wave summary
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
-                  // Track weapon evolution kills
-                  if(b.ownerId===myId){const _cw=getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon];if(_cw)trackWeaponKill(_cw.type);}
+                  // Track weapon evolution kills (local player only — each client evolves their own weapons)
+                  if(b.ownerId===myId){const _lp=getLocalPlayer();if(_lp){const _cw=_lp.weapons[_lp.currentWeapon];if(_cw)trackWeaponKill(_cw.type);}}
                   const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // Directional blood burst — blood flies in bullet direction
                   const _ba=Math.atan2(b.vy,b.vx);
@@ -2373,9 +2390,9 @@ function update() {
                   {const _kp=players.find(pp=>pp.id===b.ownerId);if(_kp&&_kp.alive&&playerHasPerk(_kp,'vampire')){
                     let healAmt=2*getPlayerPerkCount(_kp,'vampire');
                     // Blood Rage synergy: 5x heal at low HP
-                    if(hasSynergy('BLOOD RAGE')&&_kp.hp<_kp.maxHp*0.3) healAmt*=5;
+                    if(playerHasSynergy(_kp,'BLOOD RAGE')&&_kp.hp<_kp.maxHp*0.3) healAmt*=5;
                     // Juggernaut synergy: heal 4 per kill
-                    if(hasSynergy('JUGGERNAUT')) healAmt=Math.max(healAmt,4);
+                    if(playerHasSynergy(_kp,'JUGGERNAUT')) healAmt=Math.max(healAmt,4);
                     _kp.hp=Math.min(_kp.maxHp,_kp.hp+healAmt);
                   }}
                   if(z.splitOnDeath||ZOMBIE_TYPES[z.type]?.splitOnDeath)splitZombie(z);
@@ -2392,7 +2409,10 @@ function update() {
         // (host confirms on next sync — any mismatch self-corrects silently)
         const predDmg = b.damage || WEAPON_DEFS[getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon]?.type||'pistol']?.damage || 10;
         if(b.ownerId===myId && predDmg > 0) {
+          const wasAlive = z.hp > 0;
           z.hp -= predDmg; z.hitFlash = 6;
+          // Track weapon evolution kills on non-host via predicted kills
+          if(wasAlive && z.hp <= 0){const _cw=getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon];if(_cw)trackWeaponKill(_cw.type);}
           // Predicted blood splatter (immediate, not waiting for host sync)
           const intensity = Math.min(3, predDmg/30);
           const bloodCount = Math.floor(4+intensity*4);
