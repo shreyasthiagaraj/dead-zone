@@ -1487,7 +1487,7 @@ function fireSingleShot(p,w,d) {
     // Base 5% crit chance + 15% per crit perk stack
     const critChance=0.05+getPlayerPerkCount(p,'critical')*0.15;
     if(Math.random()<critChance){dmg*=3;isCrit=true;}
-    bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:dmg,color:isCrit?'#f0f':d.bulletColor,size:isCrit?d.bulletSize+2:d.bulletSize,knockback:isCrit?d.knockback*2:d.knockback,pierce:d.pierce+extraPierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:(d.explosionRadius||0)*blastMult,tracer:d.tracer||isCrit,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,laserGlow:d.laserGlow||false,grenade:d.grenade||false,owner:'player',ownerId:p.id,trail:[],crit:isCrit});}
+    bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:dmg,color:isCrit?'#f0f':d.bulletColor,size:isCrit?d.bulletSize+2:d.bulletSize,knockback:isCrit?d.knockback*2:d.knockback,pierce:d.pierce+extraPierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:(d.explosionRadius||0)*blastMult,tracer:d.tracer||false,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,laserGlow:d.laserGlow||false,grenade:d.grenade||false,owner:'player',ownerId:p.id,trail:[],crit:isCrit});}
   playWeaponSound(w.type,d.sound);
   if(p===getLocalPlayer()) screenShake.intensity=Math.max(screenShake.intensity,d.shakeIntensity);
   const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
@@ -1510,8 +1510,6 @@ function dash() {
 // In multiplayer, only the host runs authoritative pickups for ALL players.
 // Non-host only gets visual feedback — state syncs from host.
 function tryPickup() {
-  // In multiplayer, non-host skips — host handles pickups for everyone
-  if (isMultiplayer && !isHost) return;
   const lp=getLocalPlayer(); if(!lp||!lp.alive) return;
   tryPickupForPlayer(lp, true);
 }
@@ -1835,9 +1833,11 @@ function damagePlayerObj(p,damage) {
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);}
   if(p.hp<=0){
-    // Second Wind perk: revive once
-    if(p===getLocalPlayer()&&hasPerk('second_wind')){
-      playerPerks['second_wind']=0;p.hp=30;p.invincible=1500;p.damageFlash=30;
+    // Second Wind perk: revive once (works for any player with the perk)
+    if(playerHasPerk(p,'second_wind')){
+      if(p===getLocalPlayer()) playerPerks['second_wind']=0;
+      else if(p._remotePerks) p._remotePerks['second_wind']=0;
+      p.hp=30;p.invincible=1500;p.damageFlash=30;
       addFloatingText(p.x,p.y-30,'SECOND WIND!','#f4f');screenShake.intensity=15;
       for(let k=0;k<20;k++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:p.x,y:p.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*15,maxLife:35,size:3+Math.random()*3,color:'#f4f',type:'spark'});}
     } else {
@@ -1935,7 +1935,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, hp: lp.hp, alive: lp.alive, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp } });
+    sendMsg({ type: 'player_input', input: { x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -1944,7 +1944,9 @@ function update() {
       if (p.id === myId || !p.alive) continue;
       const inp = remoteInputs[p.id];
       if (inp) {
-        p.x = inp.x; p.y = inp.y; p.vx = inp.vx||0; p.vy = inp.vy||0; p.angle = inp.angle; p.moveAngle = inp.moveAngle||0; p.alive = inp.alive; p.hp = inp.hp;
+        p.x = inp.x; p.y = inp.y; p.vx = inp.vx||0; p.vy = inp.vy||0; p.angle = inp.angle; p.moveAngle = inp.moveAngle||0;
+        // HP and alive are HOST-AUTHORITATIVE — never accept from client input
+        // (otherwise client overwrites host damage every frame)
         // Sync dash, reload, maxHp, and perk state from remote player
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
         if (inp.maxHp) p.maxHp = inp.maxHp;
@@ -2148,7 +2150,7 @@ function update() {
             const sp = (Math.random() - 0.5) * wd.spread * 2 * pSpreadMult;
             const ba = p.angle + sp, bc = Math.cos(ba), bs = Math.sin(ba);
             const isCrit = Math.random() < (0.05 + getPlayerPerkCount(p, 'critical') * 0.15);
-            bullets.push({ x: p.x + bc * 22, y: p.y + bs * 22, vx: bc * wd.bulletSpeed, vy: bs * wd.bulletSpeed, damage: 0, color: isCrit ? '#f0f' : wd.bulletColor, size: isCrit ? wd.bulletSize + 2 : wd.bulletSize, knockback: 0, pierce: pPierce, pierced: 0, life: wd.bulletLife || 60, flame: wd.flame || false, explosive: wd.explosive || false, explosionRadius: wd.explosionRadius || 0, tracer: wd.tracer || isCrit, chain: wd.chain || false, chainRange: wd.chainRange || 0, chainCount: wd.chainCount || 0, laserGlow: wd.laserGlow || false, grenade: wd.grenade || false, owner: 'player', ownerId: p.id, trail: [], crit: isCrit, visualOnly: true });
+            bullets.push({ x: p.x + bc * 22, y: p.y + bs * 22, vx: bc * wd.bulletSpeed, vy: bs * wd.bulletSpeed, damage: 0, color: isCrit ? '#f0f' : wd.bulletColor, size: isCrit ? wd.bulletSize + 2 : wd.bulletSize, knockback: 0, pierce: pPierce, pierced: 0, life: wd.bulletLife || 60, flame: wd.flame || false, explosive: wd.explosive || false, explosionRadius: wd.explosionRadius || 0, tracer: wd.tracer || false, chain: wd.chain || false, chainRange: wd.chainRange || 0, chainCount: wd.chainCount || 0, laserGlow: wd.laserGlow || false, grenade: wd.grenade || false, owner: 'player', ownerId: p.id, trail: [], crit: isCrit, visualOnly: true });
           }
           // Muzzle flash and sound
           p.weapons[p.currentWeapon].muzzleFlash = 6;
