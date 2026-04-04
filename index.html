@@ -433,7 +433,19 @@ function createWeapon(type) { const d = WEAPON_DEFS[type]; return { type, ammo: 
 
 // ---- ENTITIES ----
 let bullets = [], zombies = [], particles = [], pickups = [], decals = [], floatingTexts = [], explosions = [], obstacles = [], barrels = [];
-let dungeonGrid = null, rooms = [];
+let dungeonGrid = null, rooms = [], roomDetails = [];
+
+// Room visual themes — each defines floor color, grid color, wall accent, and a name
+const ROOM_THEMES = [
+  { name:'corridor', floor:'#1c1c1c', grid:'#232323', accent:'#3a3028' },
+  { name:'concrete', floor:'#282828', grid:'#303030', accent:'#3a3028' },
+  { name:'tile',     floor:'#262830', grid:'#2e3038', accent:'#384050' },
+  { name:'lab',      floor:'#1e2820', grid:'#263028', accent:'#2a4030' },
+  { name:'furnace',  floor:'#2c2218', grid:'#342a20', accent:'#4a3020' },
+  { name:'storage',  floor:'#242420', grid:'#2c2c28', accent:'#3a3820' },
+  { name:'medbay',   floor:'#202830', grid:'#283038', accent:'#204050' },
+  { name:'ruin',     floor:'#221c1c', grid:'#2a2424', accent:'#402828' },
+];
 
 const ZOMBIE_TYPES = {
   normal: { hp: 50, speed: 1.8, radius: 12, color: '#5a5', damage: 10, score: 100 },
@@ -823,6 +835,35 @@ function generateDungeon(seed) {
       if (candidates.length > 0) carveCorridor(rooms[i], rooms[candidates[Math.floor(rng()*candidates.length)]]);
     }
   }
+  // Assign visual themes and generate room details (debris, stains, props)
+  roomDetails = [];
+  for (let ri = 0; ri < rooms.length; ri++) {
+    const r = rooms[ri];
+    const theme = ri === 0 ? ROOM_THEMES[1] : ri === 1 ? ROOM_THEMES[7] : ROOM_THEMES[1 + Math.floor(rng() * (ROOM_THEMES.length - 1))];
+    r.theme = theme;
+    r.brightness = 0.8 + rng() * 0.4; // 0.8-1.2
+    r.flicker = rng() < 0.15;
+    const details = [];
+    const numProps = 2 + Math.floor(rng() * 5);
+    for (let pi = 0; pi < numProps; pi++) {
+      const px = (r.x + 2 + rng() * (r.w - 4)) * CELL_SIZE;
+      const py = (r.y + 2 + rng() * (r.h - 4)) * CELL_SIZE;
+      const kind = rng();
+      if (kind < 0.2) details.push({ type: 'crate', x: px, y: py, size: 12 + rng() * 8, angle: rng() * 0.3 - 0.15 });
+      else if (kind < 0.35) details.push({ type: 'table', x: px, y: py, w: 20 + rng() * 15, h: 10 + rng() * 8, angle: rng() * Math.PI });
+      else if (kind < 0.5) details.push({ type: 'rubble', x: px, y: py, size: 6 + rng() * 10, count: 3 + Math.floor(rng() * 4) });
+      else if (kind < 0.7) details.push({ type: 'stain', x: px, y: py, size: 10 + rng() * 20, color: rng() < 0.5 ? '#2a1515' : '#1a1a10' });
+      else if (kind < 0.85) details.push({ type: 'pipes', x: (r.x + (rng() < 0.5 ? 0 : r.w - 1)) * CELL_SIZE, y: (r.y + 1 + rng() * (r.h - 2)) * CELL_SIZE, len: 2 + Math.floor(rng() * 4), vertical: rng() < 0.5 });
+      else details.push({ type: 'scratch', x: px, y: py, angle: rng() * Math.PI, len: 8 + rng() * 15 });
+    }
+    if (rng() < 0.4) {
+      const bx = (r.x + 1 + rng() * (r.w - 2)) * CELL_SIZE;
+      const by = (r.y + 1 + rng() * (r.h - 2)) * CELL_SIZE;
+      details.push({ type: 'bloodsmear', x: bx, y: by, angle: rng() * Math.PI * 2, len: 30 + rng() * 50 });
+    }
+    roomDetails.push({ ri, theme, details, brightness: r.brightness, flicker: r.flicker });
+  }
+
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
   uploadDungeonGrid();
@@ -862,6 +903,26 @@ function generateArena(seed) {
     for (let y = oy; y < oy + oh && y < GRID_H; y++) for (let x = ox; x < ox + ow && x < GRID_W; x++) dungeonGrid[y][x] = false;
     placed.push({ x: ox, y: oy, w: ow, h: oh });
   }
+  // Arena visual theme
+  arena.theme = ROOM_THEMES[4]; // furnace theme for survival
+  arena.brightness = 1.0;
+  arena.flicker = false;
+  roomDetails = [];
+  const arenaDetails = [];
+  const numDebris = 15 + Math.floor(rng() * 10);
+  for (let di = 0; di < numDebris; di++) {
+    const px = (arena.x + 3 + rng() * (arena.w - 6)) * CELL_SIZE;
+    const py = (arena.y + 3 + rng() * (arena.h - 6)) * CELL_SIZE;
+    if (dungeonGrid[Math.floor(py/CELL_SIZE)] && dungeonGrid[Math.floor(py/CELL_SIZE)][Math.floor(px/CELL_SIZE)]) {
+      const kind = rng();
+      if (kind < 0.3) arenaDetails.push({ type: 'stain', x: px, y: py, size: 10 + rng() * 25, color: rng() < 0.5 ? '#2a1515' : '#1a1a10' });
+      else if (kind < 0.5) arenaDetails.push({ type: 'rubble', x: px, y: py, size: 6 + rng() * 10, count: 3 + Math.floor(rng() * 4) });
+      else if (kind < 0.7) arenaDetails.push({ type: 'scratch', x: px, y: py, angle: rng() * Math.PI, len: 8 + rng() * 15 });
+      else arenaDetails.push({ type: 'crate', x: px, y: py, size: 10 + rng() * 8, angle: rng() * 0.3 - 0.15 });
+    }
+  }
+  roomDetails.push({ ri: 0, theme: arena.theme, details: arenaDetails, brightness: 1.0, flicker: false });
+
   // Build obstacles array from grid
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
@@ -2459,36 +2520,94 @@ function render() {
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.translate(ox,oy);
 
-  // Floor + walls
+  // Floor + walls with room themes
   const vL=camera.x-canvas.width/2-CELL_SIZE,vR=camera.x+canvas.width/2+CELL_SIZE,vT=camera.y-canvas.height/2-CELL_SIZE,vB=camera.y+canvas.height/2+CELL_SIZE;
   const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(GRID_H-1,Math.floor(vB/CELL_SIZE));
+  const _corridorTheme=ROOM_THEMES[0];
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
-      // Floor cell — check if room or corridor
-      let inR=false;for(const r of rooms){if(cx>=r.x&&cx<r.x+r.w&&cy>=r.y&&cy<r.y+r.h){inR=true;break;}}
-      ctx.fillStyle=inR?'#252525':'#1c1c1c';
+      // Floor cell — find which room it belongs to for themed rendering
+      let theme=_corridorTheme;
+      for(const r of rooms){if(cx>=r.x&&cx<r.x+r.w&&cy>=r.y&&cy<r.y+r.h){theme=r.theme||_corridorTheme;break;}}
+      ctx.fillStyle=theme.floor;
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      // Subtle floor grid
-      ctx.strokeStyle=inR?'#2d2d2d':'#232323';ctx.lineWidth=0.5;
+      ctx.strokeStyle=theme.grid;ctx.lineWidth=0.5;
       ctx.strokeRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
     } else {
-      // Wall cell — dark and solid
       ctx.fillStyle='#0c0a08';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      // Draw lit edges where wall meets floor
+      // Wall edge highlights using adjacent room's accent color
       const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
       const floorAbove=cy>0&&dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx];
       const floorBelow=cy<GRID_H-1&&dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx];
       const floorLeft=cx>0&&dungeonGrid[cy][cx-1];
       const floorRight=cx<GRID_W-1&&dungeonGrid[cy][cx+1];
-      ctx.fillStyle='#3a3028';
-      if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,2);
-      if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-2,CELL_SIZE,2);
-      if(floorLeft) ctx.fillRect(px,py,2,CELL_SIZE);
-      if(floorRight) ctx.fillRect(px+CELL_SIZE-2,py,2,CELL_SIZE);
+      if(floorAbove||floorBelow||floorLeft||floorRight){
+        // Find nearest room for accent color
+        let accent='#3a3028';
+        for(const r of rooms){if(cx>=r.x-1&&cx<r.x+r.w+1&&cy>=r.y-1&&cy<r.y+r.h+1){accent=(r.theme||_corridorTheme).accent;break;}}
+        ctx.fillStyle=accent;
+        if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,2);
+        if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-2,CELL_SIZE,2);
+        if(floorLeft) ctx.fillRect(px,py,2,CELL_SIZE);
+        if(floorRight) ctx.fillRect(px+CELL_SIZE-2,py,2,CELL_SIZE);
+      }
     }
   }
   ctx.strokeStyle='#f04040';ctx.lineWidth=3;ctx.strokeRect(0,0,ARENA_W,ARENA_H);
+
+  // Room debris and props
+  for(const rd of roomDetails){
+    const r=rooms[rd.ri]; if(!r)continue;
+    const rc=getRoomCenter(r);
+    // Skip if room not in viewport
+    if(rc.x+r.w*CELL_SIZE/2<vL||rc.x-r.w*CELL_SIZE/2>vR||rc.y+r.h*CELL_SIZE/2<vT||rc.y-r.h*CELL_SIZE/2>vB)continue;
+    for(const d of rd.details){
+      if(d.x<vL-40||d.x>vR+40||d.y<vT-40||d.y>vB+40)continue;
+      ctx.save();
+      if(d.type==='crate'){
+        ctx.translate(d.x,d.y);ctx.rotate(d.angle||0);
+        ctx.fillStyle='#3a3020';ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
+        ctx.strokeStyle='#4a4030';ctx.lineWidth=1;ctx.strokeRect(-d.size/2,-d.size/2,d.size,d.size);
+        ctx.strokeStyle='#2a2018';ctx.beginPath();ctx.moveTo(-d.size/2,0);ctx.lineTo(d.size/2,0);ctx.stroke();
+      } else if(d.type==='table'){
+        ctx.translate(d.x,d.y);ctx.rotate(d.angle||0);
+        ctx.fillStyle='#2a2a2a';ctx.fillRect(-d.w/2,-d.h/2,d.w,d.h);
+        ctx.strokeStyle='#3a3a3a';ctx.lineWidth=1;ctx.strokeRect(-d.w/2,-d.h/2,d.w,d.h);
+      } else if(d.type==='rubble'){
+        for(let ri=0;ri<d.count;ri++){
+          const rx=d.x+(Math.sin(ri*7.3))*d.size*1.5,ry=d.y+(Math.cos(ri*5.1))*d.size*1.5;
+          ctx.fillStyle=ri%2?'#333':'#2a2a2a';
+          ctx.beginPath();ctx.arc(rx,ry,2+d.size*0.3,0,Math.PI*2);ctx.fill();
+        }
+      } else if(d.type==='stain'){
+        ctx.globalAlpha=0.4;
+        const g=ctx.createRadialGradient(d.x,d.y,0,d.x,d.y,d.size);
+        g.addColorStop(0,d.color);g.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=g;ctx.fillRect(d.x-d.size,d.y-d.size,d.size*2,d.size*2);
+        ctx.globalAlpha=1;
+      } else if(d.type==='pipes'){
+        ctx.strokeStyle='#444';ctx.lineWidth=3;
+        ctx.beginPath();
+        if(d.vertical){ctx.moveTo(d.x+CELL_SIZE/2,d.y);ctx.lineTo(d.x+CELL_SIZE/2,d.y+d.len*CELL_SIZE);}
+        else{ctx.moveTo(d.x,d.y+CELL_SIZE/2);ctx.lineTo(d.x+d.len*CELL_SIZE,d.y+CELL_SIZE/2);}
+        ctx.stroke();
+        ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.stroke();
+      } else if(d.type==='scratch'){
+        ctx.globalAlpha=0.3;ctx.strokeStyle='#444';ctx.lineWidth=1;
+        ctx.translate(d.x,d.y);ctx.rotate(d.angle);
+        for(let si=0;si<3;si++){ctx.beginPath();ctx.moveTo(-d.len/2,si*2-2);ctx.lineTo(d.len/2,si*2-2);ctx.stroke();}
+        ctx.globalAlpha=1;
+      } else if(d.type==='bloodsmear'){
+        ctx.globalAlpha=0.3;ctx.translate(d.x,d.y);ctx.rotate(d.angle);
+        const g=ctx.createLinearGradient(-d.len/2,0,d.len/2,0);
+        g.addColorStop(0,'rgba(60,10,10,0)');g.addColorStop(0.3,'#3a1010');g.addColorStop(0.7,'#301010');g.addColorStop(1,'rgba(40,8,8,0)');
+        ctx.fillStyle=g;ctx.fillRect(-d.len/2,-6,d.len,12);
+        ctx.globalAlpha=1;
+      }
+      ctx.restore();
+    }
+  }
 
   // Decals
   for(const d of decals){ctx.globalAlpha=d.alpha;ctx.fillStyle=d.color;ctx.beginPath();ctx.arc(d.x,d.y,d.size,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
@@ -2843,6 +2962,17 @@ function render() {
       }
     }
   }
+
+  // Room flickering lights — draw dark overlay on flickering rooms
+  {const rlx=-camera.x+canvas.width/2+screenShake.x,rly=-camera.y+canvas.height/2+screenShake.y;
+  for(const rd of roomDetails){
+    if(!rd.flicker)continue;
+    const r=rooms[rd.ri]; if(!r)continue;
+    const sx=r.x*CELL_SIZE+rlx, sy=r.y*CELL_SIZE+rly;
+    if(sx+r.w*CELL_SIZE<0||sx>canvas.width||sy+r.h*CELL_SIZE<0||sy>canvas.height)continue;
+    const flick=Math.sin(performance.now()*0.01+rd.ri*100)>0.3?0:0.12+Math.random()*0.08;
+    if(flick>0){ctx.fillStyle=`rgba(0,0,0,${flick})`;ctx.fillRect(sx,sy,r.w*CELL_SIZE,r.h*CELL_SIZE);}
+  }}
 
   // Dynamic lighting — additive glow from explosions, muzzle flashes, barrels
   {const dlx=-camera.x+canvas.width/2+screenShake.x,dly=-camera.y+canvas.height/2+screenShake.y;
