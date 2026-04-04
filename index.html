@@ -264,7 +264,7 @@ const PERK_DEFS = [
   { id: 'second_wind', name: 'SECOND WIND', desc: 'Revive once with 30 HP', color: '#f4f', icon: '↑', stackable: false },
   { id: 'blast', name: 'BLAST RADIUS', desc: 'Explosions +50% bigger', color: '#f60', icon: '✸', stackable: true },
   { id: 'adrenaline', name: 'ADRENALINE', desc: 'Kill streaks boost speed', color: '#ff4', icon: '⚡', stackable: false },
-  { id: 'critical', name: 'CRITICAL HIT', desc: '15% chance for 3x damage', color: '#f0f', icon: '★', stackable: true },
+  { id: 'critical', name: 'CRITICAL HIT', desc: '+15% crit chance (3x damage)', color: '#f0f', icon: '★', stackable: true },
   { id: 'berserker', name: 'BERSERKER', desc: '+40% damage when below 30% HP', color: '#f22', icon: '☠', stackable: true },
 ];
 let playerPerks = {}; // { perkId: count }
@@ -362,7 +362,7 @@ const WEAPON_DEFS = {
   // Revolver: high damage per shot, strong knockback, slow fire — snappy crack sound
   revolver: { name: 'Revolver', color: '#daa', bulletColor: '#fa0', damage: 55, fireRate: 600, bulletSpeed: 18, spread: 0.02, magSize: 6, reloadTime: 1000, bulletSize: 4, knockback: 8, pierce: 0, infinite: false, totalAmmo: 36, shakeIntensity: 5, aimLine: 'medium', sound: { freq: 250, duration: 0.12, type: 'sawtooth' } },
   // SMG: spray and pray, high fire rate, low damage, wide spread — rapid clicking
-  smg: { name: 'SMG', color: '#7af', bulletColor: '#7df', damage: 10, fireRate: 60, bulletSpeed: 16, spread: 0.15, magSize: 35, reloadTime: 800, bulletSize: 2, knockback: 0.5, pierce: 0, infinite: false, totalAmmo: 175, shakeIntensity: 1, aimLine: 'short', sound: { freq: 950, duration: 0.02, type: 'square' } },
+  smg: { name: 'SMG', color: '#7af', bulletColor: '#7df', damage: 10, fireRate: 60, bulletSpeed: 16, spread: 0.15, magSize: 50, reloadTime: 800, bulletSize: 2, knockback: 0.5, pierce: 0, infinite: false, totalAmmo: 250, shakeIntensity: 1, aimLine: 'short', sound: { freq: 950, duration: 0.02, type: 'square' } },
   // Burst: precise 3-round burst, good at medium range — sharp pop
   burst: { name: 'Burst', color: '#af7', bulletColor: '#af7', damage: 22, fireRate: 450, bulletSpeed: 18, spread: 0.04, magSize: 24, reloadTime: 900, burst: 3, burstDelay: 45, bulletSize: 3, knockback: 2, pierce: 0, infinite: false, totalAmmo: 96, shakeIntensity: 2, aimLine: 'medium', sound: { freq: 650, duration: 0.025, type: 'square' } },
   // Shotgun: devastating close range, spread cone aim — deep boom
@@ -370,7 +370,7 @@ const WEAPON_DEFS = {
   // Rifle: long range sniper, pierces 2 zombies, very precise — heavy thud
   rifle: { name: 'Rifle', color: '#4f4', bulletColor: '#4f4', damage: 70, fireRate: 900, bulletSpeed: 24, spread: 0.008, magSize: 5, reloadTime: 1200, bulletSize: 4, knockback: 10, pierce: 2, tracer: true, infinite: false, totalAmmo: 25, shakeIntensity: 7, aimLine: 'sniper', sound: { freq: 100, duration: 0.18, type: 'sawtooth' } },
   // Minigun: wall of bullets, needs spin-up time feel — buzzing whir
-  minigun: { name: 'Minigun', color: '#aaf', bulletColor: '#adf', damage: 7, fireRate: 30, bulletSpeed: 18, spread: 0.2, magSize: 120, reloadTime: 2500, bulletSize: 2, knockback: 0.3, pierce: 0, infinite: false, totalAmmo: 360, shakeIntensity: 0.8, aimLine: 'wide', sound: { freq: 1100, duration: 0.015, type: 'square' } },
+  minigun: { name: 'Minigun', color: '#aaf', bulletColor: '#adf', damage: 7, fireRate: 30, bulletSpeed: 18, spread: 0.2, magSize: 200, reloadTime: 2500, bulletSize: 2, knockback: 0.3, pierce: 0, infinite: false, totalAmmo: 600, shakeIntensity: 0.8, aimLine: 'wide', sound: { freq: 1100, duration: 0.015, type: 'square' } },
   // Flamethrower: area denial, short range cone, DOT feel — hissing roar
   flamethrower: { name: 'Flame', color: '#f60', bulletColor: '#f80', damage: 6, fireRate: 35, bulletSpeed: 7, spread: 0.35, magSize: 100, reloadTime: 1500, bulletSize: 6, knockback: 0.5, pierce: 1, infinite: false, totalAmmo: 200, shakeIntensity: 0.5, flame: true, bulletLife: 20, aimLine: 'cone', sound: { freq: 80, duration: 0.025, type: 'sawtooth' } },
   // Laser: precise beam, pierces everything, low damage per tick — high-pitched zap
@@ -598,18 +598,51 @@ function updateAmbientAudio() {
     ambientDripTimer = 300 + Math.floor(Math.random() * 400); // every 5-12 seconds
   }
 
-  // Random zombie groans from nearby zombies
+  // Zombie groans — prioritize zombies in the fog (unseen = scarier)
   zombieGroanTimer--;
   if (zombieGroanTimer <= 0) {
-    const nearbyZombies = zombies.filter(z => {
+    const fogZombies = []; const nearZombies = [];
+    for (const z of zombies) {
       const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
-      return d < 500;
-    });
-    if (nearbyZombies.length > 0) {
-      const z = nearbyZombies[Math.floor(Math.random() * nearbyZombies.length)];
-      playSfxSpatial('zombie_groan', z.x, z.y, 0.15 + Math.random() * 0.1, 500);
+      if (d > 800) continue;
+      // Check if zombie is outside flashlight cone (in the fog)
+      const aToZ = Math.atan2(z.y-lp.y, z.x-lp.x);
+      const angleDiff = Math.abs(((aToZ - lp.angle + Math.PI*3) % (Math.PI*2)) - Math.PI);
+      const inBeam = d < 400 && angleDiff < 0.5;
+      if (!inBeam && d > 200) fogZombies.push({z, d});
+      else if (d < 500) nearZombies.push({z, d});
     }
-    zombieGroanTimer = 180 + Math.floor(Math.random() * 300); // every 3-8 seconds
+    // Fog groans are creepier — play at lower volume with more reverb feel
+    if (fogZombies.length > 0) {
+      const pick = fogZombies[Math.floor(Math.random() * fogZombies.length)];
+      playSfxSpatial('zombie_groan', pick.z.x, pick.z.y, 0.12 + Math.random() * 0.08, 800);
+      // Occasional deep moan for atmosphere
+      if (Math.random() < 0.3) playSound(60 + Math.random() * 40, 0.4, 'sawtooth', 0.03);
+    } else if (nearZombies.length > 0) {
+      const pick = nearZombies[Math.floor(Math.random() * nearZombies.length)];
+      playSfxSpatial('zombie_groan', pick.z.x, pick.z.y, 0.15 + Math.random() * 0.1, 500);
+    }
+    zombieGroanTimer = 120 + Math.floor(Math.random() * 200); // every 2-5 seconds (more frequent)
+  }
+
+  // Zombie shuffling footsteps — faint sounds from off-screen zombies
+  if (gameTime % 45 === 0) {
+    const offscreen = zombies.filter(z => {
+      const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
+      return d > 300 && d < 700 && z.aware;
+    });
+    if (offscreen.length > 0) {
+      const z = offscreen[Math.floor(Math.random() * offscreen.length)];
+      playSfxSpatial('zombie_groan', z.x, z.y, 0.04 + Math.random() * 0.03, 700);
+      // Faint scratching/shuffling sound
+      playSound(150 + Math.random() * 100, 0.06, 'sawtooth', 0.02);
+    }
+  }
+
+  // Rare distant scream (pure atmosphere — every 20-40 seconds)
+  if (gameTime % 60 === 0 && Math.random() < 0.04 && zombies.length > 5) {
+    playSound(200 + Math.random() * 300, 0.3 + Math.random() * 0.2, 'sawtooth', 0.04);
+    setTimeout(() => playSound(150 + Math.random() * 100, 0.2, 'square', 0.02), 100);
   }
 
   // Low health heartbeat (repeating warning)
@@ -758,8 +791,8 @@ function generateArena(seed) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Compact arena for intense survival combat
-  const margin = 16;
+  // Tight arena for intense survival combat
+  const margin = 24;
   const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
   carveRoom(arena);
   rooms.push(arena);
@@ -1447,10 +1480,12 @@ function fireSingleShot(p,w,d) {
   const blastMult=isLocal?(1+getPerkCount('blast')*0.5):1;
   const pellets=d.pellets||1;
   for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2*spreadMult,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a);
-    let dmg=d.damage;
+    let dmg=d.damage, isCrit=false;
     if(isLocal&&hasPerk('berserker')&&p.hp<p.maxHp*0.3) dmg*=1+getPerkCount('berserker')*0.4;
-    if(isLocal&&hasPerk('critical')&&Math.random()<0.15*getPerkCount('critical')){dmg*=3;}
-    bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:dmg,color:dmg>d.damage?'#f0f':d.bulletColor,size:dmg>d.damage?d.bulletSize+2:d.bulletSize,knockback:d.knockback,pierce:d.pierce+extraPierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:(d.explosionRadius||0)*blastMult,tracer:d.tracer||false,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,laserGlow:d.laserGlow||false,grenade:d.grenade||false,owner:'player',ownerId:p.id,trail:[]});}
+    // Base 5% crit chance + 15% per crit perk stack
+    const critChance=0.05+getPerkCount('critical')*0.15;
+    if(Math.random()<critChance){dmg*=3;isCrit=true;}
+    bullets.push({x:p.x+c*22,y:p.y+s*22,vx:c*d.bulletSpeed,vy:s*d.bulletSpeed,damage:dmg,color:isCrit?'#f0f':d.bulletColor,size:isCrit?d.bulletSize+2:d.bulletSize,knockback:isCrit?d.knockback*2:d.knockback,pierce:d.pierce+extraPierce,pierced:0,life:d.bulletLife||60,flame:d.flame||false,explosive:d.explosive||false,explosionRadius:(d.explosionRadius||0)*blastMult,tracer:d.tracer||isCrit,chain:d.chain||false,chainRange:d.chainRange||0,chainCount:d.chainCount||0,laserGlow:d.laserGlow||false,grenade:d.grenade||false,owner:'player',ownerId:p.id,trail:[],crit:isCrit});}
   playWeaponSound(w.type,d.sound);
   if(p===getLocalPlayer()) screenShake.intensity=Math.max(screenShake.intensity,d.shakeIntensity);
   const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
@@ -1536,7 +1571,7 @@ function spawnBarrels(count) {
     // Don't spawn too close to players
     const tooClose = players.some(pl => pl.alive && Math.sqrt((pl.x-p.x)**2+(pl.y-p.y)**2) < 200);
     if (tooClose) continue;
-    barrels.push({ x: p.x, y: p.y, radius: 10, hp: 1 });
+    barrels.push({ x: p.x, y: p.y, radius: 14, hp: 1 });
   }
 }
 function explodeBarrel(barrel, idx) {
@@ -1774,9 +1809,18 @@ function createExplosion(x,y,radius,damage,source='player') {
   for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*3;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*30,maxLife:60,size:5+Math.random()*6,color:'#555',type:'smoke'});}
 }
 function damageZombie(z,damage,kbx=0,kby=0) {
+  const prevHp=z.hp;
   z.hp-=damage;z.hitFlash=6;z.vx+=kbx;z.vy+=kby;z.staggerTimer=5;z.aware=true;
-  for(let i=0;i<4;i++)particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*4+kbx*0.3,vy:(Math.random()-0.5)*4+kby*0.3,life:15+Math.random()*10,maxLife:25,size:2+Math.random()*3,color:'#a22',type:'blood'});
-  if(Math.random()>0.5)decals.push({x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,size:4+Math.random()*8,alpha:0.4+Math.random()*0.3,color:'#311'});
+  // Scale blood splatter with damage intensity
+  const intensity=Math.min(3,damage/30);
+  const bloodCount=Math.floor(4+intensity*4);
+  for(let i=0;i<bloodCount;i++){const spd=(1+intensity)*2;particles.push({x:z.x+(Math.random()-0.5)*z.radius,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*spd+kbx*0.3,vy:(Math.random()-0.5)*spd+kby*0.3,life:15+Math.random()*10,maxLife:25,size:2+Math.random()*(2+intensity),color:['#a22','#811','#c11','#922'][Math.floor(Math.random()*4)],type:'blood'});}
+  // Blood splat decal on ground
+  if(Math.random()>0.3)decals.push({x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,size:4+Math.random()*8+intensity*3,alpha:0.4+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});
+  // Overkill gibs — when damage far exceeds remaining HP
+  if(z.hp<=0&&damage>prevHp*1.5){const gibCount=Math.min(12,Math.floor(damage/prevHp)*4);for(let i=0;i<gibCount;i++){const ga=Math.random()*Math.PI*2,gs=3+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(ga)*gs+kbx*0.5,vy:Math.sin(ga)*gs+kby*0.5,life:50+Math.random()*30,maxLife:80,size:4+Math.random()*6,color:['#611','#522','#700','#811'][Math.floor(Math.random()*4)],type:'chunk',gravity:0.08});}}
+  // Wounded zombie starts dripping blood
+  if(z.hp>0&&z.hp<z.maxHp*0.4) z._bleeding=true;
   playHitSound();
 }
 function damagePlayerObj(p,damage) {
@@ -1923,6 +1967,8 @@ function update() {
         // Use sweep collision for fast bullets (Tesla, etc) to prevent tunneling
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_bhit){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+                  // Critical hit VFX
+                  if(b.crit){addFloatingText(z.x,z.y-z.radius-10,'CRITICAL!','#f0f');playHeadshotSound();screenShake.intensity=Math.max(screenShake.intensity,8);for(let ck=0;ck<8;ck++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:15+Math.random()*10,maxLife:25,size:3+Math.random()*3,color:Math.random()>0.5?'#f0f':'#fff',type:'spark'});}}
                   // Chain lightning — arc from gun to first hit, then between chained zombies
                   if(b.chain){
                   // Find the firing player for gun muzzle position
@@ -1943,10 +1989,14 @@ function update() {
                   // Sparks at chain point
                   for(let li=0;li<4;li++){particles.push({x:nz.x+(Math.random()-0.5)*12,y:nz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
                   damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
-                  for(let k=0;k<35;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'});}
-                  for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
-                  decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
-                  for(let k=0;k<6;k++){const a2=Math.random()*Math.PI*2,sd=12+Math.random()*30;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});}
+                  // Directional blood burst — blood flies in bullet direction
+                  const _ba=Math.atan2(b.vy,b.vx);
+                  for(let k=0;k<40;k++){const a2=_ba+(Math.random()-0.5)*Math.PI*1.2,s=1+Math.random()*10;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:35+Math.random()*25,maxLife:60,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700','#500'][Math.floor(Math.random()*7)],type:'blood'});}
+                  // Gore chunks with gravity
+                  for(let k=0;k<12;k++){const a2=_ba+(Math.random()-0.5)*Math.PI,s=2+Math.random()*7;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:50+Math.random()*30,maxLife:80,size:4+Math.random()*7,color:['#511','#422','#600','#700'][Math.floor(Math.random()*4)],type:'chunk',gravity:0.07});}
+                  // Large blood pool + directional splatter trail
+                  decals.push({x:z.x,y:z.y,size:z.radius+18+Math.random()*25,alpha:0.6+Math.random()*0.2,color:'#200'});
+                  for(let k=0;k<8;k++){const a2=_ba+(Math.random()-0.5)*1.2,sd=15+Math.random()*40;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*10,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411','#500'][Math.floor(Math.random()*4)]});}
                   playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;dropZombieLoot(z);}
                   if(hasPerk('vampire')){const lp=getLocalPlayer();if(lp&&lp.alive){lp.hp=Math.min(lp.maxHp,lp.hp+2*getPerkCount('vampire'));}}
                   if(z.splitOnDeath||ZOMBIE_TYPES[z.type]?.splitOnDeath)splitZombie(z);
@@ -2000,6 +2050,8 @@ function update() {
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      // Bleeding zombies leave blood trails
+      if(z._bleeding&&gameTime%8===0){decals.push({x:z.x+(Math.random()-0.5)*6,y:z.y+(Math.random()-0.5)*6,size:2+Math.random()*4,alpha:0.3+Math.random()*0.2,color:'#311'});if(Math.random()<0.3)particles.push({x:z.x,y:z.y+z.radius*0.5,vx:(Math.random()-0.5)*0.5,vy:0.5+Math.random()*0.5,life:20,maxLife:20,size:1+Math.random()*2,color:'#a22',type:'blood'});}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;pushOutOfObstacles(z,z.radius);continue;}
       const{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
       if(!np)continue;
@@ -2088,7 +2140,7 @@ function update() {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360 }));
     const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
     // Sync bullets so remote players see all shots including other remote players' bullets
-    const bs = bullets.map(b => ({ x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color,size:b.size,life:b.life,flame:b.flame||false,grenade:b.grenade||false,tracer:b.tracer||false,chain:b.chain||false,explosive:b.explosive||false,explosionRadius:b.explosionRadius||0,laserGlow:b.laserGlow||false,owner:b.owner,ownerId:b.ownerId }));
+    const bs = bullets.map(b => ({ x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color,size:b.size,life:b.life,flame:b.flame||false,grenade:b.grenade||false,tracer:b.tracer||false,chain:b.chain||false,explosive:b.explosive||false,explosionRadius:b.explosionRadius||0,laserGlow:b.laserGlow||false,crit:b.crit||false,owner:b.owner,ownerId:b.ownerId }));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
     sendMsg({ type: 'game_state', players: ps, zombies: zs, bullets: bs, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState });
@@ -2262,8 +2314,19 @@ function render() {
   // Decals
   for(const d of decals){ctx.globalAlpha=d.alpha;ctx.fillStyle=d.color;ctx.beginPath();ctx.arc(d.x,d.y,d.size,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
 
-  // Barrels
-  for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);ctx.fillStyle='#811';ctx.beginPath();ctx.arc(0,0,br.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#a22';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#fa0';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('!',0,0);ctx.restore();}
+  // Barrels — red with pulsing glow and hazard stripe
+  for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
+    // Pulsing danger glow
+    const bPulse=0.3+Math.sin(performance.now()*0.004+br.x)*0.15;
+    ctx.shadowColor='#f40';ctx.shadowBlur=18;ctx.globalAlpha=bPulse;ctx.fillStyle='#f40';ctx.beginPath();ctx.arc(0,0,br.radius+5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;
+    // Barrel body
+    ctx.fillStyle='#922';ctx.beginPath();ctx.arc(0,0,br.radius,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#f80';ctx.lineWidth=3;ctx.stroke();
+    // Hazard stripe
+    ctx.strokeStyle='#fa0';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-br.radius+2,0);ctx.lineTo(br.radius-2,0);ctx.stroke();
+    // Warning symbol
+    ctx.fillStyle='#ff0';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('☢',0,0);
+  ctx.restore();}
 
   // Pickups
   for(const p of pickups){const bob=Math.sin(p.bobTimer)*3;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}ctx.restore();}
@@ -2600,6 +2663,22 @@ function render() {
     }
   }
 
+  // Dynamic lighting — additive glow from explosions, muzzle flashes, barrels
+  {const dlx=-camera.x+canvas.width/2+screenShake.x,dly=-camera.y+canvas.height/2+screenShake.y;
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  // Explosion light
+  for(const e of explosions){const t=e.life/e.maxLife,r=e.radius*2.5*t;const sx=e.x+dlx,sy=e.y+dly;
+    const g=ctx.createRadialGradient(sx,sy,0,sx,sy,r);g.addColorStop(0,`rgba(255,160,40,${t*0.35})`);g.addColorStop(0.4,`rgba(255,80,0,${t*0.15})`);g.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=g;ctx.fillRect(sx-r,sy-r,r*2,r*2);}
+  // Muzzle flash light
+  for(const p of players){if(p.alive&&p.weapons&&p.weapons[p.currentWeapon]?.muzzleFlash>0){
+    const mf=p.weapons[p.currentWeapon].muzzleFlash/6;const c=Math.cos(p.angle),s=Math.sin(p.angle);
+    const mx=p.x+c*24+dlx,my=p.y+s*24+dly,mr=80*mf;
+    const mg=ctx.createRadialGradient(mx,my,0,mx,my,mr);mg.addColorStop(0,`rgba(255,200,100,${mf*0.3})`);mg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=mg;ctx.fillRect(mx-mr,my-mr,mr*2,mr*2);}}
+  // Barrel glow
+  for(const br of barrels){const bsx=br.x+dlx,bsy=br.y+dly,brr=40;
+    const bg=ctx.createRadialGradient(bsx,bsy,0,bsx,bsy,brr);bg.addColorStop(0,'rgba(255,60,0,0.08)');bg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=bg;ctx.fillRect(bsx-brr,bsy-brr,brr*2,brr*2);}
+  ctx.restore();}
+
   // Redraw bullets on top of fog so they're always visible
   {const bx=-camera.x+canvas.width/2+screenShake.x,by=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.translate(bx,by);
@@ -2626,8 +2705,34 @@ function render() {
   }
   ctx.restore();}
 
-  // Damage vignette
-  const lp2=getLocalPlayer();if(lp2&&lp2.damageFlash>0){ctx.fillStyle=`rgba(255,0,0,${lp2.damageFlash/15*0.4})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+  // ---- Screen Effects ----
+  const lp2=getLocalPlayer();
+  if(lp2){
+    const hpRatio=lp2.hp/lp2.maxHp;
+    // Damage flash — red overlay on hit
+    if(lp2.damageFlash>0){
+      const flashAlpha=lp2.damageFlash/15*0.4;
+      ctx.fillStyle=`rgba(255,0,0,${flashAlpha})`;ctx.fillRect(0,0,canvas.width,canvas.height);
+      // Blood splatter on screen edges when hit
+      if(lp2.damageFlash>12){ctx.save();
+        for(let es=0;es<4;es++){const ex=Math.random()*canvas.width,ey=Math.random()<0.5?Math.random()*40:canvas.height-Math.random()*40;
+          const gr=ctx.createRadialGradient(ex,ey,0,ex,ey,20+Math.random()*30);gr.addColorStop(0,`rgba(120,0,0,${0.3+Math.random()*0.3})`);gr.addColorStop(1,'rgba(80,0,0,0)');ctx.fillStyle=gr;ctx.fillRect(ex-50,ey-50,100,100);}
+        for(let es=0;es<3;es++){const ey2=Math.random()*canvas.height,ex2=Math.random()<0.5?Math.random()*30:canvas.width-Math.random()*30;
+          const gr2=ctx.createRadialGradient(ex2,ey2,0,ex2,ey2,15+Math.random()*25);gr2.addColorStop(0,`rgba(100,0,0,${0.2+Math.random()*0.3})`);gr2.addColorStop(1,'rgba(60,0,0,0)');ctx.fillStyle=gr2;ctx.fillRect(ex2-40,ey2-40,80,80);}
+      ctx.restore();}
+    }
+    // Low HP vignette — dark edges that intensify as health drops
+    if(hpRatio<0.5&&lp2.alive){
+      const vigAlpha=Math.min(0.6,(0.5-hpRatio)*1.2);
+      const grd=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
+      grd.addColorStop(0,'rgba(0,0,0,0)');grd.addColorStop(1,`rgba(40,0,0,${vigAlpha})`);
+      ctx.fillStyle=grd;ctx.fillRect(0,0,canvas.width,canvas.height);
+      // Pulse effect at critical HP
+      if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+    }
+    // Kill streak screen flash
+    if(rapidKills>=3&&performance.now()-lastKillTime<200){ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+  }
 
   // Spectating text
   if(lp2&&!lp2.alive&&gameState==='playing'){ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,canvas.width,40);ctx.fillStyle='#f04040';ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.fillText('SPECTATING',canvas.width/2,26);}
