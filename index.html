@@ -118,7 +118,8 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <canvas id="game" tabindex="0"></canvas>
 <canvas id="minimap"></canvas>
 
-<div id="top-hud"><div class="score" id="score">0</div><div class="wave" id="wave-display">WAVE 1</div><div class="kills" id="kills-display">0 KILLS</div><div id="perk-display" style="margin-top:2px;font-size:14px;letter-spacing:2px"></div></div>
+<div id="top-hud"><div class="score" id="score">0</div><div class="wave" id="wave-display">WAVE 1</div><div class="kills" id="kills-display">0 KILLS</div></div>
+<div id="perk-display" style="position:fixed;top:82px;left:50%;transform:translateX(-50%);text-align:center;z-index:20;pointer-events:none;font-size:14px;letter-spacing:3px;text-shadow:1px 1px 3px #000"></div>
 <div id="health-hud"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
 <div id="ammo-hud"><div class="weapon-name" id="weapon-name">PISTOL</div><div class="ammo" id="ammo-display">12 <span class="slash">/</span> <span class="reserve">∞</span></div></div>
 <div id="weapon-slots"></div>
@@ -211,6 +212,18 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <div style="color:#4f4;font-size:clamp(20px,5vw,36px);font-weight:bold;letter-spacing:4px;margin-bottom:4px" id="wave-summary-title">WAVE COMPLETE</div>
     <div style="color:#888;font-size:13px;margin-bottom:16px" id="wave-summary-sub"></div>
     <div id="wave-summary-stats" style="text-align:center"></div>
+  </div>
+</div>
+
+<!-- ---- PAUSE MENU ---- -->
+<div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;background:rgba(0,0,0,0.75);font-family:'Courier New',monospace;text-align:center">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:350px">
+    <div style="color:#fff;font-size:clamp(24px,6vw,40px);font-weight:bold;letter-spacing:6px;margin-bottom:6px">PAUSED</div>
+    <div id="pause-mode-label" style="color:#888;font-size:12px;margin-bottom:24px"></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <button class="menu-btn primary" id="btn-resume" style="min-width:200px">RESUME</button>
+      <button class="menu-btn danger" id="btn-quit-game" style="min-width:200px">QUIT TO MENU</button>
+    </div>
   </div>
 </div>
 
@@ -1346,6 +1359,7 @@ function showScreen(id) {
   ['start-screen','solo-mode-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'].forEach(s => document.getElementById(s).style.display = 'none');
   document.getElementById('perk-screen').style.display = 'none'; perkSelectionActive = false;
   document.getElementById('wave-summary-screen').style.display = 'none'; waveSummaryActive = false; if(waveSummaryTimer){clearTimeout(waveSummaryTimer);waveSummaryTimer=0;}
+  document.getElementById('pause-screen').style.display = 'none'; gamePaused = false;
   if (id) document.getElementById(id).style.display = 'flex';
 }
 
@@ -1438,13 +1452,37 @@ addBtn('btn-restart', () => {
   if (isMultiplayer) { showScreen('start-screen'); if (ws) ws.close(); }
   else { startSoloGame(); }
 });
-addBtn('btn-menu', () => {
+addBtn('btn-menu', () => { togglePauseMenu(); });
+addBtn('btn-resume', () => { togglePauseMenu(); });
+addBtn('btn-quit-game', () => {
+  document.getElementById('pause-screen').style.display = 'none';
   gameState = 'menu';
   if (ws) ws.close();
   document.getElementById('btn-menu').style.display = 'none';
   showScreen('start-screen');
   playMusic('music_menu', 2.0);
 });
+
+let gamePaused = false;
+function togglePauseMenu() {
+  if (gameState !== 'playing' && !gamePaused) return;
+  const pauseEl = document.getElementById('pause-screen');
+  if (gamePaused) {
+    // Resume
+    gamePaused = false;
+    pauseEl.style.display = 'none';
+    gameState = 'playing';
+    canvas.focus();
+  } else {
+    // Pause
+    gamePaused = true;
+    pauseEl.style.display = 'block';
+    const modeLabel = gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
+    document.getElementById('pause-mode-label').textContent = isMultiplayer ? modeLabel + ' (multiplayer)' : modeLabel;
+    // Only actually freeze the game loop in single player
+    if (!isMultiplayer) gameState = 'paused';
+  }
+}
 // Action buttons: trigger action AND activate right joystick so user can hold+drag to aim
 function activateRightJoystickFromButton(touch) {
   if (!rightJoystick.active) {
@@ -1466,7 +1504,7 @@ document.getElementById('btn-reload').addEventListener('mousedown', () => reload
 // ============================================================
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
-  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; resetPerks();
+  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; resetPerks(); gamePaused = false;
   window._currentLevelSeed = Date.now();
   if (gameMode === 'survival') {
     generateArena(window._currentLevelSeed);
@@ -1535,7 +1573,7 @@ function startMultiplayerGame() {
 // ============================================================
 // INPUT
 // ============================================================
-function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(); if (e.key === ' ') { e.preventDefault(); dash(); } } }
+function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(); if (e.key === ' ') { e.preventDefault(); dash(); } } }
 function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
@@ -2519,7 +2557,7 @@ function updateHUD() {
 // ============================================================
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (gameState !== 'playing') { renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused') { renderMinimap(); return; }
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.translate(ox,oy);
 
