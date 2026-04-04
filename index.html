@@ -126,7 +126,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash">DASH</div>
   <div class="mobile-btn reload-btn" id="btn-reload" style="display:none">RLD</div>
-  <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:11px;font-weight:bold;display:flex;align-items:center;justify-content:center;text-align:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;animation:pulse 1s ease-in-out infinite">SWAP</div>
+  <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:10px;font-weight:bold;text-align:center;line-height:1.2;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;padding-top:22px;box-sizing:border-box"></div>
 </div>
 <div class="joystick-zone" id="joystick-left"></div>
 <div class="joystick-zone" id="joystick-right"></div>
@@ -217,7 +217,8 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;background:rgba(0,0,0,0.75);font-family:'Courier New',monospace;text-align:center">
   <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:350px">
     <div style="color:#fff;font-size:clamp(24px,6vw,40px);font-weight:bold;letter-spacing:6px;margin-bottom:6px">PAUSED</div>
-    <div id="pause-mode-label" style="color:#888;font-size:12px;margin-bottom:24px"></div>
+    <div id="pause-mode-label" style="color:#888;font-size:12px;margin-bottom:12px"></div>
+    <div id="pause-inventory" style="text-align:left;margin-bottom:16px;font-size:11px;max-height:40vh;overflow-y:auto"></div>
     <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
       <button class="menu-btn primary" id="btn-resume" style="min-width:200px">RESUME</button>
       <button class="menu-btn danger" id="btn-quit-game" style="min-width:200px">QUIT TO MENU</button>
@@ -279,24 +280,61 @@ const POWERUP_TYPES = [
   { id: 'overcharge', name: 'OVERCHARGE', color: '#ff0', icon: '⚡', duration: 900, desc: 'Infinite ammo, 3x fire rate' },
   { id: 'magnet', name: 'MAGNET', color: '#4af', icon: '🧲', duration: 600, desc: 'Pickups fly to you' },
   { id: 'nuke', name: 'NUKE', color: '#f0f', icon: '☢', duration: 1, desc: 'Kills all zombies on screen' },
+  { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 900, desc: 'Absorbs all damage' },
+  { id: 'bomb', name: 'BOMB', color: '#fa0', icon: '💣', duration: 1, desc: 'Drops explosion where you stand' },
+  { id: 'giant', name: 'GIANT', color: '#4f4', icon: '🍄', duration: 720, desc: 'Grow big, crush zombies on contact' },
+  { id: 'freeze', name: 'FREEZE', color: '#aef', icon: '❄', duration: 480, desc: 'All zombies slowed 70%' },
+  { id: 'frenzy', name: 'FRENZY', color: '#f80', icon: '💀', duration: 600, desc: '3x speed, 3x damage, half HP' },
+  { id: 'sunbeam', name: 'SUNBEAM', color: '#ffa', icon: '☀', duration: 600, desc: 'Flashlight burns zombies' },
+  { id: 'timebomb', name: 'TIME BOMB', color: '#a8f', icon: '⏳', duration: 1, desc: 'Slows zombies in area for 8s' },
+  { id: 'firebomb', name: 'FIRE BOMB', color: '#f60', icon: '🔥', duration: 1, desc: 'Drops fire that burns zombies' },
 ];
 let activePowerUp = null; // { id, timer }
 
 function activatePowerUp(id) {
   const def = POWERUP_TYPES.find(p => p.id === id);
   if (!def) return;
+  const lp = getLocalPlayer();
+  // Instant power-ups
   if (id === 'nuke') {
-    // Instant: kill all zombies on host
     if (isHost) { for (const z of zombies) { z.hp = 0; } }
     screenShake.intensity = 20;
-    addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 40, 'NUKE!', '#f0f');
-    // Big flash
-    const lp = getLocalPlayer(); if (lp) lp.damageFlash = 8;
+    addFloatingText(lp.x, lp.y - 40, 'NUKE!', '#f0f');
+    if (lp) lp.damageFlash = 8;
     playExplosionSound();
     return;
   }
+  if (id === 'bomb') {
+    if (lp) createExplosion(lp.x, lp.y, 160, 400, 'player');
+    screenShake.intensity = 15;
+    addFloatingText(lp.x, lp.y - 40, 'BOMB!', '#fa0');
+    playExplosionSound();
+    return;
+  }
+  if (id === 'timebomb') {
+    // Slow all zombies near player for 8 seconds
+    if (lp && isHost) { for (const tz of zombies) { const td = Math.sqrt((tz.x-lp.x)**2+(tz.y-lp.y)**2); if (td < 300) { tz._slowTimer = 480; } } }
+    addFloatingText(lp.x, lp.y - 40, 'TIME SLOW!', '#a8f');
+    for (let k=0;k<15;k++){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*80,y:lp.y+Math.sin(a)*80,vx:0,vy:-0.5,life:30,maxLife:30,size:4,color:'#a8f',type:'spark'});}
+    return;
+  }
+  if (id === 'firebomb') {
+    // Create fire zone that damages zombies walking through it
+    if (lp) {
+      for (let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fd=Math.random()*60;
+        particles.push({x:lp.x+Math.cos(fa)*fd,y:lp.y+Math.sin(fa)*fd,vx:(Math.random()-0.5)*0.5,vy:-0.5-Math.random(),life:300,maxLife:300,size:6+Math.random()*4,color:Math.random()>0.5?'#f80':'#f40',type:'explosion'});}
+      // Damage zombies in area (repeated via a temporary fire zone)
+      if (isHost) { for (const fz of zombies) { const fd2=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if(fd2<80) damageZombie(fz,60,0,0); } }
+    }
+    addFloatingText(lp.x, lp.y - 40, 'FIRE!', '#f60');
+    playExplosionSound();
+    return;
+  }
+  // Duration power-ups
   activePowerUp = { id, timer: def.duration };
-  addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 40, def.name + '!', def.color);
+  addFloatingText(lp.x, lp.y - 40, def.name + '!', def.color);
+  // Frenzy: halve HP on activation
+  if (id === 'frenzy' && lp) { lp.hp = Math.max(1, Math.floor(lp.hp * 0.5)); }
 }
 
 function hasPowerUp(id) { return activePowerUp && activePowerUp.id === id; }
@@ -546,30 +584,28 @@ function createPlayerObj(id, name, color, x, y) {
 
 // ---- WEAPONS ----
 const WEAPON_DEFS = {
-  // Pistol: reliable sidearm
+  // Pistol: reliable sidearm — infinite ammo
   pistol: { name: 'Pistol', color: '#ccc', bulletColor: '#ff0', damage: 35, fireRate: 180, bulletSpeed: 16, spread: 0.03, magSize: 999, bulletSize: 3, knockback: 3, pierce: 0, infinite: true, shakeIntensity: 2, aimLine: 'short', sound: { freq: 600, duration: 0.05, type: 'square' } },
   // Revolver: hand cannon
-  revolver: { name: 'Revolver', color: '#daa', bulletColor: '#fa0', damage: 80, fireRate: 400, bulletSpeed: 20, spread: 0.02, magSize: 999, bulletSize: 5, knockback: 12, pierce: 1, infinite: true, shakeIntensity: 6, aimLine: 'medium', sound: { freq: 250, duration: 0.12, type: 'sawtooth' } },
+  revolver: { name: 'Revolver', color: '#daa', bulletColor: '#fa0', damage: 80, fireRate: 400, bulletSpeed: 20, spread: 0.02, magSize: 50, bulletSize: 5, knockback: 12, pierce: 1, infinite: false, totalAmmo: 100, shakeIntensity: 6, aimLine: 'medium', sound: { freq: 250, duration: 0.12, type: 'sawtooth' } },
   // SMG: bullet hose
-  smg: { name: 'SMG', color: '#7af', bulletColor: '#7df', damage: 15, fireRate: 40, bulletSpeed: 18, spread: 0.12, magSize: 999, bulletSize: 2, knockback: 1, pierce: 0, infinite: true, shakeIntensity: 1, aimLine: 'short', sound: { freq: 950, duration: 0.02, type: 'square' } },
+  smg: { name: 'SMG', color: '#7af', bulletColor: '#7df', damage: 15, fireRate: 40, bulletSpeed: 18, spread: 0.12, magSize: 200, bulletSize: 2, knockback: 1, pierce: 0, infinite: false, totalAmmo: 500, shakeIntensity: 1, aimLine: 'short', sound: { freq: 950, duration: 0.02, type: 'square' } },
   // Burst: precise 3-round burst
-  burst: { name: 'Burst', color: '#af7', bulletColor: '#af7', damage: 30, fireRate: 320, bulletSpeed: 20, spread: 0.03, magSize: 999, burst: 3, burstDelay: 35, bulletSize: 3, knockback: 3, pierce: 0, infinite: true, shakeIntensity: 2, aimLine: 'medium', sound: { freq: 650, duration: 0.025, type: 'square' } },
+  burst: { name: 'Burst', color: '#af7', bulletColor: '#af7', damage: 30, fireRate: 320, bulletSpeed: 20, spread: 0.03, magSize: 120, burst: 3, burstDelay: 35, bulletSize: 3, knockback: 3, pierce: 0, infinite: false, totalAmmo: 300, shakeIntensity: 2, aimLine: 'medium', sound: { freq: 650, duration: 0.025, type: 'square' } },
   // Shotgun: devastating close range
-  shotgun: { name: 'Shotgun', color: '#fa4', bulletColor: '#fa0', damage: 28, fireRate: 500, bulletSpeed: 12, spread: 0.2, magSize: 999, pellets: 10, bulletSize: 3, knockback: 12, pierce: 0, infinite: true, shakeIntensity: 7, aimLine: 'cone', sound: { freq: 120, duration: 0.15, type: 'sawtooth' } },
+  shotgun: { name: 'Shotgun', color: '#fa4', bulletColor: '#fa0', damage: 28, fireRate: 500, bulletSpeed: 12, spread: 0.2, magSize: 60, pellets: 10, bulletSize: 3, knockback: 12, pierce: 0, infinite: false, totalAmmo: 120, shakeIntensity: 7, aimLine: 'cone', sound: { freq: 120, duration: 0.15, type: 'sawtooth' } },
   // Rifle: long range sniper
-  rifle: { name: 'Rifle', color: '#4f4', bulletColor: '#4f4', damage: 100, fireRate: 650, bulletSpeed: 28, spread: 0.005, magSize: 999, bulletSize: 4, knockback: 14, pierce: 3, tracer: true, infinite: true, shakeIntensity: 8, aimLine: 'sniper', sound: { freq: 100, duration: 0.18, type: 'sawtooth' } },
+  rifle: { name: 'Rifle', color: '#4f4', bulletColor: '#4f4', damage: 100, fireRate: 650, bulletSpeed: 28, spread: 0.005, magSize: 40, bulletSize: 4, knockback: 14, pierce: 3, tracer: true, infinite: false, totalAmmo: 80, shakeIntensity: 8, aimLine: 'sniper', sound: { freq: 100, duration: 0.18, type: 'sawtooth' } },
   // Minigun: wall of bullets
-  minigun: { name: 'Minigun', color: '#aaf', bulletColor: '#adf', damage: 12, fireRate: 20, bulletSpeed: 20, spread: 0.18, magSize: 999, bulletSize: 2, knockback: 0.5, pierce: 0, infinite: true, shakeIntensity: 1, aimLine: 'wide', sound: { freq: 1100, duration: 0.015, type: 'square' } },
+  minigun: { name: 'Minigun', color: '#aaf', bulletColor: '#adf', damage: 12, fireRate: 20, bulletSpeed: 20, spread: 0.18, magSize: 500, bulletSize: 2, knockback: 0.5, pierce: 0, infinite: false, totalAmmo: 1000, shakeIntensity: 1, aimLine: 'wide', sound: { freq: 1100, duration: 0.015, type: 'square' } },
   // Flamethrower: area denial
-  flamethrower: { name: 'Flame', color: '#f60', bulletColor: '#f80', damage: 10, fireRate: 25, bulletSpeed: 8, spread: 0.3, magSize: 999, bulletSize: 7, knockback: 1, pierce: 2, infinite: true, shakeIntensity: 0.5, flame: true, bulletLife: 22, aimLine: 'cone', sound: { freq: 80, duration: 0.025, type: 'sawtooth' } },
+  flamethrower: { name: 'Flame', color: '#f60', bulletColor: '#f80', damage: 10, fireRate: 25, bulletSpeed: 8, spread: 0.3, magSize: 300, bulletSize: 7, knockback: 1, pierce: 2, infinite: false, totalAmmo: 600, shakeIntensity: 0.5, flame: true, bulletLife: 22, aimLine: 'cone', sound: { freq: 80, duration: 0.025, type: 'sawtooth' } },
   // Laser: precise beam, pierces everything
-  laser: { name: 'Laser', color: '#f4f', bulletColor: '#ff2fff', damage: 5, fireRate: 14, bulletSpeed: 32, spread: 0.008, magSize: 999, bulletSize: 3, knockback: 0, pierce: 99, tracer: true, infinite: true, shakeIntensity: 0.3, laserGlow: true, aimLine: 'sniper', sound: { freq: 3200, duration: 0.012, type: 'sine' } },
+  laser: { name: 'Laser', color: '#f4f', bulletColor: '#ff2fff', damage: 5, fireRate: 14, bulletSpeed: 32, spread: 0.008, magSize: 250, bulletSize: 3, knockback: 0, pierce: 99, tracer: true, infinite: false, totalAmmo: 500, shakeIntensity: 0.3, laserGlow: true, aimLine: 'sniper', sound: { freq: 3200, duration: 0.012, type: 'sine' } },
   // Tesla: chain lightning — high damage, chains to many enemies
-  lightning: { name: 'Tesla', color: '#4ff', bulletColor: '#4ff', damage: 100, fireRate: 350, bulletSpeed: 999, spread: 0.03, magSize: 999, bulletSize: 3, knockback: 4, pierce: 0, infinite: true, shakeIntensity: 5, chain: true, chainRange: 280, chainCount: 10, tracer: false, aimLine: 'medium', bulletLife: 2, sound: { freq: 1800, duration: 0.06, type: 'sine' } },
+  lightning: { name: 'Tesla', color: '#4ff', bulletColor: '#4ff', damage: 150, fireRate: 280, bulletSpeed: 999, spread: 0.03, magSize: 80, bulletSize: 4, knockback: 6, pierce: 0, infinite: false, totalAmmo: 160, shakeIntensity: 6, chain: true, chainRange: 320, chainCount: 12, tracer: false, aimLine: 'medium', bulletLife: 2, sound: { freq: 1800, duration: 0.06, type: 'sine' } },
   // RPG: massive explosion — instakill radius
-  rpg: { name: 'RPG', color: '#f44', bulletColor: '#f00', damage: 500, fireRate: 1100, bulletSpeed: 9, spread: 0.02, magSize: 999, bulletSize: 7, knockback: 20, pierce: 0, infinite: true, shakeIntensity: 14, explosive: true, explosionRadius: 140, aimLine: 'arc', sound: { freq: 60, duration: 0.25, type: 'sawtooth' } },
-  // Grenade Launcher: lobs grenades — instakill radius
-  grenade_launcher: { name: 'Grenade', color: '#f80', bulletColor: '#fa0', damage: 400, fireRate: 800, bulletSpeed: 9, spread: 0.03, magSize: 999, bulletSize: 5, knockback: 16, pierce: 0, infinite: true, shakeIntensity: 8, explosive: true, explosionRadius: 150, grenade: true, bulletLife: 28, aimLine: 'arc', sound: { freq: 500, duration: 0.08, type: 'sine' } },
+  rpg: { name: 'RPG', color: '#f44', bulletColor: '#f00', damage: 500, fireRate: 1100, bulletSpeed: 9, spread: 0.02, magSize: 15, bulletSize: 7, knockback: 20, pierce: 0, infinite: false, totalAmmo: 30, shakeIntensity: 14, explosive: true, explosionRadius: 140, aimLine: 'arc', sound: { freq: 60, duration: 0.25, type: 'sawtooth' } },
 };
 function createWeapon(type) { const d = WEAPON_DEFS[type]; if(!d) return createWeapon('pistol'); return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
 
@@ -1683,6 +1719,38 @@ function togglePauseMenu() {
     pauseEl.style.display = 'block';
     const modeLabel = gameMode === 'horde' ? `HORDE — ${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
     document.getElementById('pause-mode-label').textContent = isMultiplayer ? modeLabel + ' (multiplayer)' : modeLabel;
+    // Build inventory display
+    const lp = getLocalPlayer();
+    let inv = '';
+    if (lp) {
+      // Weapons
+      inv += '<div style="color:#f0c040;font-weight:bold;margin-bottom:4px">WEAPONS</div>';
+      for (let wi = 0; wi < lp.weapons.length; wi++) {
+        const ww = lp.weapons[wi], wd = WEAPON_DEFS[ww.type];
+        if (wd) inv += `<div style="color:${wd.color};padding:2px 0">${wi === lp.currentWeapon ? '► ' : '  '}${wd.name}${wd.infinite ? '' : ` (${ww.ammo})`}</div>`;
+      }
+      // Perks
+      const perkEntries = Object.entries(playerPerks).filter(([,c]) => c > 0);
+      if (perkEntries.length > 0) {
+        inv += '<div style="color:#f0c040;font-weight:bold;margin-top:8px;margin-bottom:4px">PERKS</div>';
+        for (const [pid, count] of perkEntries) {
+          const pd = PERK_DEFS.find(p => p.id === pid);
+          if (pd) inv += `<div style="color:${pd.color};padding:2px 0">${pd.icon} ${pd.name}${count > 1 ? ' x' + count : ''} — ${pd.desc}</div>`;
+        }
+      }
+      // Synergies
+      const syns = getActiveSynergies();
+      if (syns.length > 0) {
+        inv += '<div style="color:#f0c040;font-weight:bold;margin-top:8px;margin-bottom:4px">SYNERGIES</div>';
+        for (const s of syns) inv += `<div style="color:${s.color};padding:2px 0">★ ${s.name} — ${s.desc}</div>`;
+      }
+      // Power-up
+      if (activePowerUp) {
+        const pdef = POWERUP_TYPES.find(p => p.id === activePowerUp.id);
+        if (pdef) inv += `<div style="color:${pdef.color};font-weight:bold;margin-top:8px">${pdef.icon} ${pdef.name} — ${Math.ceil(activePowerUp.timer / 60)}s left</div>`;
+      }
+    }
+    document.getElementById('pause-inventory').innerHTML = inv;
     // Only actually freeze the game loop in single player
     if (!isMultiplayer) gameState = 'paused';
   }
@@ -1856,8 +1924,9 @@ function fireSingleShot(p,w,d) {
   const pellets=d.pellets||1;
   for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2*spreadMult,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a);
     let dmg=d.damage, isCrit=false;
-    // Rage power-up: 2x damage
+    // Power-up damage boosts
     if(playerHasPowerUp(p,'rage')) dmg*=2;
+    if(playerHasPowerUp(p,'frenzy')) dmg*=3;
     if(playerHasPerk(p,'berserker')&&p.hp<p.maxHp*0.3) dmg*=1+getPlayerPerkCount(p,'berserker')*0.4;
     // Base 5% crit chance + 15% per crit perk stack
     const critChance=0.05+getPlayerPerkCount(p,'critical')*0.15;
@@ -1894,7 +1963,7 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
   for(let i=pickups.length-1;i>=0;i--){ const p=pickups[i],dx=pl.x-p.x,dy=pl.y-p.y;
     if(Math.sqrt(dx*dx+dy*dy)<PICKUP_RANGE){
       if(p.dropCooldown>0) continue;
-      if(p.type==='weapon'){const ex=pl.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];if(d){ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);if(isLocalUI)showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`);};}else if(pl.weapons.length<MAX_WEAPONS){pl.weapons.push(createWeapon(p.weaponType));pl.currentWeapon=pl.weapons.length-1;if(isLocalUI)showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} ACQUIRED`);}else{
+      if(p.type==='weapon'){const ex=pl.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];if(d){ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);if(isLocalUI)showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`,`${d.name}: ${d.damage} dmg`);};}else if(pl.weapons.length<MAX_WEAPONS){const nd=WEAPON_DEFS[p.weaponType];pl.weapons.push(createWeapon(p.weaponType));pl.currentWeapon=pl.weapons.length-1;if(isLocalUI)showPickupMsg(`${nd?nd.name:'?'} ACQUIRED`,nd?`${nd.damage} dmg${nd.chain?' — chains to '+nd.chainCount+' targets':''}${nd.explosive?' — explosive':''}${nd.pellets?' — '+nd.pellets+' pellets':''}${nd.pierce?' — pierces '+nd.pierce:''}`:'')}else{
         // At max weapons: only swap on manual pickup (E key), show prompt otherwise
         if(!manual){if(isLocalUI&&pl===getLocalPlayer())_nearbyWeaponPickup={weaponType:p.weaponType,index:i};continue;}
         const droppedWeapon=pl.weapons[pl.currentWeapon];
@@ -1905,7 +1974,7 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
       else if(p.type==='health'){if(pl.hp<pl.maxHp){pl.hp=Math.min(pl.maxHp,pl.hp+p.amount);if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='ammo'){const w=pl.weapons[pl.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;if(isLocalUI){showPickupMsg('+AMMO');playPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='powerup'){
-        if(isLocalUI){activatePowerUp(p.powerupId);playPickupSound();}
+        if(isLocalUI){const ppd=POWERUP_TYPES.find(t=>t.id===p.powerupId);activatePowerUp(p.powerupId);playPickupSound();if(ppd)showPickupMsg(`${ppd.icon} ${ppd.name}`,ppd.desc);}
         // Nuke: always kill zombies on host regardless of who picked it up
         if(p.powerupId==='nuke'&&isHost){for(const z of zombies){z.hp=0;}}
         pickups.splice(i,1);}
@@ -1950,9 +2019,9 @@ function startLevel() {
   el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000);
   spawnLevelPickups(); spawnWeaponPickup(); spawnBarrels(6 + Math.floor(Math.random() * 5));
 }
-function showPickupMsg(t) { const el=document.getElementById('pickup-msg');el.textContent=t;el.style.opacity='1';setTimeout(()=>el.style.opacity='0',1500); }
+function showPickupMsg(t, sub) { const el=document.getElementById('pickup-msg');el.innerHTML=sub?`<span style="font-size:18px;font-weight:bold">${t}</span><br><span style="font-size:12px;color:#aaa">${sub}</span>`:t;el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000); }
 
-function spawnWeaponPickup() { const ts=['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg','grenade_launcher'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
+function spawnWeaponPickup() { const ts=['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 function spawnHealthPickup() { const p=getRandomFloorPos();pickups.push({type:'health',amount:25,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 function spawnBarrels(count) {
   for (let i = 0; i < count; i++) {
@@ -2091,7 +2160,7 @@ function updateSurvivalWaves() {
     return;
   }
   // Active wave — spawn zombies aggressively
-  const maxActive = 20 + survivalWave * 5;
+  const maxActive = Math.min(40, 15 + survivalWave * 3);
   const spawnRate = Math.max(4, 28 - survivalWave * 3);
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && survivalZombiesSpawned < survivalZombiesTotal && zombies.length < maxActive) {
@@ -2101,7 +2170,7 @@ function updateSurvivalWaves() {
       spawnSurvivalZombie();
       survivalZombiesSpawned++;
     }
-    if (Math.random() < 0.06) spawnWeaponPickup();
+    if (Math.random() < 0.02) spawnWeaponPickup();
   }
   // Check wave complete — boss waves require boss killed too
   if (survivalZombiesKilled >= survivalZombiesTotal && zombies.length === 0) {
@@ -2154,7 +2223,7 @@ function updateHorde() {
   // Easy start, very slow escalation
   const spawnRate = elapsed < 40 ? Math.floor(120 - elapsed * 1.5) : Math.max(12, Math.floor(60 - (elapsed - 40) * 0.3));
   // Very few zombies, slow cap growth
-  const maxZombies = elapsed < 40 ? Math.floor(2 + elapsed * 0.2) : Math.floor(10 + (elapsed - 40) * 0.5);
+  const maxZombies = Math.min(30, elapsed < 40 ? Math.floor(2 + elapsed * 0.2) : Math.floor(10 + (elapsed - 40) * 0.5));
   // Zombie type pool expands over time — slower introduction
   const types = ['normal', 'normal'];
   if (elapsed > 25) types.push('fast', 'fast');
@@ -2170,7 +2239,8 @@ function updateHorde() {
     for (let b = 0; b < burst; b++) spawnHordeZombie(types, elapsed);
   }
   // First weapon drops fast (5s, 12s), then every 15 seconds
-  if (hordeTimer === 300 || hordeTimer === 720 || (hordeTimer > 720 && hordeTimer % 900 === 0)) spawnWeaponPickup();
+  // Weapon pickup: first at 8s, then every 30s
+  if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) spawnWeaponPickup();
   // Power-up orb every 35 seconds
   if (hordeTimer % 2100 === 0 && hordeTimer > 0) {
     const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
@@ -2220,7 +2290,7 @@ function dropZombieLoot(z) {
   if (z.boss) {
     pickups.push({ type: 'health', amount: 50, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
     pickups.push({ type: 'ammo', x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
-    const ts = ['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg','grenade_launcher'];
+    const ts = ['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'];
     pickups.push({ type: 'weapon', weaponType: ts[Math.floor(Math.random()*ts.length)], x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
     // Boss always drops a power-up
     const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
@@ -2352,8 +2422,9 @@ function update() {
       if(sprinting) moveSpeed *= 1.6;
       // Adrenaline perk: kill streaks boost speed
       if(hasPerk('adrenaline')&&(rapidKills>=3||hasSynergy('MOMENTUM'))) moveSpeed *= 1.3;
-      // Ghost power-up: 1.5x speed
+      // Power-up speed effects
       if(hasPowerUp('ghost')) moveSpeed *= 1.5;
+      if(hasPowerUp('frenzy')) moveSpeed *= 3;
       // Sprint trail particles
       if(sprinting && (Math.abs(lp.vx)>0.5||Math.abs(lp.vy)>0.5) && gameTime%3===0) particles.push({x:lp.x+(Math.random()-0.5)*8,y:lp.y+(Math.random()-0.5)*8,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:8,maxLife:8,size:PLAYER_RADIUS*0.6,color:lp.color,type:'dashtrail'});
       if(isMobile&&(dx!==0||dy!==0)){
@@ -2382,12 +2453,18 @@ function update() {
       activePowerUp.timer--;
       if (activePowerUp.timer <= 0) { activePowerUp = null; }
       else {
-        // Ghost: invincibility
-        if (hasPowerUp('ghost')) lp.invincible = Math.max(lp.invincible, 50);
+        // Ghost + Shield: invincibility
+        if (hasPowerUp('ghost')||hasPowerUp('shield')) lp.invincible = Math.max(lp.invincible, 50);
         // Magnet: pull pickups toward player
         if (hasPowerUp('magnet')) { for (const pk of pickups) { const mdx=lp.x-pk.x,mdy=lp.y-pk.y,md=Math.sqrt(mdx*mdx+mdy*mdy); if(md>10&&md<500){pk.x+=mdx/md*8;pk.y+=mdy/md*8;} } }
+        // Giant: grow player radius, crush zombies on contact
+        if (hasPowerUp('giant')&&isHost) { for(let gi=zombies.length-1;gi>=0;gi--){const gz=zombies[gi];const gd=Math.sqrt((gz.x-lp.x)**2+(gz.y-lp.y)**2);if(gd<PLAYER_RADIUS*3+gz.radius){damageZombie(gz,30,((gz.x-lp.x)/gd)*5,((gz.y-lp.y)/gd)*5);}}}
+        // Freeze: slow all zombies
+        if (hasPowerUp('freeze')&&isHost) { for(const fz of zombies){fz.speed=ZOMBIE_TYPES[fz.type]?(ZOMBIE_TYPES[fz.type].speed*0.3):0.5;} }
+        // Sunbeam: flashlight damages zombies in the beam
+        if (hasPowerUp('sunbeam')&&isHost&&gameTime%6===0) { for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<400){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4)damageZombie(sz,15,sdx/sd*2,sdy/sd*2);}} }
         // Power-up aura particles
-        if (gameTime % 4 === 0) { const def = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(def){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*20,y:lp.y+Math.sin(a)*20,vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:3,color:def.color,type:'spark'});} }
+        if (gameTime % 4 === 0) { const pdef = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} }
       }
     }
 
@@ -2576,17 +2653,19 @@ function update() {
     } else {
       // Continuous zombie spawning based on level
       spawnTimer++;
-      const maxZombies = 25 + level * 8;
+      const maxZombies = Math.min(35, 20 + level * 5);
       const spawnRate = Math.max(5, 25 - level * 3);
       if(spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
         spawnZombie();
-        if(Math.random()<0.04) spawnWeaponPickup();
+        if(Math.random()<0.015) spawnWeaponPickup();
       }
     }
 
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      // Time bomb slow effect
+      if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.2):0.3;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;pushOutOfObstacles(z,z.radius);continue;}
       const{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
       if(!np)continue;
@@ -2903,7 +2982,7 @@ function updateHUD() {
   const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
   document.getElementById('weapon-name').textContent=def.name;
   const ae=document.getElementById('ammo-display');
-  ae.innerHTML=`∞`;ae.className='ammo';
+  ae.innerHTML=def.infinite?'∞':`${w.ammo} <span class="slash">/</span> <span class="reserve">${w.reserveAmmo}</span>`;ae.className='ammo';
   document.getElementById('score').textContent=score.toLocaleString();
   document.getElementById('wave-display').textContent=gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
@@ -2916,8 +2995,8 @@ function updateHUD() {
   if(_nearbyWeaponPickup&&lp.weapons.length>=MAX_WEAPONS){
     const wd=WEAPON_DEFS[_nearbyWeaponPickup.weaponType];
     if(wd){
-      h+=`<div style="color:#f0c040;font-size:13px;font-weight:bold;text-align:center;margin-bottom:6px;padding:6px 12px;border:2px solid #f0c040;background:rgba(240,192,64,0.15);animation:pulse 1s ease-in-out infinite">SWAP → ${wd.name}${isMobile?'':' [E]'}</div>`;
-      if(swapBtn){swapBtn.style.display='block';swapBtn.textContent='SWAP\n'+wd.name.substring(0,6);}
+      if(isMobile){if(swapBtn){swapBtn.style.display='block';swapBtn.innerHTML=`SWAP<br>${wd.name.substring(0,5)}`;}}
+      else{h+=`<div style="color:#f0c040;font-size:11px;font-weight:bold;text-align:center;margin-bottom:4px">[E] SWAP → ${wd.name}</div>`;}
     }
   } else { if(swapBtn)swapBtn.style.display='none'; }
   _nearbyWeaponPickup=null;
@@ -3478,6 +3557,10 @@ function render() {
     if(hasPowerUp('rage')){ctx.fillStyle='rgba(255,40,0,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('ghost')){ctx.fillStyle='rgba(200,200,255,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('overcharge')){ctx.fillStyle='rgba(255,255,0,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('shield')){ctx.fillStyle='rgba(0,200,255,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('giant')){ctx.fillStyle='rgba(0,200,0,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('freeze')){ctx.fillStyle='rgba(150,200,255,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('frenzy')){ctx.fillStyle='rgba(255,100,0,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);}
   }
 
   // Spectating text
