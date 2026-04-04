@@ -1790,7 +1790,7 @@ function startMultiplayerGame() {
 // ============================================================
 // INPUT
 // ============================================================
-function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(); if (e.key === ' ') { e.preventDefault(); dash(); } } }
+function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(true); if (e.key === ' ') { e.preventDefault(); dash(); } } }
 function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
@@ -1883,16 +1883,20 @@ function dash() {
 
 // In multiplayer, only the host runs authoritative pickups for ALL players.
 // Non-host only gets visual feedback — state syncs from host.
-function tryPickup() {
+let _nearbyWeaponPickup = null; // {weaponType, index} — shown as swap prompt in HUD
+
+function tryPickup(manual) {
   const lp=getLocalPlayer(); if(!lp||!lp.alive) return;
-  tryPickupForPlayer(lp, true);
+  tryPickupForPlayer(lp, true, manual);
 }
-function tryPickupForPlayer(pl, isLocalUI) {
+function tryPickupForPlayer(pl, isLocalUI, manual) {
   if(!pl||!pl.alive) return;
   for(let i=pickups.length-1;i>=0;i--){ const p=pickups[i],dx=pl.x-p.x,dy=pl.y-p.y;
     if(Math.sqrt(dx*dx+dy*dy)<PICKUP_RANGE){
       if(p.dropCooldown>0) continue;
-      if(p.type==='weapon'){const ex=pl.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);if(isLocalUI)showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`);}else if(pl.weapons.length<MAX_WEAPONS){pl.weapons.push(createWeapon(p.weaponType));pl.currentWeapon=pl.weapons.length-1;if(isLocalUI)showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} ACQUIRED`);}else{
+      if(p.type==='weapon'){const ex=pl.weapons.find(w=>w.type===p.weaponType);if(ex){const d=WEAPON_DEFS[p.weaponType];if(d){ex.reserveAmmo=Math.min(ex.reserveAmmo+d.totalAmmo,d.totalAmmo*2);if(isLocalUI)showPickupMsg(`+${d.totalAmmo} ${d.name} AMMO`);};}else if(pl.weapons.length<MAX_WEAPONS){pl.weapons.push(createWeapon(p.weaponType));pl.currentWeapon=pl.weapons.length-1;if(isLocalUI)showPickupMsg(`${WEAPON_DEFS[p.weaponType].name} ACQUIRED`);}else{
+        // At max weapons: only swap on manual pickup (E key), show prompt otherwise
+        if(!manual){if(isLocalUI&&pl===getLocalPlayer())_nearbyWeaponPickup={weaponType:p.weaponType,index:i};continue;}
         const droppedWeapon=pl.weapons[pl.currentWeapon];
         pickups.push({type:'weapon',weaponType:droppedWeapon.type,x:pl.x,y:pl.y,bobTimer:Math.random()*Math.PI*2,dropCooldown:90});
         pl.weapons[pl.currentWeapon]=createWeapon(p.weaponType);
@@ -2909,8 +2913,11 @@ function updateHUD() {
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
   const se=document.getElementById('weapon-slots');let h='';
+  // Swap prompt when near a weapon at max capacity
+  if(_nearbyWeaponPickup&&lp.weapons.length>=MAX_WEAPONS){const wd=WEAPON_DEFS[_nearbyWeaponPickup.weaponType];if(wd)h+=`<div style="color:#f0c040;font-size:10px;text-align:center;margin-bottom:4px;animation:pulse 1s ease-in-out infinite">[E] SWAP → ${wd.name}</div>`;}
+  _nearbyWeaponPickup=null; // reset each frame — re-set by tryPickupForPlayer if still near
   for(let i=0;i<MAX_WEAPONS;i++){
-    if(i<lp.weapons.length){const ww=lp.weapons[i],dd=WEAPON_DEFS[ww.type];h+=`<div class="weapon-slot ${i===lp.currentWeapon?'active':''}" data-idx="${i}"><span class="key">${i+1}</span>${dd.name.substring(0,4)}</div>`;}
+    if(i<lp.weapons.length){const ww=lp.weapons[i],dd=WEAPON_DEFS[ww.type];if(dd)h+=`<div class="weapon-slot ${i===lp.currentWeapon?'active':''}" data-idx="${i}"><span class="key">${i+1}</span>${dd.name.substring(0,4)}</div>`;else h+=`<div class="weapon-slot" data-idx="${i}"><span class="key">${i+1}</span>????</div>`;}
     else{h+=`<div class="weapon-slot" style="border-style:dashed;color:#333"><span class="key">${i+1}</span>----</div>`;}
   }
   se.innerHTML=h;
