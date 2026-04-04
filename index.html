@@ -2101,7 +2101,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -2110,9 +2110,21 @@ function update() {
       if (p.id === myId || !p.alive) continue;
       const inp = remoteInputs[p.id];
       if (inp) {
-        p.x = inp.x; p.y = inp.y; p.vx = inp.vx||0; p.vy = inp.vy||0; p.angle = inp.angle; p.moveAngle = inp.moveAngle||0;
+        // Snap to client position when new input arrives, then extrapolate between inputs
+        const isNewInput = inp._seq !== p._lastInputSeq;
+        if (isNewInput) {
+          p.x = inp.x; p.y = inp.y;
+          p._lastInputSeq = inp._seq;
+        } else {
+          // Extrapolate: keep moving the remote player in their last known direction
+          // This prevents the position from freezing between input packets
+          p.x += p.vx; p.y += p.vy;
+          p.x = clamp(p.x, PLAYER_RADIUS, ARENA_W - PLAYER_RADIUS);
+          p.y = clamp(p.y, PLAYER_RADIUS, ARENA_H - PLAYER_RADIUS);
+          pushOutOfObstacles(p, PLAYER_RADIUS);
+        }
+        p.vx = inp.vx||0; p.vy = inp.vy||0; p.angle = inp.angle; p.moveAngle = inp.moveAngle||0;
         // HP and alive are HOST-AUTHORITATIVE — never accept from client input
-        // (otherwise client overwrites host damage every frame)
         // Sync dash, reload, maxHp, and perk state from remote player
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
         if (inp.maxHp) p.maxHp = inp.maxHp;
@@ -2277,8 +2289,19 @@ function update() {
 
       z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);
       for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd=Math.sqrt(sx*sx+sy*sy),md2=z.radius+o.radius;if(sd<md2&&sd>0){const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
-      // Melee all players
-      for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<z.radius+PLAYER_RADIUS-2&&z.attackCooldown<=0){damagePlayerObj(p,z.damage);z.attackCooldown=30;}}
+      // Melee all players — velocity-compensated for remote players
+      for(const p of players){if(!p.alive)continue;
+        const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
+        // For remote players: if moving away from zombie, require tighter contact
+        // This compensates for position extrapolation lag
+        let meleeRange=z.radius+PLAYER_RADIUS-2;
+        if(p.id!==myId&&(p.vx*p.vx+p.vy*p.vy)>1){
+          // Dot product: positive = moving away from zombie
+          const dot=(p.vx*pdx+p.vy*pdy);
+          if(dot>0) meleeRange-=6; // tighter range when retreating
+        }
+        if(pd<meleeRange&&z.attackCooldown<=0){damagePlayerObj(p,z.damage);z.attackCooldown=30;}
+      }
       if(z.attackCooldown>0)z.attackCooldown--;
     }
   }
@@ -2357,14 +2380,18 @@ function update() {
   if (isMultiplayer && !isHost) {
     for (const z of zombies) {
       if (z._targetX !== undefined) {
-        z.x = lerp(z.x, z._targetX, 0.5);
-        z.y = lerp(z.y, z._targetY, 0.5);
+        const dx = z._targetX - z.x, dy = z._targetY - z.y;
+        const gap = Math.sqrt(dx*dx + dy*dy);
+        // Snap if close enough or very far (teleport), otherwise lerp aggressively
+        if (gap < 3 || gap > 200) { z.x = z._targetX; z.y = z._targetY; }
+        else { z.x = lerp(z.x, z._targetX, 0.6); z.y = lerp(z.y, z._targetY, 0.6); }
       }
       if (z._targetAngle !== undefined) {
         let diff = z._targetAngle - z.angle;
         while (diff > Math.PI) diff -= Math.PI*2;
         while (diff < -Math.PI) diff += Math.PI*2;
-        z.angle += diff * 0.5;
+        if (Math.abs(diff) < 0.05) z.angle = z._targetAngle;
+        else z.angle += diff * 0.6;
       }
       if (z.hitFlash > 0) z.hitFlash--;
     }
