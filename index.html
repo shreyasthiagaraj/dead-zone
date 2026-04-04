@@ -126,6 +126,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash">DASH</div>
   <div class="mobile-btn reload-btn" id="btn-reload">RLD</div>
+  <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:11px;font-weight:bold;display:flex;align-items:center;justify-content:center;text-align:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;animation:pulse 1s ease-in-out infinite">SWAP</div>
 </div>
 <div class="joystick-zone" id="joystick-left"></div>
 <div class="joystick-zone" id="joystick-right"></div>
@@ -1701,6 +1702,8 @@ document.getElementById('btn-dash').addEventListener('mousedown', () => { dash()
 document.getElementById('btn-dash').addEventListener('mouseup', () => { keys[' ']=false; });
 document.getElementById('btn-reload').addEventListener('touchstart', (e) => { e.preventDefault(); reloadWeapon(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-reload').addEventListener('mousedown', () => reloadWeapon());
+document.getElementById('btn-swap').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); tryPickup(true); }, { passive: false });
+document.getElementById('btn-swap').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); tryPickup(true); });
 
 // ============================================================
 // START GAME
@@ -2151,10 +2154,10 @@ function updateHorde() {
   if (!isHost || gameMode !== 'horde') return;
   hordeTimer++;
   const elapsed = hordeTimer / 60; // seconds
-  // Very gentle start, slow escalation
-  const spawnRate = elapsed < 30 ? Math.floor(90 - elapsed * 1.5) : Math.max(8, Math.floor(50 - (elapsed - 30) * 0.4));
-  // Few zombies early, caps lower overall
-  const maxZombies = elapsed < 30 ? Math.floor(3 + elapsed * 0.3) : Math.floor(12 + (elapsed - 30) * 0.8);
+  // Easy start, very slow escalation
+  const spawnRate = elapsed < 40 ? Math.floor(120 - elapsed * 1.5) : Math.max(12, Math.floor(60 - (elapsed - 40) * 0.3));
+  // Very few zombies, slow cap growth
+  const maxZombies = elapsed < 40 ? Math.floor(2 + elapsed * 0.2) : Math.floor(10 + (elapsed - 40) * 0.5);
   // Zombie type pool expands over time — slower introduction
   const types = ['normal', 'normal'];
   if (elapsed > 25) types.push('fast', 'fast');
@@ -2914,8 +2917,15 @@ function updateHUD() {
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
   const se=document.getElementById('weapon-slots');let h='';
   // Swap prompt when near a weapon at max capacity
-  if(_nearbyWeaponPickup&&lp.weapons.length>=MAX_WEAPONS){const wd=WEAPON_DEFS[_nearbyWeaponPickup.weaponType];if(wd)h+=`<div style="color:#f0c040;font-size:10px;text-align:center;margin-bottom:4px;animation:pulse 1s ease-in-out infinite">[E] SWAP → ${wd.name}</div>`;}
-  _nearbyWeaponPickup=null; // reset each frame — re-set by tryPickupForPlayer if still near
+  const swapBtn=document.getElementById('btn-swap');
+  if(_nearbyWeaponPickup&&lp.weapons.length>=MAX_WEAPONS){
+    const wd=WEAPON_DEFS[_nearbyWeaponPickup.weaponType];
+    if(wd){
+      h+=`<div style="color:#f0c040;font-size:13px;font-weight:bold;text-align:center;margin-bottom:6px;padding:6px 12px;border:2px solid #f0c040;background:rgba(240,192,64,0.15);animation:pulse 1s ease-in-out infinite">SWAP → ${wd.name}${isMobile?'':' [E]'}</div>`;
+      if(swapBtn){swapBtn.style.display='block';swapBtn.textContent='SWAP\n'+wd.name.substring(0,6);}
+    }
+  } else { if(swapBtn)swapBtn.style.display='none'; }
+  _nearbyWeaponPickup=null;
   for(let i=0;i<MAX_WEAPONS;i++){
     if(i<lp.weapons.length){const ww=lp.weapons[i],dd=WEAPON_DEFS[ww.type];if(dd)h+=`<div class="weapon-slot ${i===lp.currentWeapon?'active':''}" data-idx="${i}"><span class="key">${i+1}</span>${dd.name.substring(0,4)}</div>`;else h+=`<div class="weapon-slot" data-idx="${i}"><span class="key">${i+1}</span>????</div>`;}
     else{h+=`<div class="weapon-slot" style="border-style:dashed;color:#333"><span class="key">${i+1}</span>----</div>`;}
