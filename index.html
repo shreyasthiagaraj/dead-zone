@@ -531,16 +531,20 @@ function updateAmbientAudio() {
     healthLowTimer = 0;
   }
 
-  // Dynamic music: combat metal when 3+ aware zombies nearby, ambient otherwise
-  const combatRange = 350;
+  // Dynamic music: combat metal starts at 3+ aware zombies nearby,
+  // stays playing with wider radius as long as any aware zombie is in range
+  const inCombat = currentMusic && currentMusic.name === 'music_combat';
+  const triggerRange = 350;   // range to START combat music
+  const sustainRange = 600;   // wider range to KEEP combat music going
+  const range = inCombat ? sustainRange : triggerRange;
   let nearAwareCount = 0;
   for (const z of zombies) {
     const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
-    if (d < combatRange && z.aware) nearAwareCount++;
+    if (d < range && z.aware) nearAwareCount++;
   }
-  if (nearAwareCount > 2) {
+  if (!inCombat && nearAwareCount > 2) {
     playMusic('music_combat', 1.5);
-  } else {
+  } else if (inCombat && nearAwareCount === 0) {
     playMusic('music_ambient', 3.0);
   }
 }
@@ -552,9 +556,10 @@ function playWeaponSound(weaponType, fallbackSound) {
     startWeaponLoop(weaponType);
     return;
   }
-  // Per-shot weapons
+  // Per-shot weapons — individual volume overrides
+  const WEAPON_VOL = { pistol: 0.9, revolver: 0.6, shotgun: 0.6, rifle: 0.6, rpg: 0.7, lightning: 0.6 };
   const sfxName = WEAPON_SFX_MAP[weaponType];
-  if (sfxName && playSfx(sfxName, 0.5)) return;
+  if (sfxName && playSfx(sfxName, WEAPON_VOL[weaponType] || 0.5)) return;
   if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, 0.12);
 }
 
