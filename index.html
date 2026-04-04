@@ -143,6 +143,18 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <div style="color:#666;font-size:11px;margin-top:30px" id="start-controls"></div>
 </div>
 
+<!-- ---- SOLO MODE PICKER ---- -->
+<div class="screen-overlay" id="solo-mode-screen" style="display:none">
+  <h1 style="font-size:clamp(24px,6vw,48px)">GAME MODE</h1>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:10px">
+    <button class="menu-btn primary" id="btn-solo-dungeon" style="min-width:200px">DUNGEON</button>
+    <div style="color:#666;font-size:11px;margin-bottom:6px">Explore and escape</div>
+    <button class="menu-btn" id="btn-solo-survival" style="min-width:200px">SURVIVAL</button>
+    <div style="color:#666;font-size:11px">Endless waves, one arena</div>
+  </div>
+  <button class="menu-btn danger" id="btn-back-solo" style="margin-top:24px;font-size:12px;padding:8px 20px">BACK</button>
+</div>
+
 <!-- ---- MULTIPLAYER MENU ---- -->
 <div class="screen-overlay" id="multi-screen" style="display:none">
   <h1 style="font-size:clamp(24px,6vw,48px)">MULTIPLAYER</h1>
@@ -311,6 +323,7 @@ const ZOMBIE_TYPES = {
   tank: { hp: 200, speed: 1.0, radius: 18, color: '#585', damage: 20, score: 300 },
   spitter: { hp: 40, speed: 1.4, radius: 11, color: '#5a8', damage: 8, score: 200, ranged: true, fireRate: 2000 },
   exploder: { hp: 60, speed: 2.4, radius: 14, color: '#a55', damage: 30, score: 250, explodeOnDeath: true, explosionRadius: 60 },
+  boss: { hp: 500, speed: 1.2, radius: 28, color: '#f44', damage: 35, score: 1000, explodeOnDeath: true, explosionRadius: 80 },
 };
 
 // ---- AUDIO ENGINE ----
@@ -672,13 +685,13 @@ function generateArena(seed) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Large central arena — leave a border of 4 cells as walls
-  const margin = 4;
+  // Compact arena for intense survival combat
+  const margin = 16;
   const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
   carveRoom(arena);
   rooms.push(arena);
   // Scatter cover obstacles (wall blocks) throughout the arena
-  const numObstacles = 18 + Math.floor(rng() * 10);
+  const numObstacles = 22 + Math.floor(rng() * 12);
   const placed = [];
   const centerX = GRID_W / 2, centerY = GRID_H / 2;
   for (let att = 0; att < 200 && placed.length < numObstacles; att++) {
@@ -687,7 +700,7 @@ function generateArena(seed) {
     const oy = margin + 3 + Math.floor(rng() * (arena.h - oh - 6));
     // Don't block center spawn area
     const ocx = ox + ow / 2, ocy = oy + oh / 2;
-    if (Math.abs(ocx - centerX) < 8 && Math.abs(ocy - centerY) < 8) continue;
+    if (Math.abs(ocx - centerX) < 6 && Math.abs(ocy - centerY) < 6) continue;
     // Don't overlap other obstacles (with gap)
     let overlap = false;
     for (const p of placed) { if (ox < p.x + p.w + 2 && ox + ow + 2 > p.x && oy < p.y + p.h + 2 && oy + oh + 2 > p.y) { overlap = true; break; } }
@@ -1116,7 +1129,7 @@ function showMultiError(txt) { document.getElementById('multi-error').textConten
 // MENU NAVIGATION
 // ============================================================
 function showScreen(id) {
-  ['start-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'].forEach(s => document.getElementById(s).style.display = 'none');
+  ['start-screen','solo-mode-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'].forEach(s => document.getElementById(s).style.display = 'none');
   if (id) document.getElementById(id).style.display = 'flex';
 }
 
@@ -1175,7 +1188,10 @@ function addBtn(id, fn) {
   el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
   el.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
 }
-addBtn('btn-solo', () => { isMultiplayer = false; startSoloGame(); });
+addBtn('btn-solo', () => { showScreen('solo-mode-screen'); });
+addBtn('btn-solo-dungeon', () => { isMultiplayer = false; gameMode = 'dungeon'; startSoloGame(); });
+addBtn('btn-solo-survival', () => { isMultiplayer = false; gameMode = 'survival'; startSoloGame(); });
+addBtn('btn-back-solo', () => { showScreen('start-screen'); });
 addBtn('btn-multi', () => { showScreen('multi-screen'); showMultiError(''); connectWS(); });
 addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); playMusic('music_menu', 2.0); });
 addBtn('btn-create', () => {
@@ -1204,7 +1220,7 @@ addBtn('btn-start-game', () => { sendMsg({ type: 'start_game' }); });
 addBtn('btn-leave', () => { if (ws) ws.close(); showScreen('start-screen'); });
 addBtn('btn-restart', () => {
   if (isMultiplayer) { showScreen('start-screen'); if (ws) ws.close(); }
-  else startSoloGame();
+  else { startSoloGame(); }
 });
 addBtn('btn-menu', () => {
   gameState = 'menu';
@@ -1234,25 +1250,33 @@ document.getElementById('btn-reload').addEventListener('mousedown', () => reload
 // ============================================================
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
-  gameMode = 'dungeon'; // solo is always dungeon
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0;
   window._currentLevelSeed = Date.now();
-  generateDungeon(window._currentLevelSeed);
+  if (gameMode === 'survival') {
+    generateArena(window._currentLevelSeed);
+    exitPos = null;
+    resetSurvivalState();
+  } else {
+    generateDungeon(window._currentLevelSeed);
+  }
   const c = getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
   camera.x = c.x; camera.y = c.y;
-  placeExit();
+  if (gameMode !== 'survival') placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
   playMusic('music_ambient', 2.0);
-  document.activeElement?.blur(); canvas.focus(); startLevel();
+  document.activeElement?.blur(); canvas.focus();
+  if (gameMode === 'survival') startSurvivalWave();
+  else startLevel();
 }
 
 function resetSurvivalState() {
   survivalWave = 0; survivalWaveState = 'countdown'; survivalWaveTimer = 180;
   survivalZombiesTotal = 0; survivalZombiesSpawned = 0; survivalZombiesKilled = 0;
+  currentWaveMod = null;
 }
 
 function startMultiplayerGame() {
@@ -1449,18 +1473,65 @@ function spawnLevelPickups() {
 }
 
 // ---- SURVIVAL MODE WAVE SYSTEM ----
+// ---- Wave modifier system ----
+const WAVE_MODIFIERS = [
+  { name: 'SWARM', sub: 'They just keep coming...', types: ['normal','normal','fast','fast','fast'], zombieMult: 1.8, hpMult: 0.6, speedMult: 1.3 },
+  { name: 'HEAVY HITTERS', sub: 'Big ones incoming.', types: ['tank','tank','tank','normal'], zombieMult: 0.7, hpMult: 1.5, speedMult: 0.9 },
+  { name: 'SPIT STORM', sub: 'Keep your distance!', types: ['spitter','spitter','spitter','fast'], zombieMult: 1.2, hpMult: 1.0, speedMult: 1.1 },
+  { name: 'BOOM TOWN', sub: 'Watch out for the red ones!', types: ['exploder','exploder','exploder','normal','fast'], zombieMult: 1.0, hpMult: 0.8, speedMult: 1.2 },
+  { name: 'BLITZ', sub: 'They\'re everywhere!', types: ['fast','fast','fast','fast','normal'], zombieMult: 2.0, hpMult: 0.5, speedMult: 1.5 },
+  { name: 'NIGHTMARE', sub: 'No mercy.', types: ['tank','exploder','spitter','fast','normal'], zombieMult: 1.4, hpMult: 1.3, speedMult: 1.2 },
+  null, // no modifier — standard wave
+  null,
+  null,
+];
+let currentWaveMod = null;
+
 function startSurvivalWave() {
   survivalWave++;
-  survivalZombiesTotal = 8 + survivalWave * 4 + Math.floor(Math.pow(survivalWave, 1.3));
+  // Pick wave modifier (boss waves get none — they're special enough)
+  currentWaveMod = null;
+  if (survivalWave % 5 !== 0 && survivalWave >= 3) {
+    currentWaveMod = WAVE_MODIFIERS[Math.floor(Math.random() * WAVE_MODIFIERS.length)];
+  }
+  const zombieMult = currentWaveMod ? currentWaveMod.zombieMult : 1.0;
+  survivalZombiesTotal = Math.floor((15 + survivalWave * 6 + Math.floor(Math.pow(survivalWave, 1.4))) * zombieMult);
   survivalZombiesSpawned = 0;
   survivalZombiesKilled = 0;
   survivalWaveState = 'active';
   playWaveStartSound();
   const el = document.getElementById('wave-announce');
-  document.getElementById('wave-num').textContent = `WAVE ${survivalWave}`;
-  const subs = ['Here they come...', 'Stay alive.', 'Lock and load.', 'No mercy.', 'They\'re hungry...', 'Hold the line.', 'Survive.', 'Brace yourself.'];
-  document.getElementById('wave-sub').textContent = subs[Math.floor(Math.random() * subs.length)];
+  const isBoss = survivalWave % 5 === 0;
+  if (isBoss) {
+    document.getElementById('wave-num').textContent = `BOSS WAVE ${survivalWave}`;
+    document.getElementById('wave-sub').textContent = 'Kill the abomination!';
+  } else if (currentWaveMod) {
+    document.getElementById('wave-num').textContent = `WAVE ${survivalWave}: ${currentWaveMod.name}`;
+    document.getElementById('wave-sub').textContent = currentWaveMod.sub;
+  } else {
+    document.getElementById('wave-num').textContent = `WAVE ${survivalWave}`;
+    const subs = ['Here they come...', 'Stay alive.', 'Lock and load.', 'No mercy.', 'They\'re hungry...', 'Hold the line.', 'Survive.', 'Brace yourself.'];
+    document.getElementById('wave-sub').textContent = subs[Math.floor(Math.random() * subs.length)];
+  }
   el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  // Spawn boss on boss waves
+  if (isBoss) spawnBossZombie();
+}
+
+function spawnBossZombie() {
+  const arena = rooms[0];
+  const edge = Math.floor(Math.random() * 4);
+  let gx, gy;
+  if (edge === 0) { gx = arena.x + 2; gy = Math.floor(arena.y + arena.h / 2); }
+  else if (edge === 1) { gx = arena.x + arena.w - 3; gy = Math.floor(arena.y + arena.h / 2); }
+  else if (edge === 2) { gx = Math.floor(arena.x + arena.w / 2); gy = arena.y + 2; }
+  else { gx = Math.floor(arena.x + arena.w / 2); gy = arena.y + arena.h - 3; }
+  const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
+  const tier = Math.floor(survivalWave / 5); // 1, 2, 3, ...
+  const bossHp = 500 + tier * 400;
+  const bossSpeed = 1.2 + tier * 0.1;
+  const bossRadius = 28 + Math.min(tier * 2, 10);
+  zombies.push({ x, y, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bossSpeed, radius: bossRadius, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 80 + tier * 10, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
 }
 
 function updateSurvivalWaves() {
@@ -1475,37 +1546,45 @@ function updateSurvivalWaves() {
     if (survivalWaveTimer <= 0) startSurvivalWave();
     return;
   }
-  // Active wave — spawn zombies
-  const maxActive = 10 + survivalWave * 3;
-  const spawnRate = Math.max(8, 50 - survivalWave * 3);
+  // Active wave — spawn zombies aggressively
+  const maxActive = 20 + survivalWave * 5;
+  const spawnRate = Math.max(4, 28 - survivalWave * 3);
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && survivalZombiesSpawned < survivalZombiesTotal && zombies.length < maxActive) {
-    spawnSurvivalZombie();
-    survivalZombiesSpawned++;
-    if (Math.random() < 0.05) spawnWeaponPickup();
+    // Burst spawn: 1-3 zombies at once for later waves
+    const burstCount = survivalWave >= 8 ? Math.min(3, survivalZombiesTotal - survivalZombiesSpawned) : survivalWave >= 4 ? Math.min(2, survivalZombiesTotal - survivalZombiesSpawned) : 1;
+    for (let b = 0; b < burstCount; b++) {
+      spawnSurvivalZombie();
+      survivalZombiesSpawned++;
+    }
+    if (Math.random() < 0.06) spawnWeaponPickup();
   }
-  // Check wave complete
+  // Check wave complete — boss waves require boss killed too
   if (survivalZombiesKilled >= survivalZombiesTotal && zombies.length === 0) {
     survivalWaveState = 'rest';
-    survivalWaveTimer = 300 + Math.floor(Math.random() * 120); // 5-7 seconds
+    survivalWaveTimer = 240 + Math.floor(Math.random() * 60); // 4-5 seconds
     score += 500 * survivalWave;
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `WAVE ${survivalWave} CLEAR!`, '#4f4');
-    // Spawn rest-period pickups
-    for (let i = 0; i < 2; i++) spawnHealthPickup();
+    // Spawn rest-period pickups — more generous on boss wave clear
+    const isBossWave = survivalWave % 5 === 0;
+    for (let i = 0; i < (isBossWave ? 4 : 2); i++) spawnHealthPickup();
     spawnWeaponPickup();
+    if (isBossWave) spawnWeaponPickup(); // extra weapon on boss clear
     const p = getRandomFloorPos();
     pickups.push({ type: 'ammo', x: p.x, y: p.y, bobTimer: Math.random() * Math.PI * 2 });
   }
 }
 
 function getZombieTypesForWave(wave) {
+  // Use wave modifier types if active
+  if (currentWaveMod && currentWaveMod.types) return currentWaveMod.types;
   const t = ['normal'];
   if (wave >= 2) t.push('fast');
   if (wave >= 3) t.push('tank');
   if (wave >= 4) t.push('spitter');
   if (wave >= 5) t.push('exploder');
-  // Boss waves every 5 waves: more tanks and exploders
-  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder'); }
+  // Boss waves: more tanks and exploders alongside the boss
+  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'fast', 'fast'); }
   if (wave < 5) { t.push('normal', 'normal'); }
   return t;
 }
@@ -1524,7 +1603,27 @@ function spawnSurvivalZombie() {
   else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; } // bottom
   const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
   const sc = 1 + (survivalWave - 1) * 0.12;
-  zombies.push({ x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + (survivalWave - 1) * 0.03, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
+  const hpMult = currentWaveMod ? currentWaveMod.hpMult : 1.0;
+  const spdMult = currentWaveMod ? currentWaveMod.speedMult : 1.0;
+  const hp = t.hp * sc * hpMult;
+  const spd = (t.speed + (survivalWave - 1) * 0.03) * spdMult;
+  zombies.push({ x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
+}
+
+function dropZombieLoot(z) {
+  // Zombies have a chance to drop health or ammo in survival mode
+  const r = Math.random();
+  if (z.boss) {
+    // Bosses always drop good loot
+    pickups.push({ type: 'health', amount: 50, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
+    pickups.push({ type: 'ammo', x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
+    const ts = ['revolver','smg','burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg','grenade_launcher'];
+    pickups.push({ type: 'weapon', weaponType: ts[Math.floor(Math.random()*ts.length)], x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (r < 0.08) {
+    pickups.push({ type: 'health', amount: 15, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (r < 0.14) {
+    pickups.push({ type: 'ammo', x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
+  }
 }
 
 function getNearestAlivePlayer(x,y) { let best=null,bd=Infinity; for(const p of players){if(!p.alive)continue;const d=Math.sqrt((p.x-x)**2+(p.y-y)**2);if(d<bd){bd=d;best=p;}} return {player:best,dist:bd}; }
@@ -1687,7 +1786,7 @@ function update() {
                   for(let k=0;k<10;k++){const a2=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06});}
                   decals.push({x:z.x,y:z.y,size:z.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
                   for(let k=0;k<6;k++){const a2=Math.random()*Math.PI*2,sd=12+Math.random()*30;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]});}
-                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival')survivalZombiesKilled++;
+                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;dropZombieLoot(z);}
                   zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
@@ -1701,8 +1800,8 @@ function update() {
     } else {
       // Continuous zombie spawning based on level
       spawnTimer++;
-      const maxZombies = 15 + level * 5;
-      const spawnRate = Math.max(10, 40 - level * 4);
+      const maxZombies = 25 + level * 8;
+      const spawnRate = Math.max(5, 25 - level * 3);
       if(spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
         spawnZombie();
         if(Math.random()<0.04) spawnWeaponPickup();
@@ -1798,7 +1897,7 @@ function update() {
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360 }));
-    const zs = zombies.map(z => ({ x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash }));
+    const zs = zombies.map(z => ({ x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
     // Sync bullets so remote players see all shots including other remote players' bullets
     const bs = bullets.map(b => ({ x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color,size:b.size,life:b.life,flame:b.flame||false,grenade:b.grenade||false,tracer:b.tracer||false,chain:b.chain||false,explosive:b.explosive||false,explosionRadius:b.explosionRadius||0,laserGlow:b.laserGlow||false,owner:b.owner,ownerId:b.ownerId }));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
@@ -2034,7 +2133,10 @@ function render() {
   }
   // Zombie bodies
   for(const z of zombies){
-    ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#232';ctx.lineWidth=2;ctx.stroke();
+    ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
+    // Boss glow effect
+    if(z.boss||z.type==='boss'){const pulse=0.3+Math.sin(performance.now()*0.005)*0.15;ctx.globalAlpha=pulse;ctx.shadowColor='#f44';ctx.shadowBlur=30;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle=z.boss||z.type==='boss'?'#a00':'#232';ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
@@ -2044,7 +2146,7 @@ function render() {
     ctx.globalAlpha=1;ctx.shadowColor=eyeC;ctx.shadowBlur=10;ctx.fillStyle=eyeC;
     ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
     ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
-    ctx.shadowBlur=0;ctx.restore();if(z.hp<z.maxHp&&z.hp>0){const bw=24,hp2=Math.max(0,Math.min(1,z.hp/z.maxHp));ctx.fillStyle='#333';ctx.fillRect(z.x-bw/2,z.y-z.radius-8,bw,3);ctx.fillStyle=hp2>0.5?'#4a4':hp2>0.25?'#a84':'#a44';ctx.fillRect(z.x-bw/2,z.y-z.radius-8,bw*hp2,3);}}
+    ctx.shadowBlur=0;ctx.restore();if(z.hp<z.maxHp&&z.hp>0){const bw=z.boss||z.type==='boss'?48:24,bh=z.boss||z.type==='boss'?5:3,hp2=Math.max(0,Math.min(1,z.hp/z.maxHp));ctx.fillStyle='#333';ctx.fillRect(z.x-bw/2,z.y-z.radius-10,bw,bh);ctx.fillStyle=hp2>0.5?'#4a4':hp2>0.25?'#a84':'#a44';ctx.fillRect(z.x-bw/2,z.y-z.radius-10,bw*hp2,bh);}}
 
   // Players (all)
   for(const p of players){
