@@ -2147,29 +2147,28 @@ function updateHorde() {
   if (!isHost || gameMode !== 'horde') return;
   hordeTimer++;
   const elapsed = hordeTimer / 60; // seconds
-  // Escalating spawn rate: starts at every 30 frames, ramps to every 4
-  const spawnRate = Math.max(4, Math.floor(30 - elapsed * 0.8));
-  // Max active zombies scales with time
-  const maxZombies = Math.floor(20 + elapsed * 2);
-  // Zombie type pool expands over time
+  // Gentle start, then escalating: first 20s is easy, then ramps hard
+  const spawnRate = elapsed < 20 ? Math.floor(60 - elapsed * 1.5) : Math.max(4, Math.floor(35 - (elapsed - 20) * 0.6));
+  // Max active zombies: few early, scales fast after warmup
+  const maxZombies = elapsed < 20 ? Math.floor(5 + elapsed * 0.5) : Math.floor(15 + (elapsed - 20) * 2);
+  // Zombie type pool expands over time — slower introduction
   const types = ['normal', 'normal'];
-  if (elapsed > 15) types.push('fast', 'fast');
-  if (elapsed > 30) types.push('tank');
-  if (elapsed > 45) types.push('splitter');
-  if (elapsed > 60) types.push('spitter');
-  if (elapsed > 80) types.push('exploder');
-  if (elapsed > 100) types.push('fast', 'fast', 'tank');
+  if (elapsed > 25) types.push('fast', 'fast');
+  if (elapsed > 45) types.push('tank');
+  if (elapsed > 60) types.push('splitter');
+  if (elapsed > 80) types.push('spitter');
+  if (elapsed > 100) types.push('exploder');
+  if (elapsed > 120) types.push('fast', 'fast', 'tank');
   // Spawn
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
-    // Burst spawn: more zombies at once as time goes on
-    const burst = elapsed > 60 ? 3 : elapsed > 30 ? 2 : 1;
+    const burst = elapsed > 80 ? 3 : elapsed > 45 ? 2 : 1;
     for (let b = 0; b < burst; b++) spawnHordeZombie(types, elapsed);
   }
-  // Weapon pickup every 20 seconds
-  if (hordeTimer % 1200 === 0) spawnWeaponPickup();
-  // Power-up orb every 45 seconds
-  if (hordeTimer % 2700 === 0 && hordeTimer > 0) {
+  // First weapon drops fast (5s, 12s), then every 15 seconds
+  if (hordeTimer === 300 || hordeTimer === 720 || (hordeTimer > 720 && hordeTimer % 900 === 0)) spawnWeaponPickup();
+  // Power-up orb every 35 seconds
+  if (hordeTimer % 2100 === 0 && hordeTimer > 0) {
     const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
     const pwr = pool[Math.floor(Math.random() * pool.length)];
     const pos = getRandomFloorPos();
