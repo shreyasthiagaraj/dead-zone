@@ -23,7 +23,7 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 // ---- Lobbies ----
-const lobbies = new Map(); // code -> { players: Map<id, {ws, name, color, ready}>, hostId, started, seed }
+const lobbies = new Map(); // code -> { players: Map<id, {ws, name, color, ready}>, hostId, started, seed, mode }
 const playerToLobby = new Map(); // ws -> { code, id }
 let nextPlayerId = 1;
 
@@ -62,6 +62,7 @@ function sendLobbyUpdate(code) {
     players: playerList,
     hostId: lobby.hostId,
     code,
+    mode: lobby.mode,
   });
 }
 
@@ -91,6 +92,7 @@ wss.on('connection', (ws) => {
           hostId: playerId,
           started: false,
           seed: Math.floor(Math.random() * 999999),
+          mode: 'dungeon',
         };
         lobby.players.set(playerId, { ws, name, color: PLAYER_COLORS[0] });
         lobbies.set(code, lobby);
@@ -128,7 +130,7 @@ wss.on('connection', (ws) => {
         if (lobby.players.size < 2) { ws.send(JSON.stringify({ type: 'error', message: 'Need at least 2 players' })); return; }
 
         lobby.started = true;
-        broadcastToLobby(info.code, { type: 'game_start', seed: lobby.seed });
+        broadcastToLobby(info.code, { type: 'game_start', seed: lobby.seed, mode: lobby.mode });
         console.log(`Game started in lobby ${info.code}`);
         break;
       }
@@ -136,6 +138,18 @@ wss.on('connection', (ws) => {
       case 'request_lobby_update': {
         const info = playerToLobby.get(ws);
         if (info) sendLobbyUpdate(info.code);
+        break;
+      }
+
+      case 'set_mode': {
+        const info2 = playerToLobby.get(ws);
+        if (!info2) return;
+        const lobby2 = lobbies.get(info2.code);
+        if (!lobby2 || lobby2.hostId !== info2.id || lobby2.started) return;
+        if (msg.mode === 'dungeon' || msg.mode === 'survival') {
+          lobby2.mode = msg.mode;
+          sendLobbyUpdate(info2.code);
+        }
         break;
       }
 
