@@ -572,7 +572,7 @@ function getLocalPlayer() { return players[localPlayerIdx]; }
 function createPlayerObj(id, name, color, x, y) {
   return {
     id, name, color, x, y, vx: 0, vy: 0, angle: 0,
-    hp: 100, maxHp: 100, speed: 4.5,
+    hp: 100, maxHp: 100, speed: 5.5,
     weapons: [createWeapon('pistol')], currentWeapon: 0,
     dashCooldown: 0, dashTimer: 0, dashAngle: 0,
     invincible: 0, damageFlash: 0, alive: true,
@@ -927,10 +927,10 @@ function playWeaponSound(weaponType, fallbackSound) {
     return;
   }
   // Per-shot weapons — individual volume overrides
-  const WEAPON_VOL = { pistol: 0.9, revolver: 0.6, shotgun: 0.6, rifle: 0.6, rpg: 0.7, lightning: 0.6 };
+  const WEAPON_VOL = { pistol: 1.0, revolver: 0.7, shotgun: 0.7, rifle: 0.7, rpg: 0.8, lightning: 0.7 };
   const sfxName = WEAPON_SFX_MAP[weaponType];
   if (sfxName && playSfx(sfxName, WEAPON_VOL[weaponType] || 0.5)) return;
-  if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, 0.12);
+  if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, weaponType==='pistol'?0.25:0.15);
 }
 
 function playHitSound() { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); }
@@ -2354,6 +2354,8 @@ function damageZombie(z,damage,kbx=0,kby=0) {
 }
 function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
+  // Shield and Ghost power-ups block all damage (works for any player)
+  if(playerHasPowerUp(p,'shield')||playerHasPowerUp(p,'ghost')) return;
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);}
   if(p.hp<=0){
@@ -2509,7 +2511,10 @@ function update() {
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
         if (inp.maxHp) p.maxHp = inp.maxHp;
         if (inp.perks) p._remotePerks = inp.perks;
+        const prevPowerUp = p._remotePowerUp;
         p._remotePowerUp = inp.powerUp || null;
+        // Frenzy: halve HP when remote player activates it
+        if (p._remotePowerUp === 'frenzy' && prevPowerUp !== 'frenzy') { p.hp = Math.max(1, Math.floor(p.hp * 0.5)); }
         // Sync remote player's weapons so host can fire them properly
         if (inp.weaponTypes && inp.weaponTypes.length > 0) {
           // Rebuild weapon list if it changed
