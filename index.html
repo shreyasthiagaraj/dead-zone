@@ -231,6 +231,7 @@ const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 65, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#4af','#f44','#4f4','#fa4'];
 const NET_SEND_RATE = 3; // send state every N frames (~20fps)
 const MAX_WEAPONS = 3; // player can only carry 3 guns at a time
+let _nextZombieId = 1; // unique zombie IDs for multiplayer sync
 
 // ---- GAME STATE ----
 let gameState = 'menu'; // menu, multi_menu, lobby, playing, dead
@@ -1263,6 +1264,7 @@ function startSoloGame() {
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
+  _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y;
   if (gameMode !== 'survival') placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
@@ -1301,6 +1303,7 @@ function startMultiplayerGame() {
   }
   remoteInputs = {};
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = [];
+  _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y;
   if (gameMode !== 'survival') { placeExit(); }
   level = 1;
@@ -1531,7 +1534,7 @@ function spawnBossZombie() {
   const bossHp = 500 + tier * 400;
   const bossSpeed = 1.2 + tier * 0.1;
   const bossRadius = 28 + Math.min(tier * 2, 10);
-  zombies.push({ x, y, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bossSpeed, radius: bossRadius, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 80 + tier * 10, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bossSpeed, radius: bossRadius, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 80 + tier * 10, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
 }
 
 function updateSurvivalWaves() {
@@ -1607,7 +1610,7 @@ function spawnSurvivalZombie() {
   const spdMult = currentWaveMod ? currentWaveMod.speedMult : 1.0;
   const hp = t.hp * sc * hpMult;
   const spd = (t.speed + (survivalWave - 1) * 0.03) * spdMult;
-  zombies.push({ x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
 }
 
 function dropZombieLoot(z) {
@@ -1633,7 +1636,7 @@ function spawnZombie() {
   let br=null; for(let i=1;i<rooms.length;i++){const c=getRoomCenter(rooms[i]);const{dist:d}=getNearestAlivePlayer(c.x,c.y);if(d>400&&(br===null||Math.random()<0.3))br=rooms[i];}
   if(!br) br=rooms[1+Math.floor(Math.random()*(rooms.length-1))]||rooms[0];
   const x=(br.x+1+Math.random()*(br.w-2))*CELL_SIZE,y=(br.y+1+Math.random()*(br.h-2))*CELL_SIZE,sc=1+(level-1)*0.12;
-  zombies.push({x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(level-1)*0.03,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
+  zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(level-1)*0.03,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
 function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank');if(lv>=4)t.push('spitter');if(lv>=5)t.push('exploder');if(lv<5){t.push('normal');t.push('normal');}return t; }
 
@@ -1791,6 +1794,15 @@ function update() {
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
     }
+    // Non-host: visual-only bullet collision — remove local bullets on zombie contact with hit sparks
+    else if(b.owner==='player'&&b.ownerId===myId){
+      for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){
+        // Hit sparks (visual only, no damage)
+        for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#a22',type:'blood'});
+        playHitSound();
+        b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}
+      }}
+    }
   }
 
   // ---- Host runs simulation ----
@@ -1897,7 +1909,7 @@ function update() {
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),alive:p.alive,weapon:p.currentWeapon,color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360 }));
-    const zs = zombies.map(z => ({ x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
+    const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
     // Sync bullets so remote players see all shots including other remote players' bullets
     const bs = bullets.map(b => ({ x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color,size:b.size,life:b.life,flame:b.flame||false,grenade:b.grenade||false,tracer:b.tracer||false,chain:b.chain||false,explosive:b.explosive||false,explosionRadius:b.explosionRadius||0,laserGlow:b.laserGlow||false,owner:b.owner,ownerId:b.ownerId }));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
@@ -1953,8 +1965,36 @@ function applyHostState(msg) {
     p.reviveProgress = pd.reviveProgress||0; p.reviveTime = pd.reviveTime||360;
     if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
   }
-  // Sync zombies from host
-  zombies = msg.zombies.map(z => ({...z, vx:0,vy:0,staggerTimer:0,attackCooldown:0,wanderAngle:0,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,ranged:ZOMBIE_TYPES[z.type]?.ranged||false,fireRate:ZOMBIE_TYPES[z.type]?.fireRate||0,lastFired:0,explodeOnDeath:ZOMBIE_TYPES[z.type]?.explodeOnDeath||false,explosionRadius:ZOMBIE_TYPES[z.type]?.explosionRadius||0,damage:ZOMBIE_TYPES[z.type]?.damage||10,score:ZOMBIE_TYPES[z.type]?.score||100}));
+  // Sync zombies from host — detect damage and deaths for visual effects
+  const oldZombieMap = new Map();
+  for (const z of zombies) if (z.zid) oldZombieMap.set(z.zid, z);
+  const newZombies = msg.zombies.map(z => ({...z, vx:0,vy:0,staggerTimer:0,attackCooldown:0,wanderAngle:0,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,ranged:ZOMBIE_TYPES[z.type]?.ranged||false,fireRate:ZOMBIE_TYPES[z.type]?.fireRate||0,lastFired:0,explodeOnDeath:ZOMBIE_TYPES[z.type]?.explodeOnDeath||false,explosionRadius:ZOMBIE_TYPES[z.type]?.explosionRadius||0,damage:ZOMBIE_TYPES[z.type]?.damage||10,score:ZOMBIE_TYPES[z.type]?.score||100}));
+  const newZombieIds = new Set(msg.zombies.map(z => z.zid));
+  // Generate hit effects for zombies that took damage
+  for (const nz of msg.zombies) {
+    const oz = oldZombieMap.get(nz.zid);
+    if (oz && nz.hp < oz.hp) {
+      // Blood splatter on hit
+      for (let i = 0; i < 4; i++) particles.push({x:nz.x,y:nz.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:15+Math.random()*10,maxLife:25,size:2+Math.random()*3,color:'#a22',type:'blood'});
+      if (Math.random() > 0.5) decals.push({x:nz.x+(Math.random()-0.5)*10,y:nz.y+(Math.random()-0.5)*10,size:4+Math.random()*8,alpha:0.4+Math.random()*0.3,color:'#311'});
+    }
+  }
+  // Generate death effects for zombies that were killed
+  for (const [zid, oz] of oldZombieMap) {
+    if (!newZombieIds.has(zid)) {
+      // Death blood burst
+      for (let k = 0; k < 35; k++) { const a2 = Math.random()*Math.PI*2, s = 1+Math.random()*8; particles.push({x:oz.x,y:oz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*25,maxLife:55,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700'][Math.floor(Math.random()*6)],type:'blood'}); }
+      // Chunks
+      for (let k = 0; k < 10; k++) { const a2 = Math.random()*Math.PI*2, s = 2+Math.random()*6; particles.push({x:oz.x,y:oz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:40+Math.random()*25,maxLife:65,size:4+Math.random()*6,color:['#511','#422','#600'][Math.floor(Math.random()*3)],type:'chunk',gravity:0.06}); }
+      // Blood pool decal
+      decals.push({x:oz.x,y:oz.y,size:oz.radius+15+Math.random()*20,alpha:0.5+Math.random()*0.2,color:'#200'});
+      for (let k = 0; k < 6; k++) { const a2 = Math.random()*Math.PI*2, sd = 12+Math.random()*30; decals.push({x:oz.x+Math.cos(a2)*sd,y:oz.y+Math.sin(a2)*sd,size:3+Math.random()*8,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411'][Math.floor(Math.random()*3)]}); }
+      // Explosion if exploder type
+      if (oz.explodeOnDeath) createExplosion(oz.x, oz.y, oz.explosionRadius || 60, 0);
+      playDeathSound(); screenShake.intensity = Math.max(screenShake.intensity, 5);
+    }
+  }
+  zombies = newZombies;
   // Sync bullets from host — keep local player's bullets for smooth visuals, add remote bullets
   if (msg.bullets) {
     const localId = myId;
