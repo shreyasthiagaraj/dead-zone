@@ -1666,6 +1666,24 @@ function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,col
 
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
 function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);}
+// Line-segment vs circle: returns 0-1 parametric t of nearest intersection, or -1 if none
+function lineCircleHit(x0,y0,x1,y1,cx,cy,r){
+  const dx=x1-x0,dy=y1-y0,fx=x0-cx,fy=y0-cy;
+  const a=dx*dx+dy*dy; if(a<0.001)return dist({x:x0,y:y0},{x:cx,y:cy})<r?0:-1;
+  const b=2*(fx*dx+fy*dy),c=fx*fx+fy*fy-r*r,disc=b*b-4*a*c;
+  if(disc<0)return -1;
+  const sq=Math.sqrt(disc),t1=(-b-sq)/(2*a),t2=(-b+sq)/(2*a);
+  if(t1>=0&&t1<=1)return t1; if(t2>=0&&t2<=1)return t2; return -1;
+}
+// Find nearest zombie hit along a line segment, returns {zombie, index, t, hx, hy} or null
+function raycastZombies(x0,y0,x1,y1,bSize){
+  let best=null,bestT=2;
+  for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+    const t=lineCircleHit(x0,y0,x1,y1,z.x,z.y,z.radius+bSize);
+    if(t>=0&&t<bestT){bestT=t;best={zombie:z,index:j,t,hx:x0+(x1-x0)*t,hy:y0+(y1-y0)*t};}
+  }
+  return best;
+}
 function lerp(a,b,t){return a+(b-a)*t;}
 
 // ============================================================
@@ -1760,11 +1778,14 @@ function update() {
   }
 
   // ---- Bullet physics (all clients run this for smooth visuals) ----
-  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}b.x+=b.vx;b.y+=b.vy;b.life--;
+  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
     if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){bullets.splice(i,1);continue;}if(!b.grenade&&obstacleCollision(b.x,b.y,b.size)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}if(b.life<=0){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
     // Only host does damage calculations
     if(isHost){
-      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+      if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+        // Use sweep collision for fast bullets (Tesla, etc) to prevent tunneling
+        const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
+        if(_bhit){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
                   // Chain lightning — arc from gun to first hit, then between chained zombies
                   if(b.chain){
                   // Find the firing player for gun muzzle position
@@ -1796,9 +1817,26 @@ function update() {
     }
     // Non-host: visual-only bullet collision — remove local bullets on zombie contact with hit sparks
     else if(b.owner==='player'&&b.ownerId===myId){
-      for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];if(dist(b,z)<z.radius+b.size){
-        // Hit sparks (visual only, no damage)
-        for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#a22',type:'blood'});
+      for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+        const _vhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
+        if(_vhit){
+        if(b.chain){
+          // Visual-only chain lightning arcs (mirrors host chain logic)
+          const fp=getLocalPlayer();
+          const gunX=fp?fp.x+Math.cos(fp.angle)*22:_bpx,gunY=fp?fp.y+Math.sin(fp.angle)*22:_bpy;
+          particles.push({x:gunX,y:gunY,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+          particles.push({x:gunX,y:gunY,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:z.x,ty:z.y});
+          for(let li=0;li<6;li++){const t=Math.random();particles.push({x:gunX+(z.x-gunX)*t+(Math.random()-0.5)*15,y:gunY+(z.y-gunY)*t+(Math.random()-0.5)*15,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10+Math.random()*10,maxLife:20,size:2+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
+          // Visual chain arcs to nearby zombies
+          const hitSet=new Set([j]);let lastZ=z;for(let ci=0;ci<(b.chainCount||3);ci++){let bestD=b.chainRange||180,bestIdx=-1;for(let k=0;k<zombies.length;k++){if(hitSet.has(k))continue;const cz=zombies[k];const cd=Math.sqrt((cz.x-lastZ.x)**2+(cz.y-lastZ.y)**2);if(cd<bestD){bestD=cd;bestIdx=k;}}if(bestIdx===-1)break;hitSet.add(bestIdx);const nz=zombies[bestIdx];
+          particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:nz.x,ty:nz.y});
+          particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:nz.x,ty:nz.y});
+          for(let li=0;li<4;li++){particles.push({x:nz.x+(Math.random()-0.5)*12,y:nz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
+          lastZ=nz;}
+        } else {
+          // Regular hit sparks
+          for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#a22',type:'blood'});
+        }
         playHitSound();
         b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}
       }}
