@@ -151,7 +151,9 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <button class="menu-btn primary" id="btn-solo-dungeon" style="min-width:200px">DUNGEON</button>
     <div style="color:#666;font-size:11px;margin-bottom:6px">Explore and escape</div>
     <button class="menu-btn" id="btn-solo-survival" style="min-width:200px">SURVIVAL</button>
-    <div style="color:#666;font-size:11px">Endless waves, one arena</div>
+    <div style="color:#666;font-size:11px;margin-bottom:6px">Endless waves, one arena</div>
+    <button class="menu-btn" id="btn-solo-horde" style="min-width:200px">HORDE</button>
+    <div style="color:#666;font-size:11px">Tiny arena. Nonstop chaos.</div>
   </div>
   <button class="menu-btn danger" id="btn-back-solo" style="margin-top:24px;font-size:12px;padding:8px 20px">BACK</button>
 </div>
@@ -181,7 +183,9 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <button class="menu-btn primary" id="btn-create-coop" style="min-width:200px">CO-OP</button>
     <div style="color:#666;font-size:11px;margin-bottom:6px">Explore dungeons together</div>
     <button class="menu-btn" id="btn-create-survival" style="min-width:200px">SURVIVAL</button>
-    <div style="color:#666;font-size:11px">Survive endless waves</div>
+    <div style="color:#666;font-size:11px;margin-bottom:6px">Survive endless waves</div>
+    <button class="menu-btn" id="btn-create-horde" style="min-width:200px">HORDE</button>
+    <div style="color:#666;font-size:11px">Tiny arena. Nonstop chaos.</div>
   </div>
   <button class="menu-btn danger" id="btn-back-multi" style="margin-top:24px;font-size:12px;padding:8px 20px">BACK</button>
 </div>
@@ -1094,6 +1098,48 @@ function generateArena(seed) {
   uploadDungeonGrid();
 }
 
+function generateHordeArena(seed) {
+  const rng = seededRandom(seed || Date.now());
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  // Small circular arena — 30 cell diameter
+  const cx = Math.floor(GRID_W / 2), cy = Math.floor(GRID_H / 2), radius = 15;
+  const arena = { x: cx - radius, y: cy - radius, w: radius * 2, h: radius * 2 };
+  // Carve circle
+  for (let y = cy - radius; y <= cy + radius; y++) for (let x = cx - radius; x <= cx + radius; x++) {
+    if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W) {
+      const d = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      if (d <= radius) dungeonGrid[y][x] = true;
+    }
+  }
+  rooms.push(arena);
+  // Single center pillar (3x3 wall block)
+  for (let py = cy - 1; py <= cy + 1; py++) for (let px = cx - 1; px <= cx + 1; px++) {
+    if (py >= 0 && py < GRID_H && px >= 0 && px < GRID_W) dungeonGrid[py][px] = false;
+  }
+  // Arena theme — red/hot for horde intensity
+  arena.theme = ROOM_THEMES[7]; // ruin theme
+  arena.brightness = 1.0;
+  arena.flicker = false;
+  roomDetails = [];
+  const details = [];
+  // Scatter some debris
+  for (let di = 0; di < 8; di++) {
+    const a = rng() * Math.PI * 2, dist = 4 + rng() * (radius - 6);
+    const px = (cx + Math.cos(a) * dist) * CELL_SIZE, py2 = (cy + Math.sin(a) * dist) * CELL_SIZE;
+    const kind = rng();
+    if (kind < 0.4) details.push({ type: 'stain', x: px, y: py2, size: 10 + rng() * 20, color: '#2a1515' });
+    else if (kind < 0.7) details.push({ type: 'rubble', x: px, y: py2, size: 6 + rng() * 8, count: 3 + Math.floor(rng() * 3) });
+    else details.push({ type: 'scratch', x: px, y: py2, angle: rng() * Math.PI, len: 8 + rng() * 12 });
+  }
+  roomDetails.push({ ri: 0, theme: arena.theme, details, brightness: 1.0, flicker: false });
+  buildRoomGrid();
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
+}
+
 function getRoomCenter(r) { return { x: (r.x+r.w/2)*CELL_SIZE, y: (r.y+r.h/2)*CELL_SIZE }; }
 function getRandomFloorPos() {
   if (gameMode === 'survival' && rooms.length > 0) {
@@ -1549,15 +1595,15 @@ function updateLobbyUI() {
   document.getElementById('lobby-code').textContent = lobbyCode;
   // Show game mode label
   const modeDisp = document.getElementById('mode-display');
-  modeDisp.textContent = gameMode === 'survival' ? 'MODE: SURVIVAL' : 'MODE: CO-OP';
+  modeDisp.textContent = gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : 'MODE: CO-OP';
 }
 
 function showDeathScreen() {
   gameState = 'dead';
   document.getElementById('btn-menu').style.display = 'none';
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
-  const lvlLabel = gameMode === 'survival' ? 'Wave' : 'Level';
-  const lvlVal = gameMode === 'survival' ? survivalWave : level;
+  const lvlLabel = gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
+  const lvlVal = gameMode === 'horde' ? `${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? survivalWave : level;
   document.getElementById('death-stats').innerHTML = `Score: <span class="val">${score.toLocaleString()}</span><br>${lvlLabel}: <span class="val">${lvlVal}</span><br>Kills: <span class="val">${kills}</span>`;
   document.getElementById('highscore-display').textContent = `HIGH SCORE: ${highScore.toLocaleString()}`;
   showScreen('death-screen');
@@ -1573,6 +1619,7 @@ function addBtn(id, fn) {
 addBtn('btn-solo', () => { showScreen('solo-mode-screen'); });
 addBtn('btn-solo-dungeon', () => { isMultiplayer = false; gameMode = 'dungeon'; startSoloGame(); });
 addBtn('btn-solo-survival', () => { isMultiplayer = false; gameMode = 'survival'; startSoloGame(); });
+addBtn('btn-solo-horde', () => { isMultiplayer = false; gameMode = 'horde'; startSoloGame(); });
 addBtn('btn-back-solo', () => { showScreen('start-screen'); });
 addBtn('btn-multi', () => { showScreen('multi-screen'); showMultiError(''); connectWS(); });
 addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); playMusic('music_menu', 2.0); });
@@ -1587,6 +1634,12 @@ addBtn('btn-create-coop', () => {
 });
 addBtn('btn-create-survival', () => {
   gameMode = 'survival';
+  const name = document.getElementById('name-input').value.trim() || 'Player';
+  showScreen(null);
+  sendMsg({ type: 'create_lobby', name });
+});
+addBtn('btn-create-horde', () => {
+  gameMode = 'horde';
   const name = document.getElementById('name-input').value.trim() || 'Player';
   showScreen(null);
   sendMsg({ type: 'create_lobby', name });
@@ -1629,7 +1682,7 @@ function togglePauseMenu() {
     // Pause
     gamePaused = true;
     pauseEl.style.display = 'block';
-    const modeLabel = gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
+    const modeLabel = gameMode === 'horde' ? `HORDE — ${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
     document.getElementById('pause-mode-label').textContent = isMultiplayer ? modeLabel + ' (multiplayer)' : modeLabel;
     // Only actually freeze the game loop in single player
     if (!isMultiplayer) gameState = 'paused';
@@ -1662,6 +1715,10 @@ function startSoloGame() {
     generateArena(window._currentLevelSeed);
     exitPos = null;
     resetSurvivalState();
+  } else if (gameMode === 'horde') {
+    generateHordeArena(window._currentLevelSeed);
+    exitPos = null;
+    hordeTimer = 0;
   } else {
     generateDungeon(window._currentLevelSeed);
   }
@@ -1671,12 +1728,13 @@ function startSoloGame() {
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
   _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y;
-  if (gameMode !== 'survival') placeExit();
+  if (gameMode === 'dungeon') placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic(pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  playMusic(gameMode === 'horde' ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'survival') startSurvivalWave();
+  else if (gameMode === 'horde') startHorde();
   else startLevel();
 }
 
@@ -1694,6 +1752,10 @@ function startMultiplayerGame() {
     generateArena(lobbySeed);
     exitPos = null;
     resetSurvivalState();
+  } else if (gameMode === 'horde') {
+    generateHordeArena(lobbySeed);
+    exitPos = null;
+    hordeTimer = 0;
   } else {
     generateDungeon(lobbySeed);
   }
@@ -1710,14 +1772,15 @@ function startMultiplayerGame() {
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
   _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y;
-  if (gameMode !== 'survival') { placeExit(); }
+  if (gameMode === 'dungeon') { placeExit(); }
   level = 1;
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic('music_ambient', 2.0);
+  playMusic(gameMode === 'horde' ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   document.activeElement?.blur(); canvas.focus();
   if (isHost) {
     if (gameMode === 'survival') startSurvivalWave();
+    else if (gameMode === 'horde') startHorde();
     else startLevel();
   }
 }
@@ -2067,6 +2130,65 @@ function getZombieTypesForWave(wave) {
   return t;
 }
 
+// ---- HORDE MODE ----
+let hordeTimer = 0; // frames survived
+function startHorde() {
+  hordeTimer = 0;
+  const el = document.getElementById('wave-announce');
+  document.getElementById('wave-num').textContent = 'HORDE MODE';
+  document.getElementById('wave-sub').textContent = 'Survive as long as you can.';
+  el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  playWaveStartSound();
+}
+
+function updateHorde() {
+  if (!isHost || gameMode !== 'horde') return;
+  hordeTimer++;
+  const elapsed = hordeTimer / 60; // seconds
+  // Escalating spawn rate: starts at every 30 frames, ramps to every 4
+  const spawnRate = Math.max(4, Math.floor(30 - elapsed * 0.8));
+  // Max active zombies scales with time
+  const maxZombies = Math.floor(20 + elapsed * 2);
+  // Zombie type pool expands over time
+  const types = ['normal', 'normal'];
+  if (elapsed > 15) types.push('fast', 'fast');
+  if (elapsed > 30) types.push('tank');
+  if (elapsed > 45) types.push('splitter');
+  if (elapsed > 60) types.push('spitter');
+  if (elapsed > 80) types.push('exploder');
+  if (elapsed > 100) types.push('fast', 'fast', 'tank');
+  // Spawn
+  spawnTimer++;
+  if (spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
+    // Burst spawn: more zombies at once as time goes on
+    const burst = elapsed > 60 ? 3 : elapsed > 30 ? 2 : 1;
+    for (let b = 0; b < burst; b++) spawnHordeZombie(types, elapsed);
+  }
+  // Weapon pickup every 20 seconds
+  if (hordeTimer % 1200 === 0) spawnWeaponPickup();
+  // Power-up orb every 45 seconds
+  if (hordeTimer % 2700 === 0 && hordeTimer > 0) {
+    const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
+    const pwr = pool[Math.floor(Math.random() * pool.length)];
+    const pos = getRandomFloorPos();
+    pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
+  }
+  // Extra health every 30 seconds
+  if (hordeTimer % 1800 === 0) spawnHealthPickup();
+}
+
+function spawnHordeZombie(types, elapsed) {
+  const tk = types[Math.floor(Math.random() * types.length)];
+  const t = ZOMBIE_TYPES[tk]; if (!t) return;
+  // Spawn at arena edges (circular)
+  const arena = rooms[0]; if (!arena) return;
+  const cx = (arena.x + arena.w / 2) * CELL_SIZE, cy2 = (arena.y + arena.h / 2) * CELL_SIZE;
+  const a = Math.random() * Math.PI * 2, r = 15 * CELL_SIZE; // edge of circle
+  const x = cx + Math.cos(a) * r, y = cy2 + Math.sin(a) * r;
+  const sc = 1 + elapsed * 0.005; // slow HP scaling over time
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + elapsed * 0.003, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: a + Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
+}
+
 function spawnSurvivalZombie() {
   const ts = getZombieTypesForWave(survivalWave);
   const tk = ts[Math.floor(Math.random() * ts.length)];
@@ -2386,7 +2508,7 @@ function update() {
                   // Large blood pool + directional splatter trail
                   decals.push({x:z.x,y:z.y,size:z.radius+18+Math.random()*25,alpha:0.6+Math.random()*0.2,color:'#200'});
                   for(let k=0;k<8;k++){const a2=_ba+(Math.random()-0.5)*1.2,sd=15+Math.random()*40;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*10,alpha:0.3+Math.random()*0.3,color:['#311','#200','#411','#500'][Math.floor(Math.random()*4)]});}
-                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;dropZombieLoot(z);}
+                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;}if(gameMode==='survival'||gameMode==='horde')dropZombieLoot(z);
                   {const _kp=players.find(pp=>pp.id===b.ownerId);if(_kp&&_kp.alive&&playerHasPerk(_kp,'vampire')){
                     let healAmt=2*getPlayerPerkCount(_kp,'vampire');
                     // Blood Rage synergy: 5x heal at low HP
@@ -2443,7 +2565,9 @@ function update() {
 
   // ---- Host runs simulation ----
   if (isHost) {
-    if (gameMode === 'survival') {
+    if (gameMode === 'horde') {
+      updateHorde();
+    } else if (gameMode === 'survival') {
       updateSurvivalWaves();
     } else {
       // Continuous zombie spawning based on level
@@ -2630,7 +2754,7 @@ function update() {
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0 });
   }
 
   updateHUD();
@@ -2639,6 +2763,7 @@ function update() {
 // ---- Apply host state (non-host client) ----
 function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
+  if (msg.hordeTimer !== undefined) hordeTimer = msg.hordeTimer;
   // Sync survival wave state
   if (msg.gameMode === 'survival') {
     if (msg.survivalWave && msg.survivalWave !== survivalWave) {
@@ -2775,7 +2900,7 @@ function updateHUD() {
   if(w.reloading){ae.innerHTML=`RELOADING ${Math.floor((1-w.reloadTimer/def.reloadTime)*100)}%`;ae.className='ammo reloading';}
   else{ae.innerHTML=`${w.ammo} <span class="slash">/</span> <span class="reserve">${def.infinite?'∞':w.reserveAmmo}</span>`;ae.className='ammo';}
   document.getElementById('score').textContent=score.toLocaleString();
-  document.getElementById('wave-display').textContent=gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
+  document.getElementById('wave-display').textContent=gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
