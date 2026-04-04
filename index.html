@@ -205,6 +205,15 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <div class="highscore" id="highscore-display"></div>
 </div>
 
+<!-- ---- WAVE SUMMARY ---- -->
+<div id="wave-summary-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:39;background:rgba(0,0,0,0.75);font-family:'Courier New',monospace;text-align:center">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:500px">
+    <div style="color:#4f4;font-size:clamp(20px,5vw,36px);font-weight:bold;letter-spacing:4px;margin-bottom:4px" id="wave-summary-title">WAVE COMPLETE</div>
+    <div style="color:#888;font-size:13px;margin-bottom:16px" id="wave-summary-sub"></div>
+    <div id="wave-summary-stats" style="text-align:center"></div>
+  </div>
+</div>
+
 <!-- ---- PERK SELECTION ---- -->
 <div id="perk-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:40;background:rgba(0,0,0,0.8);font-family:'Courier New',monospace;text-align:center;display:none">
   <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:600px">
@@ -250,6 +259,7 @@ let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 // Survival mode wave state
 let survivalWave = 0, survivalWaveState = 'countdown', survivalWaveTimer = 0;
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
+let waveSummaryActive = false, waveSummaryTimer = 0;
 
 // ---- PERK SYSTEM ----
 const PERK_DEFS = [
@@ -270,7 +280,41 @@ const PERK_DEFS = [
 let playerPerks = {}; // { perkId: count }
 let perkSelectionActive = false;
 
-function resetPerks() { playerPerks = {}; perkSelectionActive = false; document.getElementById('perk-screen').style.display = 'none'; }
+function resetPerks() { playerPerks = {}; perkSelectionActive = false; document.getElementById('perk-screen').style.display = 'none'; document.getElementById('wave-summary-screen').style.display = 'none'; waveSummaryActive = false; }
+
+function showWaveSummary() {
+  if (waveSummaryActive) return;
+  waveSummaryActive = true;
+  document.getElementById('wave-summary-title').textContent = `WAVE ${survivalWave} COMPLETE`;
+  document.getElementById('wave-summary-sub').textContent = `+${500 * survivalWave} bonus points`;
+  const container = document.getElementById('wave-summary-stats');
+  let html = '';
+  // Sort players by wave kills descending
+  const sorted = [...players].sort((a,b) => (b._waveKills||0) - (a._waveKills||0));
+  for (const p of sorted) {
+    const wk = p._waveKills || 0;
+    const tk = p._totalKills || 0;
+    const isYou = p.id === myId;
+    html += `<div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:8px 0;${isYou?'color:#fff':'color:#aaa'}">`;
+    html += `<span style="width:14px;height:14px;border-radius:50%;background:${p.color};display:inline-block;flex-shrink:0"></span>`;
+    html += `<span style="min-width:80px;text-align:left;font-weight:${isYou?'bold':'normal'}">${p.name}${isYou?' (You)':''}</span>`;
+    html += `<span style="color:#f04040;font-weight:bold;font-size:18px;min-width:40px">${wk}</span>`;
+    html += `<span style="color:#666;font-size:11px">kills this wave</span>`;
+    html += `</div>`;
+  }
+  container.innerHTML = html;
+  document.getElementById('wave-summary-screen').style.display = 'block';
+  // Auto-transition to perk selection after 3 seconds
+  waveSummaryTimer = setTimeout(() => {
+    document.getElementById('wave-summary-screen').style.display = 'none';
+    waveSummaryActive = false;
+    showPerkSelection();
+  }, 3000);
+}
+
+function resetWaveKills() {
+  for (const p of players) p._waveKills = 0;
+}
 
 function getPerkCount(id) { return playerPerks[id] || 0; }
 function hasPerk(id) { return getPerkCount(id) > 0; }
@@ -1240,6 +1284,7 @@ function showMultiError(txt) { document.getElementById('multi-error').textConten
 function showScreen(id) {
   ['start-screen','solo-mode-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'].forEach(s => document.getElementById(s).style.display = 'none');
   document.getElementById('perk-screen').style.display = 'none'; perkSelectionActive = false;
+  document.getElementById('wave-summary-screen').style.display = 'none'; waveSummaryActive = false; if(waveSummaryTimer){clearTimeout(waveSummaryTimer);waveSummaryTimer=0;}
   if (id) document.getElementById(id).style.display = 'flex';
 }
 
@@ -1641,6 +1686,7 @@ let currentWaveMod = null;
 
 function startSurvivalWave() {
   survivalWave++;
+  resetWaveKills();
   // Pick wave modifier (boss waves get none — they're special enough)
   currentWaveMod = null;
   if (survivalWave % 5 !== 0 && survivalWave >= 3) {
@@ -1696,7 +1742,7 @@ function updateSurvivalWaves() {
     return;
   }
   if (survivalWaveState === 'rest') {
-    if (!perkSelectionActive) survivalWaveTimer--;
+    if (!perkSelectionActive && !waveSummaryActive) survivalWaveTimer--;
     if (survivalWaveTimer <= 0) startSurvivalWave();
     return;
   }
@@ -1719,8 +1765,8 @@ function updateSurvivalWaves() {
     survivalWaveTimer = 240 + Math.floor(Math.random() * 60); // 4-5 seconds
     score += 500 * survivalWave;
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `WAVE ${survivalWave} CLEAR!`, '#4f4');
-    // Perk selection after each wave
-    showPerkSelection();
+    // Wave summary then perk selection
+    showWaveSummary();
     // Spawn rest-period pickups — more generous on boss wave clear
     const isBossWave = survivalWave % 5 === 0;
     for (let i = 0; i < (isBossWave ? 4 : 2); i++) spawnHealthPickup();
@@ -2010,7 +2056,10 @@ function update() {
                   particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:nz.x,ty:nz.y});
                   // Sparks at chain point
                   for(let li=0;li<4;li++){particles.push({x:nz.x+(Math.random()-0.5)*12,y:nz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
-                  damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
+                  // Track per-player kills for wave summary
+                  const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
+                  const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // Directional blood burst — blood flies in bullet direction
                   const _ba=Math.atan2(b.vy,b.vx);
                   for(let k=0;k<40;k++){const a2=_ba+(Math.random()-0.5)*Math.PI*1.2,s=1+Math.random()*10;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:35+Math.random()*25,maxLife:60,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700','#500'][Math.floor(Math.random()*7)],type:'blood'});}
@@ -2232,7 +2281,7 @@ function update() {
 
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
-    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false }));
+    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0 }));
     const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
@@ -2255,9 +2304,9 @@ function applyHostState(msg) {
       document.getElementById('wave-num').textContent = `WAVE ${survivalWave}`;
       el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
     }
-    // Non-host perk selection: trigger when wave state changes to rest
+    // Non-host wave summary + perk selection: trigger when wave state changes to rest
     if (msg.survivalWaveState === 'rest' && survivalWaveState === 'active') {
-      showPerkSelection();
+      showWaveSummary();
     }
     survivalWaveState = msg.survivalWaveState || survivalWaveState;
   } else {
@@ -2293,6 +2342,7 @@ function applyHostState(msg) {
       if (!pd.alive && p.alive) { playPlayerDeathSound(); }
       p.hp = pd.hp; p.alive = pd.alive;
       if (pd.maxHp) p.maxHp = pd.maxHp;
+      p._waveKills = pd.waveKills||0; p._totalKills = pd.totalKills||0;
       p.reviveProgress = pd.reviveProgress||0; p.reviveTime = pd.reviveTime||360;
       continue;
     }
@@ -2306,6 +2356,7 @@ function applyHostState(msg) {
     p._remoteReloading = pd.reloading||false;
     p._remoteFiring = pd.firing||false;
     p._remoteWeaponType = pd.weaponType||'pistol';
+    p._waveKills = pd.waveKills||0; p._totalKills = pd.totalKills||0;
     if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
   }
   // Sync zombies from host — interpolate positions, detect damage and deaths
