@@ -524,7 +524,11 @@ const SFX_FILES = [
   'health_low', 'health_pickup', 'armor_pickup', 'player_death',
   'menu_select', 'menu_hover', 'countdown', 'wave_start',
 ];
-const MUSIC_FILES = ['music_ambient', 'music_combat', 'music_menu', 'music_gameover'];
+const MUSIC_FILES = ['music_ambient', 'music_ambient2', 'music_combat', 'music_combat2', 'music_combat3', 'music_combat4', 'music_menu', 'music_gameover'];
+const COMBAT_TRACKS = ['music_combat', 'music_combat2', 'music_combat3', 'music_combat4'];
+const AMBIENT_TRACKS = ['music_ambient', 'music_ambient2'];
+let _lastCombatTrack = '', _lastAmbientTrack = '';
+function pickRandomTrack(list, lastPlayed) { const available = list.filter(t => t !== lastPlayed && sfxBuffers[t]); return available.length > 0 ? available[Math.floor(Math.random() * available.length)] : list[Math.floor(Math.random() * list.length)]; }
 
 function loadSfx() {
   if (!audioCtx) return;
@@ -728,9 +732,9 @@ function updateAmbientAudio() {
     healthLowTimer = 0;
   }
 
-  // Dynamic music: combat metal starts at 3+ aware zombies nearby,
-  // stays playing with wider radius as long as any aware zombie is in range
-  const inCombat = currentMusic && currentMusic.name === 'music_combat';
+  // Dynamic music: combat starts at 3+ aware zombies nearby,
+  // randomly picks from combat track pool. Switches ambient tracks too.
+  const inCombat = currentMusic && COMBAT_TRACKS.includes(currentMusic.name);
   const triggerRange = 350;   // range to START combat music
   const sustainRange = 600;   // wider range to KEEP combat music going
   const range = inCombat ? sustainRange : triggerRange;
@@ -740,9 +744,13 @@ function updateAmbientAudio() {
     if (d < range && z.aware) nearAwareCount++;
   }
   if (!inCombat && nearAwareCount > 2) {
-    playMusic('music_combat', 1.5);
+    const track = pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack);
+    _lastCombatTrack = track;
+    playMusic(track, 1.5);
   } else if (inCombat && nearAwareCount === 0) {
-    playMusic('music_ambient', 3.0);
+    const track = pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack);
+    _lastAmbientTrack = track;
+    playMusic(track, 3.0);
   }
 }
 
@@ -1522,7 +1530,7 @@ function startSoloGame() {
   if (gameMode !== 'survival') placeExit();
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic('music_ambient', 2.0);
+  playMusic(pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'survival') startSurvivalWave();
   else startLevel();
