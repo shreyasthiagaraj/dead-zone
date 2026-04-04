@@ -446,7 +446,7 @@ function createWeapon(type) { const d = WEAPON_DEFS[type]; return { type, ammo: 
 
 // ---- ENTITIES ----
 let bullets = [], zombies = [], particles = [], pickups = [], decals = [], floatingTexts = [], explosions = [], obstacles = [], barrels = [];
-let dungeonGrid = null, rooms = [], roomDetails = [];
+let dungeonGrid = null, rooms = [], roomDetails = [], roomGrid = null; // roomGrid[y][x] = room index or -1
 
 // Room visual themes — each defines floor color, grid color, wall accent, and a name
 const ROOM_THEMES = [
@@ -885,11 +885,23 @@ function generateDungeon(seed) {
     roomDetails.push({ ri, theme, details, brightness: r.brightness, flicker: r.flicker });
   }
 
+  buildRoomGrid();
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
   uploadDungeonGrid();
 }
 function carveRoom(r) { for (let y = r.y; y < r.y+r.h && y < GRID_H; y++) for (let x = r.x; x < r.x+r.w && x < GRID_W; x++) if (y >= 0 && x >= 0) dungeonGrid[y][x] = true; }
+// Precompute room index per cell — O(1) lookup during rendering instead of O(rooms) per cell
+function buildRoomGrid() {
+  roomGrid = [];
+  for (let y = 0; y < GRID_H; y++) { roomGrid[y] = new Int8Array(GRID_W); roomGrid[y].fill(-1); }
+  for (let ri = 0; ri < rooms.length; ri++) {
+    const r = rooms[ri];
+    for (let y = r.y; y < r.y + r.h && y < GRID_H; y++)
+      for (let x = r.x; x < r.x + r.w && x < GRID_W; x++)
+        if (y >= 0 && x >= 0) roomGrid[y][x] = ri;
+  }
+}
 function carveCorridor(a, b) {
   const ax=a.x+Math.floor(a.w/2), ay=a.y+Math.floor(a.h/2), bx=b.x+Math.floor(b.w/2), by=b.y+Math.floor(b.h/2), half=1;
   for (let x = Math.min(ax,bx); x <= Math.max(ax,bx); x++) for (let dy=-half; dy<=half; dy++) { const cy=ay+dy; if (cy>=0&&cy<GRID_H&&x>=0&&x<GRID_W) dungeonGrid[cy][x]=true; }
@@ -944,6 +956,7 @@ function generateArena(seed) {
   }
   roomDetails.push({ ri: 0, theme: arena.theme, details: arenaDetails, brightness: 1.0, flicker: false });
 
+  buildRoomGrid();
   // Build obstacles array from grid
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
@@ -2575,9 +2588,9 @@ function render() {
   const _corridorTheme=ROOM_THEMES[0];
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
-      // Floor cell — find which room it belongs to for themed rendering
-      let theme=_corridorTheme;
-      for(const r of rooms){if(cx>=r.x&&cx<r.x+r.w&&cy>=r.y&&cy<r.y+r.h){theme=r.theme||_corridorTheme;break;}}
+      // Floor cell — O(1) room lookup via precomputed roomGrid
+      const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
+      const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       ctx.fillStyle=theme.floor;
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
       ctx.strokeStyle=theme.grid;ctx.lineWidth=0.5;
@@ -2585,16 +2598,17 @@ function render() {
     } else {
       ctx.fillStyle='#0c0a08';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      // Wall edge highlights using adjacent room's accent color
+      // Wall edge highlights — O(1) accent color from adjacent room
       const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
       const floorAbove=cy>0&&dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx];
       const floorBelow=cy<GRID_H-1&&dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx];
       const floorLeft=cx>0&&dungeonGrid[cy][cx-1];
       const floorRight=cx<GRID_W-1&&dungeonGrid[cy][cx+1];
       if(floorAbove||floorBelow||floorLeft||floorRight){
-        // Find nearest room for accent color
         let accent='#3a3028';
-        for(const r of rooms){if(cx>=r.x-1&&cx<r.x+r.w+1&&cy>=r.y-1&&cy<r.y+r.h+1){accent=(r.theme||_corridorTheme).accent;break;}}
+        // Check adjacent cells for room accent (O(1) via roomGrid)
+        const adj=floorAbove?roomGrid[cy-1][cx]:floorBelow?roomGrid[cy+1][cx]:floorLeft?roomGrid[cy][cx-1]:roomGrid[cy][cx+1];
+        if(adj>=0&&rooms[adj]?.theme) accent=rooms[adj].theme.accent;
         ctx.fillStyle=accent;
         if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,2);
         if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-2,CELL_SIZE,2);
