@@ -391,8 +391,13 @@ function updateOrbital() {
     // Damage nearby zombies every 10 frames
     if (gameTime % 8 === 0) { for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 70) { damageZombie(z, 20, 0, 0); z._burning = (z._burning||0) + 15; z._burnTimer = 180; } } }
   } else if (activeOrbital.id === 'lightning_drone') {
-    // Zap nearest zombie every 60 frames
-    if (gameTime % 60 === 0) { let best = null, bd = 250; for (const z of zombies) { const d = Math.sqrt((z.x-ox)**2+(z.y-oy)**2); if (d < bd) { bd = d; best = z; } } if (best) { damageZombie(best, 25, 0, 0); particles.push({x:ox,y:oy,vx:0,vy:0,life:15,maxLife:15,size:1,color:'#4ff',type:'lightning',tx:best.x,ty:best.y}); } }
+    // Zap nearest zombie every 40 frames — chains to 3 nearby
+    if (gameTime % 40 === 0) { let best = null, bd = 250; for (const z of zombies) { const d = Math.sqrt((z.x-ox)**2+(z.y-oy)**2); if (d < bd) { bd = d; best = z; } }
+      if (best) { damageZombie(best, 40, 0, 0); best.staggerTimer = Math.max(best.staggerTimer, 10);
+        particles.push({x:ox,y:oy,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:best.x,ty:best.y});
+        // Chain from drone hit to 2 more
+        let lz=best;const hs=new Set([best]);for(let c=0;c<2;c++){let bd2=200,bz2=null;for(const z2 of zombies){if(hs.has(z2))continue;const d2=Math.sqrt((z2.x-lz.x)**2+(z2.y-lz.y)**2);if(d2<bd2){bd2=d2;bz2=z2;}}if(!bz2)break;hs.add(bz2);damageZombie(bz2,25,0,0);particles.push({x:lz.x,y:lz.y,vx:0,vy:0,life:15,maxLife:15,size:1,color:'#4ff',type:'lightning',tx:bz2.x,ty:bz2.y});lz=bz2;}
+      } }
   } else if (activeOrbital.id === 'ice_shield') {
     // Slow all zombies within range
     for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 100) { z._slowTimer = Math.max(z._slowTimer||0, 30); } }
@@ -447,13 +452,18 @@ function applyElementOnHit(z, damage) {
     z._slowTimer = Math.max(z._slowTimer || 0, 120);
     if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; }
   } else if (el === 'lightning') {
+    // Chain to 5 enemies at 70% damage each — devastating group clear
     let lastZ = z; const hitSet = new Set();
-    for (let ci = 0; ci < 2; ci++) {
-      let bestD = 180, bestZ = null;
+    for (let ci = 0; ci < 5; ci++) {
+      let bestD = 250, bestZ = null;
       for (const oz of zombies) { if (oz === lastZ || hitSet.has(oz)) continue; const d = Math.sqrt((oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2); if (d < bestD) { bestD = d; bestZ = oz; } }
       if (!bestZ) break; hitSet.add(bestZ);
-      damageZombie(bestZ, Math.floor(damage * 0.4), 0, 0);
-      particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+      damageZombie(bestZ, Math.floor(damage * 0.7), 0, 0);
+      bestZ.staggerTimer = Math.max(bestZ.staggerTimer, 15); // stun on chain
+      particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+      particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+      // Sparks at chain point
+      for(let li=0;li<3;li++)particles.push({x:bestZ.x+(Math.random()-0.5)*12,y:bestZ.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10,maxLife:10,size:2+Math.random()*2,color:'#4ff',type:'spark'});
       lastZ = bestZ;
     }
   }
@@ -3331,8 +3341,13 @@ function update() {
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // Element effects: burn, slow, freeze
       if(z._burnTimer>0){z._burnTimer--;if(gameTime%15===0&&z._burning>0){damageZombie(z,z._burning,0,0);}
-        // Burning zombie fire particles (every 3 frames for dramatic effect)
-        if(z._burning>0&&gameTime%3===0){for(let fi=0;fi<2;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-1.5-Math.random()*2,life:15,maxLife:15,size:3+Math.random()*4,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'});}
+        if(z._burning>0){
+          // Fire particles (every 2 frames — big dramatic flames)
+          if(gameTime%2===0){for(let fi=0;fi<3;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:4+Math.random()*5,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
+          // Fire trail: leave burning decals on the ground
+          if(gameTime%6===0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.4,color:'#420'});
+          // Fire spread: ignite nearby non-burning zombies
+          if(gameTime%20===0){for(const oz of zombies){if(oz===z||oz._burning>0)continue;const fd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(fd<40){oz._burning=Math.floor(z._burning*0.6);oz._burnTimer=180;}}}}
         if(z._burnTimer<=0)z._burning=0;}
       if(z._frozenTimer>0){z._frozenTimer--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);continue;}
       if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
@@ -4285,6 +4300,9 @@ function render() {
   // Barrel glow
   for(const br of barrels){const bsx=br.x+dlx,bsy=br.y+dly,brr=40;
     const bg=ctx.createRadialGradient(bsx,bsy,0,bsx,bsy,brr);bg.addColorStop(0,'rgba(255,60,0,0.08)');bg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=bg;ctx.fillRect(bsx-brr,bsy-brr,brr*2,brr*2);}
+  // Burning zombie fire light
+  for(const z of zombies){if(z._burning>0){const fsx=z.x+dlx,fsy=z.y+dly,fr=60+Math.random()*10;
+    const fg=ctx.createRadialGradient(fsx,fsy,0,fsx,fsy,fr);fg.addColorStop(0,'rgba(255,120,20,0.2)');fg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=fg;ctx.fillRect(fsx-fr,fsy-fr,fr*2,fr*2);}}
   ctx.restore();}
 
   // Redraw bullets on top of fog so they're always visible
