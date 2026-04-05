@@ -290,63 +290,62 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ARCADE ESCALATION SYSTEM
 // ============================================================
 
-// ---- GUN EVOLUTION TIERS ----
-const GUN_TIERS = [
-  { kills: 0,   name: 'PISTOL',   fireRate: 200, damage: 30, bulletSpeed: 16, spread: 0.03, bulletSize: 3,  knockback: 2,  pierce: 0, pellets: 1, bulletColor: '#ff0', sound: { freq: 600, dur: 0.05 } },
-  { kills: 20,  name: 'HOT PISTOL', fireRate: 170, damage: 35, bulletSpeed: 18, spread: 0.03, bulletSize: 3, knockback: 3, pierce: 0, pellets: 1, bulletColor: '#fa0', sound: { freq: 550, dur: 0.06 } },
-  { kills: 50,  name: 'SMG',      fireRate: 80,  damage: 18, bulletSpeed: 20, spread: 0.08, bulletSize: 2,  knockback: 1,  pierce: 0, pellets: 1, bulletColor: '#7df', sound: { freq: 900, dur: 0.02 } },
-  { kills: 100, name: 'SHOTGUN',  fireRate: 400, damage: 22, bulletSpeed: 12, spread: 0.2,  bulletSize: 3,  knockback: 10, pierce: 0, pellets: 6, bulletColor: '#fa0', sound: { freq: 120, dur: 0.12 } },
-  { kills: 150, name: 'RIFLE',    fireRate: 120, damage: 45, bulletSpeed: 26, spread: 0.01, bulletSize: 4,  knockback: 6,  pierce: 2, pellets: 1, bulletColor: '#4f4', sound: { freq: 100, dur: 0.15 }, tracer: true },
-  { kills: 200, name: 'MINIGUN',  fireRate: 30,  damage: 12, bulletSpeed: 20, spread: 0.18, bulletSize: 2,  knockback: 0.5,pierce: 0, pellets: 1, bulletColor: '#adf', sound: { freq: 1100, dur: 0.015 } },
-  { kills: 250, name: 'PLASMA',   fireRate: 50,  damage: 35, bulletSpeed: 22, spread: 0.02, bulletSize: 5,  knockback: 4,  pierce: 4, pellets: 1, bulletColor: '#f4f', sound: { freq: 2000, dur: 0.03 }, tracer: true, laserGlow: true },
-  { kills: 300, name: 'GOD GUN',  fireRate: 25,  damage: 40, bulletSpeed: 24, spread: 0.06, bulletSize: 5,  knockback: 5,  pierce: 3, pellets: 3, bulletColor: '#fff', sound: { freq: 800, dur: 0.04 }, tracer: true, laserGlow: true },
-];
+// ---- SMOOTH GUN POWER SCALING ----
+// No tiers, no transitions. Gun stays the same, just gets stronger.
+// +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
+const BASE_GUN = { damage: 30, fireRate: 180, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0 };
+let runKills = 0;
 
-let runKills = 0; // kills this run (determines gun tier)
+function getScaledGun() {
+  const power = runKills / 10; // power level = kills / 10
+  const dmgMult = 1 + power * 0.05; // +5% per 10 kills
+  const rateMult = 1 + Math.min(power * 0.02, 0.6); // fire rate improves up to 60% faster
+  const sizeMult = 1 + Math.min(power * 0.015, 0.5); // bullet size grows up to 50% bigger
+  // Color shift: yellow → orange → red → white-hot
+  const t = Math.min(power / 30, 1); // 0-1 over 300 kills
+  const r = 255, g = Math.floor(255 - t * 200), b = Math.floor(t < 0.7 ? 0 : (t - 0.7) / 0.3 * 255);
+  const color = `rgb(${r},${g},${b})`;
+  return {
+    damage: Math.floor(BASE_GUN.damage * dmgMult),
+    fireRate: Math.floor(BASE_GUN.fireRate / rateMult),
+    bulletSpeed: BASE_GUN.bulletSpeed + Math.min(power * 0.3, 6),
+    spread: BASE_GUN.spread,
+    bulletSize: Math.floor(BASE_GUN.bulletSize * sizeMult * 10) / 10,
+    knockback: BASE_GUN.knockback + Math.min(power * 0.1, 3),
+    pierce: Math.floor(power / 15), // +1 pierce every 150 kills
+    bulletColor: color,
+  };
+}
+
+// Legacy stubs
 let currentGunTier = 0;
+const GUN_TIERS = [{ kills:0, name:'GUN', fireRate:180, damage:30, bulletSpeed:16, spread:0.03, bulletSize:3, knockback:2, pierce:0, pellets:1, bulletColor:'#ff0', sound:{freq:600,dur:0.05} }];
+function checkGunEvolution() {} // smooth scaling, no evolution events
 
-function getGunTier() {
-  let tier = 0;
-  for (let i = GUN_TIERS.length - 1; i >= 0; i--) { if (runKills >= GUN_TIERS[i].kills) { tier = i; break; } }
-  return tier;
-}
-
-function checkGunEvolution() {
-  const newTier = getGunTier();
-  if (newTier > currentGunTier) {
-    currentGunTier = newTier;
-    const t = GUN_TIERS[newTier];
-    addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 50, `${t.name} UNLOCKED!`, '#f0c040');
-    showPickupMsg(t.name, `Tier ${newTier + 1} — ${t.damage} dmg`);
-    screenShake.intensity = Math.max(screenShake.intensity, 12);
-    playLevelCompleteSound();
-    // Sparkle particles
-    const lp = getLocalPlayer();
-    for (let k = 0; k < 20; k++) { const a = Math.random()*Math.PI*2, s = 2+Math.random()*5; particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:25+Math.random()*15,maxLife:40,size:3+Math.random()*4,color:Math.random()>0.5?'#f0c040':'#fff',type:'spark'}); }
-  }
-}
-
-// ---- KILL STREAK SYSTEM ----
-const STREAK_TIERS = [
-  { kills: 3,  window: 240, name: 'RAPID',       color: '#ff0', fireRateMult: 1.5, damageMult: 1,   explosive: false, invincible: false, speedMult: 1,   duration: 180 },
-  { kills: 6,  window: 360, name: 'POWER',        color: '#f80', fireRateMult: 1.5, damageMult: 2,   explosive: false, invincible: false, speedMult: 1,   duration: 240 },
-  { kills: 10, window: 480, name: 'FURY',         color: '#f44', fireRateMult: 2,   damageMult: 2,   explosive: true,  invincible: false, speedMult: 1.2, duration: 300 },
-  { kills: 15, window: 600, name: 'UNSTOPPABLE',  color: '#f0f', fireRateMult: 3,   damageMult: 3,   explosive: true,  invincible: true,  speedMult: 1.5, duration: 360 },
+// ---- KILL STREAK SYSTEM (visual + loot drops, not stat changes) ----
+const STREAK_MILESTONES = [
+  { kills: 5,  name: 'STREAK!',    color: '#ff0', drop: 'health' },
+  { kills: 10, name: 'RAMPAGE!',   color: '#f80', drop: 'powerup' },
+  { kills: 15, name: 'MASSACRE!',  color: '#f44', drop: 'powerup' },
+  { kills: 20, name: 'GODLIKE!',   color: '#f0f', drop: 'orbital' },
 ];
-
 let streakKills = 0, streakTimer = 0, activeStreak = null, activeStreakTimer = 0;
 
 function registerStreakKill() {
   streakKills++;
-  streakTimer = 240; // reset decay timer (4 seconds base)
-  // Check for streak tier upgrades
-  for (let i = STREAK_TIERS.length - 1; i >= 0; i--) {
-    if (streakKills >= STREAK_TIERS[i].kills && streakTimer > 0) {
-      if (!activeStreak || STREAK_TIERS.indexOf(activeStreak) < i) {
-        activeStreak = STREAK_TIERS[i];
-        activeStreakTimer = activeStreak.duration;
-        addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, activeStreak.name + '!', activeStreak.color);
-        screenShake.intensity = Math.max(screenShake.intensity, 6);
+  streakTimer = 300; // 5 second window
+  // Check milestones
+  for (let i = STREAK_MILESTONES.length - 1; i >= 0; i--) {
+    if (streakKills === STREAK_MILESTONES[i].kills) {
+      const m = STREAK_MILESTONES[i];
+      addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, m.name, m.color);
+      screenShake.intensity = Math.max(screenShake.intensity, 4 + i * 3);
+      // Drop reward
+      const lp = getLocalPlayer();
+      if (lp && isHost) {
+        if (m.drop === 'health') { pickups.push({ type: 'health', amount: 25, x: lp.x + (Math.random()-0.5)*40, y: lp.y + (Math.random()-0.5)*40, bobTimer: Math.random()*Math.PI*2 }); }
+        else if (m.drop === 'powerup') { const pool = POWERUP_TYPES.filter(p=>p.duration>1); const pwr = pool[Math.floor(Math.random()*pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: lp.x + (Math.random()-0.5)*40, y: lp.y + (Math.random()-0.5)*40, bobTimer: Math.random()*Math.PI*2 }); }
+        else if (m.drop === 'orbital') { spawnOrbitalPickup(lp.x, lp.y); }
       }
       break;
     }
@@ -354,13 +353,52 @@ function registerStreakKill() {
 }
 
 function updateStreak() {
-  // Decay streak timer
   if (streakTimer > 0) { streakTimer--; if (streakTimer <= 0) { streakKills = 0; } }
-  // Active streak effect timer
-  if (activeStreakTimer > 0) {
-    activeStreakTimer--;
-    if (activeStreakTimer <= 0) { activeStreak = null; }
-    else if (activeStreak?.invincible) { const lp = getLocalPlayer(); if (lp) lp.invincible = Math.max(lp.invincible, 50); }
+}
+
+// ---- ORBITAL POWER-UPS ----
+const ORBITAL_TYPES = [
+  { id: 'flame_ring',    name: 'FLAME RING',     color: '#f80', icon: '🔥', desc: 'Fire circles you, burning nearby zombies' },
+  { id: 'lightning_drone', name: 'LIGHTNING DRONE', color: '#4ff', icon: '⚡', desc: 'Zaps nearest zombie every second' },
+  { id: 'ice_shield',    name: 'ICE SHIELD',     color: '#aef', icon: '❄',  desc: 'Frost aura slows everything nearby' },
+  { id: 'shadow_clone',  name: 'SHADOW CLONE',   color: '#a8f', icon: '👤', desc: 'A copy follows you and shoots' },
+];
+let activeOrbital = null; // { id, timer, angle }
+
+function spawnOrbitalPickup(x, y) {
+  const orb = ORBITAL_TYPES[Math.floor(Math.random() * ORBITAL_TYPES.length)];
+  pickups.push({ type: 'orbital', orbitalId: orb.id, x: x + (Math.random()-0.5)*60, y: y + (Math.random()-0.5)*60, bobTimer: Math.random()*Math.PI*2 });
+}
+
+function activateOrbital(id) {
+  const def = ORBITAL_TYPES.find(o => o.id === id);
+  if (!def) return;
+  activeOrbital = { id, timer: 1200, angle: 0 }; // 20 seconds
+  addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 40, def.icon + ' ' + def.name + '!', def.color);
+  showPickupMsg(def.icon + ' ' + def.name, def.desc);
+}
+
+function updateOrbital() {
+  if (!activeOrbital) return;
+  activeOrbital.timer--;
+  activeOrbital.angle += 0.05;
+  if (activeOrbital.timer <= 0) { activeOrbital = null; return; }
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive || !isHost) return;
+  const ox = lp.x + Math.cos(activeOrbital.angle) * 40;
+  const oy = lp.y + Math.sin(activeOrbital.angle) * 40;
+  if (activeOrbital.id === 'flame_ring') {
+    // Damage nearby zombies every 10 frames
+    if (gameTime % 10 === 0) { for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 60) { damageZombie(z, 8, 0, 0); z._burning = (z._burning||0) + 5; z._burnTimer = 120; } } }
+  } else if (activeOrbital.id === 'lightning_drone') {
+    // Zap nearest zombie every 60 frames
+    if (gameTime % 60 === 0) { let best = null, bd = 250; for (const z of zombies) { const d = Math.sqrt((z.x-ox)**2+(z.y-oy)**2); if (d < bd) { bd = d; best = z; } } if (best) { damageZombie(best, 25, 0, 0); particles.push({x:ox,y:oy,vx:0,vy:0,life:15,maxLife:15,size:1,color:'#4ff',type:'lightning',tx:best.x,ty:best.y}); } }
+  } else if (activeOrbital.id === 'ice_shield') {
+    // Slow all zombies within range
+    for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 100) { z._slowTimer = Math.max(z._slowTimer||0, 30); } }
+  } else if (activeOrbital.id === 'shadow_clone') {
+    // Fire a bullet toward nearest zombie every 20 frames
+    if (gameTime % 20 === 0) { let best=null,bd=300; for(const z of zombies){const d=Math.sqrt((z.x-ox)**2+(z.y-oy)**2);if(d<bd){bd=d;best=z;}} if(best){const a=Math.atan2(best.y-oy,best.x-ox);bullets.push({x:ox,y:oy,vx:Math.cos(a)*14,vy:Math.sin(a)*14,damage:15,color:'#a8f',size:2,knockback:1,pierce:0,pierced:0,life:40,flame:false,explosive:false,explosionRadius:0,tracer:false,chain:false,chainRange:0,chainCount:0,laserGlow:false,grenade:false,owner:'player',ownerId:lp.id,trail:[],crit:false,_element:null,_homing:false,_bouncing:0});} }
   }
 }
 
@@ -2255,40 +2293,37 @@ function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
-  // Arcade system: fire from current gun tier
-  const tier = GUN_TIERS[currentGunTier] || GUN_TIERS[0];
+  // Smooth scaling gun — same weapon, just gets stronger
+  const gun = getScaledGun();
   const now = performance.now();
-  let effectiveFireRate = tier.fireRate;
-  if (activeStreak) effectiveFireRate /= activeStreak.fireRateMult;
+  let effectiveFireRate = gun.fireRate;
   if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.5;
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  const pellets = tier.pellets || 1;
-  for (let i = 0; i < pellets; i++) {
-    const sp = (Math.random()-0.5) * tier.spread * 2;
-    const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
-    let dmg = tier.damage;
-    if (activeStreak) dmg *= activeStreak.damageMult;
-    if (playerHasPowerUp(p, 'rage')) dmg *= 2;
-    let isCrit = false;
-    if (Math.random() < 0.05) { dmg *= 3; isCrit = true; }
-    const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
-    bullets.push({
-      x: p.x+c*22, y: p.y+s*22, vx: c*tier.bulletSpeed, vy: s*tier.bulletSpeed,
-      damage: dmg, color: isCrit?'#f0f':(elColor||tier.bulletColor), size: isCrit?tier.bulletSize+2:tier.bulletSize,
-      knockback: tier.knockback, pierce: tier.pierce, pierced: 0, life: 60,
-      flame: false, explosive: activeStreak?.explosive||false, explosionRadius: 40,
-      tracer: tier.tracer||false, chain: false, chainRange: 0, chainCount: 0,
-      laserGlow: tier.laserGlow||false, grenade: false,
-      owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
-      _element: activeElement?.id || null, _homing: false, _bouncing: 0,
-    });
-  }
-  playSound(tier.sound.freq, tier.sound.dur, 'square', 0.2);
-  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, pellets > 1 ? 5 : 2);
+  const sp = (Math.random()-0.5) * gun.spread * 2;
+  const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
+  let dmg = gun.damage;
+  if (playerHasPowerUp(p, 'rage')) dmg *= 2;
+  let isCrit = false;
+  if (Math.random() < 0.05) { dmg *= 3; isCrit = true; }
+  const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
+  bullets.push({
+    x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
+    damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?gun.bulletSize+2:gun.bulletSize,
+    knockback: gun.knockback, pierce: gun.pierce, pierced: 0, life: 60,
+    flame: false, explosive: false, explosionRadius: 0,
+    tracer: false, chain: false, chainRange: 0, chainCount: 0,
+    laserGlow: false, grenade: false,
+    owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
+    _element: activeElement?.id || null, _homing: false, _bouncing: 0,
+  });
+  // Sound pitch shifts slightly with power
+  const freq = 600 - Math.min(runKills, 200);
+  playSound(freq, 0.05, 'square', 0.2);
+  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 2 + Math.min(runKills/100, 2));
   const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
-  for(let k=0;k<3;k++)particles.push({x:p.x+c2*24,y:p.y+s2*24,vx:c2*(3+Math.random()*3)+(Math.random()-0.5)*2,vy:s2*(3+Math.random()*3)+(Math.random()-0.5)*2,life:8+Math.random()*6,maxLife:14,size:2+Math.random()*2,color:tier.bulletColor,type:'spark'});
+  for(let k=0;k<3;k++)particles.push({x:p.x+c2*24,y:p.y+s2*24,vx:c2*(3+Math.random()*3)+(Math.random()-0.5)*2,vy:s2*(3+Math.random()*3)+(Math.random()-0.5)*2,life:8+Math.random()*6,maxLife:14,size:2+Math.random()*2,color:gun.bulletColor,type:'spark'});
   return;
 }
 function fireSingleShot(p,w,d) { /* legacy — unused */
@@ -2353,8 +2388,10 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
       else if(p.type==='ammo'){const w=pl.weapons[pl.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;if(isLocalUI){showPickupMsg('+AMMO');playPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='powerup'){
         if(isLocalUI){const ppd=POWERUP_TYPES.find(t=>t.id===p.powerupId);activatePowerUp(p.powerupId);playPickupSound();if(ppd)showPickupMsg(`${ppd.icon} ${ppd.name}`,ppd.desc);}
-        // Nuke: always kill zombies on host regardless of who picked it up
         if(p.powerupId==='nuke'&&isHost){for(const z of zombies){z.hp=0;}}
+        pickups.splice(i,1);}
+      else if(p.type==='orbital'){
+        if(isLocalUI){activateOrbital(p.orbitalId);playPickupSound();}
         pickups.splice(i,1);}
     }
   }
@@ -3054,6 +3091,7 @@ function update() {
     // Arcade system updates
     updateStreak();
     updateElementZones();
+    updateOrbital();
 
     const w=lp.weapons[lp.currentWeapon];
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
@@ -3177,6 +3215,8 @@ function update() {
                   // Arcade system: run kills + streak (check ownerId matches local player)
                   {const _lp2=getLocalPlayer();if(_lp2&&b.ownerId===_lp2.id){runKills++;checkGunEvolution();registerStreakKill();}}
                   const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  // Enrage nearby zombies (they saw their friend die)
+                  for(const nz of zombies){if(nz===z)continue;const nd=Math.sqrt((nz.x-z.x)**2+(nz.y-z.y)**2);if(nd<120&&!nz._enraged){nz._enraged=180;nz.speed*=1.4;nz.color='#f44';}}
                   // Directional blood burst — blood flies in bullet direction
                   const _ba=Math.atan2(b.vy,b.vx);
                   for(let k=0;k<40;k++){const a2=_ba+(Math.random()-0.5)*Math.PI*1.2,s=1+Math.random()*10;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:35+Math.random()*25,maxLife:60,size:3+Math.random()*6,color:['#a22','#811','#622','#933','#c11','#700','#500'][Math.floor(Math.random()*7)],type:'blood'});}
@@ -3262,6 +3302,8 @@ function update() {
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      // Enraged: revert after timer expires
+      if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // Element effects: burn, slow, freeze
       if(z._burnTimer>0){z._burnTimer--;if(gameTime%20===0&&z._burning>0){damageZombie(z,z._burning,0,0);particles.push({x:z.x+(Math.random()-0.5)*z.radius,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:'#f80',type:'spark'});}if(z._burnTimer<=0)z._burning=0;}
       if(z._frozenTimer>0){z._frozenTimer--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);continue;}
@@ -3279,7 +3321,17 @@ function update() {
       if(z.aware){
         z.angle=Math.atan2(zdy,zdx);
         if(z.ranged&&zd<300){if(zd<150){z.vx=-zdx/zd*z.speed*0.5;z.vy=-zdy/zd*z.speed*0.5;}else{z.vx*=0.9;z.vy*=0.9;}const now=performance.now();if(now-z.lastFired>z.fireRate){z.lastFired=now;bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});playZombieAttackSound();}}
-        else{z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;}
+        else{
+          const elapsed=gameTime/60; // seconds since game start
+          let mx=zdx/zd,my=zdy/zd;
+          // Flanking: after 2 min, some zombies approach from the side
+          if(elapsed>120&&!z._flanking&&Math.random()<0.001){z._flanking=true;z._flankDir=Math.random()<0.5?1:-1;}
+          if(z._flanking&&zd>80){const perp=z._flankDir;mx=mx*0.5+(-my)*0.5*perp;my=my*0.5+(mx)*0.5*perp;const ml=Math.sqrt(mx*mx+my*my)||1;mx/=ml;my/=ml;}
+          if(z._flanking&&zd<80)z._flanking=false;
+          // Dodging: after 4 min, zombies juke sideways periodically
+          if(elapsed>240&&gameTime%120<10&&Math.random()<0.02){const da=Math.random()<0.5?Math.PI/2:-Math.PI/2;const ca=Math.cos(da),sa=Math.sin(da);const nx=mx*ca-my*sa,ny=mx*sa+my*ca;mx=nx;my=ny;}
+          z.vx=mx*z.speed;z.vy=my*z.speed;
+        }
       } else {
         z.wanderTimer--;
         if(gameTime%15===0){const md=z.x-z.lastX,mdy=z.y-z.lastY;if(md*md+mdy*mdy<4)z.stuckTimer++;else z.stuckTimer=0;z.lastX=z.x;z.lastY=z.y;}
@@ -3598,13 +3650,12 @@ function applyHostState(msg) {
 // ============================================================
 function updateHUD() {
   const lp=getLocalPlayer();if(!lp)return;
-  // Gun tier display
-  const gt = GUN_TIERS[currentGunTier];
-  const nextTier = GUN_TIERS[currentGunTier + 1];
-  let tierText = `<span style="color:#f0c040">${gt.name}</span>`;
-  if (nextTier) { const pct = Math.floor((runKills - gt.kills) / (nextTier.kills - gt.kills) * 100); tierText += ` <span style="color:#666;font-size:10px">${runKills}/${nextTier.kills}</span>`; }
-  if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) tierText += ` <span style="color:${et.color}">${et.icon}</span>`; }
-  document.getElementById('weapon-name').innerHTML = tierText;
+  // Gun power display — smooth scaling, show kill count and active effects
+  const gun = getScaledGun();
+  let gunText = `<span style="color:${gun.bulletColor}">${runKills} KILLS</span> <span style="color:#888;font-size:10px">${gun.damage} dmg</span>`;
+  if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) gunText += ` <span style="color:${et.color}">${et.icon}${Math.ceil(activeElement.timer/60)}s</span>`; }
+  if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) gunText += ` <span style="color:${od.color}">${od.icon}${Math.ceil(activeOrbital.timer/60)}s</span>`; }
+  document.getElementById('weapon-name').innerHTML = gunText;
   // Streak bar (top HUD) — shows decay timer draining + color by streak level
   const streakPct = activeStreakTimer > 0 ? (activeStreakTimer / (activeStreak?.duration||1)) * 100 : (streakTimer > 0 ? (streakTimer / 240) * 100 : 0);
   const streakColor = activeStreak ? activeStreak.color : streakKills >= 10 ? '#f44' : streakKills >= 6 ? '#f80' : streakKills >= 3 ? '#ff0' : streakKills >= 1 ? '#888' : '#333';
@@ -3762,8 +3813,15 @@ function render() {
     ctx.globalAlpha=0.8*(ez.life/900);ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(et.icon,ez.x,ez.y);
     ctx.globalAlpha=1;}
 
-  // Pickups
-  for(const p of pickups){const bob=Math.sin(p.bobTimer)*3;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
+  // Active orbital rendering
+  if(activeOrbital){const lp=getLocalPlayer();if(lp&&lp.alive){const od=ORBITAL_TYPES.find(o=>o.id===activeOrbital.id);if(od){const ox=lp.x+Math.cos(activeOrbital.angle)*40,oy=lp.y+Math.sin(activeOrbital.angle)*40;ctx.save();ctx.globalAlpha=0.8;ctx.shadowColor=od.color;ctx.shadowBlur=15;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(ox,oy,6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,ox,oy);ctx.restore();
+    // Orbital aura effect
+    if(activeOrbital.id==='flame_ring'){ctx.globalAlpha=0.15;ctx.strokeStyle='#f80';ctx.lineWidth=3;ctx.beginPath();ctx.arc(lp.x,lp.y,55,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+    if(activeOrbital.id==='ice_shield'){ctx.globalAlpha=0.12;ctx.strokeStyle='#aef';ctx.lineWidth=4;ctx.beginPath();ctx.arc(lp.x,lp.y,95,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;}
+  }}}
+
+  // Pickups (+ orbital pickup rendering)
+  for(const p of pickups){const bob=Math.sin(p.bobTimer)*3;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
 
   // Exit portal
   if(exitPos){
