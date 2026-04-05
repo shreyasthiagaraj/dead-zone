@@ -151,6 +151,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <button class="menu-btn" id="btn-multi">MULTIPLAYER</button>
   </div>
   <div style="color:#666;font-size:11px;margin-top:30px" id="start-controls"></div>
+  <div id="install-prompt" style="display:none;margin-top:16px"><button class="menu-btn" id="btn-install" style="font-size:11px;padding:8px 16px;border-color:#4af;color:#4af">📱 ADD TO HOME SCREEN</button></div>
 </div>
 
 <!-- ---- SOLO MODE PICKER ---- -->
@@ -967,7 +968,7 @@ const ZOMBIE_TYPES = {
   exploder: { hp: 70, speed: 2.6, radius: 14, color: '#a55', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 70 },
   boss: { hp: 800, speed: 1.4, radius: 30, color: '#f44', damage: 40, score: 1000, explodeOnDeath: true, explosionRadius: 90 },
   splitter: { hp: 100, speed: 1.8, radius: 16, color: '#8a5', damage: 15, score: 200, splitOnDeath: true },
-  mini: { hp: 25, speed: 3.5, radius: 8, color: '#9b6', damage: 8, score: 50 },
+  mini: { hp: 20, speed: 2.5, radius: 10, color: '#9b6', damage: 6, score: 50 },
   brute: { hp: 150, speed: 2.2, radius: 15, color: '#a75', damage: 22, score: 250 },
   stalker: { hp: 45, speed: 3.0, radius: 10, color: '#556', damage: 18, score: 200 },
 };
@@ -2623,8 +2624,8 @@ function updateHorde() {
     const pos = getRandomFloorPos();
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
   }
-  // Element zone every 25 seconds
-  if (hordeTimer % 1500 === 0 && hordeTimer > 0) spawnElementZone();
+  // Element zone every 15 seconds
+  if (hordeTimer % 900 === 0 && hordeTimer > 0) spawnElementZone();
   // Extra health every 30 seconds
   if (hordeTimer % 1800 === 0) spawnHealthPickup();
 }
@@ -2863,19 +2864,15 @@ function spawnSurvivalZombie() {
 function dropZombieLoot(z) {
   const r = Math.random();
   if (z.boss) {
+    // Boss: health + guaranteed power-up
     pickups.push({ type: 'health', amount: 50, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
-    pickups.push({ type: 'ammo', x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
-    const ts = ['burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'];
-    pickups.push({ type: 'weapon', weaponType: ts[Math.floor(Math.random()*ts.length)], x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-    // Boss always drops a power-up
     const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x + (Math.random()-0.5)*20, y: z.y + (Math.random()-0.5)*20, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.04) {
+  } else if (r < 0.05) {
+    // 5% health drop
     pickups.push({ type: 'health', amount: 15, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.07) {
-    pickups.push({ type: 'ammo', x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.09) {
-    // Rare power-up drop — only duration-based ones (not instant deployables)
+  } else if (r < 0.10) {
+    // 5% power-up drop (doubled from 2%)
     const pool = POWERUP_TYPES.filter(p => p.duration > 1);
     const pwr = pool[Math.floor(Math.random() * pool.length)];
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
@@ -3607,9 +3604,9 @@ function updateHUD() {
   if (nextTier) { const pct = Math.floor((runKills - gt.kills) / (nextTier.kills - gt.kills) * 100); tierText += ` <span style="color:#666;font-size:10px">${runKills}/${nextTier.kills}</span>`; }
   if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) tierText += ` <span style="color:${et.color}">${et.icon}</span>`; }
   document.getElementById('weapon-name').innerHTML = tierText;
-  // Streak bar (top HUD)
-  const streakPct = streakTimer > 0 ? Math.min(100, streakKills / 15 * 100) : 0;
-  const streakColor = activeStreak ? activeStreak.color : (streakKills >= 1 ? '#ff0' : '#333');
+  // Streak bar (top HUD) — shows decay timer draining + color by streak level
+  const streakPct = activeStreakTimer > 0 ? (activeStreakTimer / (activeStreak?.duration||1)) * 100 : (streakTimer > 0 ? (streakTimer / 240) * 100 : 0);
+  const streakColor = activeStreak ? activeStreak.color : streakKills >= 10 ? '#f44' : streakKills >= 6 ? '#f80' : streakKills >= 3 ? '#ff0' : streakKills >= 1 ? '#888' : '#333';
   const sbar = document.getElementById('streak-bar');
   if (sbar) { sbar.style.width = streakPct + '%'; sbar.style.background = streakColor; }
   const slbl = document.getElementById('streak-label');
@@ -4273,6 +4270,26 @@ document.addEventListener('touchstart', function startMenuMusicTouch() {
   setTimeout(() => playMusic('music_menu', 3.0), 1500);
   document.removeEventListener('touchstart', startMenuMusicTouch);
 }, { once: true });
+// PWA install prompt
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); _deferredInstallPrompt = e;
+  const ip = document.getElementById('install-prompt'); if (ip) ip.style.display = 'block';
+});
+addBtn('btn-install', () => {
+  if (_deferredInstallPrompt) { _deferredInstallPrompt.prompt(); _deferredInstallPrompt.userChoice.then(() => { _deferredInstallPrompt = null; const ip = document.getElementById('install-prompt'); if (ip) ip.style.display = 'none'; }); }
+  else {
+    // iOS doesn't support beforeinstallprompt — show manual instructions
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isIOS) alert('Tap the Share button (↑) then "Add to Home Screen"');
+    else alert('Open browser menu (⋮) then "Add to Home Screen" or "Install App"');
+  }
+});
+// Show install button on iOS always (no beforeinstallprompt support)
+if (/iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.navigator.standalone) {
+  const ip = document.getElementById('install-prompt'); if (ip) ip.style.display = 'block';
+}
+
 gameLoop();
 </script>
 </body>
