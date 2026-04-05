@@ -132,7 +132,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="ammo-hud"><div class="weapon-name" id="weapon-name">PISTOL</div><div class="ammo" id="ammo-display">12 <span class="slash">/</span> <span class="reserve">∞</span></div></div>
 <div id="weapon-slots"></div>
 <div id="mobile-buttons">
-  <div class="mobile-btn dash-ready" id="btn-dash">DASH</div>
+  <div class="mobile-btn dash-ready" id="btn-dash">BLAST</div>
   <div class="mobile-btn reload-btn" id="btn-reload" style="display:none">RLD</div>
   <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:10px;font-weight:bold;text-align:center;line-height:1.2;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;padding-top:22px;box-sizing:border-box"></div>
 </div>
@@ -441,8 +441,8 @@ function applyElementOnHit(z, damage) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
   if (el === 'fire') {
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.4);
-    z._burnTimer = 240;
+    z._burning = (z._burning || 0) + Math.floor(damage * 0.8);
+    z._burnTimer = 300;
   } else if (el === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
     z._slowTimer = Math.max(z._slowTimer || 0, 120);
@@ -2360,27 +2360,26 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 }
 
 function dash() {
-  const lp=getLocalPlayer(); if(!lp||!lp.alive||lp.dashCooldown>0||lp.dashTimer>0) return;
-  let dx=0,dy=0;
-  if(isMobile&&leftJoystick.active){dx=leftJoystick.nx;dy=leftJoystick.ny;} else {if(keys['w'])dy-=1;if(keys['s'])dy+=1;if(keys['a'])dx-=1;if(keys['d'])dx+=1;}
-  if(dx===0&&dy===0){dx=Math.cos(lp.angle);dy=Math.sin(lp.angle);}
-  const len=Math.sqrt(dx*dx+dy*dy)||1;
-  lp.dashAngle=Math.atan2(dy/len,dx/len);lp.dashTimer=DASH_DURATION;lp.dashCooldown=DASH_COOLDOWN;lp.invincible=DASH_DURATION;
-  playDashSound();
-  // SHOCKWAVE: dash unleashes a blast that knocks back and damages nearby enemies
+  const lp=getLocalPlayer(); if(!lp||!lp.alive||lp.dashCooldown>0) return;
+  lp.dashCooldown=DASH_COOLDOWN;
+  lp.invincible=Math.max(lp.invincible, 200); // brief invincibility during shockwave
+  // SHOCKWAVE: massive blast that knocks back and damages ALL nearby enemies
   if (isHost) {
     for (const z of zombies) {
       const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
-      if (sd < 100 && sd > 0.1) {
-        const pushForce = 12;
-        damageZombie(z, 20, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
-        z.staggerTimer = Math.max(z.staggerTimer, 15);
+      if (sd < 180 && sd > 0.1) {
+        const pushForce = 20;
+        const dmg = Math.floor(50 * (1 - sd/180)); // more damage closer
+        damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
+        z.staggerTimer = Math.max(z.staggerTimer, 25);
       }
     }
   }
-  // Shockwave visual ring
-  for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*30,y:lp.y+Math.sin(sa)*30,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:15,maxLife:15,size:4,color:'#4af',type:'spark'}); }
-  screenShake.intensity = Math.max(screenShake.intensity, 6);
+  // Big shockwave visual — expanding ring + particles
+  for (let si = 0; si < 24; si++) { const sa = si/24*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*20,y:lp.y+Math.sin(sa)*20,vx:Math.cos(sa)*8,vy:Math.sin(sa)*8,life:20,maxLife:20,size:5,color:'#4af',type:'spark'}); }
+  for (let si = 0; si < 12; si++) { const sa = si/12*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:15,maxLife:15,size:3,color:'#fff',type:'spark'}); }
+  screenShake.intensity = Math.max(screenShake.intensity, 10);
+  playExplosionSound();
 }
 
 
@@ -3048,7 +3047,7 @@ function update() {
     if(isMobile&&leftJoystick.active){
       dx=leftJoystick.nx;dy=leftJoystick.ny;
     }
-    if(lp.dashTimer>0){lp.dashTimer-=16.67;lp.vx=Math.cos(lp.dashAngle)*DASH_SPEED;lp.vy=Math.sin(lp.dashAngle)*DASH_SPEED;if(gameTime%2===0)particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS,color:lp.color,type:'dashtrail'});}else{
+    {
       let moveSpeed=lp.speed;
       // Sprint: holding space (desktop) or dash button increases speed
       const sprinting = keys[' '];
