@@ -1807,11 +1807,11 @@ function startSoloGame() {
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
-    exitPos = null;
   } else {
     generateDungeon(window._currentLevelSeed);
   }
-  const c = getRoomCenter(rooms[0]);
+  const _spawnArena = rooms[0];
+  const c = (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
@@ -1849,7 +1849,6 @@ function startMultiplayerGame() {
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
-    exitPos = null;
   } else {
     generateDungeon(lobbySeed);
   }
@@ -2303,28 +2302,38 @@ function generateGauntletRoom(roomNum) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Room size scales slightly with room number
-  const baseSize = 18 + Math.min(roomNum, 10) * 2;
+  // Horizontal room: wider than tall, player enters from left, exits right
+  const baseW = 24 + Math.min(roomNum, 8) * 2;
+  const baseH = 16 + Math.min(roomNum, 6);
   const cx = Math.floor(GRID_W / 2), cy = Math.floor(GRID_H / 2);
-  const hw = Math.floor(baseSize / 2), hh = Math.floor(baseSize / 2);
-  const arena = { x: cx - hw, y: cy - hh, w: baseSize, h: baseSize };
+  const arena = { x: cx - Math.floor(baseW / 2), y: cy - Math.floor(baseH / 2), w: baseW, h: baseH };
   carveRoom(arena);
   rooms.push(arena);
-  // Scatter cover obstacles (more in later rooms)
+  // Player spawn point (left side) and exit (right side)
+  const spawnX = (arena.x + 2) * CELL_SIZE + CELL_SIZE / 2;
+  const spawnY = (arena.y + Math.floor(arena.h / 2)) * CELL_SIZE;
+  const exitX = (arena.x + arena.w - 3) * CELL_SIZE + CELL_SIZE / 2;
+  const exitY = (arena.y + Math.floor(arena.h / 2)) * CELL_SIZE;
+  // Store spawn/exit for use by game logic
+  arena._spawnX = spawnX; arena._spawnY = spawnY;
+  exitPos = { x: exitX, y: exitY, _locked: true };
+  // Scatter cover obstacles
   const numObs = 2 + Math.floor(rng() * 3) + Math.min(roomNum, 6);
   for (let att = 0; att < 100 && att < numObs * 10; att++) {
     const ow = 2 + Math.floor(rng() * 2), oh = 2 + Math.floor(rng() * 2);
-    const ox = arena.x + 3 + Math.floor(rng() * (arena.w - ow - 6));
+    const ox = arena.x + 4 + Math.floor(rng() * (arena.w - ow - 8));
     const oy = arena.y + 3 + Math.floor(rng() * (arena.h - oh - 6));
-    // Keep center clear and don't place next to arena edges (zombie spawn points)
-    if (Math.abs(ox + ow/2 - cx) < 5 && Math.abs(oy + oh/2 - cy) < 5) continue;
+    // Keep spawn and exit areas clear
+    const ocx = (ox + ow / 2) * CELL_SIZE, ocy = (oy + oh / 2) * CELL_SIZE;
+    if (Math.sqrt((ocx - spawnX) ** 2 + (ocy - spawnY) ** 2) < 120) continue;
+    if (Math.sqrt((ocx - exitX) ** 2 + (ocy - exitY) ** 2) < 120) continue;
     for (let y = oy; y < oy + oh && y < GRID_H; y++) for (let x = ox; x < ox + ow && x < GRID_W; x++) dungeonGrid[y][x] = false;
   }
-  // Flood fill from center — remove any floor cells not reachable from spawn
-  // This prevents obstacles from creating isolated pockets
+  // Flood fill from spawn — remove isolated floor cells
+  const spawnGX = Math.floor(spawnX / CELL_SIZE), spawnGY = Math.floor(spawnY / CELL_SIZE);
   const visited = [];
   for (let y = 0; y < GRID_H; y++) { visited[y] = []; for (let x = 0; x < GRID_W; x++) visited[y][x] = false; }
-  const stack = [[cx, cy]]; visited[cy][cx] = true;
+  const stack = [[spawnGX, spawnGY]]; if (spawnGY >= 0 && spawnGY < GRID_H && spawnGX >= 0 && spawnGX < GRID_W) visited[spawnGY][spawnGX] = true;
   while (stack.length > 0) {
     const [sx, sy] = stack.pop();
     for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
@@ -2334,7 +2343,6 @@ function generateGauntletRoom(roomNum) {
       }
     }
   }
-  // Any floor cell not visited = isolated, fill it back as wall
   for (let y = arena.y; y < arena.y + arena.h; y++) for (let x = arena.x; x < arena.x + arena.w; x++) {
     if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W && dungeonGrid[y][x] && !visited[y][x]) dungeonGrid[y][x] = false;
   }
@@ -2353,8 +2361,14 @@ function generateGauntletRoom(roomNum) {
 function startGauntlet() {
   gauntletRoom = 1;
   gauntletState = 'intro';
-  gauntletTimer = 120; // 2 second intro
+  gauntletTimer = 120;
   generateGauntletRoom(1);
+  // Spawn player on left side
+  const arena = rooms[0];
+  if (arena && arena._spawnX) {
+    for (const p of players) { if (p.alive) { p.x = arena._spawnX; p.y = arena._spawnY; } }
+    camera.x = arena._spawnX; camera.y = arena._spawnY;
+  }
   announceGauntletRoom();
 }
 
@@ -2396,67 +2410,69 @@ function updateGauntlet() {
     }
     return;
   }
-  if (gauntletState === 'cleared') {
-    gauntletTimer--;
-    if (gauntletTimer <= 0) {
+  // Fighting — spawn zombies and check for clear
+  if (gauntletState === 'fighting') {
+    if (gauntletZombiesSpawned < gauntletZombiesTotal) {
+      spawnTimer++;
+      const spawnRate = Math.max(15, 40 - gauntletRoom * 2);
+      if (spawnTimer % spawnRate === 0 && zombies.length < Math.min(20, 8 + gauntletRoom)) {
+        const types = ['normal'];
+        if (gauntletRoom >= 2) types.push('fast');
+        if (gauntletRoom >= 3) types.push('brute');
+        if (gauntletRoom >= 4) types.push('splitter', 'spitter');
+        if (gauntletRoom >= 6) types.push('tank', 'stalker');
+        if (gauntletRoom >= 8) types.push('exploder');
+        const tk = types[Math.floor(Math.random() * types.length)];
+        const t = ZOMBIE_TYPES[tk]; if (!t) return;
+        const arena = rooms[0]; if (!arena) return;
+        const edge = Math.floor(Math.random() * 4);
+        let gx, gy;
+        if (edge === 0) { gx = arena.x + 1; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+        else if (edge === 1) { gx = arena.x + arena.w - 2; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+        else if (edge === 2) { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + 1; }
+        else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
+        const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
+        const sc = 1 + (gauntletRoom - 1) * 0.08;
+        zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + (gauntletRoom - 1) * 0.02, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
+        gauntletZombiesSpawned++;
+      }
+    }
+    // All zombies spawned and killed → unlock exit
+    if (gauntletZombiesSpawned >= gauntletZombiesTotal && zombies.length === 0) {
+      gauntletState = 'exit_open';
+      if (exitPos) exitPos._locked = false;
+      score += 300 * gauntletRoom;
+      addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'EXIT UNLOCKED!', '#0ff');
+      playExitFoundSound();
+      // Drop loot
+      spawnHealthPickup();
+      if (gauntletRoom % 2 === 0) spawnWeaponPickup();
+      if (gauntletRoom % 5 === 0) {
+        const pool = POWERUP_TYPES.filter(p => p.duration > 1);
+        const pwr = pool[Math.floor(Math.random() * pool.length)];
+        const pos = getRandomFloorPos();
+        pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
+      }
+    }
+    return;
+  }
+  // Exit open — wait for all alive players to reach exit
+  if (gauntletState === 'exit_open' && exitPos) {
+    const alivePlayers = players.filter(p => p.alive);
+    const allAtExit = alivePlayers.length > 0 && alivePlayers.every(p => Math.sqrt((p.x - exitPos.x) ** 2 + (p.y - exitPos.y) ** 2) < 40);
+    if (allAtExit) {
       // Advance to next room
       gauntletRoom++;
+      // Perk selection every 3 rooms
+      if ((gauntletRoom - 1) % 3 === 0) showPerkSelection();
       generateGauntletRoom(gauntletRoom);
-      const c = getRoomCenter(rooms[0]);
-      for (const p of players) { if (p.alive) { p.x = c.x; p.y = c.y; } }
-      camera.x = c.x; camera.y = c.y;
+      const arena = rooms[0];
+      for (const p of players) { if (p.alive) { p.x = arena._spawnX; p.y = arena._spawnY; } }
+      camera.x = arena._spawnX; camera.y = arena._spawnY;
       bullets = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
       gauntletState = 'intro';
       gauntletTimer = 120;
       announceGauntletRoom();
-    }
-    return;
-  }
-  // Fighting state — spawn zombies gradually
-  if (gauntletZombiesSpawned < gauntletZombiesTotal) {
-    spawnTimer++;
-    const spawnRate = Math.max(15, 40 - gauntletRoom * 2);
-    if (spawnTimer % spawnRate === 0 && zombies.length < Math.min(20, 8 + gauntletRoom)) {
-      // Pick zombie type based on room difficulty
-      const types = ['normal'];
-      if (gauntletRoom >= 2) types.push('fast');
-      if (gauntletRoom >= 3) types.push('brute');
-      if (gauntletRoom >= 4) types.push('splitter', 'spitter');
-      if (gauntletRoom >= 6) types.push('tank', 'stalker');
-      if (gauntletRoom >= 8) types.push('exploder');
-      const tk = types[Math.floor(Math.random() * types.length)];
-      const t = ZOMBIE_TYPES[tk]; if (!t) return;
-      const arena = rooms[0]; if (!arena) return;
-      // Spawn at arena edges
-      const edge = Math.floor(Math.random() * 4);
-      let gx, gy;
-      if (edge === 0) { gx = arena.x + 1; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
-      else if (edge === 1) { gx = arena.x + arena.w - 2; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
-      else if (edge === 2) { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + 1; }
-      else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
-      const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
-      const sc = 1 + (gauntletRoom - 1) * 0.08;
-      zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + (gauntletRoom - 1) * 0.02, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
-      gauntletZombiesSpawned++;
-    }
-  }
-  // Check room cleared
-  if (gauntletZombiesSpawned >= gauntletZombiesTotal && zombies.length === 0) {
-    gauntletState = 'cleared';
-    gauntletTimer = 180; // 3 seconds before next room
-    score += 300 * gauntletRoom;
-    addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `ROOM ${gauntletRoom} CLEAR!`, '#4f4');
-    // Drop loot
-    spawnHealthPickup();
-    if (gauntletRoom % 2 === 0) spawnWeaponPickup();
-    // Perk selection every 3 rooms
-    if (gauntletRoom % 3 === 0) showPerkSelection();
-    // Drop a power-up on boss clear
-    if (gauntletRoom % 5 === 0) {
-      const pool = POWERUP_TYPES.filter(p => p.duration > 1);
-      const pwr = pool[Math.floor(Math.random() * pool.length)];
-      const pos = getRandomFloorPos();
-      pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
     }
   }
 }
@@ -3058,10 +3074,11 @@ function applyHostState(msg) {
     if (msg.gauntletRoom !== gauntletRoom && msg.gauntletRoom > 0) {
       gauntletRoom = msg.gauntletRoom;
       generateGauntletRoom(gauntletRoom);
-      const c = getRoomCenter(rooms[0]);
+      const _ga = rooms[0];
+      const _gsx = _ga._spawnX || getRoomCenter(_ga).x, _gsy = _ga._spawnY || getRoomCenter(_ga).y;
       const lp = getLocalPlayer();
-      if (lp) { lp.x = c.x; lp.y = c.y; }
-      camera.x = c.x; camera.y = c.y;
+      if (lp) { lp.x = _gsx; lp.y = _gsy; }
+      camera.x = _gsx; camera.y = _gsy;
       bullets = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
       announceGauntletRoom();
       // Perk selection every 3 rooms on non-host
@@ -3362,8 +3379,9 @@ function render() {
 
   // Exit portal
   if(exitPos){
+    const locked=exitPos._locked;
     const waiting=exitPos._someWaiting;
-    const eColor=waiting?'#fa0':'#0ff';
+    const eColor=locked?'#822':waiting?'#fa0':'#0ff';
     const pulse=0.7+Math.sin(gameTime*0.08)*0.3;
     ctx.save();ctx.translate(exitPos.x,exitPos.y);
     ctx.globalAlpha=0.2*pulse;const eg=ctx.createRadialGradient(0,0,5,0,0,35);
@@ -3375,7 +3393,7 @@ function render() {
     ctx.beginPath();ctx.arc(0,0,8,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
     ctx.globalAlpha=1;ctx.font='bold 10px monospace';ctx.textAlign='center';
     ctx.strokeStyle='#000';ctx.lineWidth=3;
-    const label=waiting?'WAITING...':'EXIT';
+    const label=locked?'LOCKED':waiting?'WAITING...':'EXIT';
     ctx.strokeText(label,0,-28);ctx.fillStyle=eColor;ctx.fillText(label,0,-28);
     ctx.restore();
   }
