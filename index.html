@@ -2311,13 +2311,32 @@ function generateGauntletRoom(roomNum) {
   carveRoom(arena);
   rooms.push(arena);
   // Scatter cover obstacles (more in later rooms)
-  const numObs = 2 + Math.floor(rng() * 3) + Math.min(roomNum, 8);
+  const numObs = 2 + Math.floor(rng() * 3) + Math.min(roomNum, 6);
   for (let att = 0; att < 100 && att < numObs * 10; att++) {
-    const ow = 2 + Math.floor(rng() * 3), oh = 2 + Math.floor(rng() * 3);
-    const ox = arena.x + 2 + Math.floor(rng() * (arena.w - ow - 4));
-    const oy = arena.y + 2 + Math.floor(rng() * (arena.h - oh - 4));
-    if (Math.abs(ox + ow/2 - cx) < 4 && Math.abs(oy + oh/2 - cy) < 4) continue;
+    const ow = 2 + Math.floor(rng() * 2), oh = 2 + Math.floor(rng() * 2);
+    const ox = arena.x + 3 + Math.floor(rng() * (arena.w - ow - 6));
+    const oy = arena.y + 3 + Math.floor(rng() * (arena.h - oh - 6));
+    // Keep center clear and don't place next to arena edges (zombie spawn points)
+    if (Math.abs(ox + ow/2 - cx) < 5 && Math.abs(oy + oh/2 - cy) < 5) continue;
     for (let y = oy; y < oy + oh && y < GRID_H; y++) for (let x = ox; x < ox + ow && x < GRID_W; x++) dungeonGrid[y][x] = false;
+  }
+  // Flood fill from center — remove any floor cells not reachable from spawn
+  // This prevents obstacles from creating isolated pockets
+  const visited = [];
+  for (let y = 0; y < GRID_H; y++) { visited[y] = []; for (let x = 0; x < GRID_W; x++) visited[y][x] = false; }
+  const stack = [[cx, cy]]; visited[cy][cx] = true;
+  while (stack.length > 0) {
+    const [sx, sy] = stack.pop();
+    for (const [dx, dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+      const nx = sx+dx, ny = sy+dy;
+      if (nx >= 0 && nx < GRID_W && ny >= 0 && ny < GRID_H && !visited[ny][nx] && dungeonGrid[ny][nx]) {
+        visited[ny][nx] = true; stack.push([nx, ny]);
+      }
+    }
+  }
+  // Any floor cell not visited = isolated, fill it back as wall
+  for (let y = arena.y; y < arena.y + arena.h; y++) for (let x = arena.x; x < arena.x + arena.w; x++) {
+    if (y >= 0 && y < GRID_H && x >= 0 && x < GRID_W && dungeonGrid[y][x] && !visited[y][x]) dungeonGrid[y][x] = false;
   }
   // Room theme varies
   const themes = [ROOM_THEMES[1], ROOM_THEMES[3], ROOM_THEMES[4], ROOM_THEMES[6], ROOM_THEMES[7]];
