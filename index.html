@@ -274,6 +274,159 @@ let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 let survivalWave = 0, survivalWaveState = 'countdown', survivalWaveTimer = 0;
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
 let waveSummaryActive = false, waveSummaryTimer = 0;
+
+// ---- SINGLE WEAPON MODIFIER SYSTEM ----
+const BASE_WEAPON = { damage: 30, fireRate: 200, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0, bulletColor: '#ff0', bulletLife: 60 };
+
+const MODIFIER_DEFS = {
+  // Projectile mods
+  spread:   { slot: 'projectile', name: 'SPREAD',   icon: '⁂', color: '#fa0', desc: '5-pellet cone, 0.6x damage each' },
+  beam:     { slot: 'projectile', name: 'BEAM',     icon: '═', color: '#f4f', desc: 'Continuous stream, rapid fire' },
+  orb:      { slot: 'projectile', name: 'ORB',      icon: '●', color: '#af4', desc: 'Slow heavy projectile, 2x damage' },
+  piercing: { slot: 'projectile', name: 'PIERCING', icon: '»', color: '#4ff', desc: 'Passes through 3 enemies' },
+  // Element mods
+  fire:      { slot: 'element', name: 'FIRE',      icon: '🔥', color: '#f80', desc: 'Burns for 15% damage over 3s' },
+  ice:       { slot: 'element', name: 'ICE',       icon: '❄',  color: '#aef', desc: 'Slows 50%, 3 hits = frozen' },
+  lightning: { slot: 'element', name: 'LIGHTNING', icon: '⚡', color: '#4ff', desc: 'Chains to 2 nearby enemies' },
+  // Behavior mods
+  homing:   { slot: 'behavior', name: 'HOMING',   icon: '◎', color: '#f44', desc: 'Bullets curve toward enemies' },
+  bouncing: { slot: 'behavior', name: 'BOUNCING', icon: '↗',  color: '#ff4', desc: 'Ricochets off walls 3 times' },
+};
+
+// Player's active modifiers: { projectile: 'spread'|null, element: 'fire'|null, behavior: 'homing'|null }
+let weaponMods = { projectile: null, element: null, behavior: null };
+let _weaponLastFired = 0, _weaponMuzzleFlash = 0;
+
+function resetWeaponMods() { weaponMods = { projectile: null, element: null, behavior: null }; _weaponLastFired = 0; _weaponMuzzleFlash = 0; }
+
+function getEffectiveWeapon() {
+  let w = { ...BASE_WEAPON };
+  // Apply projectile mod
+  if (weaponMods.projectile === 'spread') { w.pellets = 5; w.spread = 0.2; w.damage = Math.floor(w.damage * 0.6); }
+  else if (weaponMods.projectile === 'beam') { w.fireRate = 40; w.damage = Math.floor(w.damage * 0.3); w.bulletSize = 2; w.bulletColor = '#f4f'; }
+  else if (weaponMods.projectile === 'orb') { w.damage = w.damage * 2; w.bulletSpeed = 6; w.bulletSize = 10; w.bulletLife = 90; w.pierce = 99; w.bulletColor = '#af4'; }
+  else if (weaponMods.projectile === 'piercing') { w.pierce = 3; w.bulletSpeed = 24; w.damage = Math.floor(w.damage * 1.3); w.bulletSize = 4; w.bulletColor = '#4ff'; }
+  // Apply element (visual — effects applied on hit)
+  if (weaponMods.element === 'fire') { w.bulletColor = '#f80'; }
+  else if (weaponMods.element === 'ice') { w.bulletColor = '#aef'; }
+  else if (weaponMods.element === 'lightning') { w.bulletColor = '#4ff'; }
+  return w;
+}
+
+// Fire the single modified weapon
+function fireModifiedWeapon(p) {
+  const w = getEffectiveWeapon();
+  const now = performance.now();
+  // Fire rate (use player perks for lead storm etc)
+  let effectiveFireRate = w.fireRate / (1 + getPlayerPerkCount(p, 'lead_storm') * 0.2);
+  if (playerHasPowerUp(p, 'overcharge')) effectiveFireRate /= 3;
+  else if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.5;
+  if (now - _weaponLastFired < effectiveFireRate) return;
+  _weaponLastFired = now;
+  _weaponMuzzleFlash = 6;
+  // Set muzzle flash on player's weapon object so renderer picks it up
+  if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
+  const pellets = w.pellets || 1;
+  const spreadMult = Math.pow(0.5, getPlayerPerkCount(p, 'steady_aim'));
+  for (let i = 0; i < pellets; i++) {
+    const sp = (Math.random() - 0.5) * w.spread * 2 * spreadMult;
+    const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
+    let dmg = w.damage;
+    if (playerHasPowerUp(p, 'rage')) dmg *= 2;
+    if (playerHasPowerUp(p, 'frenzy')) dmg *= 3;
+    if (playerHasPerk(p, 'berserker') && p.hp < p.maxHp * 0.3) dmg *= 1 + getPlayerPerkCount(p, 'berserker') * 0.4;
+    let isCrit = false;
+    const critChance = 0.05 + getPlayerPerkCount(p, 'critical') * 0.15;
+    if (Math.random() < critChance) { dmg *= 3; isCrit = true; }
+    bullets.push({
+      x: p.x + c * 22, y: p.y + s * 22, vx: c * w.bulletSpeed, vy: s * w.bulletSpeed,
+      damage: dmg, color: isCrit ? '#f0f' : w.bulletColor, size: isCrit ? w.bulletSize + 2 : w.bulletSize,
+      knockback: w.knockback, pierce: w.pierce + getPlayerPerkCount(p, 'ricochet'), pierced: 0,
+      life: w.bulletLife, flame: false, explosive: false, explosionRadius: 0,
+      tracer: w.projectile === 'beam', chain: false, chainRange: 0, chainCount: 0,
+      laserGlow: false, grenade: false, owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
+      _element: weaponMods.element, _behavior: weaponMods.behavior, _homing: weaponMods.behavior === 'homing',
+      _bouncing: weaponMods.behavior === 'bouncing' ? 3 : 0,
+    });
+  }
+  // Sound and muzzle FX
+  const freq = weaponMods.element === 'lightning' ? 1800 : weaponMods.element === 'ice' ? 1200 : weaponMods.element === 'fire' ? 400 : 600;
+  playSound(freq, 0.05, 'square', 0.2);
+  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 2);
+  const c2 = Math.cos(p.angle), s2 = Math.sin(p.angle);
+  for (let i = 0; i < 3; i++) particles.push({ x: p.x + c2 * 24, y: p.y + s2 * 24, vx: c2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, vy: s2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, life: 8 + Math.random() * 6, maxLife: 14, size: 2 + Math.random() * 2, color: w.bulletColor, type: 'spark' });
+}
+
+// Apply element effects when bullet hits zombie
+function applyElementEffect(z, element, damage) {
+  if (!element || !isHost) return;
+  if (element === 'fire') {
+    z._burning = (z._burning || 0) + Math.floor(damage * 0.15);
+    z._burnTimer = 180; // 3 seconds
+  } else if (element === 'ice') {
+    z._iceStacks = (z._iceStacks || 0) + 1;
+    z._slowTimer = Math.max(z._slowTimer || 0, 120); // 2 seconds slow
+    if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; } // frozen 2s
+  } else if (element === 'lightning') {
+    // Chain to 2 nearby enemies
+    let lastZ = z; const hitSet = new Set();
+    for (let ci = 0; ci < 2; ci++) {
+      let bestD = 180, bestZ = null;
+      for (const oz of zombies) { if (oz === lastZ || hitSet.has(oz)) continue; const d = Math.sqrt((oz.x - lastZ.x) ** 2 + (oz.y - lastZ.y) ** 2); if (d < bestD) { bestD = d; bestZ = oz; } }
+      if (!bestZ) break;
+      hitSet.add(bestZ);
+      damageZombie(bestZ, Math.floor(damage * 0.4), 0, 0);
+      particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: 1, color: '#4ff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
+      lastZ = bestZ;
+    }
+  }
+}
+
+// Blessing picker (replaces perk picker for modifier selection)
+function showBlessingPicker() {
+  if (perkSelectionActive) return;
+  perkSelectionActive = true;
+  // Gather available blessings: one from each slot that's either empty or upgradeable
+  const available = [];
+  for (const [id, def] of Object.entries(MODIFIER_DEFS)) {
+    if (weaponMods[def.slot] === id) continue; // already have this exact one
+    available.push({ id, ...def });
+  }
+  // Shuffle and pick 3
+  const shuffled = available.sort(() => Math.random() - 0.5).slice(0, 3);
+  const container = document.getElementById('perk-options');
+  container.innerHTML = '';
+  document.getElementById('perk-subtitle').textContent = gameMode === 'gauntlet' ? `Room ${gauntletRoom} clear` : gameMode === 'survival' ? `Wave ${survivalWave} clear` : `Level ${level}`;
+  // Change title
+  const titleEl = container.parentElement.querySelector('div');
+  if (titleEl) titleEl.textContent = 'CHOOSE A BLESSING';
+  for (const mod of shuffled) {
+    const replacing = weaponMods[mod.slot];
+    const btn = document.createElement('button');
+    btn.style.cssText = `display:block;width:100%;max-width:400px;padding:14px 20px;background:rgba(255,255,255,0.06);border:2px solid ${mod.color};color:#fff;font-family:'Courier New',monospace;font-size:14px;cursor:pointer;text-align:left;touch-action:manipulation;transition:background 0.15s`;
+    btn.innerHTML = `<span style="color:${mod.color};font-size:20px;margin-right:10px">${mod.icon}</span><span style="color:${mod.color};font-weight:bold">${mod.name}</span> <span style="color:#666;font-size:10px">[${mod.slot}]</span>${replacing ? `<span style="color:#888;font-size:11px"> replaces ${MODIFIER_DEFS[replacing]?.name || 'none'}</span>` : ''}<br><span style="color:#aaa;font-size:12px">${mod.desc}</span>`;
+    btn.addEventListener('mouseenter', () => btn.style.background = 'rgba(255,255,255,0.12)');
+    btn.addEventListener('mouseleave', () => btn.style.background = 'rgba(255,255,255,0.06)');
+    const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectBlessing(mod.id, mod.slot); };
+    btn.addEventListener('click', pick);
+    btn.addEventListener('touchstart', pick, { passive: false });
+    container.appendChild(btn);
+  }
+  document.getElementById('perk-screen').style.display = 'block';
+}
+
+function selectBlessing(id, slot) {
+  if (!perkSelectionActive) return;
+  perkSelectionActive = false;
+  document.getElementById('perk-screen').style.display = 'none';
+  weaponMods[slot] = id;
+  const def = MODIFIER_DEFS[id];
+  addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 40, def.name + '!', def.color);
+  showPickupMsg(def.icon + ' ' + def.name, def.desc);
+  screenShake.intensity = Math.max(screenShake.intensity, 6);
+  canvas.focus();
+}
+
 // Gauntlet mode state
 let gauntletRoom = 0, gauntletState = 'fighting', gauntletTimer = 0;
 let gauntletZombiesTotal = 0, gauntletZombiesSpawned = 0;
@@ -1790,7 +1943,7 @@ document.getElementById('btn-swap').addEventListener('click', (e) => { e.prevent
 // ============================================================
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
-  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; resetPerks(); gamePaused = false; activePowerUp = null; weaponKillCounts = {};
+  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; resetPerks(); gamePaused = false; activePowerUp = null; weaponKillCounts = {}; resetWeaponMods();
   // Reset joysticks to prevent stuck state on restart
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
   rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;
@@ -1921,8 +2074,11 @@ function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
+  // Use the single modified weapon system
+  fireModifiedWeapon(p);
+  return;
+  // Legacy code below (kept for reference, never reached)
   const w=p.weapons[p.currentWeapon],d=WEAPON_DEFS[w.type],now=performance.now();
-  // No reload — instant refill when empty
   if(w.ammo<=0){const d2=WEAPON_DEFS[w.type];if(d2)w.ammo=d2.magSize;}
   let effectiveFireRate = d.fireRate/(1+getPlayerPerkCount(p,'lead_storm')*0.2);
   // Overcharge: 3x fire rate. Rage: 1.5x fire rate.
@@ -2038,11 +2194,11 @@ function startLevel() {
   const subs=['Here they come...','Stay alive.','Lock and load.','No mercy.','They\'re hungry...','Hold the line.','Find the exit.','Survive.'];
   document.getElementById('wave-sub').textContent=subs[Math.floor(Math.random()*subs.length)];
   el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000);
-  spawnLevelPickups(); spawnWeaponPickup(); spawnBarrels(6 + Math.floor(Math.random() * 5));
+  spawnLevelPickups(); spawnHealthPickup(); spawnBarrels(6 + Math.floor(Math.random() * 5));
 }
 function showPickupMsg(t, sub) { const el=document.getElementById('pickup-msg');el.innerHTML=sub?`<span style="font-size:18px;font-weight:bold">${t}</span><br><span style="font-size:12px;color:#aaa">${sub}</span>`:t;el.style.opacity='1';setTimeout(()=>el.style.opacity='0',2000); }
 
-function spawnWeaponPickup() { const ts=['burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
+function spawnHealthPickup() { const ts=['burst','shotgun','rifle','minigun','flamethrower','laser','lightning','rpg'],t=ts[Math.floor(Math.random()*ts.length)],p=getRandomFloorPos();pickups.push({type:'weapon',weaponType:t,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 function spawnHealthPickup() { const p=getRandomFloorPos();pickups.push({type:'health',amount:25,x:p.x,y:p.y,bobTimer:Math.random()*Math.PI*2}); }
 function spawnBarrels(count) {
   for (let i = 0; i < count; i++) {
@@ -2191,7 +2347,7 @@ function updateSurvivalWaves() {
       spawnSurvivalZombie();
       survivalZombiesSpawned++;
     }
-    if (Math.random() < 0.02) spawnWeaponPickup();
+    if (Math.random() < 0.02) spawnHealthPickup();
   }
   // Check wave complete — boss waves require boss killed too
   if (survivalZombiesKilled >= survivalZombiesTotal && zombies.length === 0) {
@@ -2204,8 +2360,8 @@ function updateSurvivalWaves() {
     // Spawn rest-period pickups — more generous on boss wave clear
     const isBossWave = survivalWave % 5 === 0;
     for (let i = 0; i < (isBossWave ? 2 : 1); i++) spawnHealthPickup();
-    spawnWeaponPickup();
-    if (isBossWave) spawnWeaponPickup(); // extra weapon on boss clear
+    spawnHealthPickup();
+    if (isBossWave) spawnHealthPickup(); // extra weapon on boss clear
     const p = getRandomFloorPos();
     pickups.push({ type: 'ammo', x: p.x, y: p.y, bobTimer: Math.random() * Math.PI * 2 });
   }
@@ -2258,7 +2414,7 @@ function updateHorde() {
   }
   // First weapon drops fast (5s, 12s), then every 15 seconds
   // Weapon pickup: first at 8s, then every 30s
-  if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) spawnWeaponPickup();
+  if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) spawnHealthPickup();
   // Power-up orb every 35 seconds
   if (hordeTimer % 2100 === 0 && hordeTimer > 0) {
     const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
@@ -2446,7 +2602,7 @@ function updateGauntlet() {
       playExitFoundSound();
       // Drop loot
       spawnHealthPickup();
-      if (gauntletRoom % 2 === 0) spawnWeaponPickup();
+      if (gauntletRoom % 2 === 0) spawnHealthPickup();
       if (gauntletRoom % 5 === 0) {
         const pool = POWERUP_TYPES.filter(p => p.duration > 1);
         const pwr = pool[Math.floor(Math.random() * pool.length)];
@@ -2463,8 +2619,8 @@ function updateGauntlet() {
     if (allAtExit) {
       // Advance to next room
       gauntletRoom++;
-      // Perk selection every 3 rooms
-      if ((gauntletRoom - 1) % 3 === 0) showPerkSelection();
+      // Blessing selection every 2 rooms
+      if (gauntletRoom % 2 === 0) showBlessingPicker();
       generateGauntletRoom(gauntletRoom);
       const arena = rooms[0];
       for (const p of players) { if (p.alive) { p.x = arena._spawnX; p.y = arena._spawnY; } }
@@ -2764,8 +2920,13 @@ function update() {
   }
 
   // ---- Bullet physics (all clients run this for smooth visuals) ----
-  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
-    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){bullets.splice(i,1);continue;}
+  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
+    // Homing behavior: curve toward nearest zombie
+    if(b._homing&&b.owner==='player'){let bestD=300,bestZ=null;for(const z of zombies){const d=Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);if(d<bestD){bestD=d;bestZ=z;}}if(bestZ){const ta=Math.atan2(bestZ.y-b.y,bestZ.x-b.x),ba=Math.atan2(b.vy,b.vx);let da=ta-ba;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;const turn=0.08;const na=ba+da*turn;const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
+    const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
+    // Bouncing behavior: ricochet off walls
+    if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;continue;}
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>ARENA_H)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(ARENA_H-1,b.y));continue;}bullets.splice(i,1);continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
@@ -2779,6 +2940,8 @@ function update() {
         // Use sweep collision for fast bullets (Tesla, etc) to prevent tunneling
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_bhit){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+                  // Apply element effects from modifier system
+                  if(b._element)applyElementEffect(z,b._element,b.damage);
                   // Critical hit VFX
                   if(b.crit){addFloatingText(z.x,z.y-z.radius-10,'CRITICAL!','#f0f');playHeadshotSound();screenShake.intensity=Math.max(screenShake.intensity,8);for(let ck=0;ck<8;ck++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:15+Math.random()*10,maxLife:25,size:3+Math.random()*3,color:Math.random()>0.5?'#f0f':'#fff',type:'spark'});}}
                   // Chain lightning — arc from gun to first hit, then between chained zombies
@@ -2884,15 +3047,17 @@ function update() {
       const spawnRate = Math.max(5, 25 - level * 3);
       if(spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
         spawnZombie();
-        if(Math.random()<0.015) spawnWeaponPickup();
+        if(Math.random()<0.015) spawnHealthPickup();
       }
     }
 
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
-      // Time bomb slow effect
-      if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.2):0.3;}
+      // Element effects: burn, slow, freeze
+      if(z._burnTimer>0){z._burnTimer--;if(gameTime%20===0&&z._burning>0){damageZombie(z,z._burning,0,0);particles.push({x:z.x+(Math.random()-0.5)*z.radius,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:'#f80',type:'spark'});}if(z._burnTimer<=0)z._burning=0;}
+      if(z._frozenTimer>0){z._frozenTimer--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);continue;}
+      if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;pushOutOfObstacles(z,z.radius);continue;}
       const{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
       if(!np)continue;
@@ -3089,7 +3254,7 @@ function applyHostState(msg) {
       bullets = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
       announceGauntletRoom();
       // Perk selection every 3 rooms on non-host
-      if (gauntletRoom > 1 && (gauntletRoom - 1) % 3 === 0) showPerkSelection();
+      if (gauntletRoom > 1 && gauntletRoom % 2 === 0) showBlessingPicker();
     }
     gauntletState = msg.gauntletState || gauntletState;
   }
@@ -3223,32 +3388,31 @@ function applyHostState(msg) {
 // ============================================================
 function updateHUD() {
   const lp=getLocalPlayer();if(!lp)return;
-  const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
-  document.getElementById('weapon-name').textContent=def.name;
-  const ae=document.getElementById('ammo-display');
-  ae.innerHTML=def.infinite?'∞':`${w.ammo} <span class="slash">/</span> <span class="reserve">${w.reserveAmmo}</span>`;ae.className='ammo';
+  // Modifier stack display
+  let modText = '';
+  for (const [slot, id] of Object.entries(weaponMods)) {
+    if (id && MODIFIER_DEFS[id]) { const md = MODIFIER_DEFS[id]; modText += `<span style="color:${md.color}">${md.icon} ${md.name}</span>  `; }
+  }
+  document.getElementById('weapon-name').innerHTML = modText || '<span style="color:#888">BASIC GUN</span>';
+  document.getElementById('ammo-display').innerHTML = '∞';
   document.getElementById('score').textContent=score.toLocaleString();
   document.getElementById('wave-display').textContent=gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
-  const se=document.getElementById('weapon-slots');let h='';
-  // Swap prompt when near a weapon at max capacity
-  const swapBtn=document.getElementById('btn-swap');
-  if(_nearbyWeaponPickup&&lp.weapons.length>=MAX_WEAPONS){
-    const wd=WEAPON_DEFS[_nearbyWeaponPickup.weaponType];
-    if(wd){
-      if(isMobile){if(swapBtn){swapBtn.style.display='block';swapBtn.innerHTML=`SWAP<br>${wd.name.substring(0,5)}`;}}
-      else{h+=`<div style="color:#f0c040;font-size:11px;font-weight:bold;text-align:center;margin-bottom:4px">[E] SWAP → ${wd.name}</div>`;}
-    }
-  } else { if(swapBtn)swapBtn.style.display='none'; }
-  _nearbyWeaponPickup=null;
-  for(let i=0;i<MAX_WEAPONS;i++){
-    if(i<lp.weapons.length){const ww=lp.weapons[i],dd=WEAPON_DEFS[ww.type];if(dd)h+=`<div class="weapon-slot ${i===lp.currentWeapon?'active':''}" data-idx="${i}"><span class="key">${i+1}</span>${dd.name.substring(0,4)}</div>`;else h+=`<div class="weapon-slot" data-idx="${i}"><span class="key">${i+1}</span>????</div>`;}
-    else{h+=`<div class="weapon-slot" style="border-style:dashed;color:#333"><span class="key">${i+1}</span>----</div>`;}
+  // Modifier slots display (replaces weapon slots)
+  const se=document.getElementById('weapon-slots');
+  let h='';
+  const slots = [['projectile','PROJ'],['element','ELEM'],['behavior','MOVE']];
+  for(const [slot, label] of slots){
+    const id=weaponMods[slot];
+    if(id&&MODIFIER_DEFS[id]){const md=MODIFIER_DEFS[id];h+=`<div class="weapon-slot active" style="border-color:${md.color};color:${md.color};font-size:10px">${md.icon}<br>${md.name.substring(0,4)}</div>`;}
+    else{h+=`<div class="weapon-slot" style="border-style:dashed;color:#444;font-size:9px">${label}<br>—</div>`;}
   }
   se.innerHTML=h;
+  // Hide swap button (no weapon swapping in modifier system)
+  const swapBtn=document.getElementById('btn-swap');if(swapBtn)swapBtn.style.display='none';
   const db=document.getElementById('btn-dash');if(db)db.className=lp.dashCooldown>0?'mobile-btn dash-cooldown':'mobile-btn dash-ready';
   // Perk icons + synergy display
   const pd=document.getElementById('perk-display');
