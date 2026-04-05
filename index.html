@@ -2360,21 +2360,24 @@ function dash() {
   const lp=getLocalPlayer(); if(!lp||!lp.alive||lp.dashCooldown>0) return;
   lp.dashCooldown=DASH_COOLDOWN;
   lp.invincible=Math.max(lp.invincible, 200); // brief invincibility during shockwave
-  // SHOCKWAVE: massive blast that knocks back and damages ALL nearby enemies
+  // SHOCKWAVE: huge blast, close enemies get launched, far ones get pushed
+  const SHOCKWAVE_RADIUS = 250;
   if (isHost) {
     for (const z of zombies) {
       const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
-      if (sd < 180 && sd > 0.1) {
-        const pushForce = 20;
-        const dmg = Math.floor(50 * (1 - sd/180)); // more damage closer
+      if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
+        const closeness = 1 - sd/SHOCKWAVE_RADIUS; // 1.0 at center, 0.0 at edge
+        const pushForce = 10 + closeness * 30; // 10 at edge, 40 at point blank
+        const dmg = Math.floor(60 * closeness); // 60 at center, 0 at edge
         damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
-        z.staggerTimer = Math.max(z.staggerTimer, 25);
+        z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
       }
     }
   }
-  // Big shockwave visual — expanding ring + particles
-  for (let si = 0; si < 24; si++) { const sa = si/24*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*20,y:lp.y+Math.sin(sa)*20,vx:Math.cos(sa)*8,vy:Math.sin(sa)*8,life:20,maxLife:20,size:5,color:'#4af',type:'spark'}); }
-  for (let si = 0; si < 12; si++) { const sa = si/12*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:15,maxLife:15,size:3,color:'#fff',type:'spark'}); }
+  // Big shockwave visual — multiple expanding rings
+  for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:'#4af',type:'spark'}); }
+  for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:'#fff',type:'spark'}); }
+  for (let si = 0; si < 8; si++) { const sa = si/8*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*5,y:lp.y+Math.sin(sa)*5,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:6,color:'#8cf',type:'spark'}); }
   screenShake.intensity = Math.max(screenShake.intensity, 10);
   playExplosionSound();
 }
@@ -3548,6 +3551,8 @@ function update() {
   for(let i=floatingTexts.length-1;i>=0;i--){floatingTexts[i].y+=floatingTexts[i].vy;floatingTexts[i].life--;if(floatingTexts[i].life<=0)floatingTexts.splice(i,1);}
   for(let i=explosions.length-1;i>=0;i--){explosions[i].life--;if(explosions[i].life<=0)explosions.splice(i,1);}
   for(let pi=pickups.length-1;pi>=0;pi--){const p=pickups[pi];p.bobTimer+=0.05;if(p.dropCooldown>0)p.dropCooldown--;
+    // Despawn pickups after 10 seconds (600 frames)
+    if(p.type!=='_bomb'){p._age=(p._age||0)+1;if(p._age>600){pickups.splice(pi,1);continue;}}
     // Bomber bombs: arc toward target, then explode
     if(p.type==='_bomb'){
       if(p._timer>60){const t=1-(p._timer-60)/60;p.x+=(p._tx-p.x)*0.05;p.y+=(p._ty-p.y)*0.05;}
