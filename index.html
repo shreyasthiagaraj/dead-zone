@@ -2303,8 +2303,8 @@ function generateGauntletRoom(roomNum) {
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
   // Horizontal room: wider than tall, player enters from left, exits right
-  const baseW = 24 + Math.min(roomNum, 8) * 2;
-  const baseH = 16 + Math.min(roomNum, 6);
+  const baseW = 34 + Math.min(roomNum, 8) * 2;
+  const baseH = 22 + Math.min(roomNum, 6);
   const cx = Math.floor(GRID_W / 2), cy = Math.floor(GRID_H / 2);
   const arena = { x: cx - Math.floor(baseW / 2), y: cy - Math.floor(baseH / 2), w: baseW, h: baseH };
   carveRoom(arena);
@@ -2317,8 +2317,8 @@ function generateGauntletRoom(roomNum) {
   // Store spawn/exit for use by game logic
   arena._spawnX = spawnX; arena._spawnY = spawnY;
   exitPos = { x: exitX, y: exitY, _locked: true };
-  // Scatter cover obstacles
-  const numObs = 2 + Math.floor(rng() * 3) + Math.min(roomNum, 6);
+  // Scatter cover obstacles (sparse — rooms should feel open)
+  const numObs = 1 + Math.floor(rng() * 2) + Math.min(roomNum, 4);
   for (let att = 0; att < 100 && att < numObs * 10; att++) {
     const ow = 2 + Math.floor(rng() * 2), oh = 2 + Math.floor(rng() * 2);
     const ox = arena.x + 4 + Math.floor(rng() * (arena.w - ow - 8));
@@ -2654,13 +2654,20 @@ function update() {
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
     if(isMobile&&gameTime%2===0)tryPickup();
-    // Check exit — all alive players must be near exit to advance
-    if(exitPos&&isHost){
+    // Check exit — dungeon mode only (gauntlet handles its own exit in updateGauntlet)
+    if(exitPos&&isHost&&gameMode==='dungeon'){
       const alivePlayers=players.filter(p=>p.alive);
       const allAtExit=alivePlayers.length>0&&alivePlayers.every(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
       const someAtExit=alivePlayers.some(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
       exitPos._someWaiting=someAtExit&&!allAtExit;
       if(allAtExit){advanceLevel();return;}
+    }
+    // Gauntlet: update waiting indicator for exit portal
+    if(exitPos&&gameMode==='gauntlet'&&isHost){
+      const alivePlayers=players.filter(p=>p.alive);
+      const someAtExit=alivePlayers.some(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
+      const allAtExit=alivePlayers.length>0&&alivePlayers.every(p=>Math.sqrt((p.x-exitPos.x)**2+(p.y-exitPos.y)**2)<40);
+      exitPos._someWaiting=someAtExit&&!allAtExit;
     }
 
     // ---- Power-up timer and effects ----
