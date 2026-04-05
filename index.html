@@ -388,22 +388,32 @@ function updateOrbital() {
   const ox = lp.x + Math.cos(activeOrbital.angle) * 40;
   const oy = lp.y + Math.sin(activeOrbital.angle) * 40;
   if (activeOrbital.id === 'flame_ring') {
-    // Damage nearby zombies every 10 frames
-    if (gameTime % 8 === 0) { for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 70) { damageZombie(z, 20, 0, 0); z._burning = (z._burning||0) + 15; z._burnTimer = 180; } } }
+    // Massive fire aura — heavy damage, sets everything ablaze
+    if (gameTime % 5 === 0) { for (const z of zombies) { const fd=Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2); if (fd < 100) { damageZombie(z, 35, (z.x-lp.x)/Math.max(fd,1)*3, (z.y-lp.y)/Math.max(fd,1)*3); z._burning = Math.max(z._burning||0, 25); z._burnTimer = 240; } } }
+    // Fire ring particles
+    if(gameTime%2===0){const fa=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(fa)*80,y:lp.y+Math.sin(fa)*80,vx:Math.cos(fa)*1,vy:-2-Math.random()*2,life:15,maxLife:15,size:5+Math.random()*4,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});}
   } else if (activeOrbital.id === 'lightning_drone') {
-    // Zap nearest zombie every 40 frames — chains to 3 nearby
-    if (gameTime % 40 === 0) { let best = null, bd = 250; for (const z of zombies) { const d = Math.sqrt((z.x-ox)**2+(z.y-oy)**2); if (d < bd) { bd = d; best = z; } }
-      if (best) { damageZombie(best, 40, 0, 0); best.staggerTimer = Math.max(best.staggerTimer, 10);
-        particles.push({x:ox,y:oy,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:best.x,ty:best.y});
-        // Chain from drone hit to 2 more
-        let lz=best;const hs=new Set([best]);for(let c=0;c<2;c++){let bd2=200,bz2=null;for(const z2 of zombies){if(hs.has(z2))continue;const d2=Math.sqrt((z2.x-lz.x)**2+(z2.y-lz.y)**2);if(d2<bd2){bd2=d2;bz2=z2;}}if(!bz2)break;hs.add(bz2);damageZombie(bz2,25,0,0);particles.push({x:lz.x,y:lz.y,vx:0,vy:0,life:15,maxLife:15,size:1,color:'#4ff',type:'lightning',tx:bz2.x,ty:bz2.y});lz=bz2;}
+    // Powerful chain lightning — zaps every 25 frames, chains to 4
+    if (gameTime % 25 === 0) { let best = null, bd = 300; for (const z of zombies) { const d = Math.sqrt((z.x-ox)**2+(z.y-oy)**2); if (d < bd) { bd = d; best = z; } }
+      if (best) { damageZombie(best, 60, 0, 0); best.staggerTimer = Math.max(best.staggerTimer, 15);
+        particles.push({x:ox,y:oy,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:best.x,ty:best.y});
+        particles.push({x:ox,y:oy,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:best.x,ty:best.y});
+        let lz=best;const hs=new Set([best]);for(let c=0;c<4;c++){let bd2=250,bz2=null;for(const z2 of zombies){if(hs.has(z2))continue;const d2=Math.sqrt((z2.x-lz.x)**2+(z2.y-lz.y)**2);if(d2<bd2){bd2=d2;bz2=z2;}}if(!bz2)break;hs.add(bz2);damageZombie(bz2,40,0,0);bz2.staggerTimer=Math.max(bz2.staggerTimer,12);particles.push({x:lz.x,y:lz.y,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:bz2.x,ty:bz2.y});lz=bz2;}
+        playSound(1800,0.04,'sine',0.1);
       } }
   } else if (activeOrbital.id === 'ice_shield') {
-    // Slow all zombies within range
-    for (const z of zombies) { if (Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2) < 100) { z._slowTimer = Math.max(z._slowTimer||0, 30); } }
+    // Freeze aura — slows heavily, freezes on sustained contact
+    for (const z of zombies) { const id2=Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2); if (id2 < 120) {
+      z._slowTimer = Math.max(z._slowTimer||0, 40);
+      z._iceStacks = (z._iceStacks||0) + (gameTime%30===0?1:0);
+      if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; }
+      // Ice damage on frozen targets
+      if (z._frozenTimer > 0 && gameTime%20===0) damageZombie(z, 15, 0, 0);
+    }}
+    if(gameTime%3===0){const ia=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ia)*100,y:lp.y+Math.sin(ia)*100,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});}
   } else if (activeOrbital.id === 'shadow_clone') {
-    // Fire a bullet toward nearest zombie every 20 frames
-    if (gameTime % 20 === 0) { let best=null,bd=300; for(const z of zombies){const d=Math.sqrt((z.x-ox)**2+(z.y-oy)**2);if(d<bd){bd=d;best=z;}} if(best){const a=Math.atan2(best.y-oy,best.x-ox);bullets.push({x:ox,y:oy,vx:Math.cos(a)*14,vy:Math.sin(a)*14,damage:15,color:'#a8f',size:2,knockback:1,pierce:0,pierced:0,life:40,flame:false,explosive:false,explosionRadius:0,tracer:false,chain:false,chainRange:0,chainCount:0,laserGlow:false,grenade:false,owner:'player',ownerId:lp.id,trail:[],crit:false,_element:null,_homing:false,_bouncing:0});} }
+    // Aggressive clone — rapid fire, decent damage, tracks targets
+    if (gameTime % 8 === 0) { let best=null,bd=350; for(const z of zombies){const d=Math.sqrt((z.x-ox)**2+(z.y-oy)**2);if(d<bd){bd=d;best=z;}} if(best){const a=Math.atan2(best.y-oy,best.x-ox);bullets.push({x:ox,y:oy,vx:Math.cos(a)*18,vy:Math.sin(a)*18,damage:25,color:'#a8f',size:3,knockback:3,pierce:1,pierced:0,life:50,flame:false,explosive:false,explosionRadius:0,tracer:false,chain:false,chainRange:0,chainCount:0,laserGlow:false,grenade:false,owner:'player',ownerId:lp.id,trail:[],crit:false,_element:activeElement?.id||null,_homing:false,_bouncing:0});} }
   }
 }
 
