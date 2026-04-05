@@ -1791,7 +1791,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const baseBright = (gameMode === 'horde' || gameMode === 'gauntlet') ? 0.45 : 0.3;
+  const baseBright = (gameMode === 'horde' || gameMode === 'gauntlet') ? 0.5 : 0.38;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -3173,8 +3173,8 @@ function update() {
                   damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
                   // Track per-player kills for wave summary
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
-                  // Arcade system: run kills + streak
-                  if(b.ownerId===myId){runKills++;checkGunEvolution();registerStreakKill();}
+                  // Arcade system: run kills + streak (check ownerId matches local player)
+                  {const _lp2=getLocalPlayer();if(_lp2&&b.ownerId===_lp2.id){runKills++;checkGunEvolution();registerStreakKill();}}
                   const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // Directional blood burst — blood flies in bullet direction
                   const _ba=Math.atan2(b.vy,b.vx);
@@ -3654,7 +3654,7 @@ function render() {
       ctx.strokeStyle=theme.grid;ctx.lineWidth=0.5;
       ctx.strokeRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
     } else {
-      ctx.fillStyle='#0c0a08';
+      ctx.fillStyle='#1a1614';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
       // Wall edge highlights — O(1) accent color from adjacent room
       const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
@@ -3666,8 +3666,8 @@ function render() {
         let accent='#3a3028';
         const adj=floorAbove?roomGrid[cy-1][cx]:floorBelow?roomGrid[cy+1][cx]:floorLeft?roomGrid[cy][cx-1]:roomGrid[cy][cx+1];
         if(adj>=0&&rooms[adj]?.theme) accent=rooms[adj].theme.accent;
-        // Bright edge line (always visible even in darkness)
-        ctx.fillStyle='#554840';
+        // Bright edge line (glows in the dark — always visible)
+        ctx.fillStyle='#776860';
         if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,3);
         if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-3,CELL_SIZE,3);
         if(floorLeft) ctx.fillRect(px,py,3,CELL_SIZE);
@@ -4037,7 +4037,7 @@ function render() {
       }
       gl.viewport(0, 0, lightCanvas.width, lightCanvas.height);
       gl.disable(gl.BLEND);
-      gl.clearColor(0.3, 0.3, 0.3, 1.0);
+      gl.clearColor(0.38, 0.38, 0.38, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
@@ -4048,7 +4048,7 @@ function render() {
       if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
       const fc = window._fogCanvas, fctx = window._fogCtx;
       fc.width = canvas.width; fc.height = canvas.height;
-      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet') ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.6)';
+      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet') ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.5)';
       fctx.fillRect(0, 0, fc.width, fc.height);
       fctx.globalCompositeOperation = 'destination-out';
       const fox = -camera.x + canvas.width/2 + screenShake.x;
@@ -4285,8 +4285,8 @@ addBtn('btn-install', () => {
     else alert('Open browser menu (⋮) then "Add to Home Screen" or "Install App"');
   }
 });
-// Show install button on iOS always (no beforeinstallprompt support)
-if (/iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.navigator.standalone) {
+// Show install button on all mobile devices (not when already installed as PWA)
+if (isMobile && !window.navigator.standalone && !window.matchMedia('(display-mode: standalone)').matches) {
   const ip = document.getElementById('install-prompt'); if (ip) ip.style.display = 'block';
 }
 
