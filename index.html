@@ -999,16 +999,18 @@ const ROOM_THEMES = [
 ];
 
 const ZOMBIE_TYPES = {
-  normal: { hp: 60, speed: 2.0, radius: 12, color: '#5a5', damage: 12, score: 100 },
-  fast: { hp: 35, speed: 2.8, radius: 11, color: '#7a5', damage: 10, score: 150 },
-  tank: { hp: 300, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300 },
-  spitter: { hp: 50, speed: 1.6, radius: 11, color: '#5a8', damage: 12, score: 200, ranged: true, fireRate: 1500 },
-  exploder: { hp: 70, speed: 2.6, radius: 14, color: '#a55', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 70 },
-  boss: { hp: 800, speed: 1.4, radius: 30, color: '#f44', damage: 40, score: 1000, explodeOnDeath: true, explosionRadius: 90 },
-  splitter: { hp: 100, speed: 1.8, radius: 16, color: '#8a5', damage: 15, score: 200, splitOnDeath: true },
-  mini: { hp: 20, speed: 2.5, radius: 10, color: '#9b6', damage: 6, score: 50 },
-  brute: { hp: 150, speed: 2.2, radius: 15, color: '#a75', damage: 22, score: 250 },
-  stalker: { hp: 45, speed: 3.0, radius: 10, color: '#556', damage: 18, score: 200 },
+  // Core roster: fewer, stronger enemies with distinct behaviors
+  normal:   { hp: 100, speed: 1.8, radius: 13, color: '#5a5', damage: 12, score: 100 }, // shambler
+  fast:     { hp: 60,  speed: 2.2, radius: 12, color: '#7a5', damage: 15, score: 150, charger: true }, // sprinter — charges in bursts
+  tank:     { hp: 300, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300, groundPound: true }, // bruiser — shockwave slam
+  spitter:  { hp: 80,  speed: 1.4, radius: 12, color: '#5a8', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true }, // 3-spread projectile
+  exploder: { hp: 60,  speed: 1.6, radius: 13, color: '#a55', damage: 35, score: 250, bomber: true, fireRate: 3000 }, // throws bombs, no suicide
+  boss:     { hp: 400, speed: 1.2, radius: 28, color: '#f44', damage: 30, score: 500, summoner: true, fireRate: 300 }, // summons zombies
+  splitter: { hp: 120, speed: 1.2, radius: 15, color: '#668', damage: 15, score: 200, shielded: true }, // front shield, must flank
+  mini:     { hp: 50,  speed: 1.5, radius: 11, color: '#a66', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // laser sight + high damage shot
+  // Legacy compat
+  brute:    { hp: 200, speed: 1.6, radius: 16, color: '#a75', damage: 20, score: 250 },
+  stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#556', damage: 15, score: 200 },
 };
 
 // ---- AUDIO ENGINE ----
@@ -2516,7 +2518,7 @@ function startSurvivalWave() {
     currentWaveMod = WAVE_MODIFIERS[Math.floor(Math.random() * WAVE_MODIFIERS.length)];
   }
   const zombieMult = currentWaveMod ? currentWaveMod.zombieMult : 1.0;
-  survivalZombiesTotal = Math.floor((15 + survivalWave * 6 + Math.floor(Math.pow(survivalWave, 1.4))) * zombieMult);
+  survivalZombiesTotal = Math.floor((4 + survivalWave * 2) * zombieMult);
   survivalZombiesSpawned = 0;
   survivalZombiesKilled = 0;
   survivalWaveState = 'active';
@@ -2577,7 +2579,7 @@ function updateSurvivalWaves() {
     return;
   }
   // Active wave — spawn zombies aggressively
-  const maxActive = Math.min(40, 15 + survivalWave * 3);
+  const maxActive = Math.min(12, 5 + survivalWave);
   const spawnRate = Math.max(4, 28 - survivalWave * 3);
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && survivalZombiesSpawned < survivalZombiesTotal && zombies.length < maxActive) {
@@ -2638,7 +2640,7 @@ function updateHorde() {
   // Very easy start, gradual escalation
   const spawnRate = elapsed < 45 ? Math.floor(150 - elapsed * 1.5) : Math.max(15, Math.floor(80 - (elapsed - 45) * 0.3));
   // Few zombies, hard cap at 25
-  const maxZombies = Math.min(25, elapsed < 45 ? Math.floor(2 + elapsed * 0.15) : Math.floor(8 + (elapsed - 45) * 0.35));
+  const maxZombies = Math.min(8, elapsed < 45 ? Math.floor(1 + elapsed * 0.1) : Math.floor(5 + (elapsed - 45) * 0.15));
   // Zombie type pool expands over time — slower introduction
   const types = ['normal', 'normal'];
   if (elapsed > 30) types.push('fast');
@@ -2782,9 +2784,9 @@ function announceGauntletRoom() {
 
 function spawnGauntletZombies() {
   const isBoss = gauntletRoom % 5 === 0;
-  // Scale difficulty with room number
-  const baseCount = 5 + gauntletRoom * 2;
-  gauntletZombiesTotal = Math.min(30, isBoss ? Math.floor(baseCount * 0.6) : baseCount);
+  // Fewer, tougher enemies per room
+  const baseCount = 3 + gauntletRoom;
+  gauntletZombiesTotal = Math.min(10, isBoss ? Math.floor(baseCount * 0.5) : baseCount);
   gauntletZombiesSpawned = 0;
   // Spawn a boss on boss rooms
   if (isBoss) {
@@ -2816,7 +2818,7 @@ function updateGauntlet() {
     if (gauntletZombiesSpawned < gauntletZombiesTotal) {
       spawnTimer++;
       const spawnRate = Math.max(15, 40 - gauntletRoom * 2);
-      if (spawnTimer % spawnRate === 0 && zombies.length < Math.min(20, 8 + gauntletRoom)) {
+      if (spawnTimer % spawnRate === 0 && zombies.length < Math.min(8, 4 + gauntletRoom)) {
         const types = ['normal'];
         if (gauntletRoom >= 2) types.push('fast');
         if (gauntletRoom >= 3) types.push('brute');
@@ -3185,7 +3187,10 @@ function update() {
       if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
         // Use sweep collision for fast bullets (Tesla, etc) to prevent tunneling
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
-        if(_bhit){const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+        if(_bhit){
+                  // Shielder: block bullets from the front
+                  if(ZOMBIE_TYPES[z.type]?.shielded&&z._shieldAngle!==undefined){const ba=Math.atan2(b.vy,b.vx);let sd=ba-z._shieldAngle;while(sd>Math.PI)sd-=Math.PI*2;while(sd<-Math.PI)sd+=Math.PI*2;if(Math.abs(sd)<1.2){b.pierced=(b.pierced||0)+99;particles.push({x:b.x,y:b.y,vx:-b.vx*0.2,vy:-b.vy*0.2,life:8,maxLife:8,size:3,color:'#4af',type:'spark'});playSound(800,0.03,'sine',0.1);continue;}}
+                  const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
                   // Apply element effects from modifier system
                   if(b._element)applyElementOnHit(z,b.damage);
                   // Critical hit VFX
@@ -3215,6 +3220,8 @@ function update() {
                   // Arcade system: run kills + streak (check ownerId matches local player)
                   {const _lp2=getLocalPlayer();if(_lp2&&b.ownerId===_lp2.id){runKills++;checkGunEvolution();registerStreakKill();}}
                   const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  // Every kill drops a small health orb (3-5 HP)
+                  if(isHost)pickups.push({type:'health',amount:3+Math.floor(Math.random()*3),x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,bobTimer:Math.random()*Math.PI*2});
                   // Enrage nearby zombies (they saw their friend die)
                   for(const nz of zombies){if(nz===z)continue;const nd=Math.sqrt((nz.x-z.x)**2+(nz.y-z.y)**2);if(nd<120&&!nz._enraged){nz._enraged=180;nz.speed*=1.4;nz.color='#f44';}}
                   // Directional blood burst — blood flies in bullet direction
@@ -3291,7 +3298,7 @@ function update() {
     } else {
       // Continuous zombie spawning based on level
       spawnTimer++;
-      const maxZombies = Math.min(35, 20 + level * 5);
+      const maxZombies = Math.min(10, 5 + level * 2);
       const spawnRate = Math.max(5, 25 - level * 3);
       if(spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
         spawnZombie();
@@ -3320,17 +3327,72 @@ function update() {
 
       if(z.aware){
         z.angle=Math.atan2(zdy,zdx);
-        if(z.ranged&&zd<300){if(zd<150){z.vx=-zdx/zd*z.speed*0.5;z.vy=-zdy/zd*z.speed*0.5;}else{z.vx*=0.9;z.vy*=0.9;}const now=performance.now();if(now-z.lastFired>z.fireRate){z.lastFired=now;bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});playZombieAttackSound();}}
+        const zt=ZOMBIE_TYPES[z.type];
+        const _now=performance.now();
+
+        // ---- CHARGER (sprinter): charge→pause→charge ----
+        if(zt?.charger){
+          if(!z._chargeState)z._chargeState='approach';
+          if(z._chargeState==='approach'&&zd<200){z._chargeState='wind';z._chargeTimer=30;}
+          if(z._chargeState==='wind'){z._chargeTimer--;z.vx*=0.5;z.vy*=0.5;if(z._chargeTimer<=0){z._chargeState='charge';z._chargeTimer=20;z._chargeDx=zdx/zd;z._chargeDy=zdy/zd;}}
+          else if(z._chargeState==='charge'){z._chargeTimer--;z.vx=z._chargeDx*z.speed*3;z.vy=z._chargeDy*z.speed*3;if(z._chargeTimer<=0){z._chargeState='rest';z._chargeTimer=60;}}
+          else if(z._chargeState==='rest'){z._chargeTimer--;z.vx*=0.9;z.vy*=0.9;if(z._chargeTimer<=0)z._chargeState='approach';}
+          else{z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;}
+        }
+        // ---- SPITTER: 3-spread ranged attack, keeps distance ----
+        else if(zt?.spreadShot&&zd<300){
+          if(zd<120){z.vx=-zdx/zd*z.speed*0.6;z.vy=-zdy/zd*z.speed*0.6;}else{z.vx*=0.9;z.vy*=0.9;}
+          if(_now-z.lastFired>z.fireRate){z.lastFired=_now;
+            for(let si=-1;si<=1;si++){const sa=z.angle+si*0.25;bullets.push({x:z.x,y:z.y,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});}
+            playZombieAttackSound();}
+        }
+        // ---- BOMBER: throws bombs that land and explode after 2s ----
+        else if(zt?.bomber){
+          z.vx=(zdx/zd)*z.speed*0.7;z.vy=(zdy/zd)*z.speed*0.7;
+          if(zd<250&&_now-z.lastFired>z.fireRate){z.lastFired=_now;
+            const bx=np.x+(Math.random()-0.5)*40,by=np.y+(Math.random()-0.5)*40;
+            pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:120,_damage:35,_radius:70,bobTimer:0});}
+        }
+        // ---- SHIELDER: front shield blocks bullets, must be flanked ----
+        else if(zt?.shielded){
+          z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;
+          z._shieldAngle=z.angle; // shield faces player
+        }
+        // ---- SNIPER: stays far, charges laser, fires fast shot ----
+        else if(zt?.sniper){
+          if(zd<200){z.vx=-zdx/zd*z.speed;z.vy=-zdy/zd*z.speed;} // retreat
+          else{z.vx*=0.9;z.vy*=0.9;}
+          if(!z._sniperState)z._sniperState='aim';
+          if(z._sniperState==='aim'){z._sniperCharge=(z._sniperCharge||0)+1;if(z._sniperCharge>=90){z._sniperState='fire';}}
+          else if(z._sniperState==='fire'){
+            bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*16,vy:Math.sin(z.angle)*16,damage:z.damage,color:'#f44',size:5,knockback:4,pierce:0,pierced:0,life:60,owner:'zombie',trail:[]});
+            z._sniperState='cooldown';z._sniperCharge=0;z._sniperCooldown=120;}
+          else if(z._sniperState==='cooldown'){z._sniperCooldown--;if(z._sniperCooldown<=0)z._sniperState='aim';}
+        }
+        // ---- SUMMONER (boss): retreats, summons zombies ----
+        else if(zt?.summoner){
+          if(zd<200){z.vx=-zdx/zd*z.speed;z.vy=-zdy/zd*z.speed;}else{z.vx*=0.8;z.vy*=0.8;}
+          z._summonTimer=(z._summonTimer||0)+1;
+          if(z._summonTimer>=z.fireRate&&zombies.length<12){z._summonTimer=0;
+            for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sd=30+Math.random()*20;
+              const st=ZOMBIE_TYPES.normal;
+              zombies.push({zid:_nextZombieId++,x:z.x+Math.cos(sa)*sd,y:z.y+Math.sin(sa)*sd,vx:0,vy:0,hp:st.hp*0.6,maxHp:st.hp*0.6,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:50,type:'normal',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0});
+              particles.push({x:z.x+Math.cos(sa)*sd,y:z.y+Math.sin(sa)*sd,vx:0,vy:-1,life:20,maxLife:20,size:5,color:'#a44',type:'spark'});}
+            playZombieAttackSound();}
+        }
+        // ---- BRUISER: ground pound when close ----
+        else if(zt?.groundPound){
+          z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;
+          if(zd<50&&_now-z.lastFired>3000){z.lastFired=_now;
+            // Shockwave: damage all players in radius
+            for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<80)damagePlayerObj(p,25);}
+            screenShake.intensity=Math.max(screenShake.intensity,8);
+            for(let si=0;si<12;si++){const sa=si/12*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*40,y:z.y+Math.sin(sa)*40,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:20,maxLife:20,size:4,color:'#a85',type:'spark'});}
+            playExplosionSound();}
+        }
+        // ---- DEFAULT: walk toward player ----
         else{
-          const elapsed=gameTime/60; // seconds since game start
-          let mx=zdx/zd,my=zdy/zd;
-          // Flanking: after 2 min, some zombies approach from the side
-          if(elapsed>120&&!z._flanking&&Math.random()<0.001){z._flanking=true;z._flankDir=Math.random()<0.5?1:-1;}
-          if(z._flanking&&zd>80){const perp=z._flankDir;mx=mx*0.5+(-my)*0.5*perp;my=my*0.5+(mx)*0.5*perp;const ml=Math.sqrt(mx*mx+my*my)||1;mx/=ml;my/=ml;}
-          if(z._flanking&&zd<80)z._flanking=false;
-          // Dodging: after 4 min, zombies juke sideways periodically
-          if(elapsed>240&&gameTime%120<10&&Math.random()<0.02){const da=Math.random()<0.5?Math.PI/2:-Math.PI/2;const ca=Math.cos(da),sa=Math.sin(da);const nx=mx*ca-my*sa,ny=mx*sa+my*ca;mx=nx;my=ny;}
-          z.vx=mx*z.speed;z.vy=my*z.speed;
+          z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;
         }
       } else {
         z.wanderTimer--;
@@ -3467,7 +3529,15 @@ function update() {
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;if(p.gravity)p.vy+=p.gravity;p.vx*=0.95;p.vy*=0.95;p.life--;if(p.life<=0)particles.splice(i,1);}
   for(let i=floatingTexts.length-1;i>=0;i--){floatingTexts[i].y+=floatingTexts[i].vy;floatingTexts[i].life--;if(floatingTexts[i].life<=0)floatingTexts.splice(i,1);}
   for(let i=explosions.length-1;i>=0;i--){explosions[i].life--;if(explosions[i].life<=0)explosions.splice(i,1);}
-  for(const p of pickups){p.bobTimer+=0.05;if(p.dropCooldown>0)p.dropCooldown--;}
+  for(let pi=pickups.length-1;pi>=0;pi--){const p=pickups[pi];p.bobTimer+=0.05;if(p.dropCooldown>0)p.dropCooldown--;
+    // Bomber bombs: arc toward target, then explode
+    if(p.type==='_bomb'){
+      if(p._timer>60){const t=1-(p._timer-60)/60;p.x+=(p._tx-p.x)*0.05;p.y+=(p._ty-p.y)*0.05;}
+      p._timer--;
+      if(p._timer<=0&&isHost){createExplosion(p.x,p.y,p._radius,p._damage,'any');pickups.splice(pi,1);continue;}
+      // Render bomb as pulsing red circle (visual warning)
+    }
+  }
   if(decals.length>200)decals.splice(0,decals.length-200);
 
   // Camera follows local player (or spectate alive player) with aim-look-ahead
@@ -3821,7 +3891,13 @@ function render() {
   }}}
 
   // Pickups (+ orbital pickup rendering)
-  for(const p of pickups){const bob=Math.sin(p.bobTimer)*3;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
+  for(const p of pickups){if(p.type==='_bomb'){
+    // Bomber bomb: pulsing red circle with expanding warning
+    const bt=p._timer/120;ctx.save();ctx.translate(p.x,p.y);
+    ctx.globalAlpha=0.3+bt*0.3;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,p._radius*(1-bt),0,Math.PI*2);ctx.stroke();
+    ctx.globalAlpha=0.8;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,5,0,Math.PI*2);ctx.fill();
+    ctx.restore();continue;}
+    const bob=Math.sin(p.bobTimer)*3;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
 
   // Exit portal
   if(exitPos){
@@ -3917,6 +3993,10 @@ function render() {
     ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
     // Boss glow effect
     if(z.boss||z.type==='boss'){const pulse=0.3+Math.sin(performance.now()*0.005)*0.15;ctx.globalAlpha=pulse;ctx.shadowColor='#f44';ctx.shadowBlur=30;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // Shielder: front-facing energy barrier
+    if(ZOMBIE_TYPES[z.type]?.shielded){ctx.globalAlpha=0.5;ctx.strokeStyle='#4af';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,z.radius+4,-0.8,0.8);ctx.stroke();ctx.globalAlpha=1;}
+    // Sniper: laser sight when aiming
+    if(z._sniperState==='aim'&&z._sniperCharge>20){ctx.globalAlpha=Math.min(0.6,z._sniperCharge/90);ctx.strokeStyle='#f44';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(z.radius,0);ctx.lineTo(z.radius+300,0);ctx.stroke();ctx.globalAlpha=1;}
     ctx.fillStyle=z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle=z.boss||z.type==='boss'?'#a00':'#232';ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
