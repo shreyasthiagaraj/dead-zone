@@ -146,7 +146,7 @@ wss.on('connection', (ws) => {
         if (!info2) return;
         const lobby2 = lobbies.get(info2.code);
         if (!lobby2 || lobby2.hostId !== info2.id || lobby2.started) return;
-        if (msg.mode === 'dungeon' || msg.mode === 'survival' || msg.mode === 'horde') {
+        if (msg.mode === 'dungeon' || msg.mode === 'survival' || msg.mode === 'horde' || msg.mode === 'gauntlet') {
           lobby2.mode = msg.mode;
           sendLobbyUpdate(info2.code);
         }

@@ -152,6 +152,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <button class="menu-btn primary" id="btn-solo-dungeon" style="min-width:140px;padding:10px 16px;font-size:14px">DUNGEON<br><span style="color:#888;font-size:10px;font-weight:normal">Explore & escape</span></button>
     <button class="menu-btn" id="btn-solo-survival" style="min-width:140px;padding:10px 16px;font-size:14px">SURVIVAL<br><span style="color:#888;font-size:10px;font-weight:normal">Endless waves</span></button>
     <button class="menu-btn" id="btn-solo-horde" style="min-width:140px;padding:10px 16px;font-size:14px">HORDE<br><span style="color:#888;font-size:10px;font-weight:normal">Nonstop chaos</span></button>
+    <button class="menu-btn" id="btn-solo-gauntlet" style="min-width:140px;padding:10px 16px;font-size:14px">GAUNTLET<br><span style="color:#888;font-size:10px;font-weight:normal">Room by room</span></button>
   </div>
   <button class="menu-btn danger" id="btn-back-solo" style="margin-top:12px;font-size:11px;padding:6px 16px">BACK</button>
 </div>
@@ -180,6 +181,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
     <button class="menu-btn primary" id="btn-create-coop" style="min-width:140px;padding:10px 16px;font-size:14px">CO-OP<br><span style="color:#888;font-size:10px;font-weight:normal">Dungeons together</span></button>
     <button class="menu-btn" id="btn-create-survival" style="min-width:140px;padding:10px 16px;font-size:14px">SURVIVAL<br><span style="color:#888;font-size:10px;font-weight:normal">Endless waves</span></button>
     <button class="menu-btn" id="btn-create-horde" style="min-width:140px;padding:10px 16px;font-size:14px">HORDE<br><span style="color:#888;font-size:10px;font-weight:normal">Nonstop chaos</span></button>
+    <button class="menu-btn" id="btn-create-gauntlet" style="min-width:140px;padding:10px 16px;font-size:14px">GAUNTLET<br><span style="color:#888;font-size:10px;font-weight:normal">Room by room</span></button>
   </div>
   <button class="menu-btn danger" id="btn-back-multi" style="margin-top:12px;font-size:11px;padding:6px 16px">BACK</button>
 </div>
@@ -272,6 +274,9 @@ let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 let survivalWave = 0, survivalWaveState = 'countdown', survivalWaveTimer = 0;
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
 let waveSummaryActive = false, waveSummaryTimer = 0;
+// Gauntlet mode state
+let gauntletRoom = 0, gauntletState = 'fighting', gauntletTimer = 0;
+let gauntletZombiesTotal = 0, gauntletZombiesSpawned = 0;
 
 // ---- POWER-UP SYSTEM ----
 const POWERUP_TYPES = [
@@ -1454,7 +1459,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const baseBright = gameMode === 'horde' ? 0.45 : 0.15;
+  const baseBright = (gameMode === 'horde' || gameMode === 'gauntlet') ? 0.4 : 0.15;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
@@ -1627,15 +1632,15 @@ function updateLobbyUI() {
   document.getElementById('lobby-code').textContent = lobbyCode;
   // Show game mode label
   const modeDisp = document.getElementById('mode-display');
-  modeDisp.textContent = gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : 'MODE: CO-OP';
+  modeDisp.textContent = gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : 'MODE: CO-OP';
 }
 
 function showDeathScreen() {
   gameState = 'dead';
   document.getElementById('btn-menu').style.display = 'none';
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
-  const lvlLabel = gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
-  const lvlVal = gameMode === 'horde' ? `${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? survivalWave : level;
+  const lvlLabel = gameMode === 'gauntlet' ? 'Room' : gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
+  const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? survivalWave : level;
   document.getElementById('death-stats').innerHTML = `Score: <span class="val">${score.toLocaleString()}</span><br>${lvlLabel}: <span class="val">${lvlVal}</span><br>Kills: <span class="val">${kills}</span>`;
   document.getElementById('highscore-display').textContent = `HIGH SCORE: ${highScore.toLocaleString()}`;
   showScreen('death-screen');
@@ -1655,6 +1660,7 @@ addBtn('btn-solo', () => { showScreen('solo-mode-screen'); });
 addBtn('btn-solo-dungeon', () => { isMultiplayer = false; gameMode = 'dungeon'; startSoloGame(); });
 addBtn('btn-solo-survival', () => { isMultiplayer = false; gameMode = 'survival'; startSoloGame(); });
 addBtn('btn-solo-horde', () => { isMultiplayer = false; gameMode = 'horde'; startSoloGame(); });
+addBtn('btn-solo-gauntlet', () => { isMultiplayer = false; gameMode = 'gauntlet'; startSoloGame(); });
 addBtn('btn-back-solo', () => { showScreen('start-screen'); });
 addBtn('btn-multi', () => { showScreen('multi-screen'); showMultiError(''); connectWS(); });
 addBtn('btn-back-main', () => { showScreen('start-screen'); if (ws) ws.close(); playMusic('music_menu', 2.0); });
@@ -1675,6 +1681,12 @@ addBtn('btn-create-survival', () => {
 });
 addBtn('btn-create-horde', () => {
   gameMode = 'horde';
+  const name = document.getElementById('name-input').value.trim() || 'Player';
+  showScreen(null);
+  sendMsg({ type: 'create_lobby', name });
+});
+addBtn('btn-create-gauntlet', () => {
+  gameMode = 'gauntlet';
   const name = document.getElementById('name-input').value.trim() || 'Player';
   showScreen(null);
   sendMsg({ type: 'create_lobby', name });
@@ -1717,7 +1729,7 @@ function togglePauseMenu() {
     // Pause
     gamePaused = true;
     pauseEl.style.display = 'block';
-    const modeLabel = gameMode === 'horde' ? `HORDE — ${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
+    const modeLabel = gameMode === 'gauntlet' ? `GAUNTLET — ROOM ${gauntletRoom}` : gameMode === 'horde' ? `HORDE — ${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? `SURVIVAL — WAVE ${survivalWave}` : `DUNGEON — LEVEL ${level}`;
     document.getElementById('pause-mode-label').textContent = isMultiplayer ? modeLabel + ' (multiplayer)' : modeLabel;
     // Build inventory display
     const lp = getLocalPlayer();
@@ -1792,6 +1804,10 @@ function startSoloGame() {
     generateHordeArena(window._currentLevelSeed);
     exitPos = null;
     hordeTimer = 0;
+  } else if (gameMode === 'gauntlet') {
+    gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
+    generateGauntletRoom(1);
+    exitPos = null;
   } else {
     generateDungeon(window._currentLevelSeed);
   }
@@ -1808,6 +1824,7 @@ function startSoloGame() {
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'survival') startSurvivalWave();
   else if (gameMode === 'horde') startHorde();
+  else if (gameMode === 'gauntlet') startGauntlet();
   else startLevel();
 }
 
@@ -1829,6 +1846,10 @@ function startMultiplayerGame() {
     generateHordeArena(lobbySeed);
     exitPos = null;
     hordeTimer = 0;
+  } else if (gameMode === 'gauntlet') {
+    gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
+    generateGauntletRoom(1);
+    exitPos = null;
   } else {
     generateDungeon(lobbySeed);
   }
@@ -1854,6 +1875,7 @@ function startMultiplayerGame() {
   if (isHost) {
     if (gameMode === 'survival') startSurvivalWave();
     else if (gameMode === 'horde') startHorde();
+    else if (gameMode === 'gauntlet') startGauntlet();
     else startLevel();
   }
 }
@@ -2261,6 +2283,165 @@ function spawnHordeZombie(types, elapsed) {
   zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + elapsed * 0.003, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: a + Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
 }
 
+// ---- GAUNTLET MODE ----
+const GAUNTLET_ROOMS = [
+  { name: 'THE ENTRANCE', sub: 'Clear the room.' },
+  { name: 'DARK PASSAGE', sub: 'They lurk in the shadows.' },
+  { name: 'THE PIT', sub: 'No way out but through.' },
+  { name: 'BLOOD CHAMBER', sub: 'Something died here.' },
+  { name: 'BOSS ARENA', sub: 'Kill the abomination.' },
+  { name: 'THE GAUNTLET', sub: 'The real test begins.' },
+  { name: 'CHARNEL HOUSE', sub: 'Piles of the fallen.' },
+  { name: 'GORE HALLS', sub: 'Paint the walls red.' },
+  { name: 'THE CRUCIBLE', sub: 'Prove yourself.' },
+  { name: 'BOSS ARENA', sub: 'Another one rises.' },
+];
+
+function generateGauntletRoom(roomNum) {
+  const seed = (window._currentLevelSeed || Date.now()) + roomNum * 777;
+  const rng = seededRandom(seed);
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  // Room size scales slightly with room number
+  const baseSize = 18 + Math.min(roomNum, 10) * 2;
+  const cx = Math.floor(GRID_W / 2), cy = Math.floor(GRID_H / 2);
+  const hw = Math.floor(baseSize / 2), hh = Math.floor(baseSize / 2);
+  const arena = { x: cx - hw, y: cy - hh, w: baseSize, h: baseSize };
+  carveRoom(arena);
+  rooms.push(arena);
+  // Scatter cover obstacles (more in later rooms)
+  const numObs = 2 + Math.floor(rng() * 3) + Math.min(roomNum, 8);
+  for (let att = 0; att < 100 && att < numObs * 10; att++) {
+    const ow = 2 + Math.floor(rng() * 3), oh = 2 + Math.floor(rng() * 3);
+    const ox = arena.x + 2 + Math.floor(rng() * (arena.w - ow - 4));
+    const oy = arena.y + 2 + Math.floor(rng() * (arena.h - oh - 4));
+    if (Math.abs(ox + ow/2 - cx) < 4 && Math.abs(oy + oh/2 - cy) < 4) continue;
+    for (let y = oy; y < oy + oh && y < GRID_H; y++) for (let x = ox; x < ox + ow && x < GRID_W; x++) dungeonGrid[y][x] = false;
+  }
+  // Room theme varies
+  const themes = [ROOM_THEMES[1], ROOM_THEMES[3], ROOM_THEMES[4], ROOM_THEMES[6], ROOM_THEMES[7]];
+  arena.theme = themes[roomNum % themes.length];
+  arena.brightness = 1.0;
+  arena.flicker = roomNum % 3 === 2;
+  roomDetails = [{ ri: 0, theme: arena.theme, details: [], brightness: 1.0, flicker: arena.flicker }];
+  buildRoomGrid();
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
+}
+
+function startGauntlet() {
+  gauntletRoom = 1;
+  gauntletState = 'intro';
+  gauntletTimer = 120; // 2 second intro
+  generateGauntletRoom(1);
+  announceGauntletRoom();
+}
+
+function announceGauntletRoom() {
+  const el = document.getElementById('wave-announce');
+  const isBoss = gauntletRoom % 5 === 0;
+  const roomInfo = GAUNTLET_ROOMS[(gauntletRoom - 1) % GAUNTLET_ROOMS.length];
+  document.getElementById('wave-num').textContent = isBoss ? `ROOM ${gauntletRoom}: BOSS` : `ROOM ${gauntletRoom}`;
+  document.getElementById('wave-sub').textContent = roomInfo.sub;
+  el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  playWaveStartSound();
+}
+
+function spawnGauntletZombies() {
+  const isBoss = gauntletRoom % 5 === 0;
+  // Scale difficulty with room number
+  const baseCount = 5 + gauntletRoom * 2;
+  gauntletZombiesTotal = Math.min(30, isBoss ? Math.floor(baseCount * 0.6) : baseCount);
+  gauntletZombiesSpawned = 0;
+  // Spawn a boss on boss rooms
+  if (isBoss) {
+    const arena = rooms[0]; if (!arena) return;
+    const bossX = (arena.x + arena.w / 2) * CELL_SIZE, bossY = (arena.y + 2) * CELL_SIZE;
+    const tier = Math.floor(gauntletRoom / 5);
+    const bossHp = 600 + tier * 300;
+    zombies.push({ zid: _nextZombieId++, x: bossX, y: bossY, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: 1.4 + tier * 0.1, radius: 30, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
+  }
+  // Spawn barrels
+  spawnBarrels(2 + Math.floor(Math.random() * 3));
+}
+
+function updateGauntlet() {
+  if (!isHost || gameMode !== 'gauntlet') return;
+  if (gauntletState === 'intro') {
+    gauntletTimer--;
+    if (gauntletTimer <= 0) {
+      gauntletState = 'fighting';
+      spawnGauntletZombies();
+    }
+    return;
+  }
+  if (gauntletState === 'cleared') {
+    gauntletTimer--;
+    if (gauntletTimer <= 0) {
+      // Advance to next room
+      gauntletRoom++;
+      generateGauntletRoom(gauntletRoom);
+      const c = getRoomCenter(rooms[0]);
+      for (const p of players) { if (p.alive) { p.x = c.x; p.y = c.y; } }
+      camera.x = c.x; camera.y = c.y;
+      bullets = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
+      gauntletState = 'intro';
+      gauntletTimer = 120;
+      announceGauntletRoom();
+    }
+    return;
+  }
+  // Fighting state — spawn zombies gradually
+  if (gauntletZombiesSpawned < gauntletZombiesTotal) {
+    spawnTimer++;
+    const spawnRate = Math.max(15, 40 - gauntletRoom * 2);
+    if (spawnTimer % spawnRate === 0 && zombies.length < Math.min(20, 8 + gauntletRoom)) {
+      // Pick zombie type based on room difficulty
+      const types = ['normal'];
+      if (gauntletRoom >= 2) types.push('fast');
+      if (gauntletRoom >= 3) types.push('brute');
+      if (gauntletRoom >= 4) types.push('splitter', 'spitter');
+      if (gauntletRoom >= 6) types.push('tank', 'stalker');
+      if (gauntletRoom >= 8) types.push('exploder');
+      const tk = types[Math.floor(Math.random() * types.length)];
+      const t = ZOMBIE_TYPES[tk]; if (!t) return;
+      const arena = rooms[0]; if (!arena) return;
+      // Spawn at arena edges
+      const edge = Math.floor(Math.random() * 4);
+      let gx, gy;
+      if (edge === 0) { gx = arena.x + 1; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+      else if (edge === 1) { gx = arena.x + arena.w - 2; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+      else if (edge === 2) { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + 1; }
+      else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
+      const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
+      const sc = 1 + (gauntletRoom - 1) * 0.08;
+      zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + (gauntletRoom - 1) * 0.02, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
+      gauntletZombiesSpawned++;
+    }
+  }
+  // Check room cleared
+  if (gauntletZombiesSpawned >= gauntletZombiesTotal && zombies.length === 0) {
+    gauntletState = 'cleared';
+    gauntletTimer = 180; // 3 seconds before next room
+    score += 300 * gauntletRoom;
+    addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `ROOM ${gauntletRoom} CLEAR!`, '#4f4');
+    // Drop loot
+    spawnHealthPickup();
+    if (gauntletRoom % 2 === 0) spawnWeaponPickup();
+    // Perk selection every 3 rooms
+    if (gauntletRoom % 3 === 0) showPerkSelection();
+    // Drop a power-up on boss clear
+    if (gauntletRoom % 5 === 0) {
+      const pool = POWERUP_TYPES.filter(p => p.duration > 1);
+      const pwr = pool[Math.floor(Math.random() * pool.length)];
+      const pos = getRandomFloorPos();
+      pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
+    }
+  }
+}
+
 function spawnSurvivalZombie() {
   const ts = getZombieTypesForWave(survivalWave);
   const tk = ts[Math.floor(Math.random() * ts.length)];
@@ -2650,6 +2831,8 @@ function update() {
   if (isHost) {
     if (gameMode === 'horde') {
       updateHorde();
+    } else if (gameMode === 'gauntlet') {
+      updateGauntlet();
     } else if (gameMode === 'survival') {
       updateSurvivalWaves();
     } else {
@@ -2841,7 +3024,7 @@ function update() {
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0 });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting' });
   }
 
   updateHUD();
@@ -2851,6 +3034,22 @@ function update() {
 function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
   if (msg.hordeTimer !== undefined) hordeTimer = msg.hordeTimer;
+  if (msg.gauntletRoom !== undefined) {
+    // Detect room change for non-host: regenerate arena and show announcement
+    if (msg.gauntletRoom !== gauntletRoom && msg.gauntletRoom > 0) {
+      gauntletRoom = msg.gauntletRoom;
+      generateGauntletRoom(gauntletRoom);
+      const c = getRoomCenter(rooms[0]);
+      const lp = getLocalPlayer();
+      if (lp) { lp.x = c.x; lp.y = c.y; }
+      camera.x = c.x; camera.y = c.y;
+      bullets = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
+      announceGauntletRoom();
+      // Perk selection every 3 rooms on non-host
+      if (gauntletRoom > 1 && (gauntletRoom - 1) % 3 === 0) showPerkSelection();
+    }
+    gauntletState = msg.gauntletState || gauntletState;
+  }
   // Sync survival wave state
   if (msg.gameMode === 'survival') {
     if (msg.survivalWave && msg.survivalWave !== survivalWave) {
@@ -2986,7 +3185,7 @@ function updateHUD() {
   const ae=document.getElementById('ammo-display');
   ae.innerHTML=def.infinite?'∞':`${w.ammo} <span class="slash">/</span> <span class="reserve">${w.reserveAmmo}</span>`;ae.className='ammo';
   document.getElementById('score').textContent=score.toLocaleString();
-  document.getElementById('wave-display').textContent=gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
+  document.getElementById('wave-display').textContent=gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
@@ -3385,7 +3584,7 @@ function render() {
 
   // ---- Lighting (WebGL with canvas 2D fallback) ----
   {
-    var spotRadius = gameMode === 'horde' ? 1200 : 700;
+    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet') ? 1200 : 700;
     const lp3 = getLocalPlayer();
     // Gather all alive players as light sources
     const lights = [];
@@ -3425,7 +3624,7 @@ function render() {
       if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
       const fc = window._fogCanvas, fctx = window._fogCtx;
       fc.width = canvas.width; fc.height = canvas.height;
-      fctx.fillStyle = gameMode === 'horde' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.82)';
+      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet') ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.82)';
       fctx.fillRect(0, 0, fc.width, fc.height);
       fctx.globalCompositeOperation = 'destination-out';
       const fox = -camera.x + canvas.width/2 + screenShake.x;
