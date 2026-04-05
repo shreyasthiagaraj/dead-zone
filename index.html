@@ -411,7 +411,6 @@ const PERK_SYNERGIES = [
   { perks: ['ricochet', 'critical'], name: 'CHAIN CRIT', desc: 'Each pierce can crit again', color: '#f0f' },
   { perks: ['blast', 'lead_storm'], name: 'CARPET BOMB', desc: 'Explosive weapons 2x faster', color: '#f80' },
   { perks: ['thick_skin', 'vampire'], name: 'JUGGERNAUT', desc: '+80 max HP, heal 4/kill', color: '#4f4' },
-  { perks: ['reload', 'steady_aim'], name: 'OPERATOR', desc: 'Perfect accuracy while reloading', color: '#aaf' },
 ];
 function getActiveSynergies() {
   const active = [];
@@ -426,7 +425,6 @@ function hasSynergy(name) { return getActiveSynergies().some(s => s.name === nam
 const PERK_DEFS = [
   { id: 'vampire', name: 'VAMPIRE', desc: 'Heal 2 HP per kill', color: '#f44', icon: '♥', stackable: true },
   { id: 'speed', name: 'SPEED DEMON', desc: '+25% move speed', color: '#4ff', icon: '»', stackable: true },
-  { id: 'reload', name: 'QUICK HANDS', desc: '35% faster reload', color: '#fa0', icon: '⟳', stackable: true },
   { id: 'thick_skin', name: 'THICK SKIN', desc: '+40 max HP', color: '#4f4', icon: '■', stackable: true },
   { id: 'scavenger', name: 'SCAVENGER', desc: '2x ammo from pickups', color: '#ff0', icon: '$', stackable: false },
   { id: 'steady_aim', name: 'STEADY AIM', desc: '50% less spread', color: '#aaf', icon: '+', stackable: true },
@@ -626,14 +624,16 @@ const ROOM_THEMES = [
 ];
 
 const ZOMBIE_TYPES = {
-  normal: { hp: 50, speed: 1.8, radius: 12, color: '#5a5', damage: 10, score: 100 },
-  fast: { hp: 30, speed: 3.5, radius: 10, color: '#7a5', damage: 8, score: 150 },
-  tank: { hp: 200, speed: 1.0, radius: 18, color: '#585', damage: 20, score: 300 },
-  spitter: { hp: 40, speed: 1.4, radius: 11, color: '#5a8', damage: 8, score: 200, ranged: true, fireRate: 2000 },
-  exploder: { hp: 60, speed: 2.4, radius: 14, color: '#a55', damage: 30, score: 250, explodeOnDeath: true, explosionRadius: 60 },
-  boss: { hp: 500, speed: 1.2, radius: 28, color: '#f44', damage: 35, score: 1000, explodeOnDeath: true, explosionRadius: 80 },
-  splitter: { hp: 90, speed: 1.6, radius: 16, color: '#8a5', damage: 12, score: 200, splitOnDeath: true },
-  mini: { hp: 20, speed: 3.2, radius: 8, color: '#9b6', damage: 5, score: 50 },
+  normal: { hp: 60, speed: 2.0, radius: 12, color: '#5a5', damage: 12, score: 100 },
+  fast: { hp: 35, speed: 4.0, radius: 10, color: '#7a5', damage: 10, score: 150 },
+  tank: { hp: 300, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300 },
+  spitter: { hp: 50, speed: 1.6, radius: 11, color: '#5a8', damage: 12, score: 200, ranged: true, fireRate: 1500 },
+  exploder: { hp: 70, speed: 2.6, radius: 14, color: '#a55', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 70 },
+  boss: { hp: 800, speed: 1.4, radius: 30, color: '#f44', damage: 40, score: 1000, explodeOnDeath: true, explosionRadius: 90 },
+  splitter: { hp: 100, speed: 1.8, radius: 16, color: '#8a5', damage: 15, score: 200, splitOnDeath: true },
+  mini: { hp: 25, speed: 3.5, radius: 8, color: '#9b6', damage: 8, score: 50 },
+  brute: { hp: 150, speed: 2.2, radius: 15, color: '#a75', damage: 22, score: 250 },
+  stalker: { hp: 45, speed: 3.0, radius: 10, color: '#556', damage: 18, score: 200 },
 };
 
 // ---- AUDIO ENGINE ----
@@ -2182,7 +2182,7 @@ function updateSurvivalWaves() {
     showWaveSummary();
     // Spawn rest-period pickups — more generous on boss wave clear
     const isBossWave = survivalWave % 5 === 0;
-    for (let i = 0; i < (isBossWave ? 4 : 2); i++) spawnHealthPickup();
+    for (let i = 0; i < (isBossWave ? 2 : 1); i++) spawnHealthPickup();
     spawnWeaponPickup();
     if (isBossWave) spawnWeaponPickup(); // extra weapon on boss clear
     const p = getRandomFloorPos();
@@ -2191,16 +2191,14 @@ function updateSurvivalWaves() {
 }
 
 function getZombieTypesForWave(wave) {
-  // Use wave modifier types if active
   if (currentWaveMod && currentWaveMod.types) return currentWaveMod.types;
   const t = ['normal'];
   if (wave >= 2) t.push('fast');
-  if (wave >= 3) t.push('tank');
-  if (wave >= 3) t.push('splitter');
-  if (wave >= 4) t.push('spitter');
+  if (wave >= 3) t.push('tank', 'splitter');
+  if (wave >= 4) t.push('spitter', 'brute');
   if (wave >= 5) t.push('exploder');
-  // Boss waves: more tanks and exploders alongside the boss
-  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'fast', 'fast'); }
+  if (wave >= 6) t.push('stalker');
+  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'brute', 'fast'); }
   if (wave < 5) { t.push('normal', 'normal'); }
   return t;
 }
@@ -2220,22 +2218,21 @@ function updateHorde() {
   if (!isHost || gameMode !== 'horde') return;
   hordeTimer++;
   const elapsed = hordeTimer / 60; // seconds
-  // Easy start, very slow escalation
-  const spawnRate = elapsed < 40 ? Math.floor(120 - elapsed * 1.5) : Math.max(12, Math.floor(60 - (elapsed - 40) * 0.3));
-  // Very few zombies, slow cap growth
-  const maxZombies = Math.min(30, elapsed < 40 ? Math.floor(2 + elapsed * 0.2) : Math.floor(10 + (elapsed - 40) * 0.5));
+  // Very easy start, gradual escalation
+  const spawnRate = elapsed < 45 ? Math.floor(150 - elapsed * 1.5) : Math.max(15, Math.floor(80 - (elapsed - 45) * 0.3));
+  // Few zombies, hard cap at 25
+  const maxZombies = Math.min(25, elapsed < 45 ? Math.floor(2 + elapsed * 0.15) : Math.floor(8 + (elapsed - 45) * 0.35));
   // Zombie type pool expands over time — slower introduction
   const types = ['normal', 'normal'];
-  if (elapsed > 25) types.push('fast', 'fast');
-  if (elapsed > 45) types.push('tank');
-  if (elapsed > 60) types.push('splitter');
-  if (elapsed > 80) types.push('spitter');
-  if (elapsed > 100) types.push('exploder');
-  if (elapsed > 120) types.push('fast', 'fast', 'tank');
+  if (elapsed > 30) types.push('fast');
+  if (elapsed > 50) types.push('brute');
+  if (elapsed > 70) types.push('tank', 'splitter');
+  if (elapsed > 90) types.push('spitter', 'stalker');
+  if (elapsed > 120) types.push('exploder');
   // Spawn
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && zombies.length < maxZombies) {
-    const burst = elapsed > 80 ? 3 : elapsed > 45 ? 2 : 1;
+    const burst = elapsed > 120 ? 2 : 1;
     for (let b = 0; b < burst; b++) spawnHordeZombie(types, elapsed);
   }
   // First weapon drops fast (5s, 12s), then every 15 seconds
@@ -2295,13 +2292,13 @@ function dropZombieLoot(z) {
     // Boss always drops a power-up
     const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x + (Math.random()-0.5)*20, y: z.y + (Math.random()-0.5)*20, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.08) {
+  } else if (r < 0.04) {
     pickups.push({ type: 'health', amount: 15, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.14) {
+  } else if (r < 0.07) {
     pickups.push({ type: 'ammo', x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.16) {
-    // Rare power-up drop (2% chance, not from nuke — that's boss only)
-    const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
+  } else if (r < 0.09) {
+    // Rare power-up drop — only duration-based ones (not instant deployables)
+    const pool = POWERUP_TYPES.filter(p => p.duration > 1);
     const pwr = pool[Math.floor(Math.random() * pool.length)];
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
   }
@@ -2328,7 +2325,7 @@ function spawnZombie() {
   const x=(br.x+1+Math.random()*(br.w-2))*CELL_SIZE,y=(br.y+1+Math.random()*(br.h-2))*CELL_SIZE,sc=1+(level-1)*0.12;
   zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(level-1)*0.03,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
-function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank');if(lv>=3)t.push('splitter');if(lv>=4)t.push('spitter');if(lv>=5)t.push('exploder');if(lv<5){t.push('normal');t.push('normal');}return t; }
+function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter');if(lv>=4)t.push('spitter','brute');if(lv>=5)t.push('exploder');if(lv>=6)t.push('stalker');if(lv<5){t.push('normal','normal');}return t; }
 
 function createExplosion(x,y,radius,damage,source='player') {
   explosions.push({x,y,radius,life:15,maxLife:15});screenShake.intensity=Math.max(screenShake.intensity,12);playExplosionSound();
