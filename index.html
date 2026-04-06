@@ -423,7 +423,7 @@ function updateOrbital() {
 }
 
 // ---- THE DESCENT ----
-const DESCENT_SECTION_HEIGHT = 30; // cells per section
+const DESCENT_SECTION_HEIGHT = 14; // cells per section (fits many in the grid)
 const DESCENT_WIDTH = 40; // cells wide
 let descentSection = 0, descentGateOpen = false, descentEnemiesTotal = 0, descentEnemiesKilled = 0;
 let descentTopWall = 0; // y pixel of the closing upper wall
@@ -441,6 +441,15 @@ function generateDescentMap(seed) {
   const arena = { x: marginX, y: 0, w: DESCENT_WIDTH, h: GRID_H };
   carveRoom(arena);
   rooms.push(arena);
+  // Add central pillar in each section (small 2x2 obstacle for tactical cover)
+  const cx = marginX + Math.floor(DESCENT_WIDTH / 2);
+  for (let si = 0; si < Math.floor(GRID_H / DESCENT_SECTION_HEIGHT); si++) {
+    const py = si * DESCENT_SECTION_HEIGHT + Math.floor(DESCENT_SECTION_HEIGHT / 2);
+    for (let dy = 0; dy < 2; dy++) for (let dx = -1; dx <= 0; dx++) {
+      const gy = py + dy, gx = cx + dx;
+      if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) dungeonGrid[gy][gx] = false;
+    }
+  }
   // Theme
   arena.theme = ROOM_THEMES[4]; // furnace
   arena.brightness = 1.0;
@@ -568,7 +577,7 @@ function updateDescent() {
   // Check if player passed through the gate
   if (descentGateOpen) {
     const lp = getLocalPlayer();
-    if (lp && lp.y > sec.gateY) {
+    if (lp && Math.abs(lp.y - sec.gateY) < 30) {
       descentSection++;
       descentGateOpen = false;
       // Advance closing wall
@@ -583,6 +592,10 @@ function updateDescent() {
   const lp = getLocalPlayer();
   if (lp && lp.y < descentTopWall + PLAYER_RADIUS + 10) {
     lp.y = descentTopWall + PLAYER_RADIUS + 10;
+  }
+  // Gate blocks movement when locked
+  if (lp && !descentGateOpen && sec.gateY > 0 && lp.y > sec.gateY - PLAYER_RADIUS - 5) {
+    lp.y = sec.gateY - PLAYER_RADIUS - 5;
   }
 }
 
