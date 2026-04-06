@@ -207,11 +207,13 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <button class="menu-btn danger" id="btn-leave" style="margin-top:16px;font-size:12px;padding:8px 20px">LEAVE</button>
 </div>
 
-<!-- ---- DEATH SCREEN ---- -->
-<div class="screen-overlay" id="death-screen" style="display:none">
-  <h1>DEAD</h1>
-  <div class="stats" id="death-stats"></div>
-  <button class="menu-btn primary" id="btn-restart">PLAY AGAIN</button>
+<!-- ---- DEATH SCREEN (AFTER-ACTION REPORT) ---- -->
+<div class="screen-overlay" id="death-screen" style="display:none;overflow-y:auto">
+  <h1 style="font-size:clamp(28px,7vw,48px)">DEAD</h1>
+  <div id="death-rating" style="font-size:clamp(36px,10vw,72px);font-weight:bold;letter-spacing:4px;margin:4px 0"></div>
+  <div class="stats" id="death-stats" style="font-size:13px;line-height:1.8"></div>
+  <div id="death-best" style="color:#888;font-size:11px;margin:8px 0"></div>
+  <button class="menu-btn primary" id="btn-restart" style="margin-top:8px">PLAY AGAIN</button>
   <div class="highscore" id="highscore-display"></div>
 </div>
 
@@ -295,6 +297,8 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
 const BASE_GUN = { damage: 30, fireRate: 180, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0 };
 let runKills = 0;
+// Run stats for after-action report
+let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
 
 function getScaledGun() {
   const power = runKills / 10; // power level = kills / 10
@@ -333,7 +337,8 @@ let streakKills = 0, streakTimer = 0, activeStreak = null, activeStreakTimer = 0
 
 function registerStreakKill() {
   streakKills++;
-  streakTimer = 300; // 5 second window
+  streakTimer = 300;
+  if (streakKills > runStats.bestStreak) runStats.bestStreak = streakKills;
   // Check milestones
   for (let i = STREAK_MILESTONES.length - 1; i >= 0; i--) {
     if (streakKills === STREAK_MILESTONES[i].kills) {
@@ -2029,9 +2034,64 @@ function showDeathScreen() {
   gameState = 'dead';
   document.getElementById('btn-menu').style.display = 'none';
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
+
+  // Calculate after-action report
+  const survivalTime = Math.floor((Date.now() - runStats.startTime) / 1000);
+  const survivalMin = Math.floor(survivalTime / 60);
+  const survivalSec = survivalTime % 60;
+  const accuracy = runStats.shotsFired > 0 ? Math.floor(runStats.shotsHit / runStats.shotsFired * 100) : 0;
+  const killsPerMin = survivalTime > 0 ? (kills / (survivalTime / 60)).toFixed(1) : 0;
+
+  // Rating formula: kills/min × accuracy% × survival_seconds / 100
+  const ratingScore = (killsPerMin * accuracy * survivalTime) / 10000;
+  let rating, ratingColor;
+  if (ratingScore > 8) { rating = 'S'; ratingColor = '#f0c040'; }
+  else if (ratingScore > 5) { rating = 'A'; ratingColor = '#4f4'; }
+  else if (ratingScore > 3) { rating = 'B'; ratingColor = '#4af'; }
+  else if (ratingScore > 1.5) { rating = 'C'; ratingColor = '#fa0'; }
+  else if (ratingScore > 0.5) { rating = 'D'; ratingColor = '#f80'; }
+  else { rating = 'F'; ratingColor = '#f44'; }
+
+  // Best element
+  const elemEntries = Object.entries(runStats.elemKills).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
+  const bestElem = elemEntries.length > 0 ? elemEntries[0] : null;
+
+  // Streak label
+  const streakLabel = runStats.bestStreak >= 20 ? 'GODLIKE' : runStats.bestStreak >= 15 ? 'MASSACRE' : runStats.bestStreak >= 10 ? 'RAMPAGE' : runStats.bestStreak >= 5 ? 'STREAK' : '—';
+
   const lvlLabel = gameMode === 'gauntlet' ? 'Room' : gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
-  const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${Math.floor(hordeTimer/60)}s` : gameMode === 'survival' ? survivalWave : level;
-  document.getElementById('death-stats').innerHTML = `Score: <span class="val">${score.toLocaleString()}</span><br>${lvlLabel}: <span class="val">${lvlVal}</span><br>Kills: <span class="val">${kills}</span>`;
+  const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${survivalMin}m ${survivalSec}s` : gameMode === 'survival' ? survivalWave : level;
+
+  // Rating display
+  document.getElementById('death-rating').innerHTML = `<span style="color:${ratingColor}">${rating}</span>`;
+
+  // Stats
+  let stats = '';
+  stats += `<span style="color:#888">MISSION REPORT</span><br>`;
+  stats += `${lvlLabel}: <span class="val">${lvlVal}</span> · Time: <span class="val">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span><br>`;
+  stats += `Kills: <span class="val">${kills}</span> · Score: <span class="val">${score.toLocaleString()}</span><br>`;
+  stats += `Accuracy: <span class="val">${accuracy}%</span> · K/min: <span class="val">${killsPerMin}</span><br>`;
+  stats += `Damage Dealt: <span class="val">${runStats.damageDealt.toLocaleString()}</span> · Taken: <span class="val">${runStats.damageTaken}</span><br>`;
+  stats += `Best Streak: <span class="val">${runStats.bestStreak}</span> <span style="color:#f80">${streakLabel}</span><br>`;
+  stats += `Shockwaves: <span class="val">${runStats.shockwavesUsed}</span>`;
+  if (bestElem) stats += ` · Fav Element: <span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#aef':'#4ff'}">${bestElem[0].toUpperCase()}</span>`;
+
+  document.getElementById('death-stats').innerHTML = stats;
+
+  // Personal best comparison
+  const bestKey = `deadzone_best_${gameMode}`;
+  const prevBest = JSON.parse(localStorage.getItem(bestKey) || '{}');
+  let bestText = '';
+  if (prevBest.kills) {
+    const better = kills > prevBest.kills;
+    bestText = `Previous best: ${prevBest.kills} kills, ${prevBest.rating} rating`;
+    if (better) bestText = `<span style="color:#4f4">NEW PERSONAL BEST!</span> (was ${prevBest.kills} kills)`;
+  }
+  if (!prevBest.kills || kills > prevBest.kills) {
+    localStorage.setItem(bestKey, JSON.stringify({ kills, rating, score, time: survivalTime }));
+  }
+  document.getElementById('death-best').innerHTML = bestText;
+
   document.getElementById('highscore-display').textContent = `HIGH SCORE: ${highScore.toLocaleString()}`;
   showScreen('death-screen');
   playGameOverSound(); screenShake.intensity = 15;
@@ -2182,6 +2242,7 @@ function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; runKills = 0; currentGunTier = 0; streakKills = 0; streakTimer = 0; activeStreak = null; activeStreakTimer = 0; activeElement = null; elementZones = [];
+  runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
   // Reset joysticks to prevent stuck state on restart
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
   rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;
@@ -2322,6 +2383,7 @@ function fireWeaponForPlayer(p) {
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   // Triple shot: 3 bullets in a spread
   const shotCount = hasPowerUp('triple') ? 3 : 1;
+  if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
   for (let si = 0; si < shotCount; si++) {
     const spreadOff = shotCount > 1 ? (si - 1) * 0.15 : 0;
     const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
@@ -2381,6 +2443,7 @@ function dash() {
   lp.dashCooldown=DASH_COOLDOWN;
   lp.invincible=Math.max(lp.invincible, 200); // brief invincibility during shockwave
   // SHOCKWAVE: huge blast, close enemies get launched, far ones get pushed
+  runStats.shockwavesUsed++;
   const SHOCKWAVE_RADIUS = 250;
   if (isHost) {
     for (const z of zombies) {
@@ -3005,7 +3068,7 @@ function damagePlayerObj(p,damage) {
   // Shield and Ghost power-ups block all damage (works for any player)
   if(playerHasPowerUp(p,'shield')) return;
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
-  if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);}
+  if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);runStats.damageTaken+=damage;}
   if(p.hp<=0){
     // Second Wind perk: revive once (works for any player with the perk)
     if(playerHasPerk(p,'second_wind')){
@@ -3229,6 +3292,7 @@ function update() {
                   // Shielder: block bullets from the front
                   if(ZOMBIE_TYPES[z.type]?.shielded&&z._shieldAngle!==undefined){const ba=Math.atan2(b.vy,b.vx);let sd=ba-z._shieldAngle;while(sd>Math.PI)sd-=Math.PI*2;while(sd<-Math.PI)sd+=Math.PI*2;if(Math.abs(sd)<1.2){b.pierced=(b.pierced||0)+99;particles.push({x:b.x,y:b.y,vx:-b.vx*0.2,vy:-b.vy*0.2,life:8,maxLife:8,size:3,color:'#4af',type:'spark'});playSound(800,0.03,'sine',0.1);continue;}}
                   const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
+                  if(b.ownerId===getLocalPlayer()?.id){runStats.shotsHit++;runStats.damageDealt+=b.damage;}
                   // Apply element effects from modifier system
                   if(b._element)applyElementOnHit(z,b.damage);
                   // Critical hit VFX
