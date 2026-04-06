@@ -659,7 +659,13 @@ function applyElementOnHit(z, damage) {
     z._slowTimer = Math.max(z._slowTimer || 0, 120);
     if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; }
   } else if (el === 'lightning') {
-    // Chain to 5 enemies at 70% damage each — devastating group clear
+    // Shock effect on primary target — visible sparks for 2 seconds
+    z._shocked = 120; z.staggerTimer = Math.max(z.staggerTimer, 10);
+    // Lightning bolt visual from bullet to zombie
+    const lp = getLocalPlayer();
+    if(lp){particles.push({x:lp.x+Math.cos(lp.angle)*22,y:lp.y+Math.sin(lp.angle)*22,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});}
+    for(let si=0;si<4;si++)particles.push({x:z.x+(Math.random()-0.5)*15,y:z.y+(Math.random()-0.5)*15,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:12,maxLife:12,size:2+Math.random()*3,color:'#4ff',type:'spark'});
+    // Chain to 5 enemies at 70% damage each
     let lastZ = z; const hitSet = new Set();
     for (let ci = 0; ci < 5; ci++) {
       let bestD = 250, bestZ = null;
@@ -1214,16 +1220,16 @@ const ROOM_THEMES = [
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
-  normal:   { hp: 100, speed: 1.8, radius: 13, color: '#5a5', damage: 12, score: 100 }, // shambler
-  fast:     { hp: 60,  speed: 2.2, radius: 12, color: '#7a5', damage: 15, score: 150, charger: true }, // sprinter — charges in bursts
-  tank:     { hp: 300, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300, groundPound: true }, // bruiser — shockwave slam
-  spitter:  { hp: 80,  speed: 1.4, radius: 12, color: '#5a8', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true }, // 3-spread projectile
-  exploder: { hp: 60,  speed: 1.6, radius: 13, color: '#a55', damage: 35, score: 250, bomber: true, fireRate: 3000 }, // throws bombs, no suicide
-  boss:     { hp: 400, speed: 1.2, radius: 28, color: '#f44', damage: 30, score: 500, summoner: true, fireRate: 300 }, // summons zombies
-  splitter: { hp: 120, speed: 1.2, radius: 15, color: '#668', damage: 15, score: 200, shielded: true }, // front shield, must flank
-  mini:     { hp: 50,  speed: 1.5, radius: 11, color: '#a66', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // laser sight + high damage shot
+  normal:   { hp: 180, speed: 1.8, radius: 13, color: '#5a5', damage: 12, score: 100 }, // shambler
+  fast:     { hp: 110, speed: 2.2, radius: 12, color: '#7a5', damage: 15, score: 150, charger: true }, // sprinter
+  tank:     { hp: 500, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300, groundPound: true }, // bruiser
+  spitter:  { hp: 140, speed: 1.4, radius: 12, color: '#5a8', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true },
+  exploder: { hp: 100, speed: 1.6, radius: 13, color: '#a55', damage: 35, score: 250, bomber: true, fireRate: 3000 },
+  boss:     { hp: 700, speed: 1.2, radius: 28, color: '#f44', damage: 30, score: 500, summoner: true, fireRate: 300 },
+  splitter: { hp: 200, speed: 1.2, radius: 15, color: '#668', damage: 15, score: 200, shielded: true }, // shielder
+  mini:     { hp: 90,  speed: 1.5, radius: 11, color: '#a66', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // sniper
   // Legacy compat
-  brute:    { hp: 200, speed: 1.6, radius: 16, color: '#a75', damage: 20, score: 250 },
+  brute:    { hp: 350, speed: 1.6, radius: 16, color: '#a75', damage: 20, score: 250 },
   stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#556', damage: 15, score: 200 },
 };
 
@@ -2666,25 +2672,34 @@ function dash() {
   const lp=getLocalPlayer(); if(!lp||!lp.alive||lp.dashCooldown>0) return;
   lp.dashCooldown=DASH_COOLDOWN;
   lp.invincible=Math.max(lp.invincible, 200); // brief invincibility during shockwave
-  // SHOCKWAVE: huge blast, close enemies get launched, far ones get pushed
+  // ELEMENTAL SHOCKWAVE — blast inherits active element
   runStats.shockwavesUsed++;
   const SHOCKWAVE_RADIUS = 250;
+  const blastElem = activeElement?.id || null;
   if (isHost) {
     for (const z of zombies) {
       const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
       if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
-        const closeness = 1 - sd/SHOCKWAVE_RADIUS; // 1.0 at center, 0.0 at edge
-        const pushForce = 10 + closeness * 30; // 10 at edge, 40 at point blank
-        const dmg = Math.floor(60 * closeness); // 60 at center, 0 at edge
+        const closeness = 1 - sd/SHOCKWAVE_RADIUS;
+        const pushForce = 10 + closeness * 30;
+        const dmg = Math.floor(60 * closeness);
         damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
         z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
+        // Apply element from blast
+        if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
+        else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
+        else if (blastElem === 'lightning') { z._shocked = 120; z.staggerTimer = Math.max(z.staggerTimer, 25); damageZombie(z, 15, 0, 0); }
       }
     }
   }
-  // Big shockwave visual — multiple expanding rings
-  for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:'#4af',type:'spark'}); }
-  for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:'#fff',type:'spark'}); }
-  for (let si = 0; si < 8; si++) { const sa = si/8*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*5,y:lp.y+Math.sin(sa)*5,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:6,color:'#8cf',type:'spark'}); }
+  // Elemental shockwave visuals — color and effect match element
+  const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : '#4af';
+  const blastColor2 = blastElem === 'fire' ? '#fa0' : blastElem === 'ice' ? '#cef' : blastElem === 'lightning' ? '#8ff' : '#fff';
+  for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
+  for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:blastColor2,type:'spark'}); }
+  // Ground decal from elemental blast
+  if (blastElem) { for (let di = 0; di < 8; di++) { const da = di/8*Math.PI*2, dd = 40+Math.random()*80; decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:10+Math.random()*15,alpha:0.4,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'}); } }
+  decals.push({x:lp.x,y:lp.y,size:60+Math.random()*20,alpha:0.3,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'});
   screenShake.intensity = Math.max(screenShake.intensity, 10);
   playExplosionSound();
 }
@@ -3655,6 +3670,8 @@ function update() {
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      // Shocked: tick down
+      if(z._shocked>0)z._shocked--;
       // Enraged: revert after timer expires
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // Element effects: burn, slow, freeze
@@ -3777,6 +3794,17 @@ function update() {
       }
       if(z.attackCooldown>0)z.attackCooldown--;
     }
+    // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
+    for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(dz.hp<=0){
+      score+=dz.score;kills++;
+      const _lp2=getLocalPlayer();if(_lp2&&_lp2.id!==undefined){runKills++;checkGunEvolution();registerStreakKill();}
+      // Death effects
+      for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#a22','#811','#622','#c11'][Math.floor(Math.random()*4)],type:'blood'});}
+      decals.push({x:dz.x,y:dz.y,size:dz.radius+12+Math.random()*15,alpha:0.5,color:'#200'});
+      if(isHost&&Math.random()<0.15)pickups.push({type:'health',amount:5,x:dz.x,y:dz.y,bobTimer:Math.random()*Math.PI*2});
+      playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,3);
+      zombies.splice(di,1);
+    }}
   }
 
   // ---- Revive mechanic: stand near dead players to revive them ----
@@ -4380,7 +4408,9 @@ function render() {
     if(ZOMBIE_TYPES[z.type]?.shielded){ctx.globalAlpha=0.5;ctx.strokeStyle='#4af';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,z.radius+4,-0.8,0.8);ctx.stroke();ctx.globalAlpha=1;}
     // Sniper: laser sight when aiming
     if(z._sniperState==='aim'&&z._sniperCharge>20){ctx.globalAlpha=Math.min(0.6,z._sniperCharge/90);ctx.strokeStyle='#f44';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(z.radius,0);ctx.lineTo(z.radius+300,0);ctx.stroke();ctx.globalAlpha=1;}
-    ctx.fillStyle=z._frozenTimer>0?'#adf':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle=z.boss||z.type==='boss'?'#a00':'#232';ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();
+    ctx.fillStyle=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle=z.boss||z.type==='boss'?'#a00':'#232';ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();
+    // Shocked effect — sparks around body
+    if(z._shocked>0){ctx.globalAlpha=0.7;for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*6;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random(),0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
