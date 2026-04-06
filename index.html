@@ -671,7 +671,7 @@ function applyElementOnHit(z, damage) {
       let bestD = 250, bestZ = null;
       for (const oz of zombies) { if (oz === lastZ || hitSet.has(oz)) continue; const d = Math.sqrt((oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2); if (d < bestD) { bestD = d; bestZ = oz; } }
       if (!bestZ) break; hitSet.add(bestZ);
-      damageZombie(bestZ, Math.floor(damage * 0.7), 0, 0);
+      damageZombie(bestZ, Math.floor(damage * 0.3), 0, 0);
       bestZ.staggerTimer = Math.max(bestZ.staggerTimer, 15); // stun on chain
       particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
       particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
@@ -2278,12 +2278,14 @@ function showDeathScreen() {
 
   const lvlLabel = gameMode === 'gauntlet' ? 'Room' : gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
   const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${survivalMin}m ${survivalSec}s` : gameMode === 'survival' ? survivalWave : level;
+  const hordeCircleLost = gameMode === 'horde' && hordeCircleTimer >= HORDE_CIRCLE_CLAIM_TIME;
 
   // Rating display
   document.getElementById('death-rating').innerHTML = `<span style="color:${ratingColor}">${rating}</span>`;
 
   // Stats
   let stats = '';
+  if (hordeCircleLost) stats += `<span style="color:#f44">THE CIRCLE HAS FALLEN</span><br>`;
   stats += `<span style="color:#888">MISSION REPORT</span><br>`;
   stats += `${lvlLabel}: <span class="val">${lvlVal}</span> · Time: <span class="val">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span><br>`;
   stats += `Kills: <span class="val">${kills}</span> · Score: <span class="val">${score.toLocaleString()}</span><br>`;
@@ -2481,7 +2483,7 @@ function startSoloGame() {
   } else if (gameMode === 'horde') {
     generateHordeArena(window._currentLevelSeed);
     exitPos = null;
-    hordeTimer = 0;
+    hordeTimer = 0; hordeCircleTimer = 0;
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
@@ -2525,7 +2527,8 @@ function startMultiplayerGame() {
   } else if (gameMode === 'horde') {
     generateHordeArena(lobbySeed);
     exitPos = null;
-    hordeTimer = 0;
+    hordeTimer = 0; hordeCircleTimer = 0;
+    { const _hc = getRoomCenter(rooms[0]); hordeCircleCx = _hc.x; hordeCircleCy = _hc.y; }
   } else if (gameMode === 'descent') {
     generateDescentMap(lobbySeed);
     initDescentSections();
@@ -3016,15 +3019,29 @@ function getZombieTypesForWave(wave) {
 
 // ---- HORDE MODE ----
 let hordeTimer = 0; // frames survived
+const HORDE_CIRCLE_RADIUS = 120; // pixels — defend zone radius
+let hordeCircleCx = 0, hordeCircleCy = 0; // center in world coords
+let hordeCircleTimer = 0; // frames a zombie has been inside (10s = 600 frames = lost)
+const HORDE_CIRCLE_CLAIM_TIME = 600; // 10 seconds at 60fps
 function startHorde() {
   hordeTimer = 0;
+  hordeCircleTimer = 0;
+  const arena = rooms[0];
+  if (arena) { const c = getRoomCenter(arena); hordeCircleCx = c.x; hordeCircleCy = c.y; }
   const el = document.getElementById('wave-announce');
   document.getElementById('wave-num').textContent = 'HORDE MODE';
-  document.getElementById('wave-sub').textContent = 'Survive as long as you can.';
+  document.getElementById('wave-sub').textContent = 'Defend the circle. Don\'t let them in.';
   el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
   playWaveStartSound();
 }
 
+function getHordeEdgePos() {
+  // Spawn items in a ring around the arena, NOT the center — avoids stacking
+  const a = Math.random() * Math.PI * 2;
+  const minR = HORDE_CIRCLE_RADIUS + 60, maxR = 12 * CELL_SIZE;
+  const r = minR + Math.random() * (maxR - minR);
+  return { x: hordeCircleCx + Math.cos(a) * r, y: hordeCircleCy + Math.sin(a) * r };
+}
 function updateHorde() {
   if (!isHost || gameMode !== 'horde') return;
   hordeTimer++;
@@ -3046,20 +3063,36 @@ function updateHorde() {
     const burst = elapsed > 120 ? 2 : 1;
     for (let b = 0; b < burst; b++) spawnHordeZombie(types, elapsed);
   }
-  // First weapon drops fast (5s, 12s), then every 15 seconds
-  // Weapon pickup: first at 8s, then every 30s
-  if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) spawnHealthPickup();
+  // Items spawn at ring positions, not center
+  if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
   // Power-up orb every 35 seconds
   if (hordeTimer % 2100 === 0 && hordeTimer > 0) {
     const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
     const pwr = pool[Math.floor(Math.random() * pool.length)];
-    const pos = getRandomFloorPos();
+    const pos = getHordeEdgePos();
     pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
   }
   // Element zone every 15 seconds
   if (hordeTimer % 900 === 0 && hordeTimer > 0) spawnElementZone();
   // Extra health every 30 seconds
-  if (hordeTimer % 1800 === 0) spawnHealthPickup();
+  if (hordeTimer % 1800 === 0) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
+  // ---- DEFEND THE CIRCLE: check if zombies are inside ----
+  let zombieInCircle = false;
+  for (const z of zombies) {
+    const zd = Math.sqrt((z.x - hordeCircleCx)**2 + (z.y - hordeCircleCy)**2);
+    if (zd < HORDE_CIRCLE_RADIUS) { zombieInCircle = true; break; }
+  }
+  if (zombieInCircle) {
+    hordeCircleTimer++;
+    if (hordeCircleTimer >= HORDE_CIRCLE_CLAIM_TIME) {
+      // Circle claimed — game over
+      if (isMultiplayer) sendMsg({ type: 'game_over' });
+      showDeathScreen();
+    }
+  } else {
+    // Slowly recover when no zombies inside
+    hordeCircleTimer = Math.max(0, hordeCircleTimer - 2);
+  }
 }
 
 function spawnHordeZombie(types, elapsed) {
@@ -3071,7 +3104,9 @@ function spawnHordeZombie(types, elapsed) {
   const a = Math.random() * Math.PI * 2, r = 15 * CELL_SIZE; // edge of circle
   const x = cx + Math.cos(a) * r, y = cy2 + Math.sin(a) * r;
   const sc = 1 + elapsed * 0.005; // slow HP scaling over time
-  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + elapsed * 0.003, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: a + Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0 });
+  // ~40% of zombies are invaders that target the defend circle
+  const isInvader = Math.random() < 0.4;
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + elapsed * 0.003, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, splitOnDeath: t.splitOnDeath || false, angle: 0, staggerTimer: 0, aware: true, wanderAngle: a + Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _invader: isInvader });
 }
 
 // ---- GAUNTLET MODE ----
@@ -3647,7 +3682,7 @@ function update() {
                   particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:nz.x,ty:nz.y});
                   // Sparks at chain point
                   for(let li=0;li<4;li++){particles.push({x:nz.x+(Math.random()-0.5)*12,y:nz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
-                  damageZombie(nz,b.damage*0.7,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
+                  damageZombie(nz,b.damage*0.3,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
                   // Track per-player kills for wave summary
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
                   // Arcade system: run kills + streak (check ownerId matches local player)
@@ -3677,7 +3712,23 @@ function update() {
                   if(z.splitOnDeath||ZOMBIE_TYPES[z.type]?.splitOnDeath)splitZombie(z);
                   zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
-      else if(b.owner==='zombie'){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
+      else if(b.owner==='zombie'){
+        // Shield force field deflects projectiles
+        let deflected=false;
+        for(const p of players){if(!p.alive)continue;
+          if(playerHasPowerUp(p,'shield')&&dist(b,p)<60+b.size){
+            // Reflect bullet away from player
+            const rdx=b.x-p.x,rdy=b.y-p.y,rd=Math.sqrt(rdx*rdx+rdy*rdy)||1;
+            const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
+            b.vx=rdx/rd*spd;b.vy=rdy/rd*spd;b.owner='player';b.ownerId=p.id;
+            // Shield takes a small hit
+            if(activePowerUp&&activePowerUp._shieldHp){activePowerUp._shieldHp-=5;}
+            for(let si=0;si<4;si++){particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
+            deflected=true;break;
+          }
+        }
+        if(!deflected){for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}}
+      }
     }
     // Non-host: visual bullet collision with client-side hit prediction
     else if(b.owner==='player'){
@@ -3761,8 +3812,14 @@ function update() {
       if(z._frozenTimer>0){z._frozenTimer--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);continue;}
       if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;pushOutOfObstacles(z,z.radius);continue;}
-      const{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
+      let{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
       if(!np)continue;
+      // Horde mode: invader zombies target the circle center instead of players
+      if(gameMode==='horde'&&z._invader&&!z._enraged){
+        const cdx=hordeCircleCx-z.x,cdy=hordeCircleCy-z.y,cd=Math.sqrt(cdx*cdx+cdy*cdy);
+        // Switch to player if player is very close (threat override)
+        if(zd>80){np={x:hordeCircleCx,y:hordeCircleCy};zd=cd;}
+      }
       const zdx=np.x-z.x,zdy=np.y-z.y;
 
       if(!z.aware){
@@ -4041,7 +4098,7 @@ function update() {
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false });
   }
 
   updateHUD();
@@ -4050,7 +4107,7 @@ function update() {
 // ---- Apply host state (non-host client) ----
 function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
-  if (msg.hordeTimer !== undefined) hordeTimer = msg.hordeTimer;
+  if (msg.hordeTimer !== undefined) { hordeTimer = msg.hordeTimer; if (msg.hordeCircleTimer !== undefined) hordeCircleTimer = msg.hordeCircleTimer; }
   if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
   if (msg.elemZones) { elementZones = msg.elemZones; }
   if (msg.gauntletRoom !== undefined) {
@@ -4347,6 +4404,44 @@ function render() {
 
   // Decals
   for(const d of decals){ctx.globalAlpha=d.alpha;ctx.fillStyle=d.color;ctx.beginPath();ctx.arc(d.x,d.y,d.size,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+
+  // Horde mode: defend circle on the ground
+  if (gameMode === 'horde') {
+    const claimRatio = Math.min(1, hordeCircleTimer / HORDE_CIRCLE_CLAIM_TIME);
+    const pulse = 0.5 + Math.sin(performance.now() * 0.004) * 0.15;
+    // Circle color: transitions from cyan (safe) → yellow (warning) → red (danger)
+    const cr = Math.floor(claimRatio < 0.5 ? claimRatio * 2 * 255 : 255);
+    const cg = Math.floor(claimRatio < 0.5 ? 255 : (1 - (claimRatio - 0.5) * 2) * 255);
+    const cb = Math.floor(claimRatio < 0.3 ? (1 - claimRatio / 0.3) * 255 : 0);
+    const circleColor = `rgb(${cr},${cg},${cb})`;
+    // Outer glow ring
+    ctx.save();
+    ctx.globalAlpha = pulse * 0.3;
+    ctx.strokeStyle = circleColor; ctx.lineWidth = 8; ctx.shadowColor = circleColor; ctx.shadowBlur = 20;
+    ctx.beginPath(); ctx.arc(hordeCircleCx, hordeCircleCy, HORDE_CIRCLE_RADIUS, 0, Math.PI * 2); ctx.stroke();
+    // Fill with low opacity — shows the territory
+    ctx.globalAlpha = pulse * 0.08 + claimRatio * 0.12;
+    ctx.fillStyle = circleColor;
+    ctx.beginPath(); ctx.arc(hordeCircleCx, hordeCircleCy, HORDE_CIRCLE_RADIUS, 0, Math.PI * 2); ctx.fill();
+    // Inner ring (thinner, brighter)
+    ctx.globalAlpha = pulse * 0.6;
+    ctx.strokeStyle = circleColor; ctx.lineWidth = 2; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(hordeCircleCx, hordeCircleCy, HORDE_CIRCLE_RADIUS - 6, 0, Math.PI * 2); ctx.stroke();
+    // Claim progress arc (fills clockwise as zombies invade)
+    if (claimRatio > 0.01) {
+      ctx.globalAlpha = 0.7;
+      ctx.strokeStyle = '#f44'; ctx.lineWidth = 5; ctx.shadowColor = '#f44'; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(hordeCircleCx, hordeCircleCy, HORDE_CIRCLE_RADIUS + 8, -Math.PI/2, -Math.PI/2 + claimRatio * Math.PI * 2); ctx.stroke();
+    }
+    // Warning text when under attack
+    if (claimRatio > 0.1) {
+      ctx.globalAlpha = 0.5 + Math.sin(performance.now() * 0.008) * 0.3;
+      ctx.fillStyle = claimRatio > 0.6 ? '#f44' : '#fa0';
+      ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(claimRatio > 0.6 ? 'CIRCLE FALLING!' : 'DEFEND!', hordeCircleCx, hordeCircleCy - HORDE_CIRCLE_RADIUS - 20);
+    }
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.restore();
+  }
 
   // Barrels — red with pulsing glow and hazard stripe
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
@@ -4915,6 +5010,13 @@ function renderMinimap(){
     }
   }
   for(const p of players){if(!p.alive)continue;minimapCtx.fillStyle=p.color;minimapCtx.fillRect(p.x*sx-2,p.y*sy-2,4,4);}
+  // Horde defend circle on minimap
+  if(gameMode==='horde'){
+    const claimR=Math.min(1,hordeCircleTimer/HORDE_CIRCLE_CLAIM_TIME);
+    const mcr=Math.floor(claimR<0.5?claimR*2*255:255),mcg=Math.floor(claimR<0.5?255:(1-(claimR-0.5)*2)*255),mcb=Math.floor(claimR<0.3?(1-claimR/0.3)*255:0);
+    minimapCtx.strokeStyle=`rgb(${mcr},${mcg},${mcb})`;minimapCtx.lineWidth=2;
+    minimapCtx.beginPath();minimapCtx.arc(hordeCircleCx*sx,hordeCircleCy*sy,HORDE_CIRCLE_RADIUS*sx,0,Math.PI*2);minimapCtx.stroke();
+  }
   // Exit on minimap
   if(exitPos){const ep=0.7+Math.sin(gameTime*0.08)*0.3;minimapCtx.fillStyle=`rgba(0,255,255,${ep})`;minimapCtx.beginPath();minimapCtx.arc(exitPos.x*sx,exitPos.y*sy,4,0,Math.PI*2);minimapCtx.fill();}
   minimapCtx.strokeStyle='rgba(255,255,255,0.2)';minimapCtx.lineWidth=1;minimapCtx.strokeRect((camera.x-canvas.width/2)*sx,(camera.y-canvas.height/2)*sy,canvas.width*sx,canvas.height*sy);
