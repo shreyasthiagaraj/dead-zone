@@ -1781,18 +1781,19 @@ function getRandomFloorPos() {
   return { x: (r.x+1+Math.random()*(r.w-2))*CELL_SIZE, y: (r.y+1+Math.random()*(r.h-2))*CELL_SIZE };
 }
 
+function _gh(){return dungeonGrid?dungeonGrid.length:GRID_H;}
 function obstacleCollision(ox, oy, r) {
   const mnx=Math.max(0,Math.floor((ox-r)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((ox+r)/CELL_SIZE));
-  const mny=Math.max(0,Math.floor((oy-r)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((oy+r)/CELL_SIZE));
-  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(ox,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(oy,wy+CELL_SIZE)); const dx=ox-cx,dy=oy-cy; if (dx*dx+dy*dy<r*r) return true; } }
+  const mny=Math.max(0,Math.floor((oy-r)/CELL_SIZE)), mxy=Math.min(_gh()-1,Math.floor((oy+r)/CELL_SIZE));
+  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(ox,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(oy,wy+CELL_SIZE)); const dx=ox-cx,dy=oy-cy; if (dx*dx+dy*dy<r*r) return true; } }
   return false;
 }
 function pushOutOfObstacles(e, r) {
   const mnx=Math.max(0,Math.floor((e.x-r-CELL_SIZE)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((e.x+r+CELL_SIZE)/CELL_SIZE));
-  const mny=Math.max(0,Math.floor((e.y-r-CELL_SIZE)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((e.y+r+CELL_SIZE)/CELL_SIZE));
-  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
+  const mny=Math.max(0,Math.floor((e.y-r-CELL_SIZE)/CELL_SIZE)), mxy=Math.min(_gh()-1,Math.floor((e.y+r+CELL_SIZE)/CELL_SIZE));
+  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
 }
-function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy][gx]) return false; } return true; }
+function hasLineOfSight(ax,ay,bx,by) { const _losH=dungeonGrid?dungeonGrid.length:GRID_H; const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=_losH) return false; if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) return false; } return true; }
 
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
@@ -2019,15 +2020,15 @@ function initGL() {
 
 function uploadDungeonGrid() {
   if (!dungeonGrid || !webglSupported) return;
-  // Use RGBA format — LUMINANCE has compatibility issues on some browsers/GPUs
-  const data = new Uint8Array(GRID_W * GRID_H * 4);
-  for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) {
+  const gh = dungeonGrid.length; // use actual grid height (may be taller for descent)
+  const data = new Uint8Array(GRID_W * gh * 4);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < GRID_W; x++) {
     const i = (y * GRID_W + x) * 4;
-    const v = dungeonGrid[y][x] ? 255 : 0;
+    const v = (dungeonGrid[y] && dungeonGrid[y][x]) ? 255 : 0;
     data[i] = v; data[i+1] = v; data[i+2] = v; data[i+3] = 255;
   }
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GRID_W, GRID_H, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GRID_W, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
 }
 
 function renderLighting(lights, camX, camY) {
@@ -2059,8 +2060,10 @@ function renderLighting(lights, camX, camY) {
   gl.uniform2f(uResolution, canvas.width, canvas.height);
   gl.uniform2f(uCameraPos, camX, camY);
   gl.uniform1f(uCellSize, CELL_SIZE);
-  gl.uniform2f(uGridSize, GRID_W, GRID_H);
-  gl.uniform2f(uArenaSize, ARENA_W, ARENA_H);
+  const _ugh = gameMode==='descent'&&DESCENT_GRID_H?DESCENT_GRID_H:GRID_H;
+  const _uah = gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+  gl.uniform2f(uGridSize, GRID_W, _ugh);
+  gl.uniform2f(uArenaSize, ARENA_W, _uah);
 
   const n = Math.min(lights.length, 4);
   gl.uniform1i(uNumLights, n);
