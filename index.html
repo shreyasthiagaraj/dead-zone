@@ -677,8 +677,11 @@ function applyElementOnHit(z, damage) {
       particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
       // Sparks at chain point
       for(let li=0;li<3;li++)particles.push({x:bestZ.x+(Math.random()-0.5)*12,y:bestZ.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10,maxLife:10,size:2+Math.random()*2,color:'#4ff',type:'spark'});
+      bestZ._shocked = 120;
       lastZ = bestZ;
     }
+    // Lightning chains detonate nearby barrels
+    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-z.x)**2+(br.y-z.y)**2);if(bd<100){explodeBarrel(br,bi);break;}}
   }
 }
 
@@ -1108,7 +1111,7 @@ DEAD CODE END */
 
 // Power-ups (simplified — kept from old system)
 const POWERUP_TYPES = [
-  { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 900, desc: '2x damage' },
+  { id: 'rage', name: 'RAGE', color: '#f22', icon: '💢', duration: 900, desc: '2x damage' },
   { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 900, desc: 'Absorbs all damage' },
   { id: 'triple', name: 'TRIPLE SHOT', color: '#fa0', icon: '⁂', duration: 720, desc: '3 bullets per shot' },
   { id: 'nuke', name: 'NUKE', color: '#f0f', icon: '☢', duration: 1, desc: 'Kills all zombies' },
@@ -2684,7 +2687,7 @@ function dash() {
       if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
         const closeness = 1 - sd/SHOCKWAVE_RADIUS;
         const pushForce = 10 + closeness * 30;
-        const dmg = Math.floor(60 * closeness);
+        const dmg = Math.floor(100 * closeness);
         damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
         z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
         // Apply element from blast
@@ -2693,6 +2696,8 @@ function dash() {
         else if (blastElem === 'lightning') { z._shocked = 120; z.staggerTimer = Math.max(z.staggerTimer, 25); damageZombie(z, 15, 0, 0); }
       }
     }
+    // Blast detonates nearby barrels
+    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-lp.x)**2+(br.y-lp.y)**2);if(bd<SHOCKWAVE_RADIUS){explodeBarrel(br,bi);}}
   }
   // Elemental shockwave visuals — color and effect match element
   const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : '#4af';
@@ -3435,7 +3440,11 @@ function update() {
       if (activePowerUp.timer <= 0) { activePowerUp = null; }
       else {
         // Ghost + Shield: invincibility
-        if (hasPowerUp('shield')) lp.invincible = Math.max(lp.invincible, 50);
+        if (hasPowerUp('shield')) {
+          lp.invincible = Math.max(lp.invincible, 50);
+          // Force field: push all zombies out of shield radius
+          if(isHost){const SHIELD_RADIUS=60;for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<SHIELD_RADIUS+sz.radius&&sd>0.1){const push=(SHIELD_RADIUS+sz.radius-sd)/sd*2;sz.x+=sdx*push;sz.y+=sdy*push;sz.vx+=sdx/sd*1;sz.vy+=sdy/sd*1;}}}
+        }
         // Magnet: pull pickups toward player
         if (hasPowerUp('magnet')) { for (const pk of pickups) { const mdx=lp.x-pk.x,mdy=lp.y-pk.y,md=Math.sqrt(mdx*mdx+mdy*mdy); if(md>10&&md<500){pk.x+=mdx/md*8;pk.y+=mdy/md*8;} } }
         // Giant: grow player radius, crush zombies on contact
@@ -4276,12 +4285,17 @@ function render() {
     ctx.fillStyle='#ff0';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('☢',0,0);
   ctx.restore();}
 
-  // Element zones — glowing floor patches
+  // Element zones — visually distinct per element
   for(const ez of elementZones){const et=ELEMENT_TYPES.find(e=>e.id===ez.element);if(!et)continue;
-    const pulse=0.4+Math.sin(performance.now()*0.005)*0.2;ctx.globalAlpha=pulse*(ez.life/900);
-    const g=ctx.createRadialGradient(ez.x,ez.y,0,ez.x,ez.y,ez.radius);g.addColorStop(0,et.color);g.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=g;ctx.beginPath();ctx.arc(ez.x,ez.y,ez.radius,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=0.8*(ez.life/900);ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(et.icon,ez.x,ez.y);
+    const pulse=0.4+Math.sin(performance.now()*0.005)*0.2;const alpha=pulse*(Math.min(ez.life,900)/900);ctx.globalAlpha=alpha;
+    const g=ctx.createRadialGradient(ez.x,ez.y,0,ez.x,ez.y,ez.radius*1.3);g.addColorStop(0,et.color);g.addColorStop(0.6,et.color);g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(ez.x,ez.y,ez.radius*1.3,0,Math.PI*2);ctx.fill();
+    // Element-specific inner detail
+    if(ez.element==='fire'){ctx.globalAlpha=alpha*0.6;for(let fi=0;fi<3;fi++){const fa=performance.now()*0.003+fi*2.1,fr=15+Math.sin(fa)*8;ctx.fillStyle='#fa0';ctx.beginPath();ctx.arc(ez.x+Math.cos(fa)*fr,ez.y+Math.sin(fa)*fr,4+Math.sin(fa*2)*2,0,Math.PI*2);ctx.fill();}}
+    else if(ez.element==='ice'){ctx.globalAlpha=alpha*0.7;ctx.strokeStyle='#cef';ctx.lineWidth=2;for(let ii=0;ii<4;ii++){const ia=ii/4*Math.PI*2;ctx.beginPath();ctx.moveTo(ez.x,ez.y);ctx.lineTo(ez.x+Math.cos(ia)*20,ez.y+Math.sin(ia)*20);ctx.stroke();}}
+    else if(ez.element==='lightning'){ctx.globalAlpha=alpha*0.5;ctx.strokeStyle='#8ff';ctx.lineWidth=2;for(let li=0;li<2;li++){const la=Math.random()*Math.PI*2;ctx.beginPath();ctx.moveTo(ez.x,ez.y);const mx=ez.x+Math.cos(la)*12+(Math.random()-0.5)*10,my=ez.y+Math.sin(la)*12+(Math.random()-0.5)*10;ctx.lineTo(mx,my);ctx.lineTo(mx+Math.cos(la)*12+(Math.random()-0.5)*8,my+Math.sin(la)*12+(Math.random()-0.5)*8);ctx.stroke();}}
+    ctx.globalAlpha=0.9*(Math.min(ez.life,900)/900);ctx.fillStyle='#fff';ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(et.icon,ez.x,ez.y);
+    ctx.font='8px monospace';ctx.fillStyle=et.color;ctx.fillText(et.name,ez.x,ez.y+22);
     ctx.globalAlpha=1;}
 
   // Active orbital rendering
@@ -4464,6 +4478,14 @@ function render() {
 
     // Dash cooldown (desktop only, local player only)
     if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
+    // Shield force field — glowing circle
+    if(p===getLocalPlayer()&&hasPowerUp('shield')){
+      const pulse=0.4+Math.sin(performance.now()*0.006)*0.2;
+      ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle='#4ff';ctx.lineWidth=3;ctx.shadowColor='#4ff';ctx.shadowBlur=15;
+      ctx.beginPath();ctx.arc(p.x,p.y,60,0,Math.PI*2);ctx.stroke();
+      ctx.globalAlpha=pulse*0.15;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(p.x,p.y,60,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.restore();
+    }
   }
 
   // ---- Aim line (mobile only, local player, fades in/out smoothly) ----
