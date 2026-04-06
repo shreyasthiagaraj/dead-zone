@@ -1220,16 +1220,16 @@ const ROOM_THEMES = [
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
-  normal:   { hp: 180, speed: 1.8, radius: 13, color: '#5a5', damage: 12, score: 100 }, // shambler
-  fast:     { hp: 110, speed: 2.2, radius: 12, color: '#7a5', damage: 15, score: 150, charger: true }, // sprinter
-  tank:     { hp: 500, speed: 1.0, radius: 20, color: '#585', damage: 25, score: 300, groundPound: true }, // bruiser
-  spitter:  { hp: 140, speed: 1.4, radius: 12, color: '#5a8', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true },
-  exploder: { hp: 100, speed: 1.6, radius: 13, color: '#a55', damage: 35, score: 250, bomber: true, fireRate: 3000 },
-  boss:     { hp: 700, speed: 1.2, radius: 28, color: '#f44', damage: 30, score: 500, summoner: true, fireRate: 300 },
-  splitter: { hp: 200, speed: 1.2, radius: 15, color: '#668', damage: 15, score: 200, shielded: true }, // shielder
-  mini:     { hp: 90,  speed: 1.5, radius: 11, color: '#a66', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // sniper
+  normal:   { hp: 180, speed: 2.1, radius: 13, color: '#5a5', damage: 12, score: 100 }, // shambler
+  fast:     { hp: 110, speed: 2.8, radius: 12, color: '#7a5', damage: 15, score: 150, charger: true }, // sprinter
+  tank:     { hp: 500, speed: 1.2, radius: 20, color: '#585', damage: 25, score: 300, groundPound: true }, // bruiser
+  spitter:  { hp: 140, speed: 1.7, radius: 12, color: '#5a8', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true },
+  exploder: { hp: 100, speed: 2.0, radius: 13, color: '#a55', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 80, bomber: true, fireRate: 3000 }, // bombs + explodes on death
+  boss:     { hp: 700, speed: 1.4, radius: 28, color: '#f44', damage: 30, score: 500, summoner: true, fireRate: 300 },
+  splitter: { hp: 200, speed: 1.5, radius: 15, color: '#668', damage: 15, score: 200, shielded: true }, // shielder
+  mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#a66', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // sniper
   // Legacy compat
-  brute:    { hp: 350, speed: 1.6, radius: 16, color: '#a75', damage: 20, score: 250 },
+  brute:    { hp: 350, speed: 2.0, radius: 16, color: '#a75', damage: 20, score: 250 },
   stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#556', damage: 15, score: 200 },
 };
 
@@ -2612,21 +2612,23 @@ function fireWeaponForPlayer(p) {
   _weaponLastFired = now;
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   // Triple shot: 3 bullets in a spread
-  const shotCount = hasPowerUp('triple') ? 3 : 1;
+  const isTriple = hasPowerUp('triple');
+  const shotCount = isTriple ? 3 : 1;
   if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
   for (let si = 0; si < shotCount; si++) {
     const spreadOff = shotCount > 1 ? (si - 1) * 0.15 : 0;
     const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
     const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
-    let dmg = gun.damage;
+    let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage; // triple: 50% damage per bullet
     if (playerHasPowerUp(p, 'rage')) dmg *= 2;
     let isCrit = false;
     if (Math.random() < 0.05) { dmg *= 3; isCrit = true; }
     const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
+    const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize; // triple: smaller bullets
     bullets.push({
       x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
-      damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?gun.bulletSize+2:gun.bulletSize,
-      knockback: gun.knockback, pierce: gun.pierce, pierced: 0, life: 60,
+      damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?bSize+2:bSize,
+      knockback: 0, pierce: gun.pierce, pierced: 0, life: 35,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
@@ -4411,6 +4413,8 @@ function render() {
     ctx.fillStyle=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle=z.boss||z.type==='boss'?'#a00':'#232';ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();
     // Shocked effect — sparks around body
     if(z._shocked>0){ctx.globalAlpha=0.7;for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*6;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random(),0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
+    // Ice/frozen effect — frost particles orbiting
+    if(z._frozenTimer>0||z._slowTimer>0){ctx.globalAlpha=0.6;for(let fi=0;fi<(z._frozenTimer>0?3:1);fi++){const fa=Math.random()*Math.PI*2,fr=z.radius+Math.random()*8;ctx.fillStyle=z._frozenTimer>0?'#cef':'#adf';ctx.beginPath();ctx.arc(Math.cos(fa)*fr,Math.sin(fa)*fr,1+Math.random()*1.5,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
