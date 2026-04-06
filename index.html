@@ -435,7 +435,7 @@ let descentSections = []; // { y, height, enemies, cleared, type, hazards }
 function generateDescentMap(seed) {
   const rng = seededRandom(seed || Date.now());
   const numSections = 30;
-  const descentH = (numSections * DESCENT_SECTION_HEIGHT + 4) * CELL_SIZE;
+  const descentH = (numSections * DESCENT_SECTION_HEIGHT) * CELL_SIZE;
   setArenaDimensions(DEFAULT_ARENA_W, descentH);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -3371,17 +3371,21 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
-    let _arenaH = ARENA_H;
-    // In descent, clamp to the last section's gate (not the full grid)
-    if(gameMode==='descent'&&descentSections.length>0){const _ls=descentSections[descentSections.length-1];if(_ls)_arenaH=_ls.gateY;}
-    lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,_arenaH-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
-    // Descent: gate/wall blocking for local player (works on both host and non-host)
+    lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
+    // Descent: hard clamp player to current section bounds
     if(gameMode==='descent'){
+      // Top wall: can't go back up
       if(descentTopWall>0&&lp.y<descentTopWall+PLAYER_RADIUS+10)lp.y=descentTopWall+PLAYER_RADIUS+10;
+      // Bottom wall: can't go past current section's gate (or section bottom if last)
       const _dsec=descentSections[descentSection];
-      if(_dsec&&!descentGateOpen&&_dsec.gateY>0&&lp.y>_dsec.gateY-PLAYER_RADIUS-5)lp.y=_dsec.gateY-PLAYER_RADIUS-5;
-      // Prevent going past the last section — hard cap
-      if(descentSections.length>0){const lastSec=descentSections[descentSections.length-1];if(lastSec&&lp.y>lastSec.gateY-PLAYER_RADIUS)lp.y=lastSec.gateY-PLAYER_RADIUS;}
+      if(_dsec){
+        const bottomLimit = _dsec.gateY - PLAYER_RADIUS;
+        if(lp.y > bottomLimit) lp.y = bottomLimit;
+      } else {
+        // Past all sections — clamp to last section bottom
+        const _ls = descentSections[descentSections.length-1];
+        if(_ls) { const bl = _ls.y + _ls.height * 0.8; if(lp.y > bl) lp.y = bl; }
+      }
     }
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
