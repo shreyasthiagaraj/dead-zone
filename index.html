@@ -588,14 +588,13 @@ function updateDescent() {
       }
     }
   }
-  // Closing wall: push player down if they try to go back up
-  const lp = getLocalPlayer();
-  if (lp && lp.y < descentTopWall + PLAYER_RADIUS + 10) {
-    lp.y = descentTopWall + PLAYER_RADIUS + 10;
-  }
-  // Gate blocks movement when locked
-  if (lp && !descentGateOpen && sec.gateY > 0 && lp.y > sec.gateY - PLAYER_RADIUS - 5) {
-    lp.y = sec.gateY - PLAYER_RADIUS - 5;
+  // Closing wall + gate blocking — applies to ALL players
+  for (const _dp of players) {
+    if (!_dp.alive) continue;
+    // Closing wall: push down if going back up
+    if (_dp.y < descentTopWall + PLAYER_RADIUS + 10) _dp.y = descentTopWall + PLAYER_RADIUS + 10;
+    // Gate blocks when locked
+    if (!descentGateOpen && sec.gateY > 0 && _dp.y > sec.gateY - PLAYER_RADIUS - 5) _dp.y = sec.gateY - PLAYER_RADIUS - 5;
   }
 }
 
@@ -2486,13 +2485,18 @@ function startMultiplayerGame() {
     generateHordeArena(lobbySeed);
     exitPos = null;
     hordeTimer = 0;
+  } else if (gameMode === 'descent') {
+    generateDescentMap(lobbySeed);
+    initDescentSections();
+    exitPos = null;
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
   } else {
     generateDungeon(lobbySeed);
   }
-  const c = getRoomCenter(rooms[0]);
+  const marginX2 = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
+  const c = gameMode === 'descent' ? { x: (marginX2 + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : getRoomCenter(rooms[0]);
   players = [];
   for (let i = 0; i < lobbyPlayers.length; i++) {
     const lp = lobbyPlayers[i];
@@ -2512,7 +2516,8 @@ function startMultiplayerGame() {
   showScreen(null); document.getElementById('btn-menu').style.display = 'block';
   document.activeElement?.blur(); canvas.focus();
   if (isHost) {
-    if (gameMode === 'survival') startSurvivalWave();
+    if (gameMode === 'descent') startDescent();
+    else if (gameMode === 'survival') startSurvivalWave();
     else if (gameMode === 'horde') startHorde();
     else if (gameMode === 'gauntlet') startGauntlet();
     else startLevel();
@@ -3335,6 +3340,8 @@ function update() {
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
+    // Descent: gate/wall blocking for local player (works on both host and non-host)
+    if(gameMode==='descent'){if(descentTopWall>0&&lp.y<descentTopWall+PLAYER_RADIUS+10)lp.y=descentTopWall+PLAYER_RADIUS+10;const _dsec=descentSections[descentSection];if(_dsec&&!descentGateOpen&&_dsec.gateY>0&&lp.y>_dsec.gateY-PLAYER_RADIUS-5)lp.y=_dsec.gateY-PLAYER_RADIUS-5;}
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
@@ -3865,7 +3872,8 @@ function update() {
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0 });
+    const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false });
   }
 
   updateHUD();
@@ -3875,7 +3883,8 @@ function update() {
 function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
   if (msg.hordeTimer !== undefined) hordeTimer = msg.hordeTimer;
-  if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; }
+  if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
+  if (msg.elemZones) { elementZones = msg.elemZones; }
   if (msg.gauntletRoom !== undefined) {
     // Detect room change for non-host: regenerate arena and show announcement
     if (msg.gauntletRoom !== gauntletRoom && msg.gauntletRoom > 0) {
