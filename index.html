@@ -3360,7 +3360,9 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
-    const _arenaH = gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+    let _arenaH = gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+    // In descent, clamp to the last section's gate (not the full grid)
+    if(gameMode==='descent'&&descentSections.length>0){const _ls=descentSections[descentSections.length-1];if(_ls)_arenaH=_ls.gateY;}
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,_arenaH-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     // Descent: gate/wall blocking for local player (works on both host and non-host)
     if(gameMode==='descent'){
@@ -3446,8 +3448,9 @@ function update() {
           // Extrapolate: keep moving the remote player in their last known direction
           // This prevents the position from freezing between input packets
           p.x += p.vx; p.y += p.vy;
+          const _epAH=gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
           p.x = clamp(p.x, PLAYER_RADIUS, ARENA_W - PLAYER_RADIUS);
-          p.y = clamp(p.y, PLAYER_RADIUS, ARENA_H - PLAYER_RADIUS);
+          p.y = clamp(p.y, PLAYER_RADIUS, _epAH - PLAYER_RADIUS);
           pushOutOfObstacles(p, PLAYER_RADIUS);
         }
         p.vx = inp.vx||0; p.vy = inp.vy||0; p.angle = inp.angle; p.moveAngle = inp.moveAngle||0;
@@ -3498,7 +3501,8 @@ function update() {
     const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
     // Bouncing behavior: ricochet off walls
     if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;continue;}
-    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>ARENA_H){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>ARENA_H)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(ARENA_H-1,b.y));continue;}bullets.splice(i,1);continue;}
+    const _bAH=gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));continue;}bullets.splice(i,1);continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
@@ -4724,7 +4728,8 @@ function renderJoysticks(){
 }
 
 function renderMinimap(){
-  const mw=minimapCanvas.width,mh=minimapCanvas.height,sx=mw/ARENA_W,sy=mh/ARENA_H;
+  const _mmH=gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+  const mw=minimapCanvas.width,mh=minimapCanvas.height,sx=mw/ARENA_W,sy=mh/_mmH;
   minimapCtx.clearRect(0,0,mw,mh);minimapCtx.fillStyle='#0a0a0a';minimapCtx.fillRect(0,0,mw,mh);
   if(dungeonGrid){const cw=Math.max(1,Math.ceil(CELL_SIZE*sx)),ch=Math.max(1,Math.ceil(CELL_SIZE*sy));for(let y=0;y<GRID_H;y++)for(let x=0;x<GRID_W;x++){
     const px=Math.floor(x*CELL_SIZE*sx),py=Math.floor(y*CELL_SIZE*sy);
