@@ -129,8 +129,10 @@ body.desktop #minimap { width: 130px; height: 130px; }
   <div style="width:100%;height:5px;background:#222;border:1px solid #444;border-radius:3px;overflow:hidden"><div id="streak-bar" style="height:100%;width:0%;border-radius:3px;transition:width 0.15s,background 0.15s"></div></div>
   <div id="streak-label" style="font-size:10px;font-weight:bold;margin-top:2px;font-family:'Courier New',monospace;text-shadow:1px 1px 2px #000"></div>
 </div>
-<div id="ammo-hud"><div class="weapon-name" id="weapon-name">PISTOL</div><div class="ammo" id="ammo-display">12 <span class="slash">/</span> <span class="reserve">∞</span></div></div>
-<div id="weapon-slots"></div>
+<div id="effects-bar" style="position:fixed;top:102px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;display:flex;gap:6px;justify-content:center"></div>
+<div id="gun-stats" style="position:fixed;z-index:20;pointer-events:none;font-family:'Courier New',monospace;font-size:10px;color:#666;text-shadow:1px 1px 2px #000;bottom:calc(8px + env(safe-area-inset-bottom));left:calc(8px + env(safe-area-inset-left))"></div>
+<div id="ammo-hud" style="display:none"><div class="weapon-name" id="weapon-name"></div><div class="ammo" id="ammo-display"></div></div>
+<div id="weapon-slots" style="display:none"></div>
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash">BLAST</div>
   <div class="mobile-btn reload-btn" id="btn-reload" style="display:none">RLD</div>
@@ -3832,12 +3834,24 @@ function applyHostState(msg) {
 // ============================================================
 function updateHUD() {
   const lp=getLocalPlayer();if(!lp)return;
-  // Gun power display — smooth scaling, show kill count and active effects
+  // Active Effects Bar — icon tiles with timers
   const gun = getScaledGun();
-  let gunText = `<span style="color:${gun.bulletColor}">${runKills} KILLS</span> <span style="color:#888;font-size:10px">${gun.damage} dmg</span>`;
-  if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) gunText += ` <span style="color:${et.color}">${et.icon}${Math.ceil(activeElement.timer/60)}s</span>`; }
-  if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) gunText += ` <span style="color:${od.color}">${od.icon}${Math.ceil(activeOrbital.timer/60)}s</span>`; }
-  document.getElementById('weapon-name').innerHTML = gunText;
+  const ebar = document.getElementById('effects-bar');
+  let efx = '';
+  function effectTile(icon, color, secs, label) {
+    const expiring = secs <= 3;
+    return `<div style="display:flex;flex-direction:column;align-items:center;padding:4px 8px;border:2px solid ${color};border-radius:6px;background:rgba(0,0,0,0.6);min-width:44px;${expiring?'animation:pulse 0.5s ease-in-out infinite':''}">
+      <span style="font-size:18px;line-height:1">${icon}</span>
+      <span style="color:${color};font-size:10px;font-weight:bold;margin-top:2px">${secs}s</span>
+    </div>`;
+  }
+  if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) efx += effectTile(et.icon, et.color, Math.ceil(activeElement.timer/60), et.name); }
+  if (activePowerUp) { const pd = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(pd) efx += effectTile(pd.icon, pd.color, Math.ceil(activePowerUp.timer/60), pd.name); }
+  if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) efx += effectTile(od.icon, od.color, Math.ceil(activeOrbital.timer/60), od.name); }
+  if (ebar) ebar.innerHTML = efx;
+  // Gun stats — small, subtle, bottom corner
+  const gs = document.getElementById('gun-stats');
+  if (gs) gs.innerHTML = `<span style="color:${gun.bulletColor}">${gun.damage} dmg</span> · ${gun.fireRate}ms${gun.pierce>0?' · pierce '+gun.pierce:''}`;
   // Streak bar (top HUD) — shows decay timer draining + color by streak level
   const streakPct = activeStreakTimer > 0 ? (activeStreakTimer / (activeStreak?.duration||1)) * 100 : (streakTimer > 0 ? (streakTimer / 240) * 100 : 0);
   const streakColor = activeStreak ? activeStreak.color : streakKills >= 10 ? '#f44' : streakKills >= 6 ? '#f80' : streakKills >= 3 ? '#ff0' : streakKills >= 1 ? '#888' : '#333';
@@ -3852,17 +3866,10 @@ function updateHUD() {
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
-  // Hide weapon slots (single weapon system)
-  document.getElementById('weapon-slots').innerHTML = '';
-  const swapBtn=document.getElementById('btn-swap');if(swapBtn)swapBtn.style.display='none';
+  // Blast cooldown indicator
   const db=document.getElementById('btn-dash');if(db)db.className=lp.dashCooldown>0?'mobile-btn dash-cooldown':'mobile-btn dash-ready';
-  // Perk icons + synergy display
-  const pd=document.getElementById('perk-display');
-  let ph='';for(const[id,count]of Object.entries(playerPerks)){if(count>0){const def=PERK_DEFS.find(p=>p.id===id);if(def)ph+=`<span title="${def.name}" style="color:${def.color}">${def.icon}${count>1?count:''}</span>`;}}
-  const activeSyn=getActiveSynergies();for(const s of activeSyn){ph+=`<span title="${s.name}" style="color:${s.color};font-size:11px"> ★</span>`;}
-  // Active power-up timer
-  if(activePowerUp){const pdef=POWERUP_TYPES.find(p=>p.id===activePowerUp.id);if(pdef){const sec=Math.ceil(activePowerUp.timer/60);ph+=`<br><span style="color:${pdef.color};font-size:12px;font-weight:bold">${pdef.icon} ${pdef.name} ${sec}s</span>`;}}
-  pd.innerHTML=ph;
+  // Clear old perk display (not used in arcade system)
+  const pd=document.getElementById('perk-display');if(pd)pd.innerHTML='';
 }
 
 // ============================================================
