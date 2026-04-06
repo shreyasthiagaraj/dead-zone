@@ -2018,17 +2018,28 @@ function initGL() {
   console.log('[Lighting] WebGL lighting ready');
 }
 
+// Power-of-two ceiling for texture compatibility on mobile GPUs
+function _nextPow2(v){let p=1;while(p<v)p<<=1;return p;}
+let _gridTexW=0, _gridTexH=0; // actual texture dimensions (may be padded to POT)
+
 function uploadDungeonGrid() {
   if (!dungeonGrid || !webglSupported) return;
-  const gh = dungeonGrid.length; // use actual grid height (may be taller for descent)
-  const data = new Uint8Array(GRID_W * gh * 4);
-  for (let y = 0; y < gh; y++) for (let x = 0; x < GRID_W; x++) {
-    const i = (y * GRID_W + x) * 4;
+  // Pad to power-of-two for mobile GPU compatibility
+  _gridTexW = _nextPow2(GRID_W);
+  _gridTexH = _nextPow2(GRID_H);
+  const data = new Uint8Array(_gridTexW * _gridTexH * 4);
+  // Fill with walls (0) then carve floor cells
+  for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) {
+    const i = (y * _gridTexW + x) * 4;
     const v = (dungeonGrid[y] && dungeonGrid[y][x]) ? 255 : 0;
     data[i] = v; data[i+1] = v; data[i+2] = v; data[i+3] = 255;
   }
   gl.bindTexture(gl.TEXTURE_2D, gridTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GRID_W, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, _gridTexW, _gridTexH, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
 function renderLighting(lights, camX, camY) {
@@ -2061,7 +2072,8 @@ function renderLighting(lights, camX, camY) {
   gl.uniform2f(uCameraPos, camX, camY);
   gl.uniform1f(uCellSize, CELL_SIZE);
   gl.uniform2f(uGridSize, GRID_W, GRID_H);
-  gl.uniform2f(uArenaSize, ARENA_W, ARENA_H);
+  // Use padded texture dimensions for correct UV mapping
+  gl.uniform2f(uArenaSize, (_gridTexW||GRID_W)*CELL_SIZE, (_gridTexH||GRID_H)*CELL_SIZE);
 
   const n = Math.min(lights.length, 4);
   gl.uniform1i(uNumLights, n);
