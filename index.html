@@ -2705,6 +2705,48 @@ function dash() {
   const blastColor2 = blastElem === 'fire' ? '#fa0' : blastElem === 'ice' ? '#cef' : blastElem === 'lightning' ? '#8ff' : '#fff';
   for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
   for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:blastColor2,type:'spark'}); }
+  // Lightning blast: chain arcs between hit enemies + radiating bolts
+  if (blastElem === 'lightning') {
+    // Gather enemies hit by the blast
+    const hitZombies = zombies.filter(z => { const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2); return sd < SHOCKWAVE_RADIUS && sd > 0.1; });
+    // Arc from player to each hit enemy
+    for (const hz of hitZombies) {
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:22,maxLife:22,size:1,color:'#4ff',type:'lightning',tx:hz.x,ty:hz.y});
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#fff',type:'lightning',tx:hz.x,ty:hz.y});
+      for(let li=0;li<4;li++){particles.push({x:hz.x+(Math.random()-0.5)*14,y:hz.y+(Math.random()-0.5)*14,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
+    }
+    // Chain arcs between hit enemies (nearest-neighbor chain)
+    if (hitZombies.length >= 2) {
+      const chained = new Set();
+      let lastZ = hitZombies[0]; chained.add(lastZ);
+      for (let ci = 0; ci < hitZombies.length - 1; ci++) {
+        let bestD = Infinity, bestZ = null;
+        for (const hz of hitZombies) { if (chained.has(hz)) continue; const cd = Math.sqrt((hz.x-lastZ.x)**2+(hz.y-lastZ.y)**2); if (cd < bestD) { bestD = cd; bestZ = hz; } }
+        if (!bestZ) break; chained.add(bestZ);
+        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+        for(let li=0;li<3;li++){particles.push({x:bestZ.x+(Math.random()-0.5)*10,y:bestZ.y+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
+        lastZ = bestZ;
+      }
+    }
+    // Radiating lightning bolts from player — always visible even with no enemies
+    const boltCount = 8 + Math.floor(Math.random() * 4);
+    for (let bi = 0; bi < boltCount; bi++) {
+      const ba = (bi / boltCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const bDist = 80 + Math.random() * (SHOCKWAVE_RADIUS - 80);
+      const tx = lp.x + Math.cos(ba) * bDist, ty = lp.y + Math.sin(ba) * bDist;
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:18+Math.floor(Math.random()*8),maxLife:26,size:1,color:'#4ff',type:'lightning',tx,ty});
+      // Branch bolt from midpoint of some arcs
+      if (Math.random() > 0.5) {
+        const mx = lp.x + Math.cos(ba) * bDist * 0.5, my = lp.y + Math.sin(ba) * bDist * 0.5;
+        const branchA = ba + (Math.random() - 0.5) * 1.2;
+        const branchD = 40 + Math.random() * 60;
+        particles.push({x:mx,y:my,vx:0,vy:0,life:14+Math.floor(Math.random()*6),maxLife:20,size:1,color:'#8ff',type:'lightning',tx:mx+Math.cos(branchA)*branchD,ty:my+Math.sin(branchA)*branchD});
+      }
+      // Sparks at bolt endpoints
+      for(let si=0;si<2;si++){particles.push({x:tx+(Math.random()-0.5)*10,y:ty+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*5,vy:(Math.random()-0.5)*5,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*3,color:Math.random()>0.4?'#4ff':'#fff',type:'spark'});}
+    }
+  }
   // Ground decal from elemental blast
   if (blastElem) { for (let di = 0; di < 8; di++) { const da = di/8*Math.PI*2, dd = 40+Math.random()*80; decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:10+Math.random()*15,alpha:0.4,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'}); } }
   decals.push({x:lp.x,y:lp.y,size:60+Math.random()*20,alpha:0.3,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'});
