@@ -587,11 +587,18 @@ function updateDescent() {
     if (lp && Math.abs(lp.y - sec.gateY) < 30) {
       descentSection++;
       descentGateOpen = false;
-      // Advance closing wall
       descentTopWall = sec.y + sec.height * 0.5;
-      // Spawn next section
       if (descentSections[descentSection]) {
         spawnDescentSection(descentSection);
+      } else {
+        // Cleared all sections — victory!
+        score += 5000;
+        addFloatingText(lp.x, lp.y - 50, 'YOU ESCAPED!', '#f0c040');
+        addFloatingText(lp.x, lp.y - 25, '+5000 BONUS', '#4f4');
+        screenShake.intensity = 15;
+        playLevelCompleteSound();
+        // Show death screen as victory screen after brief delay
+        setTimeout(() => showDeathScreen(), 2000);
       }
     }
   }
@@ -3349,7 +3356,13 @@ function update() {
     const _arenaH = gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
     lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,_arenaH-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     // Descent: gate/wall blocking for local player (works on both host and non-host)
-    if(gameMode==='descent'){if(descentTopWall>0&&lp.y<descentTopWall+PLAYER_RADIUS+10)lp.y=descentTopWall+PLAYER_RADIUS+10;const _dsec=descentSections[descentSection];if(_dsec&&!descentGateOpen&&_dsec.gateY>0&&lp.y>_dsec.gateY-PLAYER_RADIUS-5)lp.y=_dsec.gateY-PLAYER_RADIUS-5;}
+    if(gameMode==='descent'){
+      if(descentTopWall>0&&lp.y<descentTopWall+PLAYER_RADIUS+10)lp.y=descentTopWall+PLAYER_RADIUS+10;
+      const _dsec=descentSections[descentSection];
+      if(_dsec&&!descentGateOpen&&_dsec.gateY>0&&lp.y>_dsec.gateY-PLAYER_RADIUS-5)lp.y=_dsec.gateY-PLAYER_RADIUS-5;
+      // Prevent going past the last section
+      if(!_dsec&&descentSections.length>0){const lastSec=descentSections[descentSections.length-1];if(lastSec&&lp.y>lastSec.gateY)lp.y=lastSec.gateY;}
+    }
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
