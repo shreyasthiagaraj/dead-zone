@@ -429,42 +429,49 @@ let descentSection = 0, descentGateOpen = false, descentEnemiesTotal = 0, descen
 let descentTopWall = 0; // y pixel of the closing upper wall
 let descentSections = []; // { y, height, enemies, cleared, type, hazards }
 
+// Descent uses a much taller grid
+let DESCENT_GRID_H = 0, DESCENT_ARENA_H = 0;
+
 function generateDescentMap(seed) {
   const rng = seededRandom(seed || Date.now());
-  // Create a tall vertical strip
-  const totalHeight = DESCENT_WIDTH * 3; // initial height = 3 sections worth
+  // Make the grid tall enough for 30 sections
+  const numSections = 30;
+  DESCENT_GRID_H = numSections * DESCENT_SECTION_HEIGHT + 4;
+  DESCENT_ARENA_H = DESCENT_GRID_H * CELL_SIZE;
   dungeonGrid = [];
-  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  for (let y = 0; y < DESCENT_GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Carve wide open strip in the center
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  const arena = { x: marginX, y: 0, w: DESCENT_WIDTH, h: GRID_H };
-  carveRoom(arena);
+  const arena = { x: marginX, y: 0, w: DESCENT_WIDTH, h: DESCENT_GRID_H };
+  // Carve the full tall strip
+  for (let y = 0; y < DESCENT_GRID_H; y++) for (let x = marginX; x < marginX + DESCENT_WIDTH && x < GRID_W; x++) dungeonGrid[y][x] = true;
   rooms.push(arena);
-  // Add central pillar in each section (small 2x2 obstacle for tactical cover)
+  // Central pillar per section
   const cx = marginX + Math.floor(DESCENT_WIDTH / 2);
-  for (let si = 0; si < Math.floor(GRID_H / DESCENT_SECTION_HEIGHT); si++) {
+  for (let si = 0; si < numSections; si++) {
     const py = si * DESCENT_SECTION_HEIGHT + Math.floor(DESCENT_SECTION_HEIGHT / 2);
     for (let dy = 0; dy < 2; dy++) for (let dx = -1; dx <= 0; dx++) {
       const gy = py + dy, gx = cx + dx;
-      if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) dungeonGrid[gy][gx] = false;
+      if (gy >= 0 && gy < DESCENT_GRID_H && gx >= 0 && gx < GRID_W) dungeonGrid[gy][gx] = false;
     }
   }
-  // Theme
-  arena.theme = ROOM_THEMES[4]; // furnace
+  arena.theme = ROOM_THEMES[4];
   arena.brightness = 1.0;
   arena.flicker = false;
   roomDetails = [{ ri: 0, theme: arena.theme, details: [], brightness: 1.0, flicker: false }];
-  buildRoomGrid();
+  // Build roomGrid for the taller grid
+  roomGrid = [];
+  for (let y = 0; y < DESCENT_GRID_H; y++) { roomGrid[y] = new Int8Array(GRID_W); roomGrid[y].fill(-1); for (let x = marginX; x < marginX + DESCENT_WIDTH && x < GRID_W; x++) roomGrid[y][x] = 0; }
+  // Build obstacles
   obstacles = [];
-  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  for (let y = 0; y < DESCENT_GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
   uploadDungeonGrid();
 }
 
 function initDescentSections() {
   descentSections = [];
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  for (let i = 0; i < 50; i++) { // pre-generate 50 sections
+  for (let i = 0; i < 30; i++) { // pre-generate 30 sections (matches grid height)
     const sectionY = i * DESCENT_SECTION_HEIGHT * CELL_SIZE;
     const isBoss = i > 0 && i % 5 === 0;
     const isDark = i > 3 && i % 4 === 3;
@@ -3339,7 +3346,8 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
-    lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
+    const _arenaH = gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+    lp.x+=lp.vx;lp.y+=lp.vy;lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,_arenaH-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     // Descent: gate/wall blocking for local player (works on both host and non-host)
     if(gameMode==='descent'){if(descentTopWall>0&&lp.y<descentTopWall+PLAYER_RADIUS+10)lp.y=descentTopWall+PLAYER_RADIUS+10;const _dsec=descentSections[descentSection];if(_dsec&&!descentGateOpen&&_dsec.gateY>0&&lp.y>_dsec.gateY-PLAYER_RADIUS-5)lp.y=_dsec.gateY-PLAYER_RADIUS-5;}
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
@@ -3710,7 +3718,8 @@ function update() {
 
       // Flashlight slow: zombies in any player's beam move 20% slower
       for(const fp of players){if(!fp.alive)continue;const fdx=z.x-fp.x,fdy=z.y-fp.y,fd=Math.sqrt(fdx*fdx+fdy*fdy);if(fd<400){const fa=Math.atan2(fdy,fdx),diff=Math.abs(((fa-fp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(diff<0.5){z.vx*=0.8;z.vy*=0.8;break;}}}
-      z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);
+      const _zaH=gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+      z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
       for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd=Math.sqrt(sx*sx+sy*sy),md2=z.radius+o.radius;if(sd<md2&&sd>0){const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
       // Push zombies out of players — prevent visual overlap
       for(const p of players){if(!p.alive)continue;const sx=z.x-p.x,sy=z.y-p.y,sd=Math.sqrt(sx*sx+sy*sy),md2=z.radius+PLAYER_RADIUS;if(sd<md2&&sd>0.1){const push=(md2-sd)/sd*0.5;z.x+=sx*push;z.y+=sy*push;}}
@@ -4081,7 +4090,8 @@ function render() {
 
   // Floor + walls with room themes
   const vL=camera.x-canvas.width/2-CELL_SIZE,vR=camera.x+canvas.width/2+CELL_SIZE,vT=camera.y-canvas.height/2-CELL_SIZE,vB=camera.y+canvas.height/2+CELL_SIZE;
-  const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(GRID_H-1,Math.floor(vB/CELL_SIZE));
+  const _gridH=gameMode==='descent'&&DESCENT_GRID_H?DESCENT_GRID_H:GRID_H;
+  const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(_gridH-1,Math.floor(vB/CELL_SIZE));
   const _corridorTheme=ROOM_THEMES[0];
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
@@ -4120,7 +4130,8 @@ function render() {
       }
     }
   }
-  ctx.strokeStyle='#f04040';ctx.lineWidth=3;ctx.strokeRect(0,0,ARENA_W,ARENA_H);
+  const _renderH=gameMode==='descent'&&DESCENT_ARENA_H?DESCENT_ARENA_H:ARENA_H;
+  ctx.strokeStyle='#f04040';ctx.lineWidth=3;ctx.strokeRect(0,0,ARENA_W,_renderH);
 
   // Room debris and props
   for(const rd of roomDetails){
