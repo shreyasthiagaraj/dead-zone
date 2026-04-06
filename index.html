@@ -908,9 +908,6 @@ function activatePowerUp(id) {
   if (id === 'frenzy' && lp) { lp.hp = Math.max(1, Math.floor(lp.hp * 0.5)); }
 }
 
-function hasPowerUp(id) { return activePowerUp && activePowerUp.id === id; }
-// Player-aware power-up check (local or remote)
-function playerHasPowerUp(p, id) { if (p === getLocalPlayer()) return hasPowerUp(id); return p._remotePowerUp === id; }
 // Player-aware synergy check
 function playerHasSynergy(p, name) {
   if (p === getLocalPlayer()) return hasSynergy(name);
@@ -3395,17 +3392,27 @@ function damageZombie(z,damage,kbx=0,kby=0) {
 }
 function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
-  // Shield and Ghost power-ups block all damage (works for any player)
+  // Shield power-up blocks all damage (works for any player)
   if(playerHasPowerUp(p,'shield')){
-    // Shield absorbs damage but breaks when depleted
-    if(!activePowerUp._shieldHp) activePowerUp._shieldHp = 150;
-    activePowerUp._shieldHp -= damage;
-    // Visual flash on shield hit
-    if(p===getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 2);
-    if(activePowerUp._shieldHp <= 0){
-      activePowerUp = null; // shield breaks
-      if(p===getLocalPlayer()){addFloatingText(p.x,p.y-30,'SHIELD BROKEN!','#f44');playSound(300,0.15,'sawtooth',0.2);screenShake.intensity=Math.max(screenShake.intensity,8);}
-      for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:p.x+Math.cos(sa)*60,y:p.y+Math.sin(sa)*60,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:15,maxLife:15,size:3,color:'#4ff',type:'spark'});}
+    // Shield absorbs damage but breaks when depleted — per-player HP tracking
+    if(p===getLocalPlayer()){
+      if(!activePowerUp._shieldHp) activePowerUp._shieldHp = 150;
+      activePowerUp._shieldHp -= damage;
+      screenShake.intensity = Math.max(screenShake.intensity, 2);
+      if(activePowerUp._shieldHp <= 0){
+        activePowerUp = null;
+        addFloatingText(p.x,p.y-30,'SHIELD BROKEN!','#f44');playSound(300,0.15,'sawtooth',0.2);screenShake.intensity=Math.max(screenShake.intensity,8);
+        for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:p.x+Math.cos(sa)*60,y:p.y+Math.sin(sa)*60,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:15,maxLife:15,size:3,color:'#4ff',type:'spark'});}
+      }
+    } else {
+      // Remote player's shield — track HP separately
+      if(!p._remoteShieldHp) p._remoteShieldHp = 150;
+      p._remoteShieldHp -= damage;
+      if(p._remoteShieldHp <= 0){
+        p._remotePowerUp = null; p._remoteShieldHp = 0;
+        addFloatingText(p.x,p.y-30,'SHIELD BROKEN!','#f44');
+        for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:p.x+Math.cos(sa)*60,y:p.y+Math.sin(sa)*60,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:15,maxLife:15,size:3,color:'#4ff',type:'spark'});}
+      }
     }
     return;
   }
@@ -3530,12 +3537,14 @@ function update() {
       activePowerUp.timer--;
       if (activePowerUp.timer <= 0) { activePowerUp = null; }
       else {
-        // Ghost + Shield: invincibility
+        // Shield: invincibility + force field
         if (hasPowerUp('shield')) {
           lp.invincible = Math.max(lp.invincible, 50);
-          // Force field: push all zombies out of shield radius
+          // Force field: push all zombies out of shield radius (local player)
           if(isHost){const SHIELD_RADIUS=60;for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<SHIELD_RADIUS+sz.radius&&sd>0.1){const push=(SHIELD_RADIUS+sz.radius-sd)/sd*2;sz.x+=sdx*push;sz.y+=sdy*push;sz.vx+=sdx/sd*1;sz.vy+=sdy/sd*1;}}}
         }
+        // Force field for remote players with shield (host pushes zombies away from them too)
+        if(isHost){for(const rp of players){if(rp===lp||!rp.alive||!playerHasPowerUp(rp,'shield'))continue;rp.invincible=Math.max(rp.invincible,50);const SHIELD_RADIUS=60;for(const sz of zombies){const sdx=sz.x-rp.x,sdy=sz.y-rp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<SHIELD_RADIUS+sz.radius&&sd>0.1){const push=(SHIELD_RADIUS+sz.radius-sd)/sd*2;sz.x+=sdx*push;sz.y+=sdy*push;sz.vx+=sdx/sd*1;sz.vy+=sdy/sd*1;}}}}
         // Sunbeam: flashlight damages zombies in the beam
         if (hasPowerUp('sunbeam')&&isHost&&gameTime%4===0) {
           for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250&&sd>0){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4){damageZombie(sz,12,(sdx/sd)*2,(sdy/sd)*2);particles.push({x:sz.x,y:sz.y,vx:(Math.random()-0.5)*2,vy:-1-Math.random(),life:8,maxLife:8,size:3,color:'#ffa',type:'spark'});}}}
@@ -3570,7 +3579,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, activeElement: activeElement ? activeElement.id : null } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -3597,6 +3606,33 @@ function update() {
         // HP and alive are HOST-AUTHORITATIVE — never accept from client input
         // Sync dash, reload, maxHp, and perk state from remote player
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
+        // Detect remote player shockwave blast
+        const prevDashCD = p.dashCooldown||0;
+        p.dashCooldown = inp.dashCooldown||0;
+        if (p.dashCooldown > prevDashCD + 100) {
+          // Remote player just dashed — apply shockwave damage + visuals
+          p.invincible = Math.max(p.invincible, 200);
+          const SHOCKWAVE_RADIUS = 250;
+          const blastElem = inp.activeElement || null;
+          for (const z of zombies) {
+            const sd = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
+            if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
+              const closeness = 1 - sd/SHOCKWAVE_RADIUS;
+              const pushForce = 10 + closeness * 30;
+              const dmg = Math.floor(100 * closeness);
+              damageZombie(z, dmg, (z.x-p.x)/sd * pushForce, (z.y-p.y)/sd * pushForce);
+              z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
+              if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
+              else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
+              else if (blastElem === 'lightning') { z._shocked = 45; z.staggerTimer = Math.max(z.staggerTimer, 25); damageZombie(z, 15, 0, 0); }
+            }
+          }
+          for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-p.x)**2+(br.y-p.y)**2);if(bd<SHOCKWAVE_RADIUS){explodeBarrel(br,bi);}}
+          // Shockwave visuals (visible to host)
+          const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : '#4af';
+          for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:p.x+Math.cos(sa)*15,y:p.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
+          screenShake.intensity = Math.max(screenShake.intensity, 6);
+        }
         if (inp.maxHp) p.maxHp = inp.maxHp;
         if (inp.perks) p._remotePerks = inp.perks;
         const prevPowerUp = p._remotePowerUp;
@@ -3714,7 +3750,7 @@ function update() {
                   zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){
-        // Shield force field deflects projectiles
+        // Shield force field deflects projectiles (works for any player with shield)
         let deflected=false;
         for(const p of players){if(!p.alive)continue;
           if(playerHasPowerUp(p,'shield')&&dist(b,p)<60+b.size){
@@ -3722,8 +3758,9 @@ function update() {
             const rdx=b.x-p.x,rdy=b.y-p.y,rd=Math.sqrt(rdx*rdx+rdy*rdy)||1;
             const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);
             b.vx=rdx/rd*spd;b.vy=rdy/rd*spd;b.owner='player';b.ownerId=p.id;
-            // Shield takes a small hit
-            if(activePowerUp&&activePowerUp._shieldHp){activePowerUp._shieldHp-=5;}
+            // Shield takes a small hit — use correct player's shield HP
+            if(p===getLocalPlayer()){if(activePowerUp&&activePowerUp._shieldHp)activePowerUp._shieldHp-=5;}
+            else{p._remoteShieldHp=(p._remoteShieldHp||150)-5;}
             for(let si=0;si<4;si++){particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
             deflected=true;break;
           }
@@ -4092,7 +4129,7 @@ function update() {
 
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
-    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0 }));
+    const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0,powerUp:p.id===myId?(activePowerUp?activePowerUp.id:null):(p._remotePowerUp||null),dashCooldown:p.dashCooldown||0 }));
     const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
@@ -4188,6 +4225,16 @@ function applyHostState(msg) {
     p._remoteReloading = pd.reloading||false;
     p._remoteFiring = pd.firing||false;
     p._remoteWeaponType = pd.weaponType||'pistol';
+    p._remotePowerUp = pd.powerUp||null;
+    // Detect remote player shockwave blast for visuals
+    const _prevDC = p.dashCooldown||0;
+    p.dashCooldown = pd.dashCooldown||0;
+    if (p.dashCooldown > _prevDC + 100) {
+      // Remote player dashed — create shockwave visuals on this client
+      const bc = '#4af';
+      for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:p.x+Math.cos(sa)*15,y:p.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:bc,type:'spark'}); }
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+    }
     p._waveKills = pd.waveKills||0; p._totalKills = pd.totalKills||0;
     if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
   }
@@ -4652,7 +4699,7 @@ function render() {
     // Dash cooldown (desktop only, local player only)
     if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
     // Shield force field — glowing circle
-    if(p===getLocalPlayer()&&hasPowerUp('shield')){
+    if(playerHasPowerUp(p,'shield')){
       const pulse=0.4+Math.sin(performance.now()*0.006)*0.2;
       ctx.save();ctx.globalAlpha=pulse;ctx.strokeStyle='#4ff';ctx.lineWidth=3;ctx.shadowColor='#4ff';ctx.shadowBlur=15;
       ctx.beginPath();ctx.arc(p.x,p.y,60,0,Math.PI*2);ctx.stroke();
