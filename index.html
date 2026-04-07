@@ -140,6 +140,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 </div>
 <div id="effects-bar" style="position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:20;pointer-events:none;display:flex;gap:6px;justify-content:flex-end"></div>
 <div id="gun-stats" style="display:none"></div>
+<div id="audio-debug" style="position:fixed;bottom:4px;left:4px;z-index:99;font-family:monospace;font-size:9px;color:#0f0;background:rgba(0,0,0,0.7);padding:3px 6px;pointer-events:none"></div>
 <div id="ammo-hud" style="display:none"><div class="weapon-name" id="weapon-name"></div><div class="ammo" id="ammo-display"></div></div>
 <div id="weapon-slots" style="display:none"></div>
 <div id="mobile-buttons">
@@ -1253,16 +1254,18 @@ const AMBIENT_TRACKS = ['music_ambient', 'music_ambient2'];
 let _lastCombatTrack = '', _lastAmbientTrack = '';
 function pickRandomTrack(list, lastPlayed) { const available = list.filter(t => t !== lastPlayed && sfxBuffers[t]); return available.length > 0 ? available[Math.floor(Math.random() * available.length)] : list[Math.floor(Math.random() * list.length)]; }
 
+let _sfxLoadStatus = { total: 0, loaded: 0, failed: 0, errors: [] };
 function loadSfx() {
   if (!audioCtx) return;
   const allFiles = [...SFX_FILES, ...MUSIC_FILES];
+  _sfxLoadStatus.total = allFiles.length;
   for (const name of allFiles) {
     fetch(`sounds/${name}.mp3`).then(r => {
-      if (!r.ok) throw new Error('not found');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.arrayBuffer();
     }).then(buf => audioCtx.decodeAudioData(buf))
-      .then(decoded => { sfxBuffers[name] = decoded; })
-      .catch(() => {});
+      .then(decoded => { sfxBuffers[name] = decoded; _sfxLoadStatus.loaded++; })
+      .catch(e => { _sfxLoadStatus.failed++; _sfxLoadStatus.errors.push(`${name}: ${e.message}`); });
   }
 }
 
@@ -5060,7 +5063,7 @@ function renderMinimap(){
 // ============================================================
 // GAME LOOP
 // ============================================================
-function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
+function gameLoop(){update();render();const _ad=document.getElementById('audio-debug');if(_ad)_ad.textContent=`Audio: ${audioCtx?audioCtx.state:'none'} | SFX: ${_sfxLoadStatus.loaded}/${_sfxLoadStatus.total} ok, ${_sfxLoadStatus.failed} fail${_sfxLoadStatus.errors.length?' | '+_sfxLoadStatus.errors.slice(0,3).join(', '):''}`;requestAnimationFrame(gameLoop);}
 // Start menu music on first user interaction
 document.addEventListener('click', function startMenuMusic() {
   initAudio(); loadSfx();
