@@ -1253,7 +1253,7 @@ const SFX_FILES = [
   'smg_fire', 'minigun_loop', 'minigun_spinup', 'flamethrower_loop', 'flamethrower_ignite',
   'laser_loop', 'smg_loop', 'laser_fire',
   'hit', 'zombie_hit', 'death', 'pickup', 'dash', 'hurt', 'explosion', 'reload',
-  'blast_default', 'blast_fire', 'blast_ice', 'blast_lightning',
+  'blast_default', 'blast_fire', 'blast_ice', 'blast_lightning', 'sunbeam_loop',
   'zombie_attack', 'level_complete', 'game_over', 'footstep',
   'headshot', 'empty_clip', 'weapon_switch', 'killstreak',
   'zombie_groan', 'zombie_spawn', 'zombie_boss',
@@ -1344,6 +1344,34 @@ function stopWeaponLoop(fadeOut = 0.2) {
   if (!activeWeaponLoop || !audioCtx) return;
   const { source, gain } = activeWeaponLoop;
   activeWeaponLoop = null;
+  try {
+    const now = audioCtx.currentTime;
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + fadeOut);
+    setTimeout(() => { try { source.stop(); } catch(e) {} }, fadeOut * 1000 + 50);
+  } catch(e) { try { source.stop(); } catch(e2) {} }
+}
+
+// ---- Sunbeam Loop Sound ----
+let activeSunbeamLoop = null; // { source, gain }
+function startSunbeamLoop() {
+  if (!audioCtx || !sfxBus || activeSunbeamLoop) return;
+  if (!sfxBuffers['sunbeam_loop']) return;
+  try {
+    const src = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    src.buffer = sfxBuffers['sunbeam_loop'];
+    src.loop = true;
+    gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.35, audioCtx.currentTime + 0.08);
+    src.connect(gain); gain.connect(sfxBus); src.start();
+    activeSunbeamLoop = { source: src, gain };
+  } catch(e) {}
+}
+function stopSunbeamLoop(fadeOut = 0.1) {
+  if (!activeSunbeamLoop || !audioCtx) return;
+  const { source, gain } = activeSunbeamLoop;
+  activeSunbeamLoop = null;
   try {
     const now = audioCtx.currentTime;
     gain.gain.setValueAtTime(gain.gain.value, now);
@@ -3352,7 +3380,7 @@ function createExplosion(x,y,radius,damage,source='player') {
   for(let i=0;i<30;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*20,maxLife:40,size:3+Math.random()*4,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});}
   for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*3;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*30,maxLife:60,size:5+Math.random()*6,color:'#555',type:'smoke'});}
 }
-function damageZombie(z,damage,kbx=0,kby=0) {
+function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const prevHp=z.hp;
   z.hp-=damage;z.hitFlash=6;z.vx+=kbx;z.vy+=kby;z.staggerTimer=5;z.aware=true;
   // Scale blood splatter with damage intensity
@@ -3365,7 +3393,7 @@ function damageZombie(z,damage,kbx=0,kby=0) {
   if(z.hp<=0&&damage>prevHp*1.5){const gibCount=Math.min(12,Math.floor(damage/prevHp)*4);for(let i=0;i<gibCount;i++){const ga=Math.random()*Math.PI*2,gs=3+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(ga)*gs+kbx*0.5,vy:Math.sin(ga)*gs+kby*0.5,life:50+Math.random()*30,maxLife:80,size:4+Math.random()*6,color:['#611','#522','#700','#811'][Math.floor(Math.random()*4)],type:'chunk',gravity:0.08});}}
   // Wounded zombie starts dripping blood
   if(z.hp>0&&z.hp<z.maxHp*0.4) z._bleeding=true;
-  playHitSound();
+  if(!silent) playHitSound();
 }
 function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
@@ -3494,7 +3522,7 @@ function update() {
     // ---- Power-up timer and effects ----
     if (activePowerUp) {
       activePowerUp.timer--;
-      if (activePowerUp.timer <= 0) { activePowerUp = null; }
+      if (activePowerUp.timer <= 0) { stopSunbeamLoop(); activePowerUp = null; }
       else {
         // Shield: invincibility + force field
         if (hasPowerUp('shield')) {
@@ -3506,7 +3534,9 @@ function update() {
         if(isHost){for(const rp of players){if(rp===lp||!rp.alive||!playerHasPowerUp(rp,'shield'))continue;rp.invincible=Math.max(rp.invincible,50);const SHIELD_RADIUS=60;for(const sz of zombies){const sdx=sz.x-rp.x,sdy=sz.y-rp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<SHIELD_RADIUS+sz.radius&&sd>0.1){const push=(SHIELD_RADIUS+sz.radius-sd)/sd*2;sz.x+=sdx*push;sz.y+=sdy*push;sz.vx+=sdx/sd*1;sz.vy+=sdy/sd*1;}}}}
         // Sunbeam: flashlight damages zombies in the beam
         if (hasPowerUp('sunbeam')&&isHost&&gameTime%4===0) {
-          for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250&&sd>0){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4){damageZombie(sz,12,(sdx/sd)*2,(sdy/sd)*2);particles.push({x:sz.x,y:sz.y,vx:(Math.random()-0.5)*2,vy:-1-Math.random(),life:8,maxLife:8,size:3,color:'#ffa',type:'spark'});}}}
+          let sunbeamHitting = false;
+          for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250&&sd>0){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4){damageZombie(sz,12,(sdx/sd)*2,(sdy/sd)*2,true);sunbeamHitting=true;particles.push({x:sz.x,y:sz.y,vx:(Math.random()-0.5)*2,vy:-1-Math.random(),life:8,maxLife:8,size:3,color:'#ffa',type:'spark'});}}}
+          if(sunbeamHitting) startSunbeamLoop(); else stopSunbeamLoop();
         }
         // Magnet: pull pickups toward player
         if (hasPowerUp('magnet')) { for (const pk of pickups) { const mdx=lp.x-pk.x,mdy=lp.y-pk.y,md=Math.sqrt(mdx*mdx+mdy*mdy); if(md>10&&md<500){pk.x+=mdx/md*8;pk.y+=mdy/md*8;} } }
@@ -3515,7 +3545,7 @@ function update() {
         // Freeze: slow all zombies
         if (hasPowerUp('freeze')&&isHost) { for(const fz of zombies){fz.speed=ZOMBIE_TYPES[fz.type]?(ZOMBIE_TYPES[fz.type].speed*0.3):0.5;} }
         // Sunbeam: flashlight damages zombies in the beam
-        if (hasPowerUp('sunbeam')&&isHost&&gameTime%6===0) { for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4)damageZombie(sz,15,sdx/sd*2,sdy/sd*2);}} }
+        if (hasPowerUp('sunbeam')&&isHost&&gameTime%6===0) { for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4)damageZombie(sz,15,sdx/sd*2,sdy/sd*2,true);}} }
         // Power-up aura particles
         if (gameTime % 4 === 0) { const pdef = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} }
       }
@@ -3791,11 +3821,11 @@ function update() {
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
       // Shocked: brief full stun (can't move OR attack) + zap damage, then wears off
-      if(z._shocked>0){z._shocked--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);if(gameTime%20===0)damageZombie(z,10,0,0);if(z._shocked<=0){z._shocked=0;}continue;}
+      if(z._shocked>0){z._shocked--;z.vx=0;z.vy=0;z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);if(gameTime%20===0)damageZombie(z,10,0,0,true);if(z._shocked<=0){z._shocked=0;}continue;}
       // Enraged: revert after timer expires
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // Element effects: burn, slow, freeze
-      if(z._burnTimer>0){z._burnTimer--;if(gameTime%15===0&&z._burning>0){damageZombie(z,z._burning,0,0);}
+      if(z._burnTimer>0){z._burnTimer--;if(gameTime%15===0&&z._burning>0){damageZombie(z,z._burning,0,0,true);}
         if(z._burning>0){
           // Fire particles (every 2 frames — big dramatic flames)
           if(gameTime%2===0){for(let fi=0;fi<3;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:4+Math.random()*5,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
@@ -4837,6 +4867,44 @@ function render() {
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
+    }
+
+    // Sunbeam flashlight visual — golden beam overlay + particles
+    if (lp3 && lp3.alive && hasPowerUp('sunbeam')) {
+      const sox = -camera.x + canvas.width/2 + screenShake.x;
+      const soy = -camera.y + canvas.height/2 + screenShake.y;
+      const sx = lp3.x + sox, sy = lp3.y + soy;
+      const sa = lp3.angle || 0, sc = Math.cos(sa), ss = Math.sin(sa);
+      const beamLen = 250;
+      // Golden cone overlay
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.08 + Math.sin(gameTime * 0.1) * 0.02;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + Math.cos(sa - 0.4) * beamLen, sy + Math.sin(sa - 0.4) * beamLen);
+      ctx.lineTo(sx + sc * beamLen * 1.1, sy + ss * beamLen * 1.1);
+      ctx.lineTo(sx + Math.cos(sa + 0.4) * beamLen, sy + Math.sin(sa + 0.4) * beamLen);
+      ctx.closePath();
+      ctx.fillStyle = '#ffa';
+      ctx.fill();
+      // Brighter core
+      ctx.globalAlpha = 0.06;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + Math.cos(sa - 0.15) * beamLen * 0.8, sy + Math.sin(sa - 0.15) * beamLen * 0.8);
+      ctx.lineTo(sx + sc * beamLen * 0.9, sy + ss * beamLen * 0.9);
+      ctx.lineTo(sx + Math.cos(sa + 0.15) * beamLen * 0.8, sy + Math.sin(sa + 0.15) * beamLen * 0.8);
+      ctx.closePath();
+      ctx.fillStyle = '#ff8';
+      ctx.fill();
+      ctx.restore();
+      // Light particles drifting in the beam
+      if (gameTime % 3 === 0) {
+        const pd = 30 + Math.random() * 200;
+        const pa = sa + (Math.random() - 0.5) * 0.6;
+        particles.push({x:lp3.x+Math.cos(pa)*pd, y:lp3.y+Math.sin(pa)*pd, vx:sc*0.5+(Math.random()-0.5)*0.5, vy:ss*0.5+(Math.random()-0.5)*0.5, life:12+Math.random()*8, maxLife:20, size:2+Math.random()*2, color:Math.random()>0.5?'#ffa':'#ff8', type:'spark'});
+      }
     }
 
     // Glowing zombie eyes visible through darkness
