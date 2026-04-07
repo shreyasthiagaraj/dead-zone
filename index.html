@@ -125,9 +125,7 @@ body.desktop #minimap { width: 130px; height: 130px; }
 <div id="top-hud"><div class="score" id="score">0</div><div class="wave" id="wave-display">WAVE 1</div><div class="kills" id="kills-display">0 KILLS</div></div>
 <div id="perk-display" style="position:fixed;top:106px;left:50%;transform:translateX(-50%);text-align:center;z-index:20;pointer-events:none;font-size:14px;letter-spacing:3px;text-shadow:1px 1px 3px #000"></div>
 <div id="health-hud"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
-<div id="streak-hud" style="position:fixed;top:80px;left:50%;transform:translateX(-50%);width:160px;z-index:20;pointer-events:none;text-align:center">
-  <div style="width:100%;height:5px;background:#222;border:1px solid #444;border-radius:3px;overflow:hidden"><div id="streak-bar" style="height:100%;width:0%;border-radius:3px;transition:width 0.15s,background 0.15s"></div></div>
-  <div id="streak-label" style="font-size:10px;font-weight:bold;margin-top:2px;font-family:'Courier New',monospace;text-shadow:1px 1px 2px #000"></div>
+<div id="streak-hud" style="display:none">
 </div>
 <div id="effects-bar" style="position:fixed;top:102px;left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;display:flex;gap:6px;justify-content:center"></div>
 <div id="gun-stats" style="position:fixed;z-index:20;pointer-events:none;font-family:'Courier New',monospace;font-size:10px;color:#666;text-shadow:1px 1px 2px #000;bottom:calc(8px + env(safe-area-inset-bottom));left:calc(8px + env(safe-area-inset-left))"></div>
@@ -299,70 +297,27 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
 const BASE_GUN = { damage: 30, fireRate: 180, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0 };
-let runKills = 0;
 // Run stats for after-action report
-let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
+let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
 
 function getScaledGun() {
-  const power = runKills / 10; // power level = kills / 10
-  const dmgMult = 1 + Math.min(power * 0.04, 0.8); // +4% per 10 kills, caps at +80% (150 kills)
-  const rateMult = 1 + Math.min(power * 0.015, 0.35); // fire rate caps at +35% faster
-  const sizeMult = 1 + Math.min(power * 0.01, 0.3); // bullet size caps at +30% bigger
-  // Color shift: yellow → orange → red (caps, never reaches white-hot)
-  const t = Math.min(power / 20, 1); // 0-1 over 200 kills
-  const r = 255, g = Math.floor(255 - t * 180), b = 0;
-  const color = `rgb(${r},${g},${b})`;
   return {
-    damage: Math.floor(BASE_GUN.damage * dmgMult),
-    fireRate: Math.floor(BASE_GUN.fireRate / rateMult),
-    bulletSpeed: BASE_GUN.bulletSpeed + Math.min(power * 0.3, 6),
+    damage: BASE_GUN.damage,
+    fireRate: BASE_GUN.fireRate,
+    bulletSpeed: BASE_GUN.bulletSpeed,
     spread: BASE_GUN.spread,
-    bulletSize: Math.floor(BASE_GUN.bulletSize * sizeMult * 10) / 10,
-    knockback: BASE_GUN.knockback + Math.min(power * 0.1, 3),
-    pierce: Math.min(Math.floor(power / 15), 2), // +1 pierce every 150 kills, max 2
-    bulletColor: color,
+    bulletSize: BASE_GUN.bulletSize,
+    knockback: BASE_GUN.knockback,
+    pierce: BASE_GUN.pierce,
+    bulletColor: '#ff0',
   };
 }
 
 // Legacy stubs
-let currentGunTier = 0;
-const GUN_TIERS = [{ kills:0, name:'GUN', fireRate:180, damage:30, bulletSpeed:16, spread:0.03, bulletSize:3, knockback:2, pierce:0, pellets:1, bulletColor:'#ff0', sound:{freq:600,dur:0.05} }];
-function checkGunEvolution() {} // smooth scaling, no evolution events
-
-// ---- KILL STREAK SYSTEM (visual + loot drops, not stat changes) ----
-const STREAK_MILESTONES = [
-  { kills: 5,  name: 'STREAK!',    color: '#ff0', drop: 'health' },
-  { kills: 10, name: 'RAMPAGE!',   color: '#f80', drop: 'powerup' },
-  { kills: 15, name: 'MASSACRE!',  color: '#f44', drop: 'powerup' },
-  { kills: 20, name: 'GODLIKE!',   color: '#f0f', drop: 'orbital' },
-];
-let streakKills = 0, streakTimer = 0, activeStreak = null, activeStreakTimer = 0;
-
-function registerStreakKill() {
-  streakKills++;
-  streakTimer = 300;
-  if (streakKills > runStats.bestStreak) runStats.bestStreak = streakKills;
-  // Check milestones
-  for (let i = STREAK_MILESTONES.length - 1; i >= 0; i--) {
-    if (streakKills === STREAK_MILESTONES[i].kills) {
-      const m = STREAK_MILESTONES[i];
-      addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, m.name, m.color);
-      screenShake.intensity = Math.max(screenShake.intensity, 4 + i * 3);
-      // Drop reward
-      const lp = getLocalPlayer();
-      if (lp && isHost) {
-        if (m.drop === 'health') { pickups.push({ type: 'health', amount: 25, x: lp.x + (Math.random()-0.5)*40, y: lp.y + (Math.random()-0.5)*40, bobTimer: Math.random()*Math.PI*2 }); }
-        else if (m.drop === 'powerup' && !hasPowerUpAnywhere()) { const pool = POWERUP_TYPES.filter(p=>p.duration>1); const pwr = pool[Math.floor(Math.random()*pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: lp.x + (Math.random()-0.5)*40, y: lp.y + (Math.random()-0.5)*40, bobTimer: Math.random()*Math.PI*2 }); }
-        else if (m.drop === 'orbital' && !hasPowerUpAnywhere()) { spawnOrbitalPickup(lp.x, lp.y); }
-      }
-      break;
-    }
-  }
-}
-
-function updateStreak() {
-  if (streakTimer > 0) { streakTimer--; if (streakTimer <= 0) { streakKills = 0; } }
-}
+let runKills = 0, currentGunTier = 0, streakKills = 0, streakTimer = 0, activeStreak = null, activeStreakTimer = 0;
+function checkGunEvolution() {}
+function registerStreakKill() {}
+function updateStreak() {}
 
 // ---- ORBITAL POWER-UPS ----
 const ORBITAL_TYPES = [
@@ -2284,7 +2239,6 @@ function showDeathScreen() {
   const bestElem = elemEntries.length > 0 ? elemEntries[0] : null;
 
   // Streak label
-  const streakLabel = runStats.bestStreak >= 20 ? 'GODLIKE' : runStats.bestStreak >= 15 ? 'MASSACRE' : runStats.bestStreak >= 10 ? 'RAMPAGE' : runStats.bestStreak >= 5 ? 'STREAK' : '—';
 
   const lvlLabel = gameMode === 'gauntlet' ? 'Room' : gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : 'Level';
   const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${survivalMin}m ${survivalSec}s` : gameMode === 'survival' ? survivalWave : level;
@@ -2301,7 +2255,6 @@ function showDeathScreen() {
   stats += `Kills: <span class="val">${kills}</span> · Score: <span class="val">${score.toLocaleString()}</span><br>`;
   stats += `Accuracy: <span class="val">${accuracy}%</span> · K/min: <span class="val">${killsPerMin}</span><br>`;
   stats += `Damage Dealt: <span class="val">${runStats.damageDealt.toLocaleString()}</span> · Taken: <span class="val">${runStats.damageTaken}</span><br>`;
-  stats += `Best Streak: <span class="val">${runStats.bestStreak}</span> <span style="color:#f80">${streakLabel}</span><br>`;
   stats += `Shockwaves: <span class="val">${runStats.shockwavesUsed}</span>`;
   if (bestElem) stats += ` · Fav Element: <span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#aef':'#4ff'}">${bestElem[0].toUpperCase()}</span>`;
 
@@ -2476,7 +2429,7 @@ document.getElementById('btn-swap').addEventListener('click', (e) => { e.prevent
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
-  activePowerUp = null; runKills = 0; currentGunTier = 0; streakKills = 0; streakTimer = 0; activeStreak = null; activeStreakTimer = 0; activeElement = null; elementZones = [];
+  activePowerUp = null; activeElement = null; elementZones = [];
   runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
   // Reset joysticks to prevent stuck state on restart
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
@@ -3343,17 +3296,19 @@ function hasPowerUpAnywhere() { return hasPowerUpOnMap() || activePowerUp || act
 function dropZombieLoot(z) {
   const r = Math.random();
   if (z.boss) {
-    // Boss: health + guaranteed power-up (if none on map)
+    // Boss: health + guaranteed power-up or shadow clone
     pickups.push({ type: 'health', amount: 30, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
-    if (!hasPowerUpAnywhere()) { const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x + (Math.random()-0.5)*20, y: z.y + (Math.random()-0.5)*20, bobTimer: Math.random() * Math.PI * 2 }); }
+    if (!hasPowerUpAnywhere()) {
+      if (Math.random() < 0.3) { spawnOrbitalPickup(z.x, z.y); }
+      else { const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x + (Math.random()-0.5)*20, y: z.y + (Math.random()-0.5)*20, bobTimer: Math.random() * Math.PI * 2 }); }
+    }
   } else if (r < 0.03) {
     // 3% health drop
     pickups.push({ type: 'health', amount: 10, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
   } else if (r < 0.06 && !hasPowerUpAnywhere()) {
-    // 3% power-up drop — only if none on map
-    const pool = POWERUP_TYPES.filter(p => p.duration > 1);
-    const pwr = pool[Math.floor(Math.random() * pool.length)];
-    pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
+    // 3% power-up or shadow clone drop
+    if (Math.random() < 0.15) { spawnOrbitalPickup(z.x, z.y); }
+    else { const pool = POWERUP_TYPES.filter(p => p.duration > 1); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 }); }
   }
 }
 
@@ -3479,7 +3434,6 @@ function update() {
       const sprinting = keys[' '];
       if(sprinting) moveSpeed *= 1.6;
       // Streak speed boost
-      if(activeStreak&&activeStreak.speedMult>1) moveSpeed *= activeStreak.speedMult;
       // Power-up speed effects
       // Sprint trail particles
       if(sprinting && (Math.abs(lp.vx)>0.5||Math.abs(lp.vy)>0.5) && gameTime%3===0) particles.push({x:lp.x+(Math.random()-0.5)*8,y:lp.y+(Math.random()-0.5)*8,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:8,maxLife:8,size:PLAYER_RADIUS*0.6,color:lp.color,type:'dashtrail'});
@@ -3721,8 +3675,7 @@ function update() {
                   // Track per-player kills for wave summary
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
                   // Arcade system: run kills + streak (check ownerId matches local player)
-                  {const _lp2=getLocalPlayer();if(_lp2&&b.ownerId===_lp2.id){runKills++;checkGunEvolution();registerStreakKill();}}
-                  const now=performance.now();if(now-lastKillTime<1500){rapidKills++;if(rapidKills>=3){playKillstreakSound();addFloatingText(z.x,z.y-40,`${rapidKills}x KILL STREAK!`,'#f0f');}}else{rapidKills=1;}lastKillTime=now;addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // 5% chance to drop a small health orb
                   if(isHost&&Math.random()<0.05)pickups.push({type:'health',amount:5,x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,bobTimer:Math.random()*Math.PI*2});
                   // Enrage nearby zombies (they saw their friend die)
@@ -3980,7 +3933,6 @@ function update() {
     // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(dz.hp<=0){
       score+=dz.score;kills++;if(gameMode==='survival'){survivalZombiesKilled++;}
-      const _lp2=getLocalPlayer();if(_lp2&&_lp2.id!==undefined){runKills++;checkGunEvolution();registerStreakKill();}
       // Death effects
       for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#a22','#811','#622','#c11'][Math.floor(Math.random()*4)],type:'blood'});}
       decals.push({x:dz.x,y:dz.y,size:dz.radius+12+Math.random()*15,alpha:0.5,color:'#200'});
@@ -4319,13 +4271,6 @@ function updateHUD() {
   // Gun stats — small, subtle, bottom corner
   const gs = document.getElementById('gun-stats');
   if (gs) gs.innerHTML = `<span style="color:${gun.bulletColor}">${gun.damage} dmg</span> · ${gun.fireRate}ms${gun.pierce>0?' · pierce '+gun.pierce:''}`;
-  // Streak bar (top HUD) — shows decay timer draining + color by streak level
-  const streakPct = activeStreakTimer > 0 ? (activeStreakTimer / (activeStreak?.duration||1)) * 100 : (streakTimer > 0 ? (streakTimer / 240) * 100 : 0);
-  const streakColor = activeStreak ? activeStreak.color : streakKills >= 10 ? '#f44' : streakKills >= 6 ? '#f80' : streakKills >= 3 ? '#ff0' : streakKills >= 1 ? '#888' : '#333';
-  const sbar = document.getElementById('streak-bar');
-  if (sbar) { sbar.style.width = streakPct + '%'; sbar.style.background = streakColor; }
-  const slbl = document.getElementById('streak-label');
-  if (slbl) { slbl.innerHTML = activeStreak ? `<span style="color:${activeStreak.color}">${activeStreak.name} ${Math.ceil(activeStreakTimer/60)}s</span>` : streakKills >= 1 ? `<span style="color:#888">${streakKills} STREAK</span>` : ''; }
   document.getElementById('ammo-display').innerHTML = '';
   document.getElementById('score').textContent=score.toLocaleString();
   document.getElementById('wave-display').textContent=gameMode==='descent'?`SECTION ${descentSection+1}`:gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
@@ -4996,8 +4941,6 @@ function render() {
       // Pulse effect at critical HP
       if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
     }
-    // Kill streak screen flash
-    if(rapidKills>=3&&performance.now()-lastKillTime<200){ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     // Power-up screen tints
     if(hasPowerUp('rage')){ctx.fillStyle='rgba(255,40,0,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('triple')){ctx.fillStyle='rgba(255,160,0,0.03)';ctx.fillRect(0,0,canvas.width,canvas.height);}
