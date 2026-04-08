@@ -230,18 +230,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 
 <!-- ---- DEATH SCREEN (AFTER-ACTION REPORT) ---- -->
 <div class="screen-overlay" id="death-screen" style="display:none;overflow-y:auto">
-  <div style="display:flex;flex-direction:row;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center;max-width:90vw">
-    <div style="text-align:center;flex-shrink:0">
-      <h1 style="font-size:clamp(22px,5vw,36px);margin-bottom:0">DEAD</h1>
-      <div id="death-rating" style="font-size:clamp(28px,7vw,52px);font-weight:bold;letter-spacing:3px;margin:2px 0"></div>
-      <button class="menu-btn primary" id="btn-restart" style="margin-top:4px">PLAY AGAIN</button>
-      <div class="highscore" id="highscore-display"></div>
-    </div>
-    <div style="text-align:center">
-      <div class="stats" id="death-stats" style="font-size:11px;line-height:1.5"></div>
-      <div id="death-best" style="color:#888;font-size:10px;margin:2px 0"></div>
-    </div>
-  </div>
+  <div id="death-content"></div>
 </div>
 
 <!-- ---- WAVE SUMMARY ---- -->
@@ -2290,37 +2279,71 @@ function showDeathScreen() {
   const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${survivalMin}m ${survivalSec}s` : gameMode === 'survival' ? survivalWave : level;
   const hordeCircleLost = gameMode === 'horde' && hordeCircleTimer >= HORDE_CIRCLE_CLAIM_TIME;
 
-  // Rating display
-  document.getElementById('death-rating').innerHTML = `<span style="color:${ratingColor}">${rating}</span>`;
-
-  // Stats
-  let stats = '';
-  if (hordeCircleLost) stats += `<span style="color:#f44">THE CIRCLE HAS FALLEN</span><br>`;
-  stats += `<span style="color:#888">MISSION REPORT</span><br>`;
-  stats += `${lvlLabel}: <span class="val">${lvlVal}</span> · Time: <span class="val">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span><br>`;
-  stats += `Kills: <span class="val">${kills}</span> · Score: <span class="val">${score.toLocaleString()}</span><br>`;
-  stats += `Accuracy: <span class="val">${accuracy}%</span> · K/min: <span class="val">${killsPerMin}</span><br>`;
-  stats += `Damage Dealt: <span class="val">${runStats.damageDealt.toLocaleString()}</span> · Taken: <span class="val">${runStats.damageTaken}</span><br>`;
-  stats += `Shockwaves: <span class="val">${runStats.shockwavesUsed}</span>`;
-  if (bestElem) stats += ` · Fav Element: <span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#aef':'#4ff'}">${bestElem[0].toUpperCase()}</span>`;
-
-  document.getElementById('death-stats').innerHTML = stats;
-
-  // Personal best comparison
+  // Personal best
   const bestKey = `deadzone_best_${gameMode}`;
   const prevBest = JSON.parse(localStorage.getItem(bestKey) || '{}');
-  let bestText = '';
-  if (prevBest.kills) {
-    const better = kills > prevBest.kills;
-    bestText = `Previous best: ${prevBest.kills} kills, ${prevBest.rating} rating`;
-    if (better) bestText = `<span style="color:#4f4">NEW PERSONAL BEST!</span> (was ${prevBest.kills} kills)`;
-  }
-  if (!prevBest.kills || kills > prevBest.kills) {
-    localStorage.setItem(bestKey, JSON.stringify({ kills, rating, score, time: survivalTime }));
-  }
-  document.getElementById('death-best').innerHTML = bestText;
+  const isNewBest = !prevBest.kills || kills > prevBest.kills;
+  if (isNewBest) localStorage.setItem(bestKey, JSON.stringify({ kills, rating, score, time: survivalTime }));
 
-  document.getElementById('highscore-display').textContent = `HIGH SCORE: ${highScore.toLocaleString()}`;
+  const dc = document.getElementById('death-content');
+
+  if (gameMode === 'horde') {
+    // ---- HORDE GAME OVER — custom layout ----
+    const circleMsg = hordeCircleLost ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,14px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:4px">THE CIRCLE HAS FALLEN</div>` : '';
+    const bestMsg = isNewBest ? `<div style="color:#0f0;font-size:11px;text-shadow:0 0 8px rgba(0,255,0,0.4);margin-top:6px">★ NEW PERSONAL BEST ★</div>` : prevBest.time ? `<div style="color:#8af;font-size:10px;margin-top:6px">Best: ${Math.floor(prevBest.time/60)}:${(prevBest.time%60).toString().padStart(2,'0')} · ${prevBest.kills} kills</div>` : '';
+    const elemIcon = bestElem ? `<span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#4ef':'#4ff'}">${bestElem[0]==='fire'?'🔥':bestElem[0]==='ice'?'🧊':'⚡'} ${bestElem[0].toUpperCase()}</span>` : '<span style="color:#888">—</span>';
+
+    dc.innerHTML = `<div style="display:flex;flex-direction:row;align-items:center;justify-content:center;gap:clamp(16px,4vw,40px);width:90vw;max-width:700px">
+      <div style="flex:1;text-align:left">
+        ${circleMsg}
+        <div style="color:#f0f;font-size:clamp(14px,3vw,20px);text-shadow:0 0 10px rgba(255,0,255,0.4);letter-spacing:2px;margin-bottom:8px">GAME OVER</div>
+        <div style="color:#0ff;font-size:clamp(32px,8vw,56px);font-weight:bold;text-shadow:0 0 20px rgba(0,255,255,0.5);letter-spacing:3px;line-height:1">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
+        <div style="color:#0ff8;font-size:10px;margin-top:2px;letter-spacing:1px">SURVIVED</div>
+        <div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap">
+          <div><div style="color:#8af;font-size:9px;letter-spacing:1px">KILLS</div><div style="color:#0ff;font-size:clamp(18px,4vw,28px);font-weight:bold;text-shadow:0 0 8px rgba(0,255,255,0.3)">${kills}</div></div>
+          <div><div style="color:#8af;font-size:9px;letter-spacing:1px">SCORE</div><div style="color:#ff0;font-size:clamp(18px,4vw,28px);font-weight:bold;text-shadow:0 0 8px rgba(255,255,0,0.3)">${score.toLocaleString()}</div></div>
+          <div><div style="color:#8af;font-size:9px;letter-spacing:1px">RATING</div><div style="color:${ratingColor};font-size:clamp(18px,4vw,28px);font-weight:bold;text-shadow:0 0 8px ${ratingColor}60">${rating}</div></div>
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:#8af;line-height:1.8">
+          Accuracy: <span style="color:#0ff">${accuracy}%</span> · K/min: <span style="color:#0ff">${killsPerMin}</span><br>
+          Blasts: <span style="color:#0ff">${runStats.shockwavesUsed}</span> · Element: ${elemIcon}
+        </div>
+        ${bestMsg}
+      </div>
+      <div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:8px">
+        <button class="menu-btn primary" id="btn-restart" style="font-size:clamp(14px,3vw,18px);padding:12px 28px">PLAY AGAIN</button>
+        <div style="color:#ff0;font-size:11px;text-shadow:0 0 6px rgba(255,255,0,0.3)">HIGH: ${highScore.toLocaleString()}</div>
+      </div>
+    </div>`;
+  } else {
+    // ---- Default game over (other modes) ----
+    let stats = '';
+    stats += `<span style="color:#8af">MISSION REPORT</span><br>`;
+    stats += `${lvlLabel}: <span class="val">${lvlVal}</span> · Time: <span class="val">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span><br>`;
+    stats += `Kills: <span class="val">${kills}</span> · Score: <span class="val">${score.toLocaleString()}</span><br>`;
+    stats += `Accuracy: <span class="val">${accuracy}%</span> · K/min: <span class="val">${killsPerMin}</span><br>`;
+    stats += `Shockwaves: <span class="val">${runStats.shockwavesUsed}</span>`;
+    if (bestElem) stats += ` · Element: <span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#4ef':'#4ff'}">${bestElem[0].toUpperCase()}</span>`;
+    const bestMsg2 = isNewBest ? `<div style="color:#0f0;font-size:10px;text-shadow:0 0 6px rgba(0,255,0,0.3)">★ NEW PERSONAL BEST ★</div>` : prevBest.kills ? `<div style="color:#8af;font-size:10px">Best: ${prevBest.kills} kills, ${prevBest.rating} rating</div>` : '';
+
+    dc.innerHTML = `<div style="display:flex;flex-direction:row;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center;max-width:90vw">
+      <div style="text-align:center;flex-shrink:0">
+        <div style="color:#f0f;font-size:clamp(22px,5vw,36px);font-weight:bold;letter-spacing:4px;text-shadow:0 0 20px rgba(255,0,255,0.5);margin-bottom:0">DEAD</div>
+        <div style="color:${ratingColor};font-size:clamp(28px,7vw,52px);font-weight:bold;letter-spacing:3px;margin:2px 0;text-shadow:0 0 12px ${ratingColor}60">${rating}</div>
+        <button class="menu-btn primary" id="btn-restart" style="margin-top:4px">PLAY AGAIN</button>
+        <div style="color:#ff0;font-size:12px;margin-top:4px;text-shadow:0 0 6px rgba(255,255,0,0.3)">HIGH: ${highScore.toLocaleString()}</div>
+      </div>
+      <div style="text-align:center">
+        <div class="stats" style="font-size:11px;line-height:1.5">${stats}</div>
+        ${bestMsg2}
+      </div>
+    </div>`;
+  }
+
+  // Re-bind restart button
+  document.getElementById('btn-restart').addEventListener('click', () => { startSoloGame(gameMode); });
+  document.getElementById('btn-restart').addEventListener('touchstart', (e) => { e.preventDefault(); startSoloGame(gameMode); }, { passive: false });
+
   showScreen('death-screen');
   playGameOverSound(); screenShake.intensity = 15;
 }
@@ -3074,11 +3097,10 @@ function updateHorde() {
   // Items spawn at ring positions, not center
   if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
   // Power-up orb every 35 seconds
-  if (hordeTimer % 2100 === 0 && hordeTimer > 0) {
-    const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
-    const pwr = pool[Math.floor(Math.random() * pool.length)];
+  if (hordeTimer % 2100 === 0 && hordeTimer > 0 && !hasPowerUpAnywhere()) {
     const pos = getHordeEdgePos();
-    pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
+    if (Math.random() < 0.2) { spawnOrbitalPickup(pos.x, pos.y); }
+    else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 }); }
   }
   // Element zone every 15 seconds
   if (hordeTimer % 900 === 0 && hordeTimer > 0) spawnElementZone();
