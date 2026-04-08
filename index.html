@@ -3544,7 +3544,7 @@ function update() {
         // Sunbeam: flashlight damages zombies in the beam
         if (hasPowerUp('sunbeam')&&isHost&&gameTime%8===0) {
           let sunbeamHitting = false;
-          for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250&&sd>0){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4){damageZombie(sz,8,(sdx/sd)*1.5,(sdy/sd)*1.5,true);sunbeamHitting=true;for(let sp=0;sp<3;sp++)particles.push({x:sz.x+(Math.random()-0.5)*12,y:sz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*3,vy:-1.5-Math.random()*2,life:10+Math.random()*6,maxLife:16,size:2+Math.random()*3,color:['#ffa','#ff8','#fea','#fe6'][Math.floor(Math.random()*4)],type:'spark'});}}}
+          for(const sz of zombies){const sdx=sz.x-lp.x,sdy=sz.y-lp.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd<250&&sd>0){const aToZ=Math.atan2(sdy,sdx),aDiff=Math.abs(((aToZ-lp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(aDiff<0.4){damageZombie(sz,8,(sdx/sd)*4,(sdy/sd)*4,true);sunbeamHitting=true;for(let sp=0;sp<3;sp++)particles.push({x:sz.x+(Math.random()-0.5)*12,y:sz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*3,vy:-1.5-Math.random()*2,life:10+Math.random()*6,maxLife:16,size:2+Math.random()*3,color:['#ffa','#ff8','#fea','#fe6'][Math.floor(Math.random()*4)],type:'spark'});}}}
           if(sunbeamHitting) startSunbeamLoop(); else stopSunbeamLoop();
         }
         // Magnet: pull pickups toward player
@@ -4536,14 +4536,30 @@ function render() {
   for(const d of decals){ctx.globalAlpha=d.alpha;ctx.fillStyle=d.color;ctx.beginPath();ctx.arc(d.x,d.y,d.size,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=d.alpha*0.3;ctx.shadowColor=d.color;ctx.shadowBlur=6;ctx.strokeStyle=d.color;ctx.lineWidth=1;ctx.stroke();ctx.shadowBlur=0;}ctx.globalAlpha=1;
 
-  // Ground haze wisps
+  // Ground haze wisps — brighter in flashlight beam
+  {const _hlp=getLocalPlayer();
+  const _ha=_hlp?_hlp.angle:0;
   for(const h of hazeParticles){
     if(h.alpha<0.005)continue;
+    let litMult=1;
+    if(_hlp&&_hlp.alive){
+      const dx=h.x-_hlp.x,dy=h.y-_hlp.y,d=Math.sqrt(dx*dx+dy*dy);
+      if(d<400&&d>1){
+        const aToH=Math.atan2(dy,dx);
+        let aDiff=aToH-_ha;while(aDiff>Math.PI)aDiff-=Math.PI*2;while(aDiff<-Math.PI)aDiff+=Math.PI*2;
+        if(Math.abs(aDiff)<0.5){
+          const distFade=1-d/400;
+          const coneFade=1-Math.abs(aDiff)/0.5;
+          litMult=1+distFade*coneFade*4; // up to 5x brighter in beam center
+        }
+      }
+    }
     const g=ctx.createRadialGradient(h.x,h.y,0,h.x,h.y,h.size);
-    g.addColorStop(0,h.color);g.addColorStop(0.5,h.color);g.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.globalAlpha=h.alpha;ctx.fillStyle=g;
+    const litColor=litMult>1.5?'#fff':h.color;
+    g.addColorStop(0,litColor);g.addColorStop(0.5,litColor);g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.globalAlpha=Math.min(0.25,h.alpha*litMult);ctx.fillStyle=g;
     ctx.beginPath();ctx.arc(h.x,h.y,h.size,0,Math.PI*2);ctx.fill();
-  }ctx.globalAlpha=1;
+  }ctx.globalAlpha=1;}
 
   // Horde mode: defend circle on the ground
   if (gameMode === 'horde') {
