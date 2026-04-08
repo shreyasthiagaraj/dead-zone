@@ -2349,8 +2349,8 @@ function showDeathScreen() {
   const elemIcon = bestElem ? `<span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#4ef':'#4ff'}">${bestElem[0]==='fire'?'🔥':bestElem[0]==='ice'?'🧊':'⚡'} ${bestElem[0].toUpperCase()}</span>` : '<span style="color:#888">—</span>';
   const bestMsg = isNewBest ? `<div style="color:#0f0;font-size:11px;text-shadow:0 0 8px rgba(0,255,0,0.4);margin-top:4px">★ NEW PERSONAL BEST ★</div>` : prevBest.time ? `<div style="color:#8af;font-size:10px;margin-top:4px">Best: ${Math.floor(prevBest.time/60)}:${(prevBest.time%60).toString().padStart(2,'0')} · ${prevBest.kills} kills</div>` : '';
   const escortWon = gameMode==='escort'&&escortVIP&&escortVIP._won;
-  const escortVIPDead = gameMode==='escort'&&escortVIP&&!escortVIP.alive&&!escortVIP._won;
-  const circleMsg = escortWon ? `<div style="color:#0f0;font-size:clamp(12px,3vw,16px);text-shadow:0 0 12px rgba(0,255,0,0.5);margin-bottom:4px">VIP EXTRACTED — MISSION COMPLETE</div>` : escortVIPDead ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">VIP LOST</div>` : (gameMode==='horde'&&hordeCircleLost) ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">THE CIRCLE HAS FALLEN</div>` : '';
+  const escortVIPDead = (gameMode==='escort'||gameMode==='protect')&&escortVIP&&!escortVIP.alive&&!escortVIP._won;
+  const circleMsg = escortWon ? `<div style="color:#0f0;font-size:clamp(12px,3vw,16px);text-shadow:0 0 12px rgba(0,255,0,0.5);margin-bottom:4px">VIP EXTRACTED — MISSION COMPLETE</div>` : escortVIPDead ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">VIP DOWN</div>` : (gameMode==='horde'&&hordeCircleLost) ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">THE CIRCLE HAS FALLEN</div>` : '';
 
   dc.innerHTML = `<div class="menu-panel" style="text-align:center;border-color:#f0f4">
     ${circleMsg}
@@ -2573,7 +2573,7 @@ function startSoloGame() {
     exitPos = null;
     protectTimer = 0;
     const spawnC = { x: 5 * CELL_SIZE, y: Math.floor(15) * CELL_SIZE };
-    escortVIP = { x: spawnC.x, y: spawnC.y, hp: 300, maxHp: 300, speed: 1.5, radius: 14, pathIdx: 0, alive: true, damageFlash: 0, invincible: 0 };
+    escortVIP = { x: spawnC.x, y: spawnC.y, hp: 300, maxHp: 300, speed: 3.0, radius: 14, pathIdx: 0, alive: true, damageFlash: 0, invincible: 0 };
     // Scatter chests along the route
     escortChests = [];
     for (let i = 2; i < escortPath.length - 2; i += 3) {
@@ -3291,9 +3291,14 @@ function updateEscortVIP() {
     }
     pushOutOfObstacles(escortVIP, escortVIP.radius);
   }
-  // Win: VIP reached end
-  if (escortVIP.pathIdx >= escortPath.length) {
-    if (gameMode === 'protect' || (exitPos && Math.sqrt((escortVIP.x - exitPos.x) ** 2 + (escortVIP.y - exitPos.y) ** 2) < 50)) {
+  // Protect mode: endless — reverse path when VIP reaches the end
+  if (gameMode === 'protect' && escortVIP.pathIdx >= escortPath.length) {
+    escortPath.reverse();
+    escortVIP.pathIdx = 1; // skip first (current position)
+  }
+  // Escort mode: win when VIP reaches exit
+  if (gameMode === 'escort' && escortVIP.pathIdx >= escortPath.length) {
+    if (exitPos && Math.sqrt((escortVIP.x - exitPos.x) ** 2 + (escortVIP.y - exitPos.y) ** 2) < 50) {
       gameState = 'dead';
       escortVIP._won = true;
       showDeathScreen();
@@ -3343,15 +3348,26 @@ function updateEscortVIP() {
       ch.unlockProgress = Math.max(0, ch.unlockProgress - 1); // decay when not near
     }
   }
-  // Spawning — scales with VIP progress (protect mode is more aggressive)
+  // Spawning — scales with VIP progress (protect mode is horde-like)
   spawnTimer++;
-  const _protectMult = gameMode === 'protect' ? 1.5 : 1;
-  const maxZ = Math.min(gameMode==='protect'?20:14, Math.floor((6 + escortVIP.pathIdx * 2) * _protectMult));
-  const rate = Math.max(3, Math.floor((20 - escortVIP.pathIdx * 2) / _protectMult));
-  if (spawnTimer % rate === 0 && zombies.length < maxZ) {
-    spawnZombie();
-    if (gameMode === 'protect' && Math.random() < 0.3) spawnZombie(); // burst spawns
-    if (Math.random() < 0.02) spawnHealthPickup();
+  if (gameMode === 'protect') {
+    const elapsed = protectTimer / 60; // seconds survived
+    const maxZ = Math.min(35, 10 + Math.floor(elapsed * 0.15));
+    const rate = Math.max(3, Math.floor(12 - elapsed * 0.05));
+    if (spawnTimer % rate === 0 && zombies.length < maxZ) {
+      spawnZombie();
+      spawnZombie(); // always double spawn
+      if (elapsed > 30 && Math.random() < 0.4) spawnZombie(); // triple after 30s
+      if (elapsed > 60 && Math.random() < 0.3) spawnZombie(); // quad chance after 60s
+      if (Math.random() < 0.03) spawnHealthPickup();
+    }
+  } else {
+    const maxZ = Math.min(14, Math.floor(6 + escortVIP.pathIdx * 2));
+    const rate = Math.max(3, Math.floor(20 - escortVIP.pathIdx * 2));
+    if (spawnTimer % rate === 0 && zombies.length < maxZ) {
+      spawnZombie();
+      if (Math.random() < 0.02) spawnHealthPickup();
+    }
   }
 }
 
@@ -4680,7 +4696,8 @@ function updateHUD() {
     if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_ch.innerHTML=`<div style="font-size:22px;font-weight:bold;color:#0ff;text-shadow:0 0 10px #0ff,0 0 20px rgba(0,255,255,0.3);letter-spacing:2px">${_m}:${_ss<10?'0':''}${_ss}</div>`;_ch.style.display='block';}
     else if(gameMode==='descent'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.3);letter-spacing:3px">SECTION ${descentSection+1}</div>`;_ch.style.display='block';}
     else if(gameMode==='survival'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#ff0;text-shadow:0 0 10px #ff0,0 0 20px rgba(255,255,0,0.3);letter-spacing:3px">WAVE ${survivalWave}</div>`;_ch.style.display='block';}
-    else if((gameMode==='escort'||gameMode==='protect')&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const prog=escortVIP.alive?Math.floor((escortVIP.pathIdx/escortPath.length)*100):0;const modeLabel=gameMode==='protect'?'PROTECT':'ESCORT';_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">${modeLabel} · VIP: ${vhp} HP · ${prog}%</div>`;_ch.style.display='block';}
+    else if(gameMode==='protect'&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const _ps=Math.floor(protectTimer/60),_pm=Math.floor(_ps/60),_pss=_ps%60;_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">PROTECT · VIP: ${vhp} HP · ${_pm}:${_pss<10?'0':''}${_pss}</div>`;_ch.style.display='block';}
+    else if(gameMode==='escort'&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const prog=escortVIP.alive?Math.floor((escortVIP.pathIdx/escortPath.length)*100):0;_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">ESCORT · VIP: ${vhp} HP · ${prog}%</div>`;_ch.style.display='block';}
     else{_ch.style.display='none';}
   }
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
