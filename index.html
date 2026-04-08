@@ -69,7 +69,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 
 /* ---- Screen overlays ---- */
 .screen-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(3,3,12,0.4); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; padding: 10px; touch-action: manipulation; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; overflow-y: auto; }
-.screen-overlay h1 { font-size: clamp(24px, 6vw, 48px); color: #f0f; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 2px; text-shadow: 0 0 30px rgba(255,0,255,0.6), 0 0 60px rgba(255,0,255,0.2); }
+.screen-overlay h1 { font-size: clamp(24px, 6vw, 48px); color: #f0f; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 2px; text-shadow: 0 0 30px rgba(255,0,255,0.6), 0 0 60px rgba(255,0,255,0.2); transition: opacity 0.3s; }
 .screen-overlay .subtitle { color: #0ff; font-size: clamp(10px, 2.5vw, 14px); letter-spacing: 3px; margin-bottom: 10px; text-shadow: 0 0 8px rgba(0,255,255,0.4); }
 .screen-overlay .stats { color: #8af; font-size: 12px; margin-bottom: 8px; line-height: 1.6; text-align: center; }
 .screen-overlay .stats .val { color: #0ff; font-weight: bold; text-shadow: 0 0 6px rgba(0,255,255,0.4); }
@@ -86,6 +86,10 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
   .lobby-players li { font-size: 13px; padding: 2px 0; }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes screenIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@keyframes screenOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.03); } }
+.screen-animate-in { animation: screenIn 0.25s ease-out forwards; }
+.screen-animate-out { animation: screenOut 0.15s ease-in forwards; }
 
 /* ---- Menu buttons ---- */
 .menu-btn {
@@ -161,7 +165,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 
 <!-- ---- MAIN MENU ---- -->
 <div class="screen-overlay" id="start-screen">
-  <h1>DEAD ZONE</h1>
+  <h1 style="font-size:clamp(40px,12vw,80px);letter-spacing:8px">DEAD ZONE</h1>
   <div class="subtitle">ZOMBIE SHOOTER</div>
   <div style="margin-top:10px;display:flex;flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center">
     <button class="menu-btn" id="btn-solo">SOLO</button>
@@ -2204,12 +2208,30 @@ function showMultiError(txt) { document.getElementById('multi-error').textConten
 // ============================================================
 // MENU NAVIGATION
 // ============================================================
+let _currentScreen = null;
 function showScreen(id) {
-  ['start-screen','solo-mode-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'].forEach(s => document.getElementById(s).style.display = 'none');
+  const screens = ['start-screen','solo-mode-screen','multi-screen','create-mode-screen','lobby-screen','death-screen'];
+  // Animate out current screen
+  if (_currentScreen && _currentScreen !== id) {
+    const prev = document.getElementById(_currentScreen);
+    if (prev && prev.style.display !== 'none') {
+      prev.classList.remove('screen-animate-in');
+      prev.classList.add('screen-animate-out');
+      const _p = prev; setTimeout(() => { _p.style.display = 'none'; _p.classList.remove('screen-animate-out'); }, 150);
+    }
+  }
+  // Hide all others immediately (in case of fast navigation)
+  screens.forEach(s => { if (s !== _currentScreen && s !== id) document.getElementById(s).style.display = 'none'; });
   document.getElementById('perk-screen').style.display = 'none'; perkSelectionActive = false;
   document.getElementById('wave-summary-screen').style.display = 'none'; waveSummaryActive = false; if(waveSummaryTimer){clearTimeout(waveSummaryTimer);waveSummaryTimer=0;}
   document.getElementById('pause-screen').style.display = 'none'; gamePaused = false;
-  if (id) document.getElementById(id).style.display = 'flex';
+  // Animate in new screen
+  if (id) {
+    const el = document.getElementById(id);
+    const delay = (_currentScreen && _currentScreen !== id) ? 160 : 0;
+    setTimeout(() => { el.style.display = 'flex'; el.classList.remove('screen-animate-out'); el.classList.add('screen-animate-in'); }, delay);
+  }
+  _currentScreen = id;
   // Hide in-game HUD on menu screens, show when playing
   const inGame = !id || id === 'pause-screen' || id === 'wave-summary-screen' || id === 'perk-screen';
   const hudVis = inGame ? '' : 'none';
@@ -2363,9 +2385,15 @@ function addBtn(id, fn) {
   let _lastTap = 0;
   // Desktop: click fires action
   el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); const now = Date.now(); if (now - _lastTap < 300) return; _lastTap = now; fn(); });
-  // Mobile: touchstart shows highlight, touchend fires action
+  // Mobile: touchstart shows highlight, touchend fires only if inside
   el.addEventListener('touchstart', (e) => { e.preventDefault(); el.classList.add('tapped'); }, {passive: false});
-  el.addEventListener('touchend', (e) => { e.preventDefault(); el.classList.remove('tapped'); const now = Date.now(); if (now - _lastTap < 300) return; _lastTap = now; fn(); }, {passive: false});
+  el.addEventListener('touchend', (e) => {
+    e.preventDefault(); el.classList.remove('tapped');
+    const t = e.changedTouches[0]; if (!t) return;
+    const r = el.getBoundingClientRect();
+    if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) return;
+    const now = Date.now(); if (now - _lastTap < 300) return; _lastTap = now; fn();
+  }, {passive: false});
   el.addEventListener('touchcancel', () => { el.classList.remove('tapped'); });
 }
 addBtn('btn-solo', () => { showScreen('solo-mode-screen'); });
