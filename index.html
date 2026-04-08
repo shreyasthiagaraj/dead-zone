@@ -5078,7 +5078,7 @@ function render() {
     if(hasPowerUp('frenzy')){ctx.fillStyle='rgba(255,100,0,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);}
   }
 
-  // CRT scanline overlay — horizontal lines for retro monitor feel
+  // CRT scanline overlay — breathing/glitching arcade monitor
   if(!window._scanlineCanvas){
     window._scanlineCanvas=document.createElement('canvas');
     window._scanlineCanvas.width=1;window._scanlineCanvas.height=3;
@@ -5086,9 +5086,24 @@ function render() {
     sctx.clearRect(0,0,1,3);
     sctx.fillStyle='rgba(0,0,0,0.35)';
     sctx.fillRect(0,2,1,1);
+    window._crtGlitch=0;window._crtGlitchTimer=0;
   }
-  ctx.save();ctx.globalAlpha=0.5;ctx.fillStyle=ctx.createPattern(window._scanlineCanvas,'repeat');
-  ctx.fillRect(0,0,canvas.width,canvas.height);ctx.restore();
+  // Random glitch surges — brief moments of heavy scanlines
+  if(window._crtGlitchTimer>0){window._crtGlitchTimer--;window._crtGlitch*=0.95;}
+  else if(Math.random()<0.003){window._crtGlitch=0.3+Math.random()*0.3;window._crtGlitchTimer=10+Math.floor(Math.random()*20);}
+  const _crtBase=0.15+Math.sin(performance.now()*0.0008)*0.05; // subtle breathing
+  const _crtAlpha=Math.min(0.7,_crtBase+window._crtGlitch);
+  ctx.save();ctx.globalAlpha=_crtAlpha;ctx.fillStyle=ctx.createPattern(window._scanlineCanvas,'repeat');
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // Glitch: horizontal color shift band
+  if(window._crtGlitch>0.15){
+    const gy=Math.random()*canvas.height,gh=4+Math.random()*12;
+    ctx.globalAlpha=window._crtGlitch*0.4;ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=Math.random()>0.5?'rgba(0,255,255,0.15)':'rgba(255,0,255,0.15)';
+    ctx.fillRect(Math.random()*6-3,gy,canvas.width,gh);
+    ctx.globalCompositeOperation='source-over';
+  }
+  ctx.restore();
 
   // Spectating text
   if(lp2&&!lp2.alive&&gameState==='playing'){ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,canvas.width,40);ctx.fillStyle='#f04040';ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.fillText('SPECTATING',canvas.width/2,26);}
