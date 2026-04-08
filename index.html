@@ -4385,9 +4385,65 @@ function updateHUD() {
 // ============================================================
 // RENDER
 // ============================================================
+// ---- Neon tunnel menu background ----
+function renderMenuBackground() {
+  const w=canvas.width,h=canvas.height,cx=w/2,cy=h/2;
+  const t=performance.now()*0.001;
+  ctx.fillStyle='#030308';ctx.fillRect(0,0,w,h);
+
+  // Perspective grid tunnel — rings receding into center
+  const numRings=14;
+  for(let i=0;i<numRings;i++){
+    const depth=(i+t*0.4%1)/numRings; // 0=far, 1=near
+    const scale=0.02+depth*depth*0.98; // perspective: small far, big near
+    const rw=w*0.6*scale,rh=h*0.6*scale;
+    const alpha=(1-depth)*0.35;
+    // Color cycles through neon palette
+    const hue=(i*25+t*30)%360;
+    const color=`hsl(${hue},100%,60%)`;
+    ctx.globalAlpha=alpha;ctx.strokeStyle=color;ctx.shadowColor=color;ctx.shadowBlur=8*scale;
+    ctx.lineWidth=1+scale*2;
+    // Rotating rectangles
+    ctx.save();ctx.translate(cx,cy);ctx.rotate(t*0.15+i*0.12);
+    ctx.strokeRect(-rw/2,-rh/2,rw,rh);
+    ctx.restore();
+  }
+
+  // Radiating grid lines from center
+  ctx.shadowBlur=0;
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2+t*0.1;
+    const c=Math.cos(a),s=Math.sin(a);
+    ctx.globalAlpha=0.06;ctx.strokeStyle='#f0f';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+c*w,cy+s*h);ctx.stroke();
+  }
+
+  // Floating neon particles drifting outward from center
+  for(let i=0;i<20;i++){
+    const seed=i*137.5+t*0.3;
+    const a=seed%6.28;const spd=(seed*0.7)%1;
+    const dist=spd*Math.max(w,h)*0.6;
+    const px=cx+Math.cos(a)*dist,py=cy+Math.sin(a)*dist;
+    const sz=1+spd*2;
+    const hue2=(i*40+t*50)%360;
+    ctx.globalAlpha=(1-spd)*0.4;ctx.fillStyle=`hsl(${hue2},100%,70%)`;
+    ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=6;
+    ctx.beginPath();ctx.arc(px,py,sz,0,Math.PI*2);ctx.fill();
+  }
+
+  // Vignette
+  const vg=ctx.createRadialGradient(cx,cy,w*0.15,cx,cy,w*0.65);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(3,3,8,0.8)');
+  ctx.globalAlpha=1;ctx.shadowBlur=0;ctx.fillStyle=vg;ctx.fillRect(0,0,w,h);
+
+  // Scanlines on menu too
+  if(window._scanlineCanvas){ctx.globalAlpha=0.06;ctx.fillStyle=ctx.createPattern(window._scanlineCanvas,'repeat');ctx.fillRect(0,0,w,h);}
+  ctx.globalAlpha=1;
+}
+
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (gameState !== 'playing' && gameState !== 'paused') { renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused') { renderMenuBackground(); renderMinimap(); return; }
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.translate(ox,oy);
 
