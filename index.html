@@ -2573,7 +2573,7 @@ function startSoloGame() {
     exitPos = null;
     protectTimer = 0;
     const spawnC = { x: 5 * CELL_SIZE, y: Math.floor(15) * CELL_SIZE };
-    escortVIP = { x: spawnC.x, y: spawnC.y, hp: 300, maxHp: 300, speed: 3.0, radius: 14, pathIdx: 0, alive: true, damageFlash: 0, invincible: 0 };
+    escortVIP = { x: spawnC.x, y: spawnC.y, hp: 300, maxHp: 300, speed: 2.0, radius: 14, pathIdx: 0, alive: true, damageFlash: 0, invincible: 0 };
     // Scatter chests along the route
     escortChests = [];
     for (let i = 2; i < escortPath.length - 2; i += 3) {
@@ -3157,7 +3157,7 @@ function getHordeEdgePos() {
 // ---- PROTECT MODE MAP ----
 function generateProtectMap(seed) {
   const rng = seededRandom(seed || Date.now());
-  const mapW = 200; // very wide
+  const mapW = 800; // massive horizontal arena
   const mapH = 30;  // not too tall
   setArenaDimensions(mapW * CELL_SIZE, mapH * CELL_SIZE);
   dungeonGrid = [];
@@ -3170,10 +3170,10 @@ function generateProtectMap(seed) {
   arena.theme = ROOM_THEMES[2]; // tile theme — cyan neon
   arena.brightness = 1.0; arena.flicker = false;
   rooms.push(arena);
-  // VIP path: simple left-to-right waypoints along the center
+  // VIP path: long left-to-right march across the entire arena
   escortPath = [];
   const centerY = Math.floor(mapH / 2);
-  const numWaypoints = 15;
+  const numWaypoints = 60;
   for (let i = 0; i <= numWaypoints; i++) {
     const wx = Math.floor((i / numWaypoints) * (mapW - 10)) + 5;
     const wy = centerY + Math.floor((rng() - 0.5) * 6); // slight vertical variance
@@ -3291,10 +3291,28 @@ function updateEscortVIP() {
     }
     pushOutOfObstacles(escortVIP, escortVIP.radius);
   }
-  // Protect mode: endless — reverse path when VIP reaches the end
-  if (gameMode === 'protect' && escortVIP.pathIdx >= escortPath.length) {
-    escortPath.reverse();
-    escortVIP.pathIdx = 1; // skip first (current position)
+  // Protect mode: endless — extend the map and add more waypoints when VIP nears the end
+  if (gameMode === 'protect' && escortVIP.pathIdx >= escortPath.length - 5) {
+    const lastWp = escortPath[escortPath.length - 1];
+    const lastX = lastWp._wx / CELL_SIZE;
+    const marginY = 3, mapH = 30, centerY = Math.floor(mapH / 2);
+    // Extend arena by 200 cells
+    const oldW = Math.floor(ARENA_W / CELL_SIZE);
+    const newW = oldW + 200;
+    setArenaDimensions(newW * CELL_SIZE, mapH * CELL_SIZE);
+    // Fill new dungeon cells
+    for (let y = 0; y < GRID_H; y++) { if (!dungeonGrid[y]) dungeonGrid[y] = []; for (let x = oldW; x < newW; x++) dungeonGrid[y][x] = y >= marginY && y < mapH - marginY; }
+    // Add new waypoints
+    for (let i = 1; i <= 15; i++) {
+      const wx = lastX + i * (200 / 15);
+      const wy = centerY + Math.floor((Math.random() - 0.5) * 6);
+      escortPath.push({ _wx: (wx + 0.5) * CELL_SIZE, _wy: (wy + 0.5) * CELL_SIZE });
+    }
+    // Rebuild obstacles for new area
+    for (let y = 0; y < GRID_H; y++) { for (let x = oldW; x < newW; x++) { if (!(dungeonGrid[y] && dungeonGrid[y][x])) { obstacles.push({ x: x*CELL_SIZE, y: y*CELL_SIZE, w: CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); } } }
+    // Extend roomGrid
+    for (let y = 0; y < GRID_H; y++) { const old = roomGrid[y]; roomGrid[y] = new Int8Array(GRID_W); roomGrid[y].set(old); for (let x = oldW; x < newW; x++) if (dungeonGrid[y] && dungeonGrid[y][x]) roomGrid[y][x] = 0; }
+    uploadDungeonGrid();
   }
   // Escort mode: win when VIP reaches exit
   if (gameMode === 'escort' && escortVIP.pathIdx >= escortPath.length) {
@@ -3352,13 +3370,13 @@ function updateEscortVIP() {
   spawnTimer++;
   if (gameMode === 'protect') {
     const elapsed = protectTimer / 60; // seconds survived
-    const maxZ = Math.min(35, 10 + Math.floor(elapsed * 0.15));
-    const rate = Math.max(3, Math.floor(12 - elapsed * 0.05));
+    const maxZ = Math.min(50, 15 + Math.floor(elapsed * 0.25));
+    const rate = Math.max(2, Math.floor(10 - elapsed * 0.06));
     if (spawnTimer % rate === 0 && zombies.length < maxZ) {
-      spawnZombie();
-      spawnZombie(); // always double spawn
-      if (elapsed > 30 && Math.random() < 0.4) spawnZombie(); // triple after 30s
-      if (elapsed > 60 && Math.random() < 0.3) spawnZombie(); // quad chance after 60s
+      spawnZombie(); spawnZombie(); spawnZombie(); // triple spawn baseline
+      if (elapsed > 20 && Math.random() < 0.5) spawnZombie(); // +1 after 20s
+      if (elapsed > 45 && Math.random() < 0.5) spawnZombie(); // +1 after 45s
+      if (elapsed > 75 && Math.random() < 0.4) { spawnZombie(); spawnZombie(); } // +2 after 75s
       if (Math.random() < 0.03) spawnHealthPickup();
     }
   } else {
