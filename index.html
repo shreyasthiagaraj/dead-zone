@@ -138,6 +138,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 <div id="health-hud"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
 <div id="streak-hud" style="display:none">
 </div>
+<div id="horde-timer" style="display:none;position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;font-size:20px;font-weight:bold;color:#0ff;text-shadow:0 0 10px #0ff,0 0 20px rgba(0,255,255,0.3);letter-spacing:2px"></div>
 <div id="effects-bar" style="position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:20;pointer-events:none;display:flex;gap:6px;justify-content:flex-end"></div>
 <div id="gun-stats" style="display:none"></div>
 <div id="ammo-hud" style="display:none"><div class="weapon-name" id="weapon-name"></div><div class="ammo" id="ammo-display"></div></div>
@@ -558,12 +559,21 @@ function updateDescent() {
     }
   }
   // Closing wall + gate blocking — applies to ALL players
+  const _marginX=Math.floor((GRID_W-DESCENT_WIDTH)/2);
+  const _gx1=_marginX*CELL_SIZE,_gx2=(_marginX+DESCENT_WIDTH)*CELL_SIZE;
+  const _gMid=(_gx1+_gx2)/2, _gPassage=40;
   for (const _dp of players) {
     if (!_dp.alive) continue;
     // Closing wall: push down if going back up
     if (_dp.y < descentTopWall + PLAYER_RADIUS + 10) _dp.y = descentTopWall + PLAYER_RADIUS + 10;
-    // Gate blocks when locked
-    if (!descentGateOpen && sec.gateY > 0 && _dp.y > sec.gateY - PLAYER_RADIUS - 5) _dp.y = sec.gateY - PLAYER_RADIUS - 5;
+    // Gate: walls always block except narrow passage. Passage only open when gate is open.
+    if (sec.gateY > 0 && Math.abs(_dp.y - sec.gateY) < PLAYER_RADIUS + 12) {
+      const inPassage = _dp.x > _gMid - _gPassage + PLAYER_RADIUS && _dp.x < _gMid + _gPassage - PLAYER_RADIUS;
+      if (!inPassage || !descentGateOpen) {
+        if (_dp.y > sec.gateY) _dp.y = sec.gateY + PLAYER_RADIUS + 12;
+        else _dp.y = sec.gateY - PLAYER_RADIUS - 12;
+      }
+    }
   }
 }
 
@@ -4313,7 +4323,10 @@ function updateHUD() {
   if (gs) gs.innerHTML = `<span style="color:${gun.bulletColor}">${gun.damage} dmg</span> · ${gun.fireRate}ms${gun.pierce>0?' · pierce '+gun.pierce:''}`;
   document.getElementById('ammo-display').innerHTML = '';
   document.getElementById('score').textContent=score.toLocaleString();
-  document.getElementById('wave-display').textContent=gameMode==='descent'?`SECTION ${descentSection+1}`:gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?`${Math.floor(hordeTimer/60)}s`:gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
+  document.getElementById('wave-display').textContent=gameMode==='descent'?`SECTION ${descentSection+1}`:gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?'HORDE':gameMode==='survival'?`WAVE ${survivalWave}`:`LEVEL ${level}`;
+  // Horde survival timer — centered top
+  const _ht=document.getElementById('horde-timer');
+  if(_ht){if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_ht.textContent=`${_m}:${_ss<10?'0':''}${_ss}`;_ht.style.display='block';}else{_ht.style.display='none';}}
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
@@ -4529,20 +4542,33 @@ function render() {
     ctx.restore();continue;}
     const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
 
-  // Descent gate
+  // Descent gate — walls with narrow passage
   if(gameMode==='descent'&&descentSections[descentSection]){
     const sec=descentSections[descentSection];
     const marginX=Math.floor((GRID_W-DESCENT_WIDTH)/2);
     const gx1=marginX*CELL_SIZE,gx2=(marginX+DESCENT_WIDTH)*CELL_SIZE,gy=sec.gateY;
+    const gMid=(gx1+gx2)/2, gPassage=40; // narrow passage width
     const gColor=descentGateOpen?'#0ff':'#f44';
     const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
-    ctx.globalAlpha=descentGateOpen?0.6*pulse:0.3;ctx.strokeStyle=gColor;ctx.lineWidth=4;
-    ctx.beginPath();ctx.moveTo(gx1,gy);ctx.lineTo(gx2,gy);ctx.stroke();
-    ctx.globalAlpha=0.15;ctx.fillStyle=gColor;ctx.fillRect(gx1,gy-10,gx2-gx1,20);
-    ctx.globalAlpha=1;ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.fillStyle=gColor;
-    ctx.fillText(descentGateOpen?'▼ GATE OPEN ▼':'✕ GATE LOCKED ✕',(gx1+gx2)/2,gy-15);
+    // Left wall
+    ctx.fillStyle='#050508';ctx.fillRect(gx1,gy-12,gMid-gPassage-gx1,24);
+    // Right wall
+    ctx.fillRect(gMid+gPassage,gy-12,gx2-(gMid+gPassage),24);
+    // Neon wall edges
+    ctx.shadowColor=gColor;ctx.shadowBlur=descentGateOpen?12:6;
+    ctx.globalAlpha=descentGateOpen?0.8*pulse:0.4;ctx.strokeStyle=gColor;ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(gx1,gy);ctx.lineTo(gMid-gPassage,gy);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(gMid+gPassage,gy);ctx.lineTo(gx2,gy);ctx.stroke();
+    // Passage markers
+    ctx.globalAlpha=descentGateOpen?0.9:0.3;ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(gMid-gPassage,gy-12);ctx.lineTo(gMid-gPassage,gy+12);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(gMid+gPassage,gy-12);ctx.lineTo(gMid+gPassage,gy+12);ctx.stroke();
+    ctx.shadowBlur=0;
+    ctx.globalAlpha=1;ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillStyle=gColor;
+    ctx.shadowColor=gColor;ctx.shadowBlur=8;
+    ctx.fillText(descentGateOpen?'▼ OPEN ▼':'✕ LOCKED ✕',gMid,gy-18);ctx.shadowBlur=0;
     // Closing wall indicator
-    if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#200';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.globalAlpha=1;}
+    if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#100008';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
   }
 
   // Exit portal
