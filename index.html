@@ -148,7 +148,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 <div id="streak-hud" style="display:none">
 </div>
 <div id="horde-timer" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;font-size:20px;font-weight:bold;color:#0ff;text-shadow:0 0 10px #0ff,0 0 20px rgba(0,255,255,0.3);letter-spacing:2px"></div>
-<div id="effects-bar" style="position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:20;pointer-events:none;display:flex;gap:6px;justify-content:flex-end"></div>
+<div id="effects-bar" style="position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right) * 0.5);z-index:20;pointer-events:none;display:flex;gap:4px;justify-content:flex-end"></div>
 <div id="gun-stats" style="display:none"></div>
 <div id="ammo-hud" style="display:none"><div class="weapon-name" id="weapon-name"></div><div class="ammo" id="ammo-display"></div></div>
 <div id="weapon-slots" style="display:none"></div>
@@ -2277,6 +2277,7 @@ function updateLobbyUI() {
 
 function showDeathScreen() {
   gameState = 'dead';
+  stopSunbeamLoop(); stopWeaponLoop();
   document.getElementById('btn-menu').style.display = 'none';
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
 
@@ -4181,25 +4182,16 @@ function update() {
     h.vx*=0.98;h.vy*=0.98;h.size+=0.03; // slowly expand
     if(h.life<=0)hazeParticles.splice(i,1);
   }}
-  // Movement dust — fine white glinting motes
-  {const lp=getLocalPlayer();if(lp&&lp.alive&&(Math.abs(lp.vx)>1||Math.abs(lp.vy)>1)){
-    const speed=Math.sqrt(lp.vx*lp.vx+lp.vy*lp.vy);
-    const count=speed>4?3:speed>2?2:1;
-    if(gameTime%2===0)for(let di=0;di<count;di++){
-      // Spawn at player edge, biased behind movement direction
+  // Movement dust — sparse fine motes behind player
+  {const lp=getLocalPlayer();if(lp&&lp.alive&&(Math.abs(lp.vx)>1.5||Math.abs(lp.vy)>1.5)){
+    if(gameTime%4===0){
       const moveA=Math.atan2(lp.vy,lp.vx);
-      const backA=moveA+Math.PI+(Math.random()-0.5)*1.6; // behind ± 45°
-      const edgeDist=PLAYER_RADIUS+2+Math.random()*6;
+      const backA=moveA+Math.PI+(Math.random()-0.5)*1.4;
+      const edgeDist=PLAYER_RADIUS+2+Math.random()*5;
       particles.push({x:lp.x+Math.cos(backA)*edgeDist,y:lp.y+Math.sin(backA)*edgeDist,
-        vx:Math.cos(backA)*0.5+(Math.random()-0.5)*0.6,vy:Math.sin(backA)*0.5+(Math.random()-0.5)*0.6,
-        life:12+Math.random()*16,maxLife:28,size:0.8+Math.random()*1.2,
+        vx:Math.cos(backA)*0.3+(Math.random()-0.5)*0.4,vy:Math.sin(backA)*0.3+(Math.random()-0.5)*0.4,
+        life:10+Math.random()*12,maxLife:22,size:0.6+Math.random()*0.8,
         color:Math.random()>0.3?'#fff':'#cef',type:'spark'});
-    }
-    // Footstep glow pulse — brief neon flash behind player
-    if(gameTime%12===0){
-      const _fa=Math.atan2(lp.vy,lp.vx);
-      particles.push({x:lp.x-Math.cos(_fa)*(PLAYER_RADIUS+4),y:lp.y-Math.sin(_fa)*(PLAYER_RADIUS+4),
-        vx:0,vy:0,life:6,maxLife:6,size:PLAYER_RADIUS*0.8,color:lp.color,type:'explosion'});
     }
   }
   // Dash afterimage trail
@@ -4420,9 +4412,9 @@ function updateHUD() {
   let efx = '';
   function effectTile(icon, color, secs, label) {
     const expiring = secs <= 3;
-    return `<div style="display:flex;flex-direction:column;align-items:center;padding:4px 8px;border:2px solid ${color};border-radius:6px;background:rgba(0,0,0,0.6);min-width:44px;${expiring?'animation:pulse 0.5s ease-in-out infinite':''}">
-      <span style="font-size:18px;line-height:1">${icon}</span>
-      <span style="color:${color};font-size:10px;font-weight:bold;margin-top:2px">${secs}s</span>
+    return `<div style="display:flex;flex-direction:column;align-items:center;padding:3px 6px;min-width:36px;${expiring?'animation:pulse 0.5s ease-in-out infinite':''}">
+      <span style="font-size:16px;line-height:1;filter:drop-shadow(0 0 4px ${color})">${icon}</span>
+      <span style="color:${color};font-size:9px;font-weight:bold;margin-top:1px;text-shadow:0 0 4px ${color}">${secs}s</span>
     </div>`;
   }
   if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) efx += effectTile(et.icon, et.color, Math.ceil(activeElement.timer/60), et.name); }
