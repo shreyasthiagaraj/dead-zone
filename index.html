@@ -3124,27 +3124,73 @@ function getHordeEdgePos() {
   return { x: hordeCircleCx + Math.cos(a) * r, y: hordeCircleCy + Math.sin(a) * r };
 }
 // ---- ESCORT MODE ----
+// BFS pathfinding on dungeon grid — returns array of {x,y} world positions
+function bfsPath(sx, sy, tx, ty) {
+  const sgx = Math.floor(sx / CELL_SIZE), sgy = Math.floor(sy / CELL_SIZE);
+  const tgx = Math.floor(tx / CELL_SIZE), tgy = Math.floor(ty / CELL_SIZE);
+  if (sgx === tgx && sgy === tgy) return [{ x: tx, y: ty }];
+  if (!dungeonGrid || !dungeonGrid[tgy] || !dungeonGrid[tgy][tgx]) return null;
+  const visited = new Set();
+  const queue = [{ gx: sgx, gy: sgy, path: [] }];
+  visited.add(sgy * GRID_W + sgx);
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [ddx, ddy] of dirs) {
+      const nx = cur.gx + ddx, ny = cur.gy + ddy;
+      const key = ny * GRID_W + nx;
+      if (nx < 0 || ny < 0 || nx >= GRID_W || ny >= GRID_H) continue;
+      if (visited.has(key)) continue;
+      if (!dungeonGrid[ny] || !dungeonGrid[ny][nx]) continue;
+      visited.add(key);
+      const newPath = [...cur.path, { x: (nx + 0.5) * CELL_SIZE, y: (ny + 0.5) * CELL_SIZE }];
+      if (nx === tgx && ny === tgy) return newPath;
+      queue.push({ gx: nx, gy: ny, path: newPath });
+    }
+  }
+  return null; // no path found
+}
+
 function updateEscortVIP() {
   if (!isHost || gameMode !== 'escort' || !escortVIP || !escortVIP.alive) return;
   // Timers
   if (escortVIP.damageFlash > 0) escortVIP.damageFlash--;
   if (escortVIP.invincible > 0) escortVIP.invincible--;
-  // Move toward next room in path
+  // Move along BFS cell path toward next room
   if (escortVIP.pathIdx < escortPath.length) {
+    // Recompute cell path when needed (new target room or no path)
+    if (!escortVIP._cellPath || escortVIP._cellPath.length === 0 || escortVIP._lastTargetIdx !== escortVIP.pathIdx) {
+      const targetRoom = rooms[escortPath[escortVIP.pathIdx]];
+      if (targetRoom) {
+        const tc = getRoomCenter(targetRoom);
+        escortVIP._cellPath = bfsPath(escortVIP.x, escortVIP.y, tc.x, tc.y) || [];
+        escortVIP._lastTargetIdx = escortVIP.pathIdx;
+      }
+    }
+    // Follow cell path
+    if (escortVIP._cellPath && escortVIP._cellPath.length > 0) {
+      const wp = escortVIP._cellPath[0];
+      const dx = wp.x - escortVIP.x, dy = wp.y - escortVIP.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < CELL_SIZE * 0.6) {
+        escortVIP._cellPath.shift(); // reached waypoint
+      } else if (d > 0.5) {
+        escortVIP.x += (dx / d) * escortVIP.speed;
+        escortVIP.y += (dy / d) * escortVIP.speed;
+      }
+    } else {
+      // No cell path — fallback: arrived at room, advance
+      escortVIP.pathIdx++;
+      escortVIP._cellPath = null;
+    }
+    // Check if close to room center — advance to next room
     const targetRoom = rooms[escortPath[escortVIP.pathIdx]];
     if (targetRoom) {
       const tc = getRoomCenter(targetRoom);
-      const dx = tc.x - escortVIP.x, dy = tc.y - escortVIP.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < 30) {
-        // Reached target room, advance
-        escortVIP.pathIdx++;
-      } else if (d > 1) {
-        escortVIP.x += (dx / d) * escortVIP.speed;
-        escortVIP.y += (dy / d) * escortVIP.speed;
-        pushOutOfObstacles(escortVIP, escortVIP.radius);
-      }
+      const dRoom = Math.sqrt((tc.x - escortVIP.x) ** 2 + (tc.y - escortVIP.y) ** 2);
+      if (dRoom < 30) { escortVIP.pathIdx++; escortVIP._cellPath = null; }
     }
+    pushOutOfObstacles(escortVIP, escortVIP.radius);
   }
   // Win: VIP reached exit
   if (exitPos && escortVIP.pathIdx >= escortPath.length) {
