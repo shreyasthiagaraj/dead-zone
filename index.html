@@ -559,21 +559,12 @@ function updateDescent() {
     }
   }
   // Closing wall + gate blocking — applies to ALL players
-  const _marginX=Math.floor((GRID_W-DESCENT_WIDTH)/2);
-  const _gx1=_marginX*CELL_SIZE,_gx2=(_marginX+DESCENT_WIDTH)*CELL_SIZE;
-  const _gMid=(_gx1+_gx2)/2, _gPassage=40;
   for (const _dp of players) {
     if (!_dp.alive) continue;
     // Closing wall: push down if going back up
     if (_dp.y < descentTopWall + PLAYER_RADIUS + 10) _dp.y = descentTopWall + PLAYER_RADIUS + 10;
-    // Gate: walls always block except narrow passage. Passage only open when gate is open.
-    if (sec.gateY > 0 && Math.abs(_dp.y - sec.gateY) < PLAYER_RADIUS + 12) {
-      const inPassage = _dp.x > _gMid - _gPassage + PLAYER_RADIUS && _dp.x < _gMid + _gPassage - PLAYER_RADIUS;
-      if (!inPassage || !descentGateOpen) {
-        if (_dp.y > sec.gateY) _dp.y = sec.gateY + PLAYER_RADIUS + 12;
-        else _dp.y = sec.gateY - PLAYER_RADIUS - 12;
-      }
-    }
+    // Gate blocks when locked
+    if (!descentGateOpen && sec.gateY > 0 && _dp.y > sec.gateY - PLAYER_RADIUS - 5) _dp.y = sec.gateY - PLAYER_RADIUS - 5;
   }
 }
 
@@ -4542,31 +4533,19 @@ function render() {
     ctx.restore();continue;}
     const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
 
-  // Descent gate — walls with narrow passage
+  // Descent gate
   if(gameMode==='descent'&&descentSections[descentSection]){
     const sec=descentSections[descentSection];
     const marginX=Math.floor((GRID_W-DESCENT_WIDTH)/2);
     const gx1=marginX*CELL_SIZE,gx2=(marginX+DESCENT_WIDTH)*CELL_SIZE,gy=sec.gateY;
-    const gMid=(gx1+gx2)/2, gPassage=40; // narrow passage width
     const gColor=descentGateOpen?'#0ff':'#f44';
     const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
-    // Left wall
-    ctx.fillStyle='#050508';ctx.fillRect(gx1,gy-12,gMid-gPassage-gx1,24);
-    // Right wall
-    ctx.fillRect(gMid+gPassage,gy-12,gx2-(gMid+gPassage),24);
-    // Neon wall edges
-    ctx.shadowColor=gColor;ctx.shadowBlur=descentGateOpen?12:6;
-    ctx.globalAlpha=descentGateOpen?0.8*pulse:0.4;ctx.strokeStyle=gColor;ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(gx1,gy);ctx.lineTo(gMid-gPassage,gy);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(gMid+gPassage,gy);ctx.lineTo(gx2,gy);ctx.stroke();
-    // Passage markers
-    ctx.globalAlpha=descentGateOpen?0.9:0.3;ctx.lineWidth=3;
-    ctx.beginPath();ctx.moveTo(gMid-gPassage,gy-12);ctx.lineTo(gMid-gPassage,gy+12);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(gMid+gPassage,gy-12);ctx.lineTo(gMid+gPassage,gy+12);ctx.stroke();
-    ctx.shadowBlur=0;
-    ctx.globalAlpha=1;ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillStyle=gColor;
+    ctx.globalAlpha=descentGateOpen?0.6*pulse:0.3;ctx.shadowColor=gColor;ctx.shadowBlur=10;ctx.strokeStyle=gColor;ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(gx1,gy);ctx.lineTo(gx2,gy);ctx.stroke();
+    ctx.globalAlpha=0.15;ctx.fillStyle=gColor;ctx.fillRect(gx1,gy-10,gx2-gx1,20);
+    ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.fillStyle=gColor;
     ctx.shadowColor=gColor;ctx.shadowBlur=8;
-    ctx.fillText(descentGateOpen?'▼ OPEN ▼':'✕ LOCKED ✕',gMid,gy-18);ctx.shadowBlur=0;
+    ctx.fillText(descentGateOpen?'▼ GATE OPEN ▼':'✕ GATE LOCKED ✕',(gx1+gx2)/2,gy-15);ctx.shadowBlur=0;
     // Closing wall indicator
     if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#100008';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
   }
