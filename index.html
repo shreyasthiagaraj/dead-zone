@@ -3167,37 +3167,62 @@ function updateEscortVIP() {
   if (escortVIP.invincible > 0) escortVIP.invincible--;
   // Move along BFS cell path toward next room
   if (escortVIP.pathIdx < escortPath.length) {
-    // Recompute cell path when needed (new target room or no path)
-    if (!escortVIP._cellPath || escortVIP._cellPath.length === 0 || escortVIP._lastTargetIdx !== escortVIP.pathIdx) {
-      const targetRoom = rooms[escortPath[escortVIP.pathIdx]];
-      if (targetRoom) {
-        const tc = getRoomCenter(targetRoom);
-        escortVIP._cellPath = bfsPath(escortVIP.x, escortVIP.y, tc.x, tc.y) || [];
-        escortVIP._lastTargetIdx = escortVIP.pathIdx;
-      }
-    }
-    // Follow cell path
-    if (escortVIP._cellPath && escortVIP._cellPath.length > 0) {
-      const wp = escortVIP._cellPath[0];
-      const dx = wp.x - escortVIP.x, dy = wp.y - escortVIP.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < CELL_SIZE * 0.6) {
-        escortVIP._cellPath.shift(); // reached waypoint
-      } else if (d > 0.5) {
-        escortVIP.x += (dx / d) * escortVIP.speed;
-        escortVIP.y += (dy / d) * escortVIP.speed;
-      }
-    } else {
-      // No cell path — fallback: arrived at room, advance
-      escortVIP.pathIdx++;
-      escortVIP._cellPath = null;
-    }
-    // Check if close to room center — advance to next room
+    // Get current target room center
     const targetRoom = rooms[escortPath[escortVIP.pathIdx]];
     if (targetRoom) {
       const tc = getRoomCenter(targetRoom);
       const dRoom = Math.sqrt((tc.x - escortVIP.x) ** 2 + (tc.y - escortVIP.y) ** 2);
-      if (dRoom < 30) { escortVIP.pathIdx++; escortVIP._cellPath = null; }
+      // Close enough to target — advance to next room
+      if (dRoom < 35) {
+        escortVIP.pathIdx++;
+        escortVIP._cellPath = null;
+        escortVIP._stuckTimer = 0;
+      } else {
+        // Recompute BFS path when target changes or path is empty/stale
+        if (!escortVIP._cellPath || escortVIP._cellPath.length === 0 || escortVIP._lastTargetIdx !== escortVIP.pathIdx) {
+          escortVIP._cellPath = bfsPath(escortVIP.x, escortVIP.y, tc.x, tc.y);
+          escortVIP._lastTargetIdx = escortVIP.pathIdx;
+          escortVIP._stuckTimer = 0;
+          // If BFS fails, try nudging start position to nearest floor cell
+          if (!escortVIP._cellPath) {
+            const gx = Math.floor(escortVIP.x / CELL_SIZE), gy = Math.floor(escortVIP.y / CELL_SIZE);
+            for (const [ox, oy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
+              if (dungeonGrid[gy+oy] && dungeonGrid[gy+oy][gx+ox]) {
+                escortVIP._cellPath = bfsPath((gx+ox+0.5)*CELL_SIZE, (gy+oy+0.5)*CELL_SIZE, tc.x, tc.y);
+                if (escortVIP._cellPath) { escortVIP.x = (gx+ox+0.5)*CELL_SIZE; escortVIP.y = (gy+oy+0.5)*CELL_SIZE; break; }
+              }
+            }
+          }
+        }
+        // Follow cell path waypoints
+        if (escortVIP._cellPath && escortVIP._cellPath.length > 0) {
+          const wp = escortVIP._cellPath[0];
+          const dx = wp.x - escortVIP.x, dy = wp.y - escortVIP.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < CELL_SIZE * 0.5) {
+            escortVIP._cellPath.shift();
+          } else if (d > 0.5) {
+            const prevX = escortVIP.x, prevY = escortVIP.y;
+            escortVIP.x += (dx / d) * escortVIP.speed;
+            escortVIP.y += (dy / d) * escortVIP.speed;
+            // Stuck detection — if barely moved, recompute path
+            if (Math.abs(escortVIP.x - prevX) < 0.01 && Math.abs(escortVIP.y - prevY) < 0.01) {
+              escortVIP._stuckTimer = (escortVIP._stuckTimer || 0) + 1;
+              if (escortVIP._stuckTimer > 60) { escortVIP._cellPath = null; escortVIP._stuckTimer = 0; }
+            } else { escortVIP._stuckTimer = 0; }
+          }
+        } else {
+          // Path exhausted but not at target — direct move as fallback
+          const dx = tc.x - escortVIP.x, dy = tc.y - escortVIP.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d > 1) { escortVIP.x += (dx / d) * escortVIP.speed; escortVIP.y += (dy / d) * escortVIP.speed; }
+          escortVIP._stuckTimer = (escortVIP._stuckTimer || 0) + 1;
+          if (escortVIP._stuckTimer > 120) { escortVIP.pathIdx++; escortVIP._cellPath = null; escortVIP._stuckTimer = 0; } // skip room if truly stuck
+        }
+      }
+    } else {
+      // Invalid room ref — skip
+      escortVIP.pathIdx++;
     }
     pushOutOfObstacles(escortVIP, escortVIP.radius);
   }
