@@ -609,7 +609,7 @@ function updateElementZones() {
   if (activeElement) { activeElement.timer--; if (activeElement.timer <= 0) activeElement = null; }
 }
 
-function applyElementOnHit(z, damage) {
+function applyElementOnHit(z, damage, srcX, srcY) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
   if (el === 'fire') {
@@ -622,9 +622,11 @@ function applyElementOnHit(z, damage) {
   } else if (el === 'lightning') {
     // Shock effect on primary target — visible sparks for 2 seconds
     z._shocked = 45; z.staggerTimer = Math.max(z.staggerTimer, 10);
-    // Lightning bolt visual from bullet to zombie
-    const lp = getLocalPlayer();
-    if(lp){particles.push({x:lp.x+Math.cos(lp.angle)*22,y:lp.y+Math.sin(lp.angle)*22,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});}
+    // Lightning bolt visual from source to zombie + zap sound
+    const _sx=srcX!==undefined?srcX:getLocalPlayer()?.x||z.x;
+    const _sy=srcY!==undefined?srcY:getLocalPlayer()?.y||z.y;
+    particles.push({x:_sx,y:_sy,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+    playSfx('zap',0.2);
     for(let si=0;si<4;si++)particles.push({x:z.x+(Math.random()-0.5)*15,y:z.y+(Math.random()-0.5)*15,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:12,maxLife:12,size:2+Math.random()*3,color:'#4ff',type:'spark'});
     // Chain to 5 enemies at 20% damage each
     let lastZ = z; const hitSet = new Set();
@@ -1248,7 +1250,7 @@ const SFX_FILES = [
   'smg_fire', 'minigun_loop', 'minigun_spinup', 'flamethrower_loop', 'flamethrower_ignite',
   'laser_loop', 'smg_loop', 'laser_fire',
   'hit', 'zombie_hit', 'death', 'pickup', 'dash', 'hurt', 'explosion', 'reload',
-  'blast_default', 'blast_fire', 'blast_ice', 'blast_lightning', 'sunbeam_loop',
+  'blast_default', 'blast_fire', 'blast_ice', 'blast_lightning', 'sunbeam_loop', 'zap', 'ice_hit',
   'zombie_attack', 'level_complete', 'game_over', 'footstep',
   'headshot', 'empty_clip', 'weapon_switch', 'killstreak',
   'zombie_groan', 'zombie_spawn', 'zombie_boss',
@@ -3478,7 +3480,11 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if(z.hp<=0&&damage>prevHp*1.5){const gibCount=Math.min(12,Math.floor(damage/prevHp)*4);for(let i=0;i<gibCount;i++){const ga=Math.random()*Math.PI*2,gs=3+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(ga)*gs+kbx*0.5,vy:Math.sin(ga)*gs+kby*0.5,life:50+Math.random()*30,maxLife:80,size:4+Math.random()*6,color:['#611','#522','#700','#811'][Math.floor(Math.random()*4)],type:'chunk',gravity:0.08});}}
   // Wounded zombie starts dripping blood
   if(z.hp>0&&z.hp<z.maxHp*0.4) z._bleeding=true;
-  if(!silent) playHitSound();
+  if(!silent){
+    if(z._frozenTimer>0) playSfx('ice_hit',0.25)||playHitSound();
+    else if(z._shocked>0) playSfx('zap',0.15)||playHitSound();
+    else playHitSound();
+  }
   // Damage number popup
   if(damage>=1) addFloatingText(z.x+(Math.random()-0.5)*16, z.y-z.radius-8, Math.floor(damage)+'', damage>=50?'#f44':damage>=20?'#fa0':'#fff');
 }
@@ -3771,7 +3777,7 @@ function update() {
                   const a=Math.atan2(b.vy,b.vx);damageZombie(z,b.damage,Math.cos(a)*b.knockback,Math.sin(a)*b.knockback);
                   if(b.ownerId===getLocalPlayer()?.id){runStats.shotsHit++;runStats.damageDealt+=b.damage;}
                   // Apply element effects from modifier system
-                  if(b._element)applyElementOnHit(z,b.damage);
+                  if(b._element)applyElementOnHit(z,b.damage,b.x,b.y);
                   // Critical hit VFX
                   if(b.crit){addFloatingText(z.x,z.y-z.radius-10,'CRITICAL!','#f0f');playHeadshotSound();screenShake.intensity=Math.max(screenShake.intensity,8);for(let ck=0;ck<8;ck++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:15+Math.random()*10,maxLife:25,size:3+Math.random()*3,color:Math.random()>0.5?'#f0f':'#fff',type:'spark'});}}
                   // Chain lightning — arc from gun to first hit, then between chained zombies
