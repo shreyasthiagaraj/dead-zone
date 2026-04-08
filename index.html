@@ -4352,6 +4352,14 @@ function render() {
       // Neon grid lines
       ctx.strokeStyle=theme.grid;ctx.lineWidth=0.5;
       ctx.strokeRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
+      // Corridor neon strip — center line in corridors (not in rooms)
+      if(ri<0){const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
+        const hFloor=(cx>0&&dungeonGrid[cy][cx-1])&&(cx<GRID_W-1&&dungeonGrid[cy][cx+1]);
+        const vFloor=(cy>0&&dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx])&&(cy<_gridH-1&&dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx]);
+        ctx.globalAlpha=0.12;ctx.fillStyle='#a4f';
+        if(hFloor)ctx.fillRect(px,py+CELL_SIZE/2-1,CELL_SIZE,2);
+        if(vFloor)ctx.fillRect(px+CELL_SIZE/2-1,py,2,CELL_SIZE);
+        ctx.globalAlpha=1;}
     } else {
       ctx.fillStyle='#050508';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
@@ -4384,6 +4392,24 @@ function render() {
   const _renderH=ARENA_H;
   ctx.shadowColor='#f0f';ctx.shadowBlur=8;ctx.strokeStyle='#f0f';ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
 
+  // Room neon accents — corner brackets + subtle pulse glow
+  const _neonPulse=0.03+Math.sin(performance.now()*0.002)*0.015;
+  for(const r of rooms){
+    if(!r||!r.theme)continue;
+    const rx=r.x*CELL_SIZE,ry=r.y*CELL_SIZE,rw=r.w*CELL_SIZE,rh=r.h*CELL_SIZE;
+    if(rx+rw<vL||rx>vR||ry+rh<vT||ry>vB)continue;
+    // Subtle pulsing room fill
+    ctx.globalAlpha=_neonPulse;ctx.fillStyle=r.theme.accent;ctx.fillRect(rx,ry,rw,rh);
+    // Corner brackets
+    ctx.globalAlpha=0.4;ctx.strokeStyle=r.theme.accent;ctx.lineWidth=1.5;
+    const cb=12; // bracket size
+    ctx.beginPath();ctx.moveTo(rx,ry+cb);ctx.lineTo(rx,ry);ctx.lineTo(rx+cb,ry);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(rx+rw-cb,ry);ctx.lineTo(rx+rw,ry);ctx.lineTo(rx+rw,ry+cb);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(rx,ry+rh-cb);ctx.lineTo(rx,ry+rh);ctx.lineTo(rx+cb,ry+rh);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(rx+rw-cb,ry+rh);ctx.lineTo(rx+rw,ry+rh);ctx.lineTo(rx+rw,ry+rh-cb);ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+
   // Room debris and props
   for(const rd of roomDetails){
     const r=rooms[rd.ri]; if(!r)continue;
@@ -4395,18 +4421,19 @@ function render() {
       ctx.save();
       if(d.type==='crate'){
         ctx.translate(d.x,d.y);ctx.rotate(d.angle||0);
-        ctx.fillStyle='#3a3020';ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
-        ctx.strokeStyle='#4a4030';ctx.lineWidth=1;ctx.strokeRect(-d.size/2,-d.size/2,d.size,d.size);
-        ctx.strokeStyle='#2a2018';ctx.beginPath();ctx.moveTo(-d.size/2,0);ctx.lineTo(d.size/2,0);ctx.stroke();
+        ctx.fillStyle='#0a0a10';ctx.fillRect(-d.size/2,-d.size/2,d.size,d.size);
+        ctx.shadowColor='#4a3';ctx.shadowBlur=4;ctx.strokeStyle='#4a3';ctx.lineWidth=1;ctx.strokeRect(-d.size/2,-d.size/2,d.size,d.size);ctx.shadowBlur=0;
+        ctx.globalAlpha=0.3;ctx.strokeStyle='#4a3';ctx.beginPath();ctx.moveTo(-d.size/2,0);ctx.lineTo(d.size/2,0);ctx.stroke();ctx.globalAlpha=1;
       } else if(d.type==='table'){
         ctx.translate(d.x,d.y);ctx.rotate(d.angle||0);
-        ctx.fillStyle='#2a2a2a';ctx.fillRect(-d.w/2,-d.h/2,d.w,d.h);
-        ctx.strokeStyle='#3a3a3a';ctx.lineWidth=1;ctx.strokeRect(-d.w/2,-d.h/2,d.w,d.h);
+        ctx.fillStyle='#08080e';ctx.fillRect(-d.w/2,-d.h/2,d.w,d.h);
+        ctx.shadowColor='#448';ctx.shadowBlur=3;ctx.strokeStyle='#448';ctx.lineWidth=1;ctx.strokeRect(-d.w/2,-d.h/2,d.w,d.h);ctx.shadowBlur=0;
       } else if(d.type==='rubble'){
         for(let ri=0;ri<d.count;ri++){
           const rx=d.x+(Math.sin(ri*7.3))*d.size*1.5,ry=d.y+(Math.cos(ri*5.1))*d.size*1.5;
-          ctx.fillStyle=ri%2?'#333':'#2a2a2a';
+          ctx.fillStyle='#0a0a10';
           ctx.beginPath();ctx.arc(rx,ry,2+d.size*0.3,0,Math.PI*2);ctx.fill();
+          ctx.globalAlpha=0.3;ctx.strokeStyle='#336';ctx.lineWidth=0.5;ctx.stroke();ctx.globalAlpha=1;
         }
       } else if(d.type==='stain'){
         ctx.globalAlpha=0.4;
@@ -4415,12 +4442,12 @@ function render() {
         ctx.fillStyle=g;ctx.fillRect(d.x-d.size,d.y-d.size,d.size*2,d.size*2);
         ctx.globalAlpha=1;
       } else if(d.type==='pipes'){
-        ctx.strokeStyle='#444';ctx.lineWidth=3;
+        ctx.strokeStyle='#0a0a10';ctx.lineWidth=4;
         ctx.beginPath();
         if(d.vertical){ctx.moveTo(d.x+CELL_SIZE/2,d.y);ctx.lineTo(d.x+CELL_SIZE/2,d.y+d.len*CELL_SIZE);}
         else{ctx.moveTo(d.x,d.y+CELL_SIZE/2);ctx.lineTo(d.x+d.len*CELL_SIZE,d.y+CELL_SIZE/2);}
         ctx.stroke();
-        ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.stroke();
+        ctx.shadowColor='#448';ctx.shadowBlur=4;ctx.strokeStyle='#448';ctx.lineWidth=1;ctx.stroke();ctx.shadowBlur=0;
       } else if(d.type==='scratch'){
         ctx.globalAlpha=0.3;ctx.strokeStyle='#444';ctx.lineWidth=1;
         ctx.translate(d.x,d.y);ctx.rotate(d.angle);
@@ -5014,11 +5041,15 @@ function render() {
           const gr2=ctx.createRadialGradient(ex2,ey2,0,ex2,ey2,15+Math.random()*25);gr2.addColorStop(0,`rgba(100,0,0,${0.2+Math.random()*0.3})`);gr2.addColorStop(1,'rgba(60,0,0,0)');ctx.fillStyle=gr2;ctx.fillRect(ex2-40,ey2-40,80,80);}
       ctx.restore();}
     }
+    // Synthwave vignette — subtle purple edges always present
+    {const svg=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.35,canvas.width/2,canvas.height/2,canvas.width*0.75);
+    svg.addColorStop(0,'rgba(0,0,0,0)');svg.addColorStop(1,'rgba(15,0,25,0.35)');
+    ctx.fillStyle=svg;ctx.fillRect(0,0,canvas.width,canvas.height);}
     // Low HP vignette — dark edges that intensify as health drops
     if(hpRatio<0.5&&lp2.alive){
       const vigAlpha=Math.min(0.6,(0.5-hpRatio)*1.2);
       const grd=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
-      grd.addColorStop(0,'rgba(0,0,0,0)');grd.addColorStop(1,`rgba(40,0,0,${vigAlpha})`);
+      grd.addColorStop(0,'rgba(0,0,0,0)');grd.addColorStop(1,`rgba(30,0,20,${vigAlpha})`);
       ctx.fillStyle=grd;ctx.fillRect(0,0,canvas.width,canvas.height);
       // Pulse effect at critical HP
       if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
