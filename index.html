@@ -4393,20 +4393,30 @@ function render() {
   ctx.shadowColor='#f0f';ctx.shadowBlur=8;ctx.strokeStyle='#f0f';ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
 
   // Room neon accents — corner brackets + subtle pulse glow
-  const _neonPulse=0.03+Math.sin(performance.now()*0.002)*0.015;
+  const _neonPulse=0.06+Math.sin(performance.now()*0.002)*0.03;
   for(const r of rooms){
     if(!r||!r.theme)continue;
     const rx=r.x*CELL_SIZE,ry=r.y*CELL_SIZE,rw=r.w*CELL_SIZE,rh=r.h*CELL_SIZE;
     if(rx+rw<vL||rx>vR||ry+rh<vT||ry>vB)continue;
-    // Subtle pulsing room fill
-    ctx.globalAlpha=_neonPulse;ctx.fillStyle=r.theme.accent;ctx.fillRect(rx,ry,rw,rh);
-    // Corner brackets
+    // Subtle pulsing room fill — clamp to viewport for huge rooms
+    const pfx=Math.max(rx,vL),pfy=Math.max(ry,vT),pfw=Math.min(rx+rw,vR)-pfx,pfh=Math.min(ry+rh,vB)-pfy;
+    ctx.globalAlpha=_neonPulse;ctx.fillStyle=r.theme.accent;ctx.fillRect(pfx,pfy,pfw,pfh);
+    // Corner brackets — only draw if corner is in viewport
     ctx.globalAlpha=0.4;ctx.strokeStyle=r.theme.accent;ctx.lineWidth=1.5;
-    const cb=12; // bracket size
-    ctx.beginPath();ctx.moveTo(rx,ry+cb);ctx.lineTo(rx,ry);ctx.lineTo(rx+cb,ry);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(rx+rw-cb,ry);ctx.lineTo(rx+rw,ry);ctx.lineTo(rx+rw,ry+cb);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(rx,ry+rh-cb);ctx.lineTo(rx,ry+rh);ctx.lineTo(rx+cb,ry+rh);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(rx+rw-cb,ry+rh);ctx.lineTo(rx+rw,ry+rh);ctx.lineTo(rx+rw,ry+rh-cb);ctx.stroke();
+    const cb=12;
+    if(rx>vL-cb&&rx<vR&&ry>vT-cb&&ry<vB){ctx.beginPath();ctx.moveTo(rx,ry+cb);ctx.lineTo(rx,ry);ctx.lineTo(rx+cb,ry);ctx.stroke();}
+    if(rx+rw>vL&&rx+rw<vR+cb&&ry>vT-cb&&ry<vB){ctx.beginPath();ctx.moveTo(rx+rw-cb,ry);ctx.lineTo(rx+rw,ry);ctx.lineTo(rx+rw,ry+cb);ctx.stroke();}
+    if(rx>vL-cb&&rx<vR&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx,ry+rh-cb);ctx.lineTo(rx,ry+rh);ctx.lineTo(rx+cb,ry+rh);ctx.stroke();}
+    if(rx+rw>vL&&rx+rw<vR+cb&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx+rw-cb,ry+rh);ctx.lineTo(rx+rw,ry+rh);ctx.lineTo(rx+rw,ry+rh-cb);ctx.stroke();}
+    // For large rooms: add grid of accent dots across the floor
+    if(rw>CELL_SIZE*10||rh>CELL_SIZE*10){
+      ctx.globalAlpha=0.06;ctx.fillStyle=r.theme.accent;
+      const spacing=CELL_SIZE*4;
+      const sx=Math.ceil(Math.max(rx,vL)/spacing)*spacing,sy=Math.ceil(Math.max(ry,vT)/spacing)*spacing;
+      for(let dy=sy;dy<Math.min(ry+rh,vB);dy+=spacing)for(let dx=sx;dx<Math.min(rx+rw,vR);dx+=spacing){
+        ctx.beginPath();ctx.arc(dx,dy,2,0,Math.PI*2);ctx.fill();
+      }
+    }
     ctx.globalAlpha=1;
   }
 
