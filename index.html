@@ -5134,6 +5134,47 @@ function render() {
     }else{ctx.shadowColor=b.color;ctx.shadowBlur=14;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size*0.6,0,Math.PI*2);ctx.fill();ctx.globalAlpha=0.5;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*1.5,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.shadowBlur=0;}}
 
   // Zombies
+  // Helper: draw zombie body shape based on type (centered at origin, pre-rotated)
+  function _drawZombieShape(ctx, type, r) {
+    ctx.beginPath();
+    if (type === 'fast') {
+      // Triangle — pointy, looks fast
+      ctx.moveTo(r, 0);
+      ctx.lineTo(-r * 0.7, -r * 0.8);
+      ctx.lineTo(-r * 0.7, r * 0.8);
+      ctx.closePath();
+    } else if (type === 'tank' || type === 'boss') {
+      // Square — bulky
+      ctx.rect(-r, -r, r * 2, r * 2);
+    } else if (type === 'brute') {
+      // Hexagon — heavy
+      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 - Math.PI / 6; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
+      ctx.closePath();
+    } else if (type === 'spitter') {
+      // Diamond — ranged indicator
+      ctx.moveTo(r, 0); ctx.lineTo(0, -r); ctx.lineTo(-r, 0); ctx.lineTo(0, r);
+      ctx.closePath();
+    } else if (type === 'exploder') {
+      // Star — spiky, dangerous
+      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 - Math.PI / 2; const sr = i % 2 === 0 ? r : r * 0.5; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * sr, Math.sin(a) * sr); }
+      ctx.closePath();
+    } else if (type === 'stalker') {
+      // Crescent / thin wedge
+      ctx.moveTo(r, 0);
+      ctx.lineTo(-r * 0.5, -r * 0.9);
+      ctx.lineTo(-r * 0.3, 0);
+      ctx.lineTo(-r * 0.5, r * 0.9);
+      ctx.closePath();
+    } else if (type === 'splitter') {
+      // Pentagon
+      for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
+      ctx.closePath();
+    } else {
+      // Normal / default — circle
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+    }
+  }
+
   // Zombie shadows — separate pass so they render below all zombie bodies
   for(const z of zombies){
     const{player:np}=getNearestAlivePlayer(z.x,z.y);
@@ -5180,11 +5221,18 @@ function render() {
     // Sniper: laser sight when aiming
     if(z._sniperState==='aim'&&z._sniperCharge>20){ctx.globalAlpha=Math.min(0.6,z._sniperCharge/90);ctx.strokeStyle='#f44';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);ctx.beginPath();ctx.moveTo(z.radius,0);ctx.lineTo(z.radius+300,0);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
     const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
-    // Neon glow body
+    // Type-specific body shape
+    const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:2;
     ctx.shadowColor=_zc;ctx.shadowBlur=z.hitFlash>0?20:12;
-    ctx.fillStyle=_zc;ctx.globalAlpha=0.15;ctx.beginPath();ctx.arc(0,0,z.radius+2,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=1;ctx.fillStyle='#0a0a0a';ctx.beginPath();ctx.arc(0,0,z.radius,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle=_zc;ctx.lineWidth=z.boss||z.type==='boss'?3:2;ctx.stroke();ctx.shadowBlur=0;
+    // Glow outline
+    ctx.fillStyle=_zc;ctx.globalAlpha=0.15;
+    _drawZombieShape(ctx, z.type, _zr+2);
+    ctx.fill();
+    // Solid dark body
+    ctx.globalAlpha=1;ctx.fillStyle='#0a0a0a';
+    _drawZombieShape(ctx, z.type, _zr);
+    ctx.fill();
+    ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();ctx.shadowBlur=0;
     // Shocked effect — sparks around body
     if(z._shocked>0){ctx.globalAlpha=0.7;for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*6;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random(),0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
     // Ice/frozen effect — neon ice with glowing crystals
