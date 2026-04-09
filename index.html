@@ -2610,10 +2610,10 @@ function startSoloGame() {
     placeExit();
     const spawnC = getRoomCenter(rooms[0]);
     escortVIP = { x: spawnC.x, y: spawnC.y + 20, hp: 200, maxHp: 200, speed: 2.0, radius: 14, pathIdx: 1, alive: true, damageFlash: 0, invincible: 0 };
-    // Spawn treasure chests in random rooms (not spawn or exit room)
+    // Spawn treasure chests in most rooms (not spawn room)
     escortChests = [];
-    for (let ri = 2; ri < rooms.length; ri++) {
-      if (Math.random() < 0.5) { // 50% chance per room
+    for (let ri = 1; ri < rooms.length; ri++) {
+      if (Math.random() < 0.75) { // 75% chance per room
         const rc = getRoomCenter(rooms[ri]);
         escortChests.push({ x: rc.x + (Math.random() - 0.5) * 40, y: rc.y + (Math.random() - 0.5) * 40, roomIdx: ri, unlockProgress: 0, unlockTime: 180, opened: false });
       }
@@ -2960,6 +2960,58 @@ function advanceLevel() {
   spawnTimer = 0;
   placeExit();
   startLevel();
+  playPickupSound();
+}
+
+function advanceEscortLevel() {
+  level++;
+  score += 500 * level;
+  playLevelCompleteSound(); playExitFoundSound();
+  addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `LEVEL ${level}!`, '#f0c040');
+  document.getElementById('wave-num').textContent = `ESCORT · LEVEL ${level}`;
+  document.getElementById('wave-sub').textContent = 'The VIP presses on...';
+  document.getElementById('wave-announce').style.opacity = '1';
+  setTimeout(() => document.getElementById('wave-announce').style.opacity = '0', 2500);
+  showPerkSelection();
+  // Generate new dungeon
+  window._currentLevelSeed = Date.now() + level;
+  generateDungeon(window._currentLevelSeed);
+  placeExit();
+  const c = getRoomCenter(rooms[0]);
+  for (const p of players) { if (p.alive) { p.x = c.x + (Math.random() - 0.5) * 40; p.y = c.y + (Math.random() - 0.5) * 40; } }
+  camera.x = c.x; camera.y = c.y;
+  bullets = []; zombies = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
+  spawnTimer = 0;
+  // Reset VIP for new level — heal partially, reset path
+  escortVIP.x = c.x; escortVIP.y = c.y + 20;
+  escortVIP.hp = Math.min(escortVIP.maxHp, escortVIP.hp + 50); // heal 50 HP per level
+  escortVIP.pathIdx = 1; escortVIP._cellPath = null; escortVIP._stuckTimer = 0;
+  escortVIP.invincible = 120; // brief invincibility on new level
+  // Build room visit order for VIP path
+  escortPath = [];
+  const visited = new Set([0]);
+  let cur = 0;
+  while (visited.size < rooms.length) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < rooms.length; i++) {
+      if (visited.has(i)) continue;
+      const ci = getRoomCenter(rooms[i]), cc = getRoomCenter(rooms[cur]);
+      const d = Math.sqrt((ci.x - cc.x) ** 2 + (ci.y - cc.y) ** 2);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best === -1) break;
+    visited.add(best); escortPath.push(best); cur = best;
+  }
+  // Treasure chests in most rooms
+  escortChests = [];
+  for (let ri = 1; ri < rooms.length; ri++) {
+    if (Math.random() < 0.75) {
+      const rc = getRoomCenter(rooms[ri]);
+      escortChests.push({ x: rc.x + (Math.random() - 0.5) * 40, y: rc.y + (Math.random() - 0.5) * 40, roomIdx: ri, unlockProgress: 0, unlockTime: Math.max(90, 180 - level * 10), opened: false });
+    }
+  }
+  spawnLevelPickups(); spawnHealthPickup(); spawnBarrels(6 + Math.floor(Math.random() * 5));
+  elementZones = []; spawnElementZone(); spawnElementZone();
   playPickupSound();
 }
 
@@ -3339,12 +3391,10 @@ function updateEscortVIP() {
     for (let y = 0; y < GRID_H; y++) { const old = roomGrid[y]; roomGrid[y] = new Int8Array(GRID_W); roomGrid[y].set(old); for (let x = oldW; x < newW; x++) if (dungeonGrid[y] && dungeonGrid[y][x]) roomGrid[y][x] = 0; }
     uploadDungeonGrid();
   }
-  // Escort mode: win when VIP reaches exit
+  // Escort mode: VIP reached exit — advance to next level
   if (gameMode === 'escort' && escortVIP.pathIdx >= escortPath.length) {
     if (exitPos && Math.sqrt((escortVIP.x - exitPos.x) ** 2 + (escortVIP.y - exitPos.y) ** 2) < 50) {
-      gameState = 'dead';
-      escortVIP._won = true;
-      showDeathScreen();
+      advanceEscortLevel();
       return;
     }
   }
@@ -3405,11 +3455,15 @@ function updateEscortVIP() {
       if (Math.random() < 0.03) spawnHealthPickup();
     }
   } else {
-    const maxZ = Math.min(14, Math.floor(6 + escortVIP.pathIdx * 2));
-    const rate = Math.max(3, Math.floor(20 - escortVIP.pathIdx * 2));
+    // Escort mode: scales with level and VIP progress
+    const lvlMult = 1 + (level - 1) * 0.3;
+    const maxZ = Math.min(25, Math.floor((8 + escortVIP.pathIdx * 2.5) * lvlMult));
+    const rate = Math.max(3, Math.floor((16 - escortVIP.pathIdx * 2) / lvlMult));
     if (spawnTimer % rate === 0 && zombies.length < maxZ) {
       spawnZombie();
-      if (Math.random() < 0.02) spawnHealthPickup();
+      if (level >= 2 || escortVIP.pathIdx > 3) spawnZombie(); // double spawn
+      if (level >= 4 && Math.random() < 0.4) spawnZombie(); // triple chance at high levels
+      if (Math.random() < 0.03) spawnHealthPickup();
     }
   }
 }
@@ -4745,7 +4799,7 @@ function updateHUD() {
   if (gs) gs.innerHTML = `<span style="color:${gun.bulletColor}">${gun.damage} dmg</span> · ${gun.fireRate}ms${gun.pierce>0?' · pierce '+gun.pierce:''}`;
   document.getElementById('ammo-display').innerHTML = '';
   document.getElementById('score').textContent=score.toLocaleString();
-  document.getElementById('wave-display').textContent=gameMode==='descent'?`SECTION ${descentSection+1}`:gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?'HORDE':gameMode==='survival'?`WAVE ${survivalWave}`:gameMode==='escort'?'ESCORT':gameMode==='protect'?'PROTECT':`LEVEL ${level}`;
+  document.getElementById('wave-display').textContent=gameMode==='descent'?`SECTION ${descentSection+1}`:gameMode==='gauntlet'?`ROOM ${gauntletRoom}`:gameMode==='horde'?'HORDE':gameMode==='survival'?`WAVE ${survivalWave}`:gameMode==='escort'?`ESCORT ${level}`:gameMode==='protect'?'PROTECT':`LEVEL ${level}`;
   // Center HUD — mode-specific prominent display
   const _ch=document.getElementById('center-hud');
   if(_ch){
@@ -4753,7 +4807,7 @@ function updateHUD() {
     else if(gameMode==='descent'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.3);letter-spacing:3px">SECTION ${descentSection+1}</div>`;_ch.style.display='block';}
     else if(gameMode==='survival'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#ff0;text-shadow:0 0 10px #ff0,0 0 20px rgba(255,255,0,0.3);letter-spacing:3px">WAVE ${survivalWave}</div>`;_ch.style.display='block';}
     else if(gameMode==='protect'&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const _ps=Math.floor(protectTimer/60),_pm=Math.floor(_ps/60),_pss=_ps%60;_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">PROTECT · VIP: ${vhp} HP · ${_pm}:${_pss<10?'0':''}${_pss}</div>`;_ch.style.display='block';}
-    else if(gameMode==='escort'&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const prog=escortVIP.alive?Math.floor((escortVIP.pathIdx/escortPath.length)*100):0;_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">ESCORT · VIP: ${vhp} HP · ${prog}%</div>`;_ch.style.display='block';}
+    else if(gameMode==='escort'&&escortVIP){const vhp=escortVIP.alive?Math.ceil(escortVIP.hp):'DEAD';const prog=escortVIP.alive?Math.floor((escortVIP.pathIdx/escortPath.length)*100):0;_ch.innerHTML=`<div style="font-size:14px;font-weight:bold;color:#0f0;text-shadow:0 0 8px #0f0;letter-spacing:2px">ESCORT LV${level} · VIP: ${vhp} HP · ${prog}%</div>`;_ch.style.display='block';}
     else{_ch.style.display='none';}
   }
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
