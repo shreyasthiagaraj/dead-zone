@@ -2378,60 +2378,40 @@ function showDeathScreen() {
   const accuracy = runStats.shotsFired > 0 ? Math.floor(runStats.shotsHit / runStats.shotsFired * 100) : 0;
   const killsPerMin = survivalTime > 0 ? (kills / (survivalTime / 60)).toFixed(1) : 0;
 
-  // Rating formula: kills/min × accuracy% × survival_seconds / 100
-  const ratingScore = (killsPerMin * accuracy * survivalTime) / 10000;
-  let rating, ratingColor;
-  if (ratingScore > 8) { rating = 'S'; ratingColor = '#f0c040'; }
-  else if (ratingScore > 5) { rating = 'A'; ratingColor = '#4f4'; }
-  else if (ratingScore > 3) { rating = 'B'; ratingColor = '#4af'; }
-  else if (ratingScore > 1.5) { rating = 'C'; ratingColor = '#fa0'; }
-  else if (ratingScore > 0.5) { rating = 'D'; ratingColor = '#f80'; }
-  else { rating = 'F'; ratingColor = '#f44'; }
-
-  // Best element
-  const elemEntries = Object.entries(runStats.elemKills).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
-  const bestElem = elemEntries.length > 0 ? elemEntries[0] : null;
-
-  // Streak label
-
-  const lvlLabel = gameMode === 'gauntlet' ? 'Room' : gameMode === 'horde' ? 'Survived' : gameMode === 'survival' ? 'Wave' : (gameMode === 'descent' || gameMode === 'dvip') ? 'Section' : 'Level';
-  const lvlVal = gameMode === 'gauntlet' ? gauntletRoom : gameMode === 'horde' ? `${survivalMin}m ${survivalSec}s` : gameMode === 'survival' ? survivalWave : (gameMode === 'descent' || gameMode === 'dvip') ? descentSection + 1 : level;
   const hordeCircleLost = gameMode === 'horde' && hordeCircleTimer >= HORDE_CIRCLE_CLAIM_TIME;
 
   // Personal best
   const bestKey = `deadzone_best_${gameMode}`;
   const prevBest = JSON.parse(localStorage.getItem(bestKey) || '{}');
-  const isNewBest = !prevBest.kills || kills > prevBest.kills;
-  if (isNewBest) localStorage.setItem(bestKey, JSON.stringify({ kills, rating, score, time: survivalTime }));
+  const isNewBest = !prevBest.score || score > prevBest.score;
+  if (isNewBest) localStorage.setItem(bestKey, JSON.stringify({ score, time: survivalTime }));
 
   // Leaderboard history — store top 10 runs per mode
   const lbKey = `deadzone_lb_${gameMode}`;
   const lbHistory = JSON.parse(localStorage.getItem(lbKey) || '[]');
-  const thisRun = { kills, score, time: survivalTime, rating, accuracy, level: gameMode==='survival'?survivalWave:gameMode==='gauntlet'?gauntletRoom:level, date: Date.now() };
+  const thisRun = { score, time: survivalTime, date: Date.now() };
   lbHistory.push(thisRun);
   lbHistory.sort((a, b) => b.score - a.score);
   if (lbHistory.length > 10) lbHistory.length = 10;
   localStorage.setItem(lbKey, JSON.stringify(lbHistory));
-  const thisRunRank = lbHistory.findIndex(r => r.date === thisRun.date);
   const lbRows = lbHistory.map((r, i) => {
     const isThis = r.date === thisRun.date;
     const t = `${Math.floor(r.time/60)}:${(r.time%60).toString().padStart(2,'0')}`;
     const rowColor = isThis ? '#0f0' : '#8af';
     const bg = isThis ? 'rgba(0,255,0,0.08)' : 'transparent';
-    return `<tr style="color:${rowColor};background:${bg}"><td style="padding:1px 4px">${i+1}</td><td style="padding:1px 4px">${r.score.toLocaleString()}</td><td style="padding:1px 4px">${r.kills}</td><td style="padding:1px 4px">${t}</td><td style="padding:1px 4px">${r.rating}</td></tr>`;
+    return `<tr style="color:${rowColor};background:${bg}"><td style="padding:1px 4px">${i+1}</td><td style="padding:1px 4px">${r.score.toLocaleString()}</td><td style="padding:1px 4px">${t}</td></tr>`;
   }).join('');
   const lbHtml = `<div style="margin-top:6px;max-height:140px;overflow-y:auto">
     <div style="color:#f0f;font-size:10px;letter-spacing:2px;margin-bottom:3px;text-shadow:0 0 6px rgba(255,0,255,0.3)">LEADERBOARD</div>
     <table style="width:100%;font-size:10px;border-collapse:collapse;text-align:center">
-      <tr style="color:#fff8;font-size:9px"><th style="padding:1px 4px">#</th><th style="padding:1px 4px">SCORE</th><th style="padding:1px 4px">KILLS</th><th style="padding:1px 4px">TIME</th><th style="padding:1px 4px">RANK</th></tr>
+      <tr style="color:#fff8;font-size:9px"><th style="padding:1px 4px">#</th><th style="padding:1px 4px">SCORE</th><th style="padding:1px 4px">TIME</th></tr>
       ${lbRows}
     </table>
   </div>`;
 
   const dc = document.getElementById('death-content');
 
-  const elemIcon = bestElem ? `<span style="color:${bestElem[0]==='fire'?'#f80':bestElem[0]==='ice'?'#4ef':'#4ff'}">${bestElem[0]==='fire'?'🔥':bestElem[0]==='ice'?'🧊':'⚡'} ${bestElem[0].toUpperCase()}</span>` : '<span style="color:#888">—</span>';
-  const bestMsg = isNewBest ? `<div style="color:#0f0;font-size:11px;text-shadow:0 0 8px rgba(0,255,0,0.4);margin-top:4px">★ NEW PERSONAL BEST ★</div>` : prevBest.time ? `<div style="color:#8af;font-size:10px;margin-top:4px">Best: ${Math.floor(prevBest.time/60)}:${(prevBest.time%60).toString().padStart(2,'0')} · ${prevBest.kills} kills</div>` : '';
+  const bestMsg = isNewBest ? `<div style="color:#0f0;font-size:11px;text-shadow:0 0 8px rgba(0,255,0,0.4);margin-top:4px">★ NEW PERSONAL BEST ★</div>` : prevBest.time ? `<div style="color:#8af;font-size:10px;margin-top:4px">Best: ${Math.floor(prevBest.time/60)}:${(prevBest.time%60).toString().padStart(2,'0')} · ${prevBest.score.toLocaleString()} pts</div>` : '';
   const escortWon = gameMode==='escort'&&escortVIP&&escortVIP._won;
   const escortVIPDead = (gameMode==='escort'||gameMode==='protect'||gameMode==='dvip')&&escortVIP&&!escortVIP.alive&&!escortVIP._won;
   const circleMsg = escortWon ? `<div style="color:#0f0;font-size:clamp(12px,3vw,16px);text-shadow:0 0 12px rgba(0,255,0,0.5);margin-bottom:4px">VIP EXTRACTED — MISSION COMPLETE</div>` : escortVIPDead ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">VIP DOWN</div>` : (gameMode==='horde'&&hordeCircleLost) ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">THE CIRCLE HAS FALLEN</div>` : '';
@@ -2439,18 +2419,9 @@ function showDeathScreen() {
   dc.innerHTML = `<div class="menu-panel" style="text-align:center;border-color:#f0f4">
     ${circleMsg}
     <div style="color:${escortWon?'#0f0':'#f0f'};font-size:clamp(16px,3.5vw,24px);text-shadow:0 0 12px ${escortWon?'rgba(0,255,0,0.5)':'rgba(255,0,255,0.5)'};letter-spacing:3px;margin-bottom:4px">${escortWon?'MISSION COMPLETE':'GAME OVER'}</div>
-    ${gameMode==='horde'?`
-      <div style="color:#0ff;font-size:clamp(28px,7vw,48px);font-weight:bold;text-shadow:0 0 20px rgba(0,255,255,0.5);letter-spacing:3px;line-height:1">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
-      <div style="color:#0ff8;font-size:9px;margin-top:1px;letter-spacing:2px;margin-bottom:6px">SURVIVED</div>
-    `:`
-      <div style="color:${ratingColor};font-size:clamp(28px,7vw,48px);font-weight:bold;text-shadow:0 0 12px ${ratingColor}60;letter-spacing:3px">${rating}</div>
-    `}
-    <div style="font-size:11px;color:#8af;line-height:1.7;margin:4px 0">
-      ${gameMode!=='horde'?`${lvlLabel}: <span style="color:#0ff">${lvlVal}</span> · Time: <span style="color:#0ff">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span><br>`:''}
-      Kills: <span style="color:#0ff">${kills}</span> · Score: <span style="color:#ff0">${score.toLocaleString()}</span> · Rating: <span style="color:${ratingColor}">${rating}</span><br>
-      Accuracy: <span style="color:#0ff">${accuracy}%</span> · K/min: <span style="color:#0ff">${killsPerMin}</span> · Blasts: <span style="color:#0ff">${runStats.shockwavesUsed}</span><br>
-      Element: ${elemIcon}
-    </div>
+    <div style="color:#0ff;font-size:clamp(28px,7vw,48px);font-weight:bold;text-shadow:0 0 20px rgba(0,255,255,0.5);letter-spacing:3px;line-height:1">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
+    <div style="color:#0ff8;font-size:9px;margin-top:1px;letter-spacing:2px;margin-bottom:6px">SURVIVED</div>
+    <div style="font-size:13px;color:#ff0;margin:4px 0;text-shadow:0 0 8px rgba(255,255,0,0.3)">SCORE: ${score.toLocaleString()}</div>
     ${bestMsg}
     <div style="color:#ff0;font-size:10px;margin-top:2px;text-shadow:0 0 6px rgba(255,255,0,0.3)">HIGH SCORE: ${highScore.toLocaleString()}</div>
     ${lbHtml}
