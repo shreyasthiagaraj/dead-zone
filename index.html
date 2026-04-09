@@ -323,9 +323,11 @@ let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 let survivalWave = 0, survivalWaveState = 'countdown', survivalWaveTimer = 0;
 
 // Siege mode state
-let siegeWall = []; // array of { hp, maxHp, y, height } — wall sections
+let siegeWall = []; // array of { hp, maxHp, y, height, _flashTimer, _repairShield } — wall sections
 let siegeTimer = 0;
 let siegeWallX = 0; // x pixel position of the wall
+let siegeWave = 0, siegeWaveState = 'rest', siegeWaveTimer = 0; // wave system
+let siegeWaveZombiesLeft = 0;
 
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
 let waveSummaryActive = false, waveSummaryTimer = 0;
@@ -831,53 +833,7 @@ const POWERUP_TYPES = [
   { id: 'timebomb', name: 'TIME BOMB', color: '#a8f', icon: '⏳', duration: 1, desc: 'Slows zombies in area for 8s' },
   { id: 'firebomb', name: 'FIRE BOMB', color: '#f60', icon: '🔥', duration: 1, desc: 'Drops fire that burns zombies' },
 ];
-let activePowerUp = null; // { id, timer }
-
-function activatePowerUp(id) {
-  const def = POWERUP_TYPES.find(p => p.id === id);
-  if (!def) return;
-  const lp = getLocalPlayer();
-  // Instant power-ups
-  if (id === 'nuke') {
-    if (isHost) { for (const z of zombies) { z.hp = 0; } }
-    screenShake.intensity = 20;
-    addFloatingText(lp.x, lp.y - 40, 'NUKE!', '#f0f');
-    if (lp) lp.damageFlash = 8;
-    playExplosionSound();
-    return;
-  }
-  if (id === 'bomb') {
-    if (lp) createExplosion(lp.x, lp.y, 160, 400, 'player');
-    screenShake.intensity = 15;
-    addFloatingText(lp.x, lp.y - 40, 'BOMB!', '#fa0');
-    playExplosionSound();
-    return;
-  }
-  if (id === 'timebomb') {
-    // Slow all zombies near player for 8 seconds
-    if (lp && isHost) { for (const tz of zombies) { const td = Math.sqrt((tz.x-lp.x)**2+(tz.y-lp.y)**2); if (td < 300) { tz._slowTimer = 480; } } }
-    addFloatingText(lp.x, lp.y - 40, 'TIME SLOW!', '#a8f');
-    for (let k=0;k<15;k++){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*80,y:lp.y+Math.sin(a)*80,vx:0,vy:-0.5,life:30,maxLife:30,size:4,color:'#a8f',type:'spark'});}
-    return;
-  }
-  if (id === 'firebomb') {
-    // Create fire zone that damages zombies walking through it
-    if (lp) {
-      for (let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fd=Math.random()*60;
-        particles.push({x:lp.x+Math.cos(fa)*fd,y:lp.y+Math.sin(fa)*fd,vx:(Math.random()-0.5)*0.5,vy:-0.5-Math.random(),life:300,maxLife:300,size:6+Math.random()*4,color:Math.random()>0.5?'#f80':'#f40',type:'explosion'});}
-      // Damage zombies in area (repeated via a temporary fire zone)
-      if (isHost) { for (const fz of zombies) { const fd2=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if(fd2<80) damageZombie(fz,60,0,0); } }
-    }
-    addFloatingText(lp.x, lp.y - 40, 'FIRE!', '#f60');
-    playExplosionSound();
-    return;
-  }
-  // Duration power-ups
-  activePowerUp = { id, timer: def.duration };
-  addFloatingText(lp.x, lp.y - 40, def.name + '!', def.color);
-  // Frenzy: halve HP on activation
-  if (id === 'frenzy' && lp) { lp.hp = Math.max(1, Math.floor(lp.hp * 0.5)); }
-}
+// activePowerUp/activatePowerUp defined below with multi-power-up support
 
 // Player-aware synergy check
 function playerHasSynergy(p, name) {
@@ -1085,15 +1041,26 @@ const POWERUP_TYPES = [
   { id: 'sunbeam', name: 'SUNBEAM', color: '#ffa', icon: '☀', duration: 600, desc: 'Flashlight burns zombies' },
   { id: 'nuke', name: 'NUKE', color: '#f0f', icon: '☢', duration: 1, desc: 'Kills all zombies' },
 ];
-let activePowerUp = null;
+let activePowerUp = null; // kept for compat — points to first active power-up or null
+let activePowerUps = []; // array of { id, timer }
 function activatePowerUp(id) {
   const def = POWERUP_TYPES.find(p => p.id === id);
   if (!def) return;
-  if (id === 'nuke') { if (isHost) { for (const z of zombies) z.hp = 0; } screenShake.intensity = 20; playExplosionSound(); addFloatingText(getLocalPlayer().x, getLocalPlayer().y-40,'NUKE!','#f0f'); return; }
-  activePowerUp = { id, timer: def.duration };
-  addFloatingText(getLocalPlayer().x, getLocalPlayer().y-40, def.name+'!', def.color);
+  const lp = getLocalPlayer();
+  // Instant power-ups (duration <= 1)
+  if (id === 'nuke') { if (isHost) { for (const z of zombies) z.hp = 0; } screenShake.intensity = 20; playExplosionSound(); if(lp)lp.damageFlash=8; addFloatingText(lp.x,lp.y-40,'NUKE!','#f0f'); return; }
+  if (id === 'bomb') { if (lp) createExplosion(lp.x, lp.y, 160, 400, 'player'); screenShake.intensity = 15; addFloatingText(lp.x,lp.y-40,'BOMB!','#fa0'); playExplosionSound(); return; }
+  if (id === 'timebomb') { if (lp&&isHost){for(const tz of zombies){const td=Math.sqrt((tz.x-lp.x)**2+(tz.y-lp.y)**2);if(td<300)tz._slowTimer=480;}} addFloatingText(lp.x,lp.y-40,'TIME SLOW!','#a8f'); for(let k=0;k<15;k++){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*80,y:lp.y+Math.sin(a)*80,vx:0,vy:-0.5,life:30,maxLife:30,size:4,color:'#a8f',type:'spark'});} return; }
+  if (id === 'firebomb') { if(lp){for(let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fd=Math.random()*60;particles.push({x:lp.x+Math.cos(fa)*fd,y:lp.y+Math.sin(fa)*fd,vx:(Math.random()-0.5)*0.5,vy:-0.5-Math.random(),life:300,maxLife:300,size:6+Math.random()*4,color:Math.random()>0.5?'#f80':'#f40',type:'explosion'});}if(isHost){for(const fz of zombies){const fd2=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2);if(fd2<80)damageZombie(fz,60,0,0);}}} addFloatingText(lp.x,lp.y-40,'FIRE!','#f60'); playExplosionSound(); return; }
+  // Duration power-ups — stack (refresh if already active)
+  const existing = activePowerUps.find(p => p.id === id);
+  if (existing) { existing.timer = def.duration; }
+  else { activePowerUps.push({ id, timer: def.duration }); }
+  activePowerUp = activePowerUps[0] || null;
+  addFloatingText(lp.x, lp.y-40, def.name+'!', def.color);
+  if (id === 'frenzy' && lp) { lp.hp = Math.max(1, Math.floor(lp.hp * 0.5)); }
 }
-function hasPowerUp(id) { return activePowerUp && activePowerUp.id === id; }
+function hasPowerUp(id) { return activePowerUps.some(p => p.id === id); }
 function playerHasPowerUp(p, id) { if (p === getLocalPlayer()) return hasPowerUp(id); return p._remotePowerUp === id; }
 // Stub functions for removed systems (prevent crashes from old references)
 function playerHasPerk(p,id){return false;} function hasPerk(id){return false;} function getPerkCount(id){return 0;} function getPlayerPerkCount(p,id){return 0;}
@@ -2536,7 +2503,7 @@ document.getElementById('btn-swap').addEventListener('click', (e) => { e.prevent
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
-  activePowerUp = null; activeElement = null; elementZones = []; hazeParticles = [];
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; hazeParticles = [];
   runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
   // Reset joysticks to prevent stuck state on restart
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
@@ -2557,7 +2524,7 @@ function startSoloGame() {
   } else if (gameMode === 'siege') {
     generateSiegeArena(window._currentLevelSeed);
     exitPos = null;
-    siegeTimer = 0;
+    siegeTimer = 0; siegeWave = 0; siegeWaveState = 'rest'; siegeWaveTimer = 0; siegeWaveZombiesLeft = 0;
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
@@ -2611,7 +2578,7 @@ function startMultiplayerGame() {
   } else if (gameMode === 'siege') {
     generateSiegeArena(lobbySeed);
     exitPos = null;
-    siegeTimer = 0;
+    siegeTimer = 0; siegeWave = 0; siegeWaveState = 'rest'; siegeWaveTimer = 0; siegeWaveZombiesLeft = 0;
   } else if (gameMode === 'gauntlet') {
     gauntletRoom = 0; gauntletState = 'intro'; gauntletTimer = 0;
     generateGauntletRoom(1);
@@ -3211,7 +3178,7 @@ function generateSiegeArena(seed) {
   siegeWall = [];
   for (let i = 0; i < numSections; i++) {
     const sy = (margin + i * secH) * CELL_SIZE;
-    siegeWall.push({ hp: 100, maxHp: 100, y: sy, height: secH * CELL_SIZE, _flashTimer: 0 });
+    siegeWall.push({ hp: 100, maxHp: 100, y: sy, height: secH * CELL_SIZE, _flashTimer: 0, _repairShield: 0 });
   }
   roomDetails = [{ ri: 0, theme: arena.theme, details: [], brightness: 1.0, flicker: false }];
   buildRoomGrid();
@@ -3232,33 +3199,60 @@ function startSiege() {
 function updateSiege() {
   if (!isHost || gameMode !== 'siege') return;
   siegeTimer++;
-  const elapsed = siegeTimer / 60; // seconds
 
-  // ---- Spawn zombies from the right side ----
-  spawnTimer++;
-  const maxZ = Math.min(30, 5 + Math.floor(elapsed * 0.12));
-  const rate = Math.max(8, Math.floor(40 - elapsed * 0.2));
-  const types = ['normal', 'normal'];
-  if (elapsed > 20) types.push('fast');
-  if (elapsed > 40) types.push('brute');
-  if (elapsed > 60) types.push('tank', 'splitter');
-  if (elapsed > 90) types.push('spitter');
-  if (elapsed > 120) types.push('exploder', 'stalker');
-  if (spawnTimer % rate === 0 && zombies.length < maxZ) {
-    spawnSiegeZombie(types, elapsed);
-    if (elapsed > 30) spawnSiegeZombie(types, elapsed);
-    if (elapsed > 80 && Math.random() < 0.3) spawnSiegeZombie(types, elapsed);
+  // ---- WAVE SYSTEM ----
+  if (siegeWaveState === 'rest') {
+    siegeWaveTimer++;
+    // Rest period: 5 seconds between waves (first wave starts after 3s)
+    const restDuration = siegeWave === 0 ? 180 : 300;
+    if (siegeWaveTimer >= restDuration) {
+      siegeWave++;
+      siegeWaveState = 'active';
+      siegeWaveTimer = 0;
+      // Zombies per wave: scales up
+      siegeWaveZombiesLeft = Math.min(30, 4 + siegeWave * 3);
+      const el = document.getElementById('wave-announce');
+      document.getElementById('wave-num').textContent = `WAVE ${siegeWave}`;
+      document.getElementById('wave-sub').textContent = siegeWave % 5 === 0 ? 'MASSIVE ASSAULT!' : 'They\'re coming...';
+      el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2000);
+      playWaveStartSound();
+    }
+  } else if (siegeWaveState === 'active') {
+    // Spawn zombies for this wave
+    spawnTimer++;
+    const types = ['normal', 'normal'];
+    if (siegeWave >= 3) types.push('fast');
+    if (siegeWave >= 5) types.push('brute');
+    if (siegeWave >= 7) types.push('tank', 'splitter');
+    if (siegeWave >= 10) types.push('spitter');
+    if (siegeWave >= 13) types.push('exploder', 'stalker');
+    const maxOnScreen = Math.min(20, 4 + siegeWave * 2);
+    const rate = Math.max(10, 30 - siegeWave * 2);
+    if (spawnTimer % rate === 0 && siegeWaveZombiesLeft > 0 && zombies.length < maxOnScreen) {
+      spawnSiegeZombie(types, siegeWave);
+      siegeWaveZombiesLeft--;
+      // Double spawn on boss waves
+      if (siegeWave % 5 === 0 && siegeWaveZombiesLeft > 0 && zombies.length < maxOnScreen) { spawnSiegeZombie(types, siegeWave); siegeWaveZombiesLeft--; }
+    }
+    // Wave complete when all spawned and all dead
+    if (siegeWaveZombiesLeft <= 0 && zombies.length === 0) {
+      siegeWaveState = 'rest';
+      siegeWaveTimer = 0;
+      score += 200 * siegeWave;
+      addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `WAVE ${siegeWave} CLEAR!`, '#0ff');
+      playLevelCompleteSound();
+    }
   }
 
-  // ---- Zombies damage wall sections when touching them ----
+  // ---- Zombies damage wall sections when touching (skip if repair shield active) ----
   for (const z of zombies) {
     if (!z.hp || z.hp <= 0) continue;
     for (const sec of siegeWall) {
       if (sec.hp <= 0) continue;
+      if (sec._repairShield > 0) continue; // repair shield — immune to damage briefly
       if (Math.abs(z.x - siegeWallX) < z.radius + CELL_SIZE * 0.5 && z.y > sec.y - z.radius && z.y < sec.y + sec.height + z.radius) {
         sec.hp -= 0.15;
-        sec._flashTimer = 6; // flash when taking damage
-        // Damage sparks
+        sec._flashTimer = 6;
         if (gameTime % 6 === 0) {
           for (let sp = 0; sp < 2; sp++) particles.push({ x: siegeWallX + (Math.random() - 0.5) * 8, y: sec.y + Math.random() * sec.height, vx: -2 - Math.random() * 3, vy: (Math.random() - 0.5) * 3, life: 12, maxLife: 12, size: 2 + Math.random() * 2, color: Math.random() > 0.5 ? '#f80' : '#f44', type: 'spark' });
         }
@@ -3267,7 +3261,6 @@ function updateSiege() {
           addFloatingText(siegeWallX, sec.y + sec.height / 2, 'BREACH!', '#f44');
           screenShake.intensity = Math.max(screenShake.intensity, 10);
           playExplosionSound();
-          // Explosion of particles when wall section is destroyed
           for (let i = 0; i < 25; i++) { const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 6; particles.push({ x: siegeWallX + (Math.random() - 0.5) * 10, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 25 + Math.random() * 15, maxLife: 40, size: 3 + Math.random() * 4, color: ['#f44', '#f80', '#fa0', '#ff0'][Math.floor(Math.random() * 4)], type: 'explosion' }); }
           for (let i = 0; i < 8; i++) { const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2; particles.push({ x: siegeWallX, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 40 + Math.random() * 20, maxLife: 60, size: 5 + Math.random() * 5, color: '#555', type: 'smoke' }); }
         }
@@ -3282,10 +3275,9 @@ function updateSiege() {
     }
   }
 
-  // ---- Block player at wall (cannot cross to the right) ----
+  // ---- Block player at wall ----
   for (const p of players) {
     if (!p.alive) continue;
-    // Player blocked by intact wall sections
     for (const sec of siegeWall) {
       if (sec.hp <= 0) continue;
       if (p.y > sec.y - PLAYER_RADIUS && p.y < sec.y + sec.height + PLAYER_RADIUS) {
@@ -3294,19 +3286,19 @@ function updateSiege() {
     }
   }
 
-  // ---- Player repairs wall by standing near damaged sections ----
+  // ---- Player repairs wall (must be very close) — grants repair shield to prevent flicker ----
   for (const p of players) {
     if (!p.alive) continue;
     for (const sec of siegeWall) {
       if (sec.hp >= sec.maxHp) continue;
-      if (Math.abs(p.x - siegeWallX) < CELL_SIZE * 2.5 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
+      // Must be within 1 cell of the wall to repair
+      if (Math.abs(p.x - siegeWallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
         const wasZero = sec.hp <= 0;
-        sec.hp = Math.min(sec.maxHp, sec.hp + 0.35);
-        // Repair particles — welding sparks
-        if (gameTime % 8 === 0) {
+        sec.hp = Math.min(sec.maxHp, sec.hp + 0.4);
+        sec._repairShield = 30; // immune to zombie damage for 0.5s after each repair tick
+        if (gameTime % 6 === 0) {
           for (let sp = 0; sp < 3; sp++) particles.push({ x: siegeWallX + (Math.random() - 0.5) * 12, y: sec.y + Math.random() * sec.height, vx: (Math.random() - 0.5) * 3, vy: -1.5 - Math.random() * 2, life: 15, maxLife: 15, size: 2 + Math.random() * 2, color: Math.random() > 0.3 ? '#0ff' : '#fff', type: 'spark' });
         }
-        // Announce repair when section comes back from zero
         if (wasZero && sec.hp > 0) {
           addFloatingText(siegeWallX, sec.y + sec.height / 2, 'REPAIRING!', '#0ff');
         }
@@ -3314,32 +3306,34 @@ function updateSiege() {
     }
   }
 
-  // ---- Drop power-ups inside the house periodically ----
-  if (siegeTimer % 1200 === 600 && !hasPowerUpAnywhere()) {
+  // ---- Drop power-ups in the house between waves and during ----
+  if (siegeTimer % 900 === 450) {
     const px = CELL_SIZE * 2 + Math.random() * (siegeWallX - CELL_SIZE * 5);
     const py = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     if (Math.random() < 0.15) { spawnOrbitalPickup(px, py); }
     else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: px, y: py, bobTimer: Math.random() * Math.PI * 2 }); }
   }
-  // Health drops every 25 seconds
-  if (siegeTimer % 1500 === 0) {
+  // Health every 20 seconds
+  if (siegeTimer % 1200 === 0 && siegeTimer > 0) {
     const hx = CELL_SIZE * 2 + Math.random() * (siegeWallX - CELL_SIZE * 5);
     const hy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     pickups.push({ type: 'health', amount: 25, x: hx, y: hy, bobTimer: Math.random() * Math.PI * 2 });
   }
-  // Element zone every 25 seconds
   if (siegeTimer % 1500 === 0 && siegeTimer > 0) spawnElementZone();
-  // Tick down flash timers
-  for (const sec of siegeWall) { if (sec._flashTimer > 0) sec._flashTimer--; }
+  // Tick timers
+  for (const sec of siegeWall) {
+    if (sec._flashTimer > 0) sec._flashTimer--;
+    if (sec._repairShield > 0) sec._repairShield--;
+  }
 }
 
-function spawnSiegeZombie(types, elapsed) {
+function spawnSiegeZombie(types, wave) {
   const tk = types[Math.floor(Math.random() * types.length)];
   const t = ZOMBIE_TYPES[tk]; if (!t) return;
   const x = ARENA_W - CELL_SIZE * 2;
   const y = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
-  const sc = 1 + elapsed * 0.004;
-  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + elapsed * 0.002, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _siegeWallTarget: true, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
+  const sc = 1 + wave * 0.05;
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + wave * 0.01, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _siegeWallTarget: true, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
 }
 
 // ---- GAUNTLET MODE ----
@@ -3562,7 +3556,7 @@ function spawnSurvivalZombie() {
 }
 
 function hasPowerUpOnMap() { return pickups.some(p => p.type === 'powerup' || p.type === 'orbital'); }
-function hasPowerUpAnywhere() { return hasPowerUpOnMap() || activePowerUp || activeOrbital; }
+function hasPowerUpAnywhere() { return hasPowerUpOnMap() || activePowerUps.length > 0 || activeOrbital; }
 
 function dropZombieLoot(z) {
   const r = Math.random();
@@ -3753,10 +3747,16 @@ function update() {
     }
 
     // ---- Power-up timer and effects ----
-    if (activePowerUp) {
-      activePowerUp.timer--;
-      if (activePowerUp.timer <= 0) { stopSunbeamLoop(); activePowerUp = null; }
-      else {
+    // Tick all active power-ups
+    for (let pi = activePowerUps.length - 1; pi >= 0; pi--) {
+      activePowerUps[pi].timer--;
+      if (activePowerUps[pi].timer <= 0) {
+        if (activePowerUps[pi].id === 'sunbeam') stopSunbeamLoop();
+        activePowerUps.splice(pi, 1);
+      }
+    }
+    activePowerUp = activePowerUps[0] || null; // compat
+    if (activePowerUps.length > 0) {
         // Shield: invincibility + force field
         if (hasPowerUp('shield')) {
           lp.invincible = Math.max(lp.invincible, 50);
@@ -3778,9 +3778,8 @@ function update() {
         // Freeze: slow all zombies
         if (hasPowerUp('freeze')&&isHost) { for(const fz of zombies){fz.speed=ZOMBIE_TYPES[fz.type]?(ZOMBIE_TYPES[fz.type].speed*0.3):0.5;} }
         // (sunbeam damage handled above)
-        // Power-up aura particles
-        if (gameTime % 4 === 0) { const pdef = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} }
-      }
+        // Power-up aura particles — one per active power-up
+        if (gameTime % 4 === 0) { for (const ap of activePowerUps) { const pdef = POWERUP_TYPES.find(p=>p.id===ap.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} } }
     }
 
     // Arcade system updates
@@ -4601,7 +4600,7 @@ function updateHUD() {
     </div>`;
   }
   if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) efx += effectTile(et.icon, et.color, Math.ceil(activeElement.timer/60), et.name); }
-  if (activePowerUp) { const pd = POWERUP_TYPES.find(p=>p.id===activePowerUp.id); if(pd) efx += effectTile(pd.icon, pd.color, Math.ceil(activePowerUp.timer/60), pd.name); }
+  for (const ap of activePowerUps) { const pd = POWERUP_TYPES.find(p=>p.id===ap.id); if(pd) efx += effectTile(pd.icon, pd.color, Math.ceil(ap.timer/60), pd.name); }
   if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) efx += effectTile(od.icon, od.color, Math.ceil(activeOrbital.timer/60), od.name); }
   if (ebar) ebar.innerHTML = efx;
   // Gun stats — small, subtle, bottom corner
@@ -4616,7 +4615,7 @@ function updateHUD() {
     if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_ch.innerHTML=`<div style="font-size:22px;font-weight:bold;color:#0ff;text-shadow:0 0 10px #0ff,0 0 20px rgba(0,255,255,0.3);letter-spacing:2px">${_m}:${_ss<10?'0':''}${_ss}</div><div style="font-size:11px;color:#0ff8;letter-spacing:1px">${kills} KILLS</div>`;_ch.style.display='block';}
     else if(gameMode==='descent'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.3);letter-spacing:3px">SECTION ${descentSection+1}</div><div style="font-size:11px;color:#f0f8;letter-spacing:1px">${kills} KILLS</div>`;_ch.style.display='block';}
     else if(gameMode==='survival'){_ch.innerHTML=`<div style="font-size:18px;font-weight:bold;color:#ff0;text-shadow:0 0 10px #ff0,0 0 20px rgba(255,255,0,0.3);letter-spacing:3px">WAVE ${survivalWave}</div><div style="font-size:11px;color:#ff08;letter-spacing:1px">${kills} KILLS</div>`;_ch.style.display='block';}
-    else if(gameMode==='siege'){const _ss=Math.floor(siegeTimer/60),_sm=Math.floor(_ss/60),_sss=_ss%60;const wallPct=siegeWall.length>0?Math.floor(siegeWall.reduce((s,w)=>s+w.hp,0)/siegeWall.reduce((s,w)=>s+w.maxHp,0)*100):100;const wc=wallPct>60?'#0ff':wallPct>30?'#fa0':'#f44';_ch.innerHTML=`<div style="font-size:16px;font-weight:bold;color:${wc};text-shadow:0 0 10px ${wc};letter-spacing:2px">WALL ${wallPct}%</div><div style="font-size:11px;color:#0ff8;letter-spacing:1px">${_sm}:${_sss<10?'0':''}${_sss} · ${kills} KILLS</div>`;_ch.style.display='block';}
+    else if(gameMode==='siege'){const wallPct=siegeWall.length>0?Math.floor(siegeWall.reduce((s,w)=>s+w.hp,0)/siegeWall.reduce((s,w)=>s+w.maxHp,0)*100):100;const wc=wallPct>60?'#0ff':wallPct>30?'#fa0':'#f44';const waveLabel=siegeWaveState==='rest'?(siegeWave===0?'PREPARING...':'REPAIRING...'):`WAVE ${siegeWave}`;_ch.innerHTML=`<div style="font-size:16px;font-weight:bold;color:${wc};text-shadow:0 0 10px ${wc};letter-spacing:2px">WALL ${wallPct}%</div><div style="font-size:11px;color:#0ff8;letter-spacing:1px">${waveLabel} · ${kills} KILLS</div>`;_ch.style.display='block';}
     else{_ch.style.display='none';}
   }
   document.getElementById('kills-display').textContent=`${kills} KILLS`;
