@@ -58,18 +58,18 @@ body.mobile .joystick-zone { display: block; }
 
 #mobile-buttons { display: none; }
 body.mobile #mobile-buttons { display: block; }
-.mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: rgba(0,10,20,0.7); color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s; }
+.mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: transparent; color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s, opacity 0.12s linear; }
 .mobile-btn svg { display: block; filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
-/* Blast button — big, always at the same spot regardless of game mode */
-#btn-dash { width: 84px; height: 84px; right: calc(18px + env(safe-area-inset-right) * 0.5); bottom: calc(120px + env(safe-area-inset-bottom)); }
+/* Blast button — medium-sized, always at the same spot regardless of game mode */
+#btn-dash { width: 68px; height: 68px; right: calc(22px + env(safe-area-inset-right) * 0.5); bottom: calc(120px + env(safe-area-inset-bottom)); }
 /* Repair (fix) button — stacked above blast with a big gap so you don't accidentally hit it */
-#btn-repair { width: 60px; height: 60px; right: calc(30px + env(safe-area-inset-right) * 0.5); bottom: calc(245px + env(safe-area-inset-bottom)); }
+#btn-repair { width: 60px; height: 60px; right: calc(26px + env(safe-area-inset-right) * 0.5); bottom: calc(225px + env(safe-area-inset-bottom)); }
 /* Reload button (small, far above) */
-#btn-reload { width: 52px; height: 52px; font-size: 11px; right: calc(34px + env(safe-area-inset-right) * 0.5); bottom: calc(325px + env(safe-area-inset-bottom)); }
-.mobile-btn:active, .mobile-btn.pressed { background: #0ff; border-color: #0ff; color: #030308; transform: scale(1.1); box-shadow: 0 0 20px rgba(0,255,255,0.5); text-shadow: none; filter: drop-shadow(0 0 8px rgba(0,255,255,0.6)); }
+#btn-reload { width: 52px; height: 52px; font-size: 11px; right: calc(30px + env(safe-area-inset-right) * 0.5); bottom: calc(305px + env(safe-area-inset-bottom)); }
+.mobile-btn:active, .mobile-btn.pressed { border-color: #0ff; color: #0ff; transform: scale(1.1); box-shadow: 0 0 22px rgba(0,255,255,0.6); }
 .mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 14px rgba(0,255,255,0.4); text-shadow: 0 0 8px rgba(0,255,255,0.6); }
-.mobile-btn.dash-cooldown { border-color: #0ff; color: #0ff; }
-.mobile-btn.dash-cooldown svg { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
+.mobile-btn.dash-cooldown { border-color: #0ff; color: #0ff; pointer-events: none; }
+.mobile-btn.dash-cooldown svg { filter: drop-shadow(0 0 4px currentColor); }
 .mobile-btn.reload-btn { border-color: #a4f; color: #a4f; box-shadow: 0 0 8px rgba(170,68,255,0.25); text-shadow: 0 0 6px rgba(170,68,255,0.4); }
 .mobile-btn.repair-btn { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
 .mobile-btn.repair-btn.disabled { border-color: #234; color: #345; box-shadow: none; opacity: 0.4; pointer-events: none; cursor: default; }
@@ -168,7 +168,7 @@ body.mobile #mobile-buttons { display: block; }
 <div id="weapon-slots" style="display:none"></div>
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash" aria-label="Blast">
-    <svg viewBox="0 0 40 40" width="48" height="48" fill="none" stroke="currentColor" stroke-linecap="round">
+    <svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-linecap="round">
       <!-- Concentric shockwave rings -->
       <circle cx="20" cy="20" r="4" stroke-width="2.2"/>
       <circle cx="20" cy="20" r="9" stroke-width="1.7" opacity="0.75"/>
@@ -414,7 +414,14 @@ function pollGamepad() {
   const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
   let gp = null;
   for (const p of pads) { if (p) { gp = p; break; } }
-  if (!gp) { gamepad.connected = false; gamepad.lx = gamepad.ly = gamepad.rx = gamepad.ry = 0; gamepad.fire = false; return; }
+  if (!gp) {
+    gamepad.connected = false;
+    gamepad.lx = gamepad.ly = gamepad.rx = gamepad.ry = 0;
+    gamepad.fire = false;
+    // Release any held repair if the controller disconnects
+    if (siegeRepairHeld) { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); }
+    return;
+  }
   gamepad.connected = true;
   const dz = v => Math.abs(v) < GAMEPAD_DEADZONE ? 0 : (v - Math.sign(v) * GAMEPAD_DEADZONE) / (1 - GAMEPAD_DEADZONE);
   gamepad.lx = dz(gp.axes[0] || 0);
@@ -422,18 +429,23 @@ function pollGamepad() {
   gamepad.rx = dz(gp.axes[2] || 0);
   gamepad.ry = dz(gp.axes[3] || 0);
   const btn = i => gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5);
-  // Fire: R2 (trigger) or Square (0 is X/Cross on xbox, but on PS5 X is Cross)
+  // Fire: R2 (trigger) or Square
   gamepad.fire = btn(7) || btn(2);
   // Edge-triggered buttons
   const pressed = (i) => { const now = btn(i); const was = gamepad._prev[i]; gamepad._prev[i] = now; return now && !was; };
   if (gameState === 'playing') {
-    if (pressed(0)) dash();                   // Cross / A → blast
-    if (pressed(5) || pressed(3)) reloadWeapon(); // R1 or Triangle → reload
+    if (pressed(1)) dash();                    // Circle (PS) / B (Xbox) → blast
+    if (pressed(5)) reloadWeapon();            // R1 → reload
     if (pressed(4)) tryPickup(true);           // L1 → pickup/swap
-    // DPad or face button weapon switch
-    if (pressed(12) || pressed(3)) {} // reserved
-    // Shoulder bumpers cycle weapons
-    // (could add more mappings here)
+    // Triangle (PS) / Y (Xbox) → hold to repair in Siege
+    if (gameMode === 'siege') {
+      const triangleHeld = btn(3);
+      if (triangleHeld !== siegeRepairHeld) {
+        siegeRepairHeld = triangleHeld;
+        const rb = document.getElementById('btn-repair');
+        if (rb) { if (triangleHeld) rb.classList.add('repairing'); else rb.classList.remove('repairing'); }
+      }
+    }
   }
   if (pressed(9)) togglePauseMenu();           // Options / Start → pause
 }
@@ -442,7 +454,7 @@ try { screen.orientation?.lock?.('landscape').catch(()=>{}); } catch(e) {}
 document.body.classList.add(isMobile ? 'mobile' : 'desktop');
 
 const controlsEl = document.getElementById('start-controls');
-if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move <span style="color:#999">MOUSE</span> Aim <span style="color:#999">CLICK</span> Shoot <span style="color:#999">R</span> Reload <span style="color:#999">SPACE</span> Blast <span style="color:#999">E</span> Pickup <span style="color:#999">1-0</span> Weapons · <span style="color:#6af">Gamepad</span>: LS move · RS aim · R2/□ shoot · ✕ blast · R1/△ reload';
+if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move <span style="color:#999">MOUSE</span> Aim <span style="color:#999">CLICK</span> Shoot <span style="color:#999">R</span> Reload <span style="color:#999">SPACE</span> Blast <span style="color:#999">F</span> Fix <span style="color:#999">E</span> Pickup <span style="color:#999">1-0</span> Weapons · <span style="color:#6af">Gamepad</span>: LS move · RS aim · R2/□ shoot · ○ blast · △ fix · R1 reload';
 else controlsEl.innerHTML = 'Left thumb: Move | Right thumb: Aim+Shoot';
 
 // ---- CONSTANTS ----
@@ -5235,25 +5247,12 @@ function updateHUD() {
   const db=document.getElementById('btn-dash');
   if (db) {
     if (lp.dashCooldown > 0) {
-      // Cooldown: start in "pressed" look (cyan fill, dark icon) and fade back to ready
-      const prog = Math.max(0, Math.min(1, 1 - lp.dashCooldown / DASH_COOLDOWN));
+      // Translucent while recharging — not interactable until ready
       db.className = 'mobile-btn dash-cooldown';
-      // Background fades from solid cyan (pressed) to transparent dark (ready)
-      const bgA = (1 - prog) * 0.85;
-      db.style.background = `rgba(0, 255, 255, ${bgA.toFixed(3)})`;
-      // Icon/text/border color interpolates from dark (#030308) to neon cyan (#00ffff)
-      const r = Math.round(3 + prog * (0 - 3));
-      const g = Math.round(3 + prog * (255 - 3));
-      const b = Math.round(8 + prog * (255 - 8));
-      db.style.color = `rgb(${r}, ${g}, ${b})`;
-      db.style.borderColor = prog < 0.5 ? `rgba(0, 255, 255, ${(0.3 + prog).toFixed(3)})` : '#0ff';
-      db.style.boxShadow = `0 0 ${Math.round(6 + prog * 14)}px rgba(0,255,255,${(0.15 + prog * 0.35).toFixed(3)})`;
+      db.style.opacity = '0.25';
     } else {
       db.className = 'mobile-btn dash-ready';
-      db.style.background = '';
-      db.style.color = '';
-      db.style.borderColor = '';
-      db.style.boxShadow = '';
+      db.style.opacity = '';
     }
   }
   // Siege repair button — only enabled when the local player is near a damaged wall section
