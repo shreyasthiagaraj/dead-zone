@@ -275,19 +275,36 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 </div>
 
 <!-- ---- CODEX (encyclopedia) ---- -->
-<div id="codex-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:200;background:rgba(3,3,12,0.98);font-family:'Courier New',monospace;overflow-y:auto">
-  <div style="max-width:760px;margin:0 auto;padding:calc(16px + env(safe-area-inset-top)) 16px 80px 16px">
-    <div style="text-align:center;margin-bottom:12px">
-      <div style="color:#f0f;font-size:clamp(22px,5vw,34px);font-weight:bold;letter-spacing:6px;text-shadow:0 0 14px rgba(255,0,255,0.6)">CODEX</div>
-      <div style="color:#888;font-size:11px;letter-spacing:2px">KNOW YOUR ENEMY. KNOW YOUR ARSENAL.</div>
+<div id="codex-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:200;background:rgba(3,3,12,0.98);font-family:'Courier New',monospace;overflow:hidden">
+  <div style="max-width:980px;height:100%;margin:0 auto;padding:calc(12px + env(safe-area-inset-top)) 12px 12px 12px;box-sizing:border-box;display:flex;flex-direction:column">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-shrink:0">
+      <div>
+        <div style="color:#f0f;font-size:clamp(18px,4vw,28px);font-weight:bold;letter-spacing:5px;text-shadow:0 0 14px rgba(255,0,255,0.6)">CODEX</div>
+        <div style="color:#888;font-size:10px;letter-spacing:2px">KNOW YOUR ENEMY. KNOW YOUR ARSENAL.</div>
+      </div>
+      <button class="menu-btn danger" id="btn-codex-back" style="font-size:11px;padding:7px 18px">CLOSE</button>
     </div>
-    <div id="codex-tabs" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:12px"></div>
-    <div id="codex-content" style="color:#ccc;font-size:12px;line-height:1.5"></div>
-    <div style="text-align:center;margin-top:16px">
-      <button class="menu-btn danger" id="btn-codex-back" style="font-size:12px;padding:8px 22px">BACK</button>
+    <!-- 3-column finder-style layout -->
+    <div class="codex-grid">
+      <div id="codex-categories"></div>
+      <div id="codex-items"></div>
+      <div id="codex-detail"></div>
     </div>
   </div>
 </div>
+<style>
+.codex-grid { flex: 1; display: grid; grid-template-columns: 130px 180px 1fr; gap: 0; min-height: 0; border: 1px solid #333; border-radius: 6px; background: rgba(10,10,20,0.6); overflow: hidden; }
+.codex-grid > div { overflow-y: auto; padding: 6px 4px; }
+#codex-categories, #codex-items { border-right: 1px solid #222; }
+#codex-detail { padding: 14px 16px; }
+@media (max-width: 620px) {
+  .codex-grid { grid-template-columns: 90px 130px 1fr; }
+}
+.codex-list-item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; margin: 2px 0; border: 1px solid transparent; border-radius: 4px; cursor: pointer; color: #ccc; font-size: 11px; letter-spacing: 1px; transition: background 0.08s; }
+.codex-list-item:hover { background: rgba(255,255,255,0.04); }
+.codex-list-item.selected { background: rgba(255,0,255,0.12); border-color: #f0f; color: #fff; text-shadow: 0 0 6px rgba(255,0,255,0.6); }
+</style>
 
 <!-- ---- PERK SELECTION ---- -->
 <div id="perk-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:40;background:rgba(3,3,12,0.85);font-family:'Courier New',monospace;text-align:center;display:none">
@@ -1208,6 +1225,31 @@ const ROOM_THEMES = [
   { name:'medbay',   floor:'#0a0e18', grid:'#141a28', accent:'#4080ff' },
   { name:'ruin',     floor:'#120a0e', grid:'#1c141a', accent:'#ff40a0' },
 ];
+
+// Shared helper: draw zombie body shape based on type (centered at origin)
+function _drawZombieShape(ctx, type, r) {
+  ctx.beginPath();
+  if (type === 'fast') {
+    ctx.moveTo(r, 0); ctx.lineTo(-r * 0.7, -r * 0.8); ctx.lineTo(-r * 0.7, r * 0.8); ctx.closePath();
+  } else if (type === 'tank' || type === 'boss') {
+    ctx.rect(-r, -r, r * 2, r * 2);
+  } else if (type === 'brute') {
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 - Math.PI / 6; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
+    ctx.closePath();
+  } else if (type === 'spitter') {
+    ctx.moveTo(r, 0); ctx.lineTo(0, -r); ctx.lineTo(-r, 0); ctx.lineTo(0, r); ctx.closePath();
+  } else if (type === 'exploder') {
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 - Math.PI / 2; const sr = i % 2 === 0 ? r : r * 0.5; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * sr, Math.sin(a) * sr); }
+    ctx.closePath();
+  } else if (type === 'stalker') {
+    ctx.moveTo(r, 0); ctx.lineTo(-r * 0.5, -r * 0.9); ctx.lineTo(-r * 0.3, 0); ctx.lineTo(-r * 0.5, r * 0.9); ctx.closePath();
+  } else if (type === 'splitter') {
+    for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
+    ctx.closePath();
+  } else {
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+  }
+}
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
@@ -2580,115 +2622,252 @@ const ZOMBIE_CODEX = {
   stalker:  { name: 'STALKER',   desc: 'Lightweight and agile. Flanks the player.' },
 };
 
-let codexCurrentTab = 'enemies';
+const CODEX_CATEGORIES = [
+  { id: 'enemies',  name: 'ENEMIES',   color: '#f44' },
+  { id: 'weapons',  name: 'WEAPONS',   color: '#0ff' },
+  { id: 'powerups', name: 'POWER-UPS', color: '#ff0' },
+  { id: 'elements', name: 'ELEMENTS',  color: '#f8f' },
+  { id: 'modes',    name: 'MODES',     color: '#0f0' },
+];
+const WEAPON_DESCS = {
+  pistol: 'Reliable sidearm with infinite ammo. Never runs dry.',
+  revolver: 'Hand cannon — slow fire, massive damage per shot, strong knockback.',
+  smg: 'Bullet hose. High fire rate, low damage per shot. Great for swarms.',
+  burst: 'Precise 3-round burst on each trigger pull. Good accuracy.',
+  shotgun: 'Devastating close-range spread. 10 pellets per shell.',
+  rifle: 'Long-range sniper. High damage, slow fire, pierces 3 enemies.',
+  minigun: 'Wall of bullets. Wide spread, huge ammo pool.',
+  flamethrower: 'Short-range area denial. Ignites enemies with a fire trail.',
+  laser: 'Instant-hit pierce beam. Cuts through 99 enemies in a straight line.',
+  lightning: 'Tesla coil. Chain lightning jumps between 3 nearby enemies.',
+  rpg: 'Massive explosion. Instakill radius. Be careful not to blow yourself up.',
+};
+const ELEMENT_DESCS = {
+  fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies while burning.',
+  ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
+  lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
+};
+const MODE_LIST = [
+  { id: 'descent', name: 'DESCENT', color: '#f0f', icon: '▼', desc: 'Vertical dungeon. Clear each section to unlock the gate below. Boss every 5 sections. How deep can you go?' },
+  { id: 'survival', name: 'SURVIVAL', color: '#ff0', icon: '❖', desc: 'Endless waves in a single arena. Pick a perk between waves.' },
+  { id: 'horde', name: 'HORDE', color: '#0ff', icon: '◯', desc: 'Nonstop chaos. Defend the center circle from invading zombies. How long can you survive?' },
+  { id: 'siege', name: 'SIEGE', color: '#f80', icon: '▣', desc: 'Two walls flanking your house. Waves attack from both sides. Repair walls between waves. Shoot chests for power-ups.' },
+];
+let codexState = { category: 'enemies', itemKey: null };
+
 function hexToRgba(hex, a) {
   const h = hex.replace('#','');
   const f = h.length === 3 ? h.split('').map(c=>c+c).join('') : h;
   const r = parseInt(f.slice(0,2),16), g = parseInt(f.slice(2,4),16), b = parseInt(f.slice(4,6),16);
   return `rgba(${r},${g},${b},${a})`;
 }
-function codexCard(color, title, icon, body) {
-  return `<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;margin-bottom:8px;border:2px solid ${color};border-radius:8px;background:${hexToRgba(color,0.06)};box-shadow:0 0 12px ${hexToRgba(color,0.2)},inset 0 0 6px ${hexToRgba(color,0.1)}">
-    <div style="flex-shrink:0;width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:${hexToRgba(color,0.15)};border:1px solid ${color};color:${color};font-size:20px;text-shadow:0 0 8px ${color},0 0 14px ${color}">${icon}</div>
-    <div style="flex:1;min-width:0">
-      <div style="color:${color};font-weight:bold;letter-spacing:1px;text-shadow:0 0 6px ${color};margin-bottom:3px;font-size:13px">${title}</div>
-      <div style="color:#ccd;font-size:11px;line-height:1.55">${body}</div>
-    </div>
-  </div>`;
-}
 function codexStat(label, value, color) {
-  return `<span style="display:inline-block;padding:1px 6px;margin:1px 2px 1px 0;border:1px solid ${color}66;border-radius:4px;background:${hexToRgba(color,0.08)};color:${color};font-size:10px">${label}: <b style="color:#fff">${value}</b></span>`;
+  return `<span style="display:inline-block;padding:2px 8px;margin:2px 4px 2px 0;border:1px solid ${color}88;border-radius:4px;background:${hexToRgba(color,0.08)};color:${color};font-size:10px;letter-spacing:1px">${label}: <b style="color:#fff;text-shadow:0 0 4px ${color}">${value}</b></span>`;
 }
-function renderCodex(tab) {
-  codexCurrentTab = tab;
-  // Build tabs
-  const tabs = [
-    { id: 'enemies',  name: 'ENEMIES',   color: '#f44' },
-    { id: 'weapons',  name: 'WEAPONS',   color: '#0ff' },
-    { id: 'powerups', name: 'POWER-UPS', color: '#ff0' },
-    { id: 'elements', name: 'ELEMENTS',  color: '#f8f' },
-    { id: 'modes',    name: 'MODES',     color: '#0f0' },
-  ];
-  const tabEl = document.getElementById('codex-tabs');
-  tabEl.innerHTML = tabs.map(t => {
-    const active = t.id === tab;
-    return `<button class="codex-tab" data-tab="${t.id}" style="padding:6px 14px;border:2px solid ${t.color};border-radius:6px;background:${active?hexToRgba(t.color,0.3):hexToRgba(t.color,0.08)};color:${t.color};font-family:'Courier New',monospace;font-size:11px;font-weight:bold;letter-spacing:1px;cursor:pointer;text-shadow:0 0 6px ${t.color};box-shadow:${active?`0 0 14px ${hexToRgba(t.color,0.6)}`:`0 0 8px ${hexToRgba(t.color,0.2)}`}">${t.name}</button>`;
+function codexItemsFor(cat) {
+  if (cat === 'enemies') return Object.keys(ZOMBIE_TYPES).map(k => ({ key: k, name: (ZOMBIE_CODEX[k]||{}).name || k.toUpperCase(), color: ZOMBIE_TYPES[k].color }));
+  if (cat === 'weapons') return Object.keys(WEAPON_DEFS).map(k => ({ key: k, name: WEAPON_DEFS[k].name.toUpperCase(), color: WEAPON_DEFS[k].color }));
+  if (cat === 'powerups') return POWERUP_TYPES.map(p => ({ key: p.id, name: p.name, color: p.color }));
+  if (cat === 'elements') return ELEMENT_TYPES.map(e => ({ key: e.id, name: e.name, color: e.color }));
+  if (cat === 'modes') return MODE_LIST.map(m => ({ key: m.id, name: m.name, color: m.color }));
+  return [];
+}
+
+// Draw a zombie preview (same shape as in-game) on the detail canvas
+function drawZombiePreview(canvas, key) {
+  const def = ZOMBIE_TYPES[key]; if (!def) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w/2, cy = h/2;
+  const r = Math.min(w, h) * 0.32;
+  const color = def.color;
+  ctx.save(); ctx.translate(cx, cy);
+  // Halo glow
+  ctx.shadowColor = color; ctx.shadowBlur = 28;
+  ctx.globalAlpha = 0.2; ctx.fillStyle = color;
+  _drawZombieShape(ctx, key, r + 4); ctx.fill();
+  // Dark body
+  ctx.globalAlpha = 1; ctx.fillStyle = '#0a0a0a';
+  _drawZombieShape(ctx, key, r); ctx.fill();
+  // Neon outline
+  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+  ctx.shadowBlur = 0;
+  // Eyes
+  ctx.fillStyle = def.ranged ? '#5fa' : '#f44';
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.arc(r*0.35, -r*0.25, 4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.35, r*0.25, 4, 0, Math.PI*2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// Draw a weapon preview (muzzle flash + bullet) on the detail canvas
+function drawWeaponPreview(canvas, key) {
+  const def = WEAPON_DEFS[key]; if (!def) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w/2, cy = h/2;
+  ctx.save(); ctx.translate(cx, cy);
+  // Weapon body (stylized gun barrel)
+  ctx.shadowColor = def.color; ctx.shadowBlur = 18;
+  ctx.fillStyle = def.color; ctx.globalAlpha = 0.2;
+  ctx.fillRect(-40, -8, 80, 16);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#111'; ctx.fillRect(-38, -6, 76, 12);
+  ctx.strokeStyle = def.color; ctx.lineWidth = 2; ctx.strokeRect(-38, -6, 76, 12);
+  // Muzzle flash
+  ctx.shadowColor = def.bulletColor; ctx.shadowBlur = 20;
+  ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.8;
+  ctx.beginPath(); ctx.arc(42, 0, 8, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = def.bulletColor; ctx.globalAlpha = 0.6;
+  ctx.beginPath(); ctx.arc(42, 0, 14, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  // Bullet trail
+  for (let i = 0; i < 5; i++) {
+    const bx = 50 + i * 14;
+    ctx.fillStyle = def.bulletColor;
+    ctx.shadowColor = def.bulletColor; ctx.shadowBlur = 10;
+    ctx.globalAlpha = 1 - i * 0.18;
+    ctx.beginPath(); ctx.arc(bx, 0, def.bulletSize + 1, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Draw a power-up / element icon preview
+function drawIconPreview(canvas, icon, color) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w/2, cy = h/2;
+  // Glowing background ring
+  ctx.shadowColor = color; ctx.shadowBlur = 30;
+  ctx.globalAlpha = 0.18; ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(cx, cy, 48, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(cx, cy, 48, 0, Math.PI*2); ctx.stroke();
+  ctx.shadowBlur = 0;
+  // Icon
+  ctx.font = 'bold 52px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = color; ctx.shadowBlur = 16;
+  ctx.fillStyle = color;
+  ctx.fillText(icon, cx, cy + 2);
+  ctx.shadowBlur = 0;
+}
+
+function renderCodexDetail() {
+  const { category, itemKey } = codexState;
+  const el = document.getElementById('codex-detail');
+  if (!itemKey) { el.innerHTML = '<div style="color:#666;font-size:11px;padding:20px;text-align:center">Select an item from the list</div>'; return; }
+
+  const previewId = 'codex-preview-canvas';
+  let color, title, desc, stats = '';
+
+  if (category === 'enemies') {
+    const def = ZOMBIE_TYPES[itemKey]; const info = ZOMBIE_CODEX[itemKey] || { name: itemKey.toUpperCase(), desc: '—' };
+    color = def.color; title = info.name; desc = info.desc;
+    stats = codexStat('HP', def.hp, color) + codexStat('DMG', def.damage, color) + codexStat('SPEED', def.speed.toFixed(1), color) + codexStat('SIZE', def.radius, color) + codexStat('SCORE', def.score, color);
+  }
+  else if (category === 'weapons') {
+    const def = WEAPON_DEFS[itemKey]; color = def.color; title = def.name.toUpperCase(); desc = WEAPON_DESCS[itemKey] || '';
+    stats = codexStat('DAMAGE', def.damage, color) +
+      codexStat('FIRE RATE', `${def.fireRate}ms`, color) +
+      codexStat('MAG', def.magSize === 999 ? '∞' : def.magSize, color) +
+      codexStat('RANGE', def.bulletSpeed >= 25 ? 'LONG' : def.bulletSpeed >= 15 ? 'MED' : 'SHORT', color) +
+      codexStat('KNOCKBACK', def.knockback, color) +
+      (def.pierce ? codexStat('PIERCE', def.pierce >= 99 ? '∞' : def.pierce, color) : '') +
+      (def.pellets ? codexStat('PELLETS', def.pellets, color) : '') +
+      (def.explosive ? codexStat('BLAST', `${def.explosionRadius}px`, color) : '') +
+      (def.chain ? codexStat('CHAIN', def.chainCount, color) : '') +
+      (def.infinite ? codexStat('AMMO', '∞', color) : codexStat('AMMO', def.totalAmmo || '—', color));
+  }
+  else if (category === 'powerups') {
+    const def = POWERUP_TYPES.find(p => p.id === itemKey); if (!def) return;
+    color = def.color; title = def.name; desc = def.desc;
+    stats = codexStat('DURATION', def.duration > 1 ? `${Math.round(def.duration/60)}s` : 'INSTANT', color) + codexStat('TYPE', def.duration > 1 ? 'BUFF' : 'TRIGGERED', color);
+  }
+  else if (category === 'elements') {
+    const def = ELEMENT_TYPES.find(e => e.id === itemKey); if (!def) return;
+    color = def.color; title = def.name; desc = ELEMENT_DESCS[itemKey] || '';
+    stats = codexStat('DURATION', '10s', color) + codexStat('SOURCE', 'ZONE PICKUP', color);
+  }
+  else if (category === 'modes') {
+    const def = MODE_LIST.find(m => m.id === itemKey); if (!def) return;
+    color = def.color; title = def.name; desc = def.desc;
+    stats = codexStat('TYPE', 'SOLO/COOP', color);
+  }
+
+  el.innerHTML = `
+    <div style="text-align:center;padding:8px">
+      <canvas id="${previewId}" width="260" height="160" style="max-width:100%;border:2px solid ${color};border-radius:8px;background:radial-gradient(circle,${hexToRgba(color,0.08)},rgba(5,5,10,0.9));box-shadow:0 0 20px ${hexToRgba(color,0.3)},inset 0 0 20px ${hexToRgba(color,0.08)}"></canvas>
+    </div>
+    <div style="text-align:center;color:${color};font-size:18px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 10px ${color},0 0 20px ${hexToRgba(color,0.5)};margin:10px 0 6px 0">${title}</div>
+    <div style="color:#ccd;font-size:12px;line-height:1.6;text-align:center;margin-bottom:14px;padding:0 8px">${desc}</div>
+    <div style="text-align:center;padding:0 8px">${stats}</div>`;
+
+  const canvas = document.getElementById(previewId);
+  if (canvas) {
+    if (category === 'enemies') drawZombiePreview(canvas, itemKey);
+    else if (category === 'weapons') drawWeaponPreview(canvas, itemKey);
+    else if (category === 'powerups') { const def = POWERUP_TYPES.find(p => p.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
+    else if (category === 'elements') { const def = ELEMENT_TYPES.find(e => e.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
+    else if (category === 'modes') { const def = MODE_LIST.find(m => m.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
+  }
+}
+
+function renderCodexItems() {
+  const el = document.getElementById('codex-items');
+  const items = codexItemsFor(codexState.category);
+  el.innerHTML = items.map(it => {
+    const selected = it.key === codexState.itemKey;
+    return `<div class="codex-list-item${selected?' selected':''}" data-key="${it.key}" style="${selected?`border-color:${it.color};background:${hexToRgba(it.color,0.15)};color:#fff`:''}">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${it.color};box-shadow:0 0 6px ${it.color}"></span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.name}</span>
+    </div>`;
   }).join('');
-  tabEl.querySelectorAll('.codex-tab').forEach(b => b.addEventListener('click', () => renderCodex(b.dataset.tab)));
-
-  const c = document.getElementById('codex-content');
-  let html = '';
-
-  if (tab === 'enemies') {
-    for (const [key, def] of Object.entries(ZOMBIE_TYPES)) {
-      const info = ZOMBIE_CODEX[key] || { name: key.toUpperCase(), desc: '—' };
-      const color = def.color || '#f44';
-      const stats = codexStat('HP', def.hp, color) + codexStat('DMG', def.damage, color) + codexStat('SPD', def.speed.toFixed(1), color) + codexStat('SIZE', def.radius, color) + codexStat('SCORE', def.score, color);
-      // Simple shape icon
-      const shape = key === 'fast' ? '▲' : (key === 'tank' || key === 'boss') ? '■' : key === 'brute' ? '⬢' : key === 'spitter' ? '◆' : key === 'exploder' ? '✦' : key === 'stalker' ? '◐' : key === 'splitter' ? '⬟' : '●';
-      html += codexCard(color, info.name, shape, `${info.desc}<br><div style="margin-top:5px">${stats}</div>`);
-    }
-  }
-  else if (tab === 'weapons') {
-    const descs = {
-      pistol: 'Reliable sidearm with infinite ammo.',
-      revolver: 'Hand cannon — slow fire, massive damage per shot, strong knockback.',
-      smg: 'Bullet hose. High fire rate, low damage per shot.',
-      burst: 'Precise 3-round burst on each trigger pull.',
-      shotgun: 'Devastating close-range spread. 10 pellets per shell.',
-      rifle: 'Long-range sniper. High damage, slow fire, pierces 3 enemies.',
-      minigun: 'Wall of bullets. Wide spread, huge ammo pool.',
-      flamethrower: 'Short-range area denial. Ignites enemies with fire trail.',
-      laser: 'Instant-hit pierce beam. Cuts through 99 enemies.',
-      lightning: 'Tesla. Chain lightning jumps between 3 enemies.',
-      rpg: 'Massive explosion. Instakill radius.',
-    };
-    for (const [key, def] of Object.entries(WEAPON_DEFS)) {
-      const color = def.color;
-      const stats = codexStat('DMG', def.damage, color) +
-        codexStat('RATE', `${def.fireRate}ms`, color) +
-        codexStat('MAG', def.magSize === 999 ? '∞' : def.magSize, color) +
-        codexStat('RANGE', def.bulletSpeed >= 25 ? 'long' : def.bulletSpeed >= 15 ? 'med' : 'short', color) +
-        codexStat('KB', def.knockback, color) +
-        (def.pierce ? codexStat('PIERCE', def.pierce >= 99 ? '∞' : def.pierce, color) : '') +
-        (def.pellets ? codexStat('PELLETS', def.pellets, color) : '') +
-        (def.explosive ? codexStat('BLAST', `${def.explosionRadius}px`, color) : '') +
-        (def.chain ? codexStat('CHAIN', def.chainCount, color) : '');
-      html += codexCard(color, def.name.toUpperCase(), '▰', `${descs[key] || ''}<br><div style="margin-top:5px">${stats}</div>`);
-    }
-  }
-  else if (tab === 'powerups') {
-    for (const p of POWERUP_TYPES) {
-      const durTxt = p.duration > 1 ? `${Math.round(p.duration/60)}s` : 'instant';
-      const stats = codexStat('DURATION', durTxt, p.color);
-      html += codexCard(p.color, p.name, p.icon, `${p.desc}<br><div style="margin-top:5px">${stats}</div>`);
-    }
-  }
-  else if (tab === 'elements') {
-    const elDescs = {
-      fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies.',
-      ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
-      lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
-    };
-    for (const e of ELEMENT_TYPES) {
-      html += codexCard(e.color, e.name, e.icon, `${elDescs[e.id] || ''}<br><div style="margin-top:5px;color:#888;font-size:10px">Pick up an element zone to apply this effect to all your bullets for 10s.</div>`);
-    }
-  }
-  else if (tab === 'modes') {
-    const modes = [
-      { name: 'DESCENT', color: '#f0f', desc: 'Vertical dungeon — clear each section to unlock the gate below. Boss every 5 sections.' },
-      { name: 'SURVIVAL', color: '#ff0', desc: 'Endless waves in a single arena. Pick a perk between waves.' },
-      { name: 'HORDE', color: '#0ff', desc: 'Nonstop chaos. Defend the center circle. How long can you survive?' },
-      { name: 'SIEGE', color: '#f80', desc: 'Two walls flanking your house. Waves attack from both sides. Repair the wall between waves. Shoot chests for power-ups.' },
-    ];
-    for (const m of modes) html += codexCard(m.color, m.name, '◆', m.desc);
-  }
-
-  c.innerHTML = html;
+  el.querySelectorAll('.codex-list-item').forEach(b => b.addEventListener('click', () => {
+    codexState.itemKey = b.dataset.key;
+    renderCodexItems();
+    renderCodexDetail();
+  }));
 }
+
+function renderCodexCategories() {
+  const el = document.getElementById('codex-categories');
+  el.innerHTML = CODEX_CATEGORIES.map(c => {
+    const selected = c.id === codexState.category;
+    return `<div class="codex-list-item${selected?' selected':''}" data-cat="${c.id}" style="${selected?`border-color:${c.color};background:${hexToRgba(c.color,0.15)};color:#fff`:''}">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c.color};box-shadow:0 0 6px ${c.color}"></span>
+      <span style="flex:1">${c.name}</span>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.codex-list-item').forEach(b => b.addEventListener('click', () => {
+    codexState.category = b.dataset.cat;
+    // Auto-select first item in the new category
+    const items = codexItemsFor(codexState.category);
+    codexState.itemKey = items.length > 0 ? items[0].key : null;
+    renderCodexCategories();
+    renderCodexItems();
+    renderCodexDetail();
+  }));
+}
+
+function renderCodex() {
+  // Default to first item of current category if none selected
+  if (!codexState.itemKey) {
+    const items = codexItemsFor(codexState.category);
+    codexState.itemKey = items.length > 0 ? items[0].key : null;
+  }
+  renderCodexCategories();
+  renderCodexItems();
+  renderCodexDetail();
+}
+
 function openCodex() {
   document.getElementById('codex-screen').style.display = 'block';
-  renderCodex(codexCurrentTab);
+  renderCodex();
 }
 function closeCodex() {
   document.getElementById('codex-screen').style.display = 'none';
@@ -5453,48 +5632,7 @@ function render() {
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{ctx.shadowColor=b.color;ctx.shadowBlur=14;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size*0.6,0,Math.PI*2);ctx.fill();ctx.globalAlpha=0.5;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*1.5,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.shadowBlur=0;}}
 
-  // Zombies
-  // Helper: draw zombie body shape based on type (centered at origin, pre-rotated)
-  function _drawZombieShape(ctx, type, r) {
-    ctx.beginPath();
-    if (type === 'fast') {
-      // Triangle — pointy, looks fast
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-r * 0.7, -r * 0.8);
-      ctx.lineTo(-r * 0.7, r * 0.8);
-      ctx.closePath();
-    } else if (type === 'tank' || type === 'boss') {
-      // Square — bulky
-      ctx.rect(-r, -r, r * 2, r * 2);
-    } else if (type === 'brute') {
-      // Hexagon — heavy
-      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 - Math.PI / 6; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
-      ctx.closePath();
-    } else if (type === 'spitter') {
-      // Diamond — ranged indicator
-      ctx.moveTo(r, 0); ctx.lineTo(0, -r); ctx.lineTo(-r, 0); ctx.lineTo(0, r);
-      ctx.closePath();
-    } else if (type === 'exploder') {
-      // Star — spiky, dangerous
-      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 - Math.PI / 2; const sr = i % 2 === 0 ? r : r * 0.5; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * sr, Math.sin(a) * sr); }
-      ctx.closePath();
-    } else if (type === 'stalker') {
-      // Crescent / thin wedge
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-r * 0.5, -r * 0.9);
-      ctx.lineTo(-r * 0.3, 0);
-      ctx.lineTo(-r * 0.5, r * 0.9);
-      ctx.closePath();
-    } else if (type === 'splitter') {
-      // Pentagon
-      for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
-      ctx.closePath();
-    } else {
-      // Normal / default — circle
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-    }
-  }
-
+  // Zombies (shape helper is defined at module scope above)
   // Zombie shadows — separate pass so they render below all zombie bodies
   for(const z of zombies){
     const{player:np}=getNearestAlivePlayer(z.x,z.y);
