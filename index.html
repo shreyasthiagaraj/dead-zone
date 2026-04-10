@@ -2926,6 +2926,27 @@ function spawnBarrels(count) {
   }
 }
 function explodeBarrel(barrel, idx) {
+  // Chest: reveal the item inside instead of exploding
+  if (barrel._chest) {
+    const c = barrel._content;
+    if (c) {
+      if (c.type === 'powerup') {
+        pickups.push({ type: 'powerup', powerupId: c.id, x: barrel.x, y: barrel.y, bobTimer: Math.random() * Math.PI * 2 });
+      } else if (c.type === 'orbital') {
+        spawnOrbitalPickup(barrel.x, barrel.y);
+      } else if (c.type === 'health') {
+        pickups.push({ type: 'health', amount: 25, x: barrel.x, y: barrel.y, bobTimer: Math.random() * Math.PI * 2 });
+      } else if (c.type === 'element') {
+        elementZones.push({ x: barrel.x, y: barrel.y, radius: 40, element: c.id, life: 900 });
+      }
+    }
+    // Gold burst on chest break
+    for (let k = 0; k < 20; k++) { const a = Math.random()*Math.PI*2, s = 2+Math.random()*5; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*15,maxLife:35,size:3+Math.random()*3,color:Math.random()>0.4?'#ff0':'#fa0',type:'spark'}); }
+    playPickupSound(); screenShake.intensity = Math.max(screenShake.intensity, 4);
+    addFloatingText(barrel.x, barrel.y - 20, 'CHEST!', '#ff0');
+    barrels.splice(idx, 1);
+    return;
+  }
   createExplosion(barrel.x, barrel.y, 70, 80, 'any');
   // Fire burst particles
   for (let k = 0; k < 15; k++) { const a = Math.random()*Math.PI*2, s = 2+Math.random()*5; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:25+Math.random()*15,maxLife:40,size:4+Math.random()*4,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
@@ -2933,6 +2954,7 @@ function explodeBarrel(barrel, idx) {
   // Chain reaction: explode nearby barrels
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
+    if (b2._chest) continue; // don't chain to chests
     if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 90) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
@@ -3358,24 +3380,33 @@ function updateSiege() {
   _repairWall(siegeWallLeft, siegeWallLeftX);
   _repairWall(siegeWallRight, siegeWallRightX);
 
-  // ---- Drop power-ups in the house every 30 seconds ----
-  if (siegeTimer % 1800 === 900) {
-    const px = siegeWallLeftX + CELL_SIZE + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 2);
-    const py = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
-    if (Math.random() < 0.15) { spawnOrbitalPickup(px, py); }
-    else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: px, y: py, bobTimer: Math.random() * Math.PI * 2 }); }
-  }
-  // Health every 40 seconds
-  if (siegeTimer % 2400 === 0 && siegeTimer > 0) {
-    const hx = siegeWallLeftX + CELL_SIZE + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 2);
-    const hy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
-    pickups.push({ type: 'health', amount: 25, x: hx, y: hy, bobTimer: Math.random() * Math.PI * 2 });
-  }
-  // Element zones every 45 seconds
-  if (siegeTimer % 2700 === 0 && siegeTimer > 0) spawnElementZone();
+  // ---- Spawn chests in the house — player must shoot them to reveal items ----
+  // Power-up chest every 30s
+  if (siegeTimer % 1800 === 900) spawnSiegeChest('powerup');
+  // Health chest every 40s
+  if (siegeTimer % 2400 === 0 && siegeTimer > 0) spawnSiegeChest('health');
+  // Element chest every 45s
+  if (siegeTimer % 2700 === 0 && siegeTimer > 0) spawnSiegeChest('element');
   // Tick timers on both walls
   for (const sec of siegeWallLeft) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
   for (const sec of siegeWallRight) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
+}
+
+function spawnSiegeChest(kind) {
+  const cx = siegeWallLeftX + CELL_SIZE * 1.5 + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 3);
+  const cy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
+  let content;
+  if (kind === 'powerup') {
+    if (Math.random() < 0.15) content = { type: 'orbital' };
+    else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; content = { type: 'powerup', id: pwr.id }; }
+  } else if (kind === 'health') {
+    content = { type: 'health' };
+  } else if (kind === 'element') {
+    const el = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
+    content = { type: 'element', id: el.id };
+  }
+  barrels.push({ x: cx, y: cy, radius: 16, hp: 1, _chest: true, _chestKind: kind, _content: content, _bobTimer: Math.random() * Math.PI * 2 });
+  addFloatingText(cx, cy - 25, 'CHEST DROPPED', '#ff0');
 }
 
 function spawnSiegeZombie(types, wave) {
@@ -5043,18 +5074,43 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
-  // Barrels — red with pulsing glow and hazard stripe
+  // Barrels + chests
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
-    // Pulsing danger glow
-    const bPulse=0.3+Math.sin(performance.now()*0.004+br.x)*0.15;
-    ctx.shadowColor='#f40';ctx.shadowBlur=18;ctx.globalAlpha=bPulse;ctx.fillStyle='#f40';ctx.beginPath();ctx.arc(0,0,br.radius+5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;
-    // Barrel body — dark with neon outline
-    ctx.fillStyle='#1a0808';ctx.beginPath();ctx.arc(0,0,br.radius,0,Math.PI*2);ctx.fill();
-    ctx.shadowColor='#f80';ctx.shadowBlur=10;ctx.strokeStyle='#f80';ctx.lineWidth=2;ctx.stroke();ctx.shadowBlur=0;
-    // Hazard stripe
-    ctx.strokeStyle='#fa0';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-br.radius+2,0);ctx.lineTo(br.radius-2,0);ctx.stroke();
-    // Warning symbol
-    ctx.fillStyle='#ff0';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('☢',0,0);
+    if (br._chest) {
+      // Chest — gold/yellow rounded box with a ? icon
+      const cPulse = 0.4 + Math.sin(performance.now() * 0.004 + br.x) * 0.2;
+      const chestColor = br._chestKind === 'health' ? '#0f0' : br._chestKind === 'element' ? '#0ff' : '#ff0';
+      const bob = Math.sin(performance.now() * 0.003 + (br._bobTimer || 0)) * 2;
+      ctx.translate(0, bob);
+      // Outer glow
+      ctx.shadowColor = chestColor; ctx.shadowBlur = 18; ctx.globalAlpha = cPulse;
+      ctx.fillStyle = chestColor; ctx.beginPath(); ctx.arc(0, 0, br.radius + 4, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      // Body
+      ctx.shadowBlur = 8; ctx.fillStyle = '#0a0a12';
+      const w = br.radius * 1.4, h = br.radius * 1.1;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-w, -h, w*2, h*2, 3) : ctx.rect(-w, -h, w*2, h*2);
+      ctx.fill();
+      ctx.strokeStyle = chestColor; ctx.lineWidth = 2; ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Lid line
+      ctx.strokeStyle = chestColor; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.6;
+      ctx.beginPath(); ctx.moveTo(-w + 2, -h * 0.3); ctx.lineTo(w - 2, -h * 0.3); ctx.stroke();
+      ctx.globalAlpha = 1;
+      // Keyhole
+      ctx.fillStyle = chestColor; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = chestColor; ctx.shadowBlur = 6;
+      ctx.fillText('?', 0, 2);
+      ctx.shadowBlur = 0;
+    } else {
+      // Barrel — red with pulsing glow and hazard stripe
+      const bPulse=0.3+Math.sin(performance.now()*0.004+br.x)*0.15;
+      ctx.shadowColor='#f40';ctx.shadowBlur=18;ctx.globalAlpha=bPulse;ctx.fillStyle='#f40';ctx.beginPath();ctx.arc(0,0,br.radius+5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;
+      ctx.fillStyle='#1a0808';ctx.beginPath();ctx.arc(0,0,br.radius,0,Math.PI*2);ctx.fill();
+      ctx.shadowColor='#f80';ctx.shadowBlur=10;ctx.strokeStyle='#f80';ctx.lineWidth=2;ctx.stroke();ctx.shadowBlur=0;
+      ctx.strokeStyle='#fa0';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-br.radius+2,0);ctx.lineTo(br.radius-2,0);ctx.stroke();
+      ctx.fillStyle='#ff0';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('☢',0,0);
+    }
   ctx.restore();}
 
   // Element zones — neon rings with pulsing glow
