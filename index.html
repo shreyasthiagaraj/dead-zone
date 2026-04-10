@@ -295,9 +295,9 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 </div>
 <style>
 .codex-grid { flex: 1; display: grid; grid-template-columns: 130px 180px 1fr; gap: 0; min-height: 0; border: 1px solid #333; border-radius: 6px; background: rgba(10,10,20,0.6); overflow: hidden; }
-.codex-grid > div { overflow-y: auto; padding: 6px 4px; }
-#codex-categories, #codex-items { border-right: 1px solid #222; }
-#codex-detail { padding: 14px 16px; }
+.codex-grid > div { padding: 6px 4px; }
+#codex-categories, #codex-items { overflow-y: auto; border-right: 1px solid #222; }
+#codex-detail { padding: 10px 14px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; }
 @media (max-width: 620px) {
   .codex-grid { grid-template-columns: 90px 130px 1fr; }
 }
@@ -2673,33 +2673,39 @@ function codexItemsFor(cat) {
   return [];
 }
 
-// Draw a zombie preview (same shape as in-game) on the detail canvas
+// Draw a zombie preview (same shape as in-game, true-to-size relative to other zombies)
 function drawZombiePreview(canvas, key) {
   const def = ZOMBIE_TYPES[key]; if (!def) return;
   const ctx = canvas.getContext('2d');
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   const cx = w/2, cy = h/2;
-  const r = Math.min(w, h) * 0.32;
+  // True-to-size scaling: actual radius * 2 so the largest zombie (boss, r=28)
+  // fits at ~56px, while a mini (r=11) is a tiny ~22px — preserving relative proportions
+  const r = def.radius * 2;
   const color = def.color;
   ctx.save(); ctx.translate(cx, cy);
   // Halo glow
-  ctx.shadowColor = color; ctx.shadowBlur = 28;
+  ctx.shadowColor = color; ctx.shadowBlur = 24;
   ctx.globalAlpha = 0.2; ctx.fillStyle = color;
-  _drawZombieShape(ctx, key, r + 4); ctx.fill();
+  _drawZombieShape(ctx, key, r + 3); ctx.fill();
   // Dark body
   ctx.globalAlpha = 1; ctx.fillStyle = '#0a0a0a';
   _drawZombieShape(ctx, key, r); ctx.fill();
   // Neon outline
-  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
   ctx.shadowBlur = 0;
-  // Eyes
+  // Eyes (scale with size)
+  const eyeR = Math.max(2, r * 0.13);
   ctx.fillStyle = def.ranged ? '#5fa' : '#f44';
-  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 10;
-  ctx.beginPath(); ctx.arc(r*0.35, -r*0.25, 4, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(r*0.35, r*0.25, 4, 0, Math.PI*2); ctx.fill();
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(r*0.35, -r*0.25, eyeR, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.35, r*0.25, eyeR, 0, Math.PI*2); ctx.fill();
   ctx.shadowBlur = 0;
   ctx.restore();
+  // Size label at the bottom
+  ctx.fillStyle = '#666'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(`ACTUAL SIZE · radius ${def.radius}`, cx, h - 6);
 }
 
 // Draw a weapon preview (muzzle flash + bullet) on the detail canvas
@@ -2800,12 +2806,12 @@ function renderCodexDetail() {
   }
 
   el.innerHTML = `
-    <div style="text-align:center;padding:8px">
-      <canvas id="${previewId}" width="260" height="160" style="max-width:100%;border:2px solid ${color};border-radius:8px;background:radial-gradient(circle,${hexToRgba(color,0.08)},rgba(5,5,10,0.9));box-shadow:0 0 20px ${hexToRgba(color,0.3)},inset 0 0 20px ${hexToRgba(color,0.08)}"></canvas>
+    <div style="text-align:center;padding:2px 4px 6px 4px">
+      <canvas id="${previewId}" width="220" height="110" style="max-width:100%;border:2px solid ${color};border-radius:8px;background:radial-gradient(circle,${hexToRgba(color,0.08)},rgba(5,5,10,0.9));box-shadow:0 0 18px ${hexToRgba(color,0.3)},inset 0 0 18px ${hexToRgba(color,0.08)}"></canvas>
     </div>
-    <div style="text-align:center;color:${color};font-size:18px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 10px ${color},0 0 20px ${hexToRgba(color,0.5)};margin:10px 0 6px 0">${title}</div>
-    <div style="color:#ccd;font-size:12px;line-height:1.6;text-align:center;margin-bottom:14px;padding:0 8px">${desc}</div>
-    <div style="text-align:center;padding:0 8px">${stats}</div>`;
+    <div style="text-align:center;color:${color};font-size:16px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 10px ${color},0 0 18px ${hexToRgba(color,0.5)};margin:4px 0 4px 0">${title}</div>
+    <div style="color:#ccd;font-size:11px;line-height:1.5;text-align:center;margin-bottom:8px;padding:0 6px">${desc}</div>
+    <div style="text-align:center;padding:0 4px">${stats}</div>`;
 
   const canvas = document.getElementById(previewId);
   if (canvas) {
