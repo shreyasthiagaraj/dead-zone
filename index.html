@@ -5905,15 +5905,22 @@ function renderMinimap(){
 // GAME LOOP
 // ============================================================
 function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
-// Start menu music on first user interaction
+// Preload audio on page load so the very first user interaction can play music immediately.
+// AudioContext is created in suspended state (allowed without user gesture in modern browsers);
+// audio files decode in parallel so the music buffer is ready by the time the user clicks.
+try { initAudio(); loadSfx(); } catch(e) {}
+
 let _menuMusicStarted = false;
 function tryStartMenuMusic() {
   if (_menuMusicStarted) return;
   _menuMusicStarted = true;
-  initAudio(); loadSfx();
-  // Wait briefly for sfx buffers to load, then play
-  const _tryPlay = () => { if (sfxBuffers['music_menu']) playMusic('music_menu', 2.0); else setTimeout(_tryPlay, 500); };
-  setTimeout(_tryPlay, 300);
+  // Fallback if eager init failed (e.g. on some older Safari)
+  if (!audioCtx) { initAudio(); loadSfx(); }
+  // Context may still be suspended — resume on this user gesture
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  // If buffer already loaded, play immediately; otherwise poll until ready
+  const _tryPlay = () => { if (sfxBuffers['music_menu']) playMusic('music_menu', 2.0); else setTimeout(_tryPlay, 200); };
+  _tryPlay();
 }
 // Capture phase so we fire BEFORE any button handlers that call stopPropagation
 document.addEventListener('click', tryStartMenuMusic, { once: true, capture: true });
