@@ -56,16 +56,22 @@ body.mobile .joystick-zone { display: block; }
 #joystick-left { left: 0; }
 #joystick-right { right: 0; }
 
-#mobile-buttons { position: fixed; z-index: 25; display: none; }
-body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; right: calc(8px + env(safe-area-inset-right) * 0.5); bottom: calc(160px + env(safe-area-inset-bottom)); }
-.mobile-btn { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #0ff4; background: rgba(0,10,20,0.7); color: #0ff6; font-size: 10px; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1.1; box-shadow: 0 0 6px rgba(0,255,255,0.15); }
-.mobile-btn { transition: transform 0.08s; }
-.mobile-btn:active, .mobile-btn.pressed { background: #0ff; border-color: #0ff; color: #030308; transform: scale(1.1); box-shadow: 0 0 20px rgba(0,255,255,0.5); text-shadow: none; }
-.mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
-.mobile-btn.dash-cooldown { border-color: #222; color: #333; box-shadow: none; }
+#mobile-buttons { display: none; }
+body.mobile #mobile-buttons { display: block; }
+.mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: rgba(0,10,20,0.7); color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s; }
+/* Blast button — big, always at the same spot regardless of game mode */
+#btn-dash { width: 84px; height: 84px; font-size: 40px; right: calc(18px + env(safe-area-inset-right) * 0.5); bottom: calc(120px + env(safe-area-inset-bottom)); }
+/* Repair (fix) button — stacked above blast with a big gap so you don't accidentally hit it */
+#btn-repair { width: 60px; height: 60px; font-size: 28px; right: calc(30px + env(safe-area-inset-right) * 0.5); bottom: calc(245px + env(safe-area-inset-bottom)); }
+/* Reload button (small, far above) */
+#btn-reload { width: 52px; height: 52px; font-size: 11px; right: calc(34px + env(safe-area-inset-right) * 0.5); bottom: calc(325px + env(safe-area-inset-bottom)); }
+.mobile-btn:active, .mobile-btn.pressed { background: #0ff; border-color: #0ff; color: #030308; transform: scale(1.1); box-shadow: 0 0 20px rgba(0,255,255,0.5); text-shadow: none; filter: drop-shadow(0 0 8px rgba(0,255,255,0.6)); }
+.mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 14px rgba(0,255,255,0.4); text-shadow: 0 0 8px rgba(0,255,255,0.6); }
+.mobile-btn.dash-cooldown { border-color: #222; color: #333; box-shadow: none; filter: grayscale(1) brightness(0.5); }
 .mobile-btn.reload-btn { border-color: #a4f; color: #a4f; box-shadow: 0 0 8px rgba(170,68,255,0.25); text-shadow: 0 0 6px rgba(170,68,255,0.4); }
 .mobile-btn.repair-btn { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
-.mobile-btn.repair-btn.repairing { background: #0ff; color: #030308; box-shadow: 0 0 20px rgba(0,255,255,0.7); }
+.mobile-btn.repair-btn.disabled { border-color: #234; color: #345; box-shadow: none; opacity: 0.4; pointer-events: none; cursor: default; }
+.mobile-btn.repair-btn.repairing { background: #0ff; color: #030308; box-shadow: 0 0 24px rgba(0,255,255,0.8); }
 
 #minimap { display: none; }
 
@@ -158,8 +164,8 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 <div id="ammo-hud" style="display:none"><div class="weapon-name" id="weapon-name"></div><div class="ammo" id="ammo-display"></div></div>
 <div id="weapon-slots" style="display:none"></div>
 <div id="mobile-buttons">
-  <div class="mobile-btn dash-ready" id="btn-dash">BLAST</div>
-  <div class="mobile-btn repair-btn" id="btn-repair" style="display:none">FIX</div>
+  <div class="mobile-btn dash-ready" id="btn-dash" aria-label="Blast">💥</div>
+  <div class="mobile-btn repair-btn disabled" id="btn-repair" aria-label="Repair" style="display:none">🔨</div>
   <div class="mobile-btn reload-btn" id="btn-reload" style="display:none">RLD</div>
   <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:10px;font-weight:bold;text-align:center;line-height:1.2;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;padding-top:22px;box-sizing:border-box"></div>
 </div>
@@ -5197,6 +5203,28 @@ function updateHUD() {
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
   // Blast cooldown indicator
   const db=document.getElementById('btn-dash');if(db)db.className=lp.dashCooldown>0?'mobile-btn dash-cooldown':'mobile-btn dash-ready';
+  // Siege repair button — only enabled when the local player is near a damaged wall section
+  if (gameMode === 'siege') {
+    const rb2 = document.getElementById('btn-repair');
+    if (rb2) {
+      let near = false;
+      if (lp && lp.alive) {
+        const checkWall = (wall, wallX) => {
+          for (const sec of wall) {
+            if (sec.hp >= sec.maxHp) continue; // fully repaired
+            if (Math.abs(lp.x - wallX) < CELL_SIZE * 1.6 && lp.y > sec.y - 14 && lp.y < sec.y + sec.height + 14) return true;
+          }
+          return false;
+        };
+        near = checkWall(siegeWallLeft, siegeWallLeftX) || checkWall(siegeWallRight, siegeWallRightX);
+      }
+      // Keep repairing state if held, toggle disabled based on proximity
+      const wasRepairing = rb2.classList.contains('repairing');
+      rb2.className = 'mobile-btn repair-btn' + (near ? '' : ' disabled') + (wasRepairing && near ? ' repairing' : '');
+      // If the player walked away while holding, stop repairing
+      if (!near && siegeRepairHeld) { siegeRepairHeld = false; }
+    }
+  }
   // Clear old perk display (not used in arcade system)
   const pd=document.getElementById('perk-display');if(pd)pd.innerHTML='';
 }
