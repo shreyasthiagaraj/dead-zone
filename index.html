@@ -3221,9 +3221,9 @@ function generateSiegeArena(seed) {
   arena.theme = ROOM_THEMES[4]; // furnace theme — red
   arena.brightness = 1.0; arena.flicker = false;
   rooms.push(arena);
-  // Two walls flanking a central house
-  const leftWallCol = Math.floor(mapW * 0.35);
-  const rightWallCol = Math.floor(mapW * 0.65);
+  // Two walls flanking a central house (narrower house)
+  const leftWallCol = Math.floor(mapW * 0.42);
+  const rightWallCol = Math.floor(mapW * 0.58);
   siegeWallLeftX = leftWallCol * CELL_SIZE;
   siegeWallRightX = rightWallCol * CELL_SIZE;
   // Wall sections (each 2 cells tall)
@@ -3278,7 +3278,9 @@ function updateSiege() {
     spawnTimer++;
     const types = ['normal', 'normal'];
     if (siegeWave >= 3) types.push('fast');
+    if (siegeWave >= 4) types.push('spitter', 'mini'); // ranged shooters early
     if (siegeWave >= 5) types.push('brute');
+    if (siegeWave >= 6) types.push('spitter'); // extra weight for shooters
     if (siegeWave >= 7) types.push('tank', 'splitter');
     if (siegeWave >= 10) types.push('spitter');
     if (siegeWave >= 13) types.push('exploder', 'stalker');
@@ -3402,7 +3404,7 @@ function spawnSiegeChest() {
     const el = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
     content = { type: 'element', id: el.id };
   }
-  barrels.push({ x: cx, y: cy, radius: 16, hp: 1, _chest: true, _content: content, _bobTimer: Math.random() * Math.PI * 2 });
+  barrels.push({ x: cx, y: cy, radius: 16, hp: 3, maxHp: 3, _chest: true, _content: content, _bobTimer: Math.random() * Math.PI * 2 });
   addFloatingText(cx, cy - 25, 'CHEST DROPPED', '#ff0');
 }
 
@@ -3991,7 +3993,7 @@ function update() {
     if(!_bfast&&!b.grenade&&obstacleCollision(b.x,b.y,b.size)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
     if(b.life<=0){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);continue;}
     // Barrel collision — all clients check (barrels are visual + host-authoritative)
-    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){explodeBarrel(br,bi);bullets.splice(i,1);break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
+    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){br.hp--;br._hitFlash=8;if(br.hp<=0)explodeBarrel(br,bi);else{playHitSound();for(let sp=0;sp<4;sp++){const sa=Math.random()*Math.PI*2;particles.push({x:br.x+Math.cos(sa)*br.radius,y:br.y+Math.sin(sa)*br.radius,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#ff0',type:'spark'});}}bullets.splice(i,1);break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
     // Only host does damage calculations
     if(isHost){
       if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
@@ -5074,9 +5076,11 @@ function render() {
   // Barrels + chests
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
     if (br._chest) {
+      // Tick hit flash
+      if (br._hitFlash > 0) br._hitFlash--;
       // Chest — gold rounded box with a ? icon
       const cPulse = 0.4 + Math.sin(performance.now() * 0.004 + br.x) * 0.2;
-      const chestColor = '#ff0';
+      const chestColor = br._hitFlash > 0 ? '#fff' : '#ff0';
       const bob = Math.sin(performance.now() * 0.003 + (br._bobTimer || 0)) * 2;
       ctx.translate(0, bob);
       // Outer glow
@@ -5099,6 +5103,16 @@ function render() {
       ctx.shadowColor = chestColor; ctx.shadowBlur = 6;
       ctx.fillText('?', 0, 2);
       ctx.shadowBlur = 0;
+      // Crack lines appear as chest takes damage
+      const dmg = (br.maxHp || 3) - br.hp;
+      if (dmg >= 1) {
+        ctx.strokeStyle = '#fff8'; ctx.lineWidth = 1; ctx.globalAlpha = 0.7;
+        ctx.beginPath(); ctx.moveTo(-w * 0.6, -h * 0.2); ctx.lineTo(-w * 0.2, h * 0.3); ctx.lineTo(w * 0.1, -h * 0.1); ctx.stroke();
+      }
+      if (dmg >= 2) {
+        ctx.beginPath(); ctx.moveTo(w * 0.5, -h * 0.5); ctx.lineTo(w * 0.2, h * 0.2); ctx.lineTo(w * 0.6, h * 0.6); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
     } else {
       // Barrel — red with pulsing glow and hazard stripe
       const bPulse=0.3+Math.sin(performance.now()*0.004+br.x)*0.15;
