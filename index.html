@@ -292,12 +292,45 @@ const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) && 'ontouchstart' in window;
+
+// ---- Gamepad (PS5 DualSense / Xbox / generic) support ----
+// Standard mapping: 0=A/Cross, 1=B/Circle, 2=X/Square, 3=Y/Triangle, 4=L1, 5=R1, 6=L2, 7=R2,
+// 8=Select/Share, 9=Start/Options, 10=L3, 11=R3, 12=DPadUp, 13=DPadDown, 14=DPadLeft, 15=DPadRight
+let gamepad = { lx: 0, ly: 0, rx: 0, ry: 0, fire: false, connected: false, _prev: {} };
+const GAMEPAD_DEADZONE = 0.18;
+function pollGamepad() {
+  const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+  let gp = null;
+  for (const p of pads) { if (p) { gp = p; break; } }
+  if (!gp) { gamepad.connected = false; gamepad.lx = gamepad.ly = gamepad.rx = gamepad.ry = 0; gamepad.fire = false; return; }
+  gamepad.connected = true;
+  const dz = v => Math.abs(v) < GAMEPAD_DEADZONE ? 0 : (v - Math.sign(v) * GAMEPAD_DEADZONE) / (1 - GAMEPAD_DEADZONE);
+  gamepad.lx = dz(gp.axes[0] || 0);
+  gamepad.ly = dz(gp.axes[1] || 0);
+  gamepad.rx = dz(gp.axes[2] || 0);
+  gamepad.ry = dz(gp.axes[3] || 0);
+  const btn = i => gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5);
+  // Fire: R2 (trigger) or Square (0 is X/Cross on xbox, but on PS5 X is Cross)
+  gamepad.fire = btn(7) || btn(2);
+  // Edge-triggered buttons
+  const pressed = (i) => { const now = btn(i); const was = gamepad._prev[i]; gamepad._prev[i] = now; return now && !was; };
+  if (gameState === 'playing') {
+    if (pressed(0)) dash();                   // Cross / A → blast
+    if (pressed(5) || pressed(3)) reloadWeapon(); // R1 or Triangle → reload
+    if (pressed(4)) tryPickup(true);           // L1 → pickup/swap
+    // DPad or face button weapon switch
+    if (pressed(12) || pressed(3)) {} // reserved
+    // Shoulder bumpers cycle weapons
+    // (could add more mappings here)
+  }
+  if (pressed(9)) togglePauseMenu();           // Options / Start → pause
+}
 // Lock to landscape on mobile
 try { screen.orientation?.lock?.('landscape').catch(()=>{}); } catch(e) {}
 document.body.classList.add(isMobile ? 'mobile' : 'desktop');
 
 const controlsEl = document.getElementById('start-controls');
-if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move <span style="color:#999">MOUSE</span> Aim <span style="color:#999">CLICK</span> Shoot <span style="color:#999">R</span> Reload <span style="color:#999">SPACE</span> Dash <span style="color:#999">E</span> Pickup <span style="color:#999">1-0</span> Weapons';
+if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move <span style="color:#999">MOUSE</span> Aim <span style="color:#999">CLICK</span> Shoot <span style="color:#999">R</span> Reload <span style="color:#999">SPACE</span> Blast <span style="color:#999">E</span> Pickup <span style="color:#999">1-0</span> Weapons · <span style="color:#6af">Gamepad</span>: LS move · RS aim · R2/□ shoot · ✕ blast · R1/△ reload';
 else controlsEl.innerHTML = 'Left thumb: Move | Right thumb: Aim+Shoot';
 
 // ---- CONSTANTS ----
@@ -3782,6 +3815,8 @@ function update() {
 
   // ---- Local player input ----
   if (lp.alive) {
+    // Poll gamepad each frame
+    pollGamepad();
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
@@ -3789,12 +3824,17 @@ function update() {
     if(isMobile&&leftJoystick.active){
       dx=leftJoystick.nx;dy=leftJoystick.ny;
     }
+    // Gamepad left stick — additive with keyboard
+    if(gamepad.connected&&(gamepad.lx!==0||gamepad.ly!==0)){
+      dx=gamepad.lx;dy=gamepad.ly;
+    }
     {
       let moveSpeed=lp.speed;
-      if(isMobile&&(dx!==0||dy!==0)){
+      const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
+      if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
-        // Smooth speed ramp: dead zone → full speed based on joystick magnitude
-        const speedScale=mag<0.15?0:Math.min(1,(mag-0.15)/0.85);
+        // Smooth speed ramp based on stick magnitude
+        const speedScale=Math.min(1,mag);
         moveSpeed=moveSpeed*speedScale;
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
@@ -3816,7 +3856,9 @@ function update() {
         if(_ls) { const bl = _ls.y + _ls.height * 0.8; if(lp.y > bl) lp.y = bl; }
       }
     }
-    if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
+    if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}
+    else if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){lp.angle=Math.atan2(gamepad.ry,gamepad.rx);}
+    else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
@@ -3880,7 +3922,7 @@ function update() {
 
     const w=lp.weapons[lp.currentWeapon];
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
-    const shouldFire=isMobile?rightJoystick.firing:mouse.down;
+    const shouldFire=isMobile?rightJoystick.firing:(mouse.down||gamepad.fire);
     lp._firing=shouldFire;
     if(shouldFire)fireWeaponForPlayer(lp);
     else stopWeaponLoop(); // stop loop sound when not firing
@@ -3890,7 +3932,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : mouse.down, weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, activeElement: activeElement ? activeElement.id : null } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (mouse.down || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, activeElement: activeElement ? activeElement.id : null } });
   }
 
   // ---- Host: process remote player inputs ----
