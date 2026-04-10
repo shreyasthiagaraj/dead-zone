@@ -322,10 +322,11 @@ let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 // Survival mode wave state
 let survivalWave = 0, survivalWaveState = 'countdown', survivalWaveTimer = 0;
 
-// Siege mode state
-let siegeWall = []; // array of { hp, maxHp, y, height, _flashTimer, _repairShield } — wall sections
+// Siege mode state — two walls flanking a central house
+let siegeWallLeft = [];  // left wall sections
+let siegeWallRight = []; // right wall sections
+let siegeWallLeftX = 0, siegeWallRightX = 0;
 let siegeTimer = 0;
-let siegeWallX = 0; // x pixel position of the wall
 let siegeWave = 0, siegeWaveState = 'rest', siegeWaveTimer = 0; // wave system
 let siegeWaveZombiesLeft = 0;
 
@@ -1792,9 +1793,9 @@ function generateHordeArena(seed) {
 
 function getRoomCenter(r) { return { x: (r.x+r.w/2)*CELL_SIZE, y: (r.y+r.h/2)*CELL_SIZE }; }
 function getRandomFloorPos() {
-  // Siege mode: always spawn inside the house (left of wall)
+  // Siege mode: always spawn inside the house (between the two walls)
   if (gameMode === 'siege') {
-    const hx = CELL_SIZE * 2 + Math.random() * (siegeWallX - CELL_SIZE * 4);
+    const hx = siegeWallLeftX + CELL_SIZE + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 2);
     const hy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     return { x: hx, y: hy };
   }
@@ -2563,7 +2564,7 @@ function startSoloGame() {
   }
   const _spawnArena = rooms[0];
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: siegeWallX / 2, y: ARENA_H / 2 } : (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
@@ -2616,7 +2617,7 @@ function startMultiplayerGame() {
     generateDungeon(lobbySeed);
   }
   const marginX2 = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  const c = gameMode === 'descent' ? { x: (marginX2 + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: siegeWallX / 2, y: ARENA_H / 2 } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX2 + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : getRoomCenter(rooms[0]);
   players = [];
   for (let i = 0; i < lobbyPlayers.length; i++) {
     const lp = lobbyPlayers[i];
@@ -3187,7 +3188,7 @@ function spawnHordeZombie(types, elapsed) {
 // ---- SIEGE MODE ----
 function generateSiegeArena(seed) {
   const rng = seededRandom(seed || Date.now());
-  const mapW = 40, mapH = 18; // compact — fits one screen
+  const mapW = 50, mapH = 18; // wider to fit two walls + central house
   setArenaDimensions(mapW * CELL_SIZE, mapH * CELL_SIZE);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -3198,17 +3199,20 @@ function generateSiegeArena(seed) {
   arena.theme = ROOM_THEMES[4]; // furnace theme — red
   arena.brightness = 1.0; arena.flicker = false;
   rooms.push(arena);
-  // Wall at 25% from left — narrow house
-  const wallCol = Math.floor(mapW * 0.25);
-  siegeWallX = wallCol * CELL_SIZE;
-  // Wall sections (each 2 cells tall to fit the shorter map)
+  // Two walls flanking a central house
+  const leftWallCol = Math.floor(mapW * 0.35);
+  const rightWallCol = Math.floor(mapW * 0.65);
+  siegeWallLeftX = leftWallCol * CELL_SIZE;
+  siegeWallRightX = rightWallCol * CELL_SIZE;
+  // Wall sections (each 2 cells tall)
   const playH = mapH - margin * 2;
   const secH = 2;
   const numSections = Math.floor(playH / secH);
-  siegeWall = [];
+  siegeWallLeft = []; siegeWallRight = [];
   for (let i = 0; i < numSections; i++) {
     const sy = (margin + i * secH) * CELL_SIZE;
-    siegeWall.push({ hp: 100, maxHp: 100, y: sy, height: secH * CELL_SIZE, _flashTimer: 0, _repairShield: 0 });
+    siegeWallLeft.push({ hp: 100, maxHp: 100, y: sy, height: secH * CELL_SIZE, _flashTimer: 0, _repairShield: 0 });
+    siegeWallRight.push({ hp: 100, maxHp: 100, y: sy, height: secH * CELL_SIZE, _flashTimer: 0, _repairShield: 0 });
   }
   roomDetails = [{ ri: 0, theme: arena.theme, details: [], brightness: 1.0, flicker: false }];
   buildRoomGrid();
@@ -3274,102 +3278,115 @@ function updateSiege() {
     }
   }
 
-  // ---- Zombies damage wall sections when touching (skip if repair shield active) ----
-  for (const z of zombies) {
-    if (!z.hp || z.hp <= 0) continue;
-    for (const sec of siegeWall) {
-      if (sec.hp <= 0) continue;
-      if (sec._repairShield > 0) continue; // repair shield — immune to damage briefly
-      if (Math.abs(z.x - siegeWallX) < z.radius + CELL_SIZE * 0.5 && z.y > sec.y - z.radius && z.y < sec.y + sec.height + z.radius) {
-        sec.hp -= 0.15;
-        sec._flashTimer = 6;
-        if (gameTime % 6 === 0) {
-          for (let sp = 0; sp < 2; sp++) particles.push({ x: siegeWallX + (Math.random() - 0.5) * 8, y: sec.y + Math.random() * sec.height, vx: -2 - Math.random() * 3, vy: (Math.random() - 0.5) * 3, life: 12, maxLife: 12, size: 2 + Math.random() * 2, color: Math.random() > 0.5 ? '#f80' : '#f44', type: 'spark' });
+  // ---- Zombies damage wall sections — helper handles both walls ----
+  const _processWall = (wall, wallX, dir) => {
+    for (const z of zombies) {
+      if (!z.hp || z.hp <= 0) continue;
+      for (const sec of wall) {
+        if (sec.hp <= 0) continue;
+        if (sec._repairShield > 0) continue;
+        if (Math.abs(z.x - wallX) < z.radius + CELL_SIZE * 0.5 && z.y > sec.y - z.radius && z.y < sec.y + sec.height + z.radius) {
+          sec.hp -= 0.15;
+          sec._flashTimer = 6;
+          if (gameTime % 6 === 0) {
+            for (let sp = 0; sp < 2; sp++) particles.push({ x: wallX + (Math.random() - 0.5) * 8, y: sec.y + Math.random() * sec.height, vx: dir * (-2 - Math.random() * 3), vy: (Math.random() - 0.5) * 3, life: 12, maxLife: 12, size: 2 + Math.random() * 2, color: Math.random() > 0.5 ? '#f80' : '#f44', type: 'spark' });
+          }
+          if (sec.hp <= 0) {
+            sec.hp = 0;
+            addFloatingText(wallX, sec.y + sec.height / 2, 'BREACH!', '#f44');
+            screenShake.intensity = Math.max(screenShake.intensity, 10);
+            playExplosionSound();
+            for (let i = 0; i < 25; i++) { const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 6; particles.push({ x: wallX + (Math.random() - 0.5) * 10, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 25 + Math.random() * 15, maxLife: 40, size: 3 + Math.random() * 4, color: ['#f44', '#f80', '#fa0', '#ff0'][Math.floor(Math.random() * 4)], type: 'explosion' }); }
+            for (let i = 0; i < 8; i++) { const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2; particles.push({ x: wallX, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 40 + Math.random() * 20, maxLife: 60, size: 5 + Math.random() * 5, color: '#555', type: 'smoke' }); }
+          }
         }
-        if (sec.hp <= 0) {
-          sec.hp = 0;
-          addFloatingText(siegeWallX, sec.y + sec.height / 2, 'BREACH!', '#f44');
-          screenShake.intensity = Math.max(screenShake.intensity, 10);
-          playExplosionSound();
-          for (let i = 0; i < 25; i++) { const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 6; particles.push({ x: siegeWallX + (Math.random() - 0.5) * 10, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 25 + Math.random() * 15, maxLife: 40, size: 3 + Math.random() * 4, color: ['#f44', '#f80', '#fa0', '#ff0'][Math.floor(Math.random() * 4)], type: 'explosion' }); }
-          for (let i = 0; i < 8; i++) { const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2; particles.push({ x: siegeWallX, y: sec.y + Math.random() * sec.height, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 40 + Math.random() * 20, maxLife: 60, size: 5 + Math.random() * 5, color: '#555', type: 'smoke' }); }
+      }
+      // Block zombies at intact wall sections — push outward (away from house)
+      if (z.x > wallX - CELL_SIZE && z.x < wallX + CELL_SIZE) {
+        for (const sec of wall) {
+          if (sec.hp <= 0) continue; // breach — no blocking
+          if (z.y + z.radius > sec.y && z.y - z.radius < sec.y + sec.height) {
+            // dir = 1 for left wall (push zombies to the left, away from house center)
+            // dir = -1 for right wall (push zombies to the right)
+            if (dir > 0) z.x = Math.min(z.x, wallX - CELL_SIZE * 0.6);
+            else z.x = Math.max(z.x, wallX + CELL_SIZE * 0.6);
+            break;
+          }
         }
       }
     }
-    // Block zombies at intact wall sections — but let them through breaches
-    // Skip blocking entirely for zombies that already crossed to the house side
-    if (z.x > siegeWallX - CELL_SIZE && z.x < siegeWallX + CELL_SIZE) {
-      for (const sec of siegeWall) {
-        if (sec.hp <= 0) continue; // breach — no blocking
-        if (z.y + z.radius > sec.y && z.y - z.radius < sec.y + sec.height) {
-          z.x = Math.max(z.x, siegeWallX + CELL_SIZE * 0.6);
-          break;
-        }
-      }
-    }
-  }
+  };
+  _processWall(siegeWallLeft, siegeWallLeftX, 1);
+  _processWall(siegeWallRight, siegeWallRightX, -1);
 
-  // ---- Block player at wall ----
+  // ---- Block player at both walls (cannot cross to zombie side) ----
   for (const p of players) {
     if (!p.alive) continue;
-    for (const sec of siegeWall) {
+    for (const sec of siegeWallLeft) {
       if (sec.hp <= 0) continue;
       if (p.y > sec.y - PLAYER_RADIUS && p.y < sec.y + sec.height + PLAYER_RADIUS) {
-        if (p.x > siegeWallX - PLAYER_RADIUS - 2) p.x = siegeWallX - PLAYER_RADIUS - 2;
+        if (p.x < siegeWallLeftX + PLAYER_RADIUS + 2) p.x = siegeWallLeftX + PLAYER_RADIUS + 2;
+      }
+    }
+    for (const sec of siegeWallRight) {
+      if (sec.hp <= 0) continue;
+      if (p.y > sec.y - PLAYER_RADIUS && p.y < sec.y + sec.height + PLAYER_RADIUS) {
+        if (p.x > siegeWallRightX - PLAYER_RADIUS - 2) p.x = siegeWallRightX - PLAYER_RADIUS - 2;
       }
     }
   }
 
-  // ---- Player repairs wall (must be very close) — grants repair shield to prevent flicker ----
-  for (const p of players) {
-    if (!p.alive) continue;
-    for (const sec of siegeWall) {
-      if (sec.hp >= sec.maxHp) continue;
-      // Must be within 1 cell of the wall to repair
-      if (Math.abs(p.x - siegeWallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
-        const wasZero = sec.hp <= 0;
-        sec.hp = Math.min(sec.maxHp, sec.hp + 0.4);
-        sec._repairShield = 30; // immune to zombie damage for 0.5s after each repair tick
-        if (gameTime % 6 === 0) {
-          for (let sp = 0; sp < 3; sp++) particles.push({ x: siegeWallX + (Math.random() - 0.5) * 12, y: sec.y + Math.random() * sec.height, vx: (Math.random() - 0.5) * 3, vy: -1.5 - Math.random() * 2, life: 15, maxLife: 15, size: 2 + Math.random() * 2, color: Math.random() > 0.3 ? '#0ff' : '#fff', type: 'spark' });
-          if (gameTime % 12 === 0) playRepairSound();
-        }
-        if (wasZero && sec.hp > 0) {
-          addFloatingText(siegeWallX, sec.y + sec.height / 2, 'REPAIRING!', '#0ff');
+  // ---- Player repairs either wall ----
+  const _repairWall = (wall, wallX) => {
+    for (const p of players) {
+      if (!p.alive) continue;
+      for (const sec of wall) {
+        if (sec.hp >= sec.maxHp) continue;
+        if (Math.abs(p.x - wallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
+          const wasZero = sec.hp <= 0;
+          sec.hp = Math.min(sec.maxHp, sec.hp + 0.4);
+          sec._repairShield = 30;
+          if (gameTime % 6 === 0) {
+            for (let sp = 0; sp < 3; sp++) particles.push({ x: wallX + (Math.random() - 0.5) * 12, y: sec.y + Math.random() * sec.height, vx: (Math.random() - 0.5) * 3, vy: -1.5 - Math.random() * 2, life: 15, maxLife: 15, size: 2 + Math.random() * 2, color: Math.random() > 0.3 ? '#0ff' : '#fff', type: 'spark' });
+            if (gameTime % 12 === 0) playRepairSound();
+          }
+          if (wasZero && sec.hp > 0) addFloatingText(wallX, sec.y + sec.height / 2, 'REPAIRING!', '#0ff');
         }
       }
     }
-  }
+  };
+  _repairWall(siegeWallLeft, siegeWallLeftX);
+  _repairWall(siegeWallRight, siegeWallRightX);
 
   // ---- Drop power-ups in the house every 30 seconds ----
   if (siegeTimer % 1800 === 900) {
-    const px = CELL_SIZE * 2 + Math.random() * (siegeWallX - CELL_SIZE * 4);
+    const px = siegeWallLeftX + CELL_SIZE + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 2);
     const py = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     if (Math.random() < 0.15) { spawnOrbitalPickup(px, py); }
     else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: px, y: py, bobTimer: Math.random() * Math.PI * 2 }); }
   }
   // Health every 40 seconds
   if (siegeTimer % 2400 === 0 && siegeTimer > 0) {
-    const hx = CELL_SIZE * 2 + Math.random() * (siegeWallX - CELL_SIZE * 4);
+    const hx = siegeWallLeftX + CELL_SIZE + Math.random() * (siegeWallRightX - siegeWallLeftX - CELL_SIZE * 2);
     const hy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     pickups.push({ type: 'health', amount: 25, x: hx, y: hy, bobTimer: Math.random() * Math.PI * 2 });
   }
   // Element zones every 45 seconds
   if (siegeTimer % 2700 === 0 && siegeTimer > 0) spawnElementZone();
-  // Tick timers
-  for (const sec of siegeWall) {
-    if (sec._flashTimer > 0) sec._flashTimer--;
-    if (sec._repairShield > 0) sec._repairShield--;
-  }
+  // Tick timers on both walls
+  for (const sec of siegeWallLeft) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
+  for (const sec of siegeWallRight) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
 }
 
 function spawnSiegeZombie(types, wave) {
   const tk = types[Math.floor(Math.random() * types.length)];
   const t = ZOMBIE_TYPES[tk]; if (!t) return;
-  const x = ARENA_W - CELL_SIZE * 2;
+  // Randomly pick left or right side
+  const fromLeft = Math.random() < 0.5;
+  const x = fromLeft ? CELL_SIZE * 2 : ARENA_W - CELL_SIZE * 2;
   const y = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
   const sc = 1 + wave * 0.05;
-  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + wave * 0.01, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _siegeWallTarget: true, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + wave * 0.01, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: fromLeft ? 0 : Math.PI, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _siegeWallTarget: true, _siegeFromLeft: fromLeft, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
 }
 
 // ---- GAUNTLET MODE ----
@@ -4110,24 +4127,30 @@ function update() {
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);continue;}
       let{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
       if(!np)continue;
-      // Siege mode: zombies target wall, but nearby zombies notice breaches
+      // Siege mode: zombies target wall they came from, noticing nearby breaches
       if(gameMode==='siege'&&z._siegeWallTarget){
-        // Check if there's a breach near this zombie's Y position (within ~3 sections)
-        let nearbyBreach = null;
-        for(const sec of siegeWall){if(sec.hp<=0){const secMid=sec.y+sec.height/2;if(Math.abs(z.y-secMid)<sec.height*3){nearbyBreach=sec;break;}}}
+        const myWall=z._siegeFromLeft?siegeWallLeft:siegeWallRight;
+        const myWallX=z._siegeFromLeft?siegeWallLeftX:siegeWallRightX;
+        // Check if there's a breach near this zombie's Y position
+        let nearbyBreach=null;
+        for(const sec of myWall){if(sec.hp<=0){const secMid=sec.y+sec.height/2;if(Math.abs(z.y-secMid)<sec.height*3){nearbyBreach=sec;break;}}}
         if(nearbyBreach){
-          // Rush through the breach toward the player
+          // Rush through the breach into the house
           const breachY=nearbyBreach.y+nearbyBreach.height/2;
-          if(z.x>siegeWallX){np={x:siegeWallX-CELL_SIZE*2,y:breachY};zd=Math.sqrt((z.x-np.x)**2+(z.y-np.y)**2);}
+          const insideX=z._siegeFromLeft?myWallX+CELL_SIZE*2:myWallX-CELL_SIZE*2;
+          if((z._siegeFromLeft&&z.x<myWallX)||(!z._siegeFromLeft&&z.x>myWallX)){
+            np={x:insideX,y:breachY};zd=Math.sqrt((z.x-np.x)**2+(z.y-np.y)**2);
+          }
         } else {
           // No nearby breach — attack the wall at this zombie's Y level
           let targetSec=null;
-          for(const sec of siegeWall){if(sec.hp>0&&z.y>sec.y-z.radius*3&&z.y<sec.y+sec.height+z.radius*3){targetSec=sec;break;}}
-          if(!targetSec){for(const sec of siegeWall){if(sec.hp>0){targetSec=sec;break;}}}
-          if(targetSec){const wy=targetSec.y+targetSec.height/2;np={x:siegeWallX,y:wy};zd=Math.sqrt((z.x-siegeWallX)**2+(z.y-wy)**2);}
+          for(const sec of myWall){if(sec.hp>0&&z.y>sec.y-z.radius*3&&z.y<sec.y+sec.height+z.radius*3){targetSec=sec;break;}}
+          if(!targetSec){for(const sec of myWall){if(sec.hp>0){targetSec=sec;break;}}}
+          if(targetSec){const wy=targetSec.y+targetSec.height/2;np={x:myWallX,y:wy};zd=Math.sqrt((z.x-myWallX)**2+(z.y-wy)**2);}
         }
-        // Past the wall — switch to chasing players permanently
-        if(z.x<siegeWallX-CELL_SIZE){z._siegeWallTarget=false;}
+        // Crossed into the house — switch to chasing players permanently
+        const crossed=z._siegeFromLeft?(z.x>myWallX+CELL_SIZE):(z.x<myWallX-CELL_SIZE);
+        if(crossed){z._siegeWallTarget=false;}
       }
       // Horde mode: invader zombies target the circle center instead of players
       if(gameMode==='horde'&&z._invader&&!z._enraged){
@@ -4956,64 +4979,65 @@ function render() {
     ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.restore();
   }
 
-  // Siege mode: floor tint + wall rendering
-  if (gameMode === 'siege' && siegeWall.length > 0) {
+  // Siege mode: floor tint + wall rendering (two walls flanking central house)
+  if (gameMode === 'siege' && siegeWallLeft.length > 0) {
     const _now = performance.now();
-    // Tint the house area (left of wall) with a subtle safe-zone glow
+    // Tint the house area (center) with a subtle safe-zone glow
     ctx.globalAlpha = 0.04;
     ctx.fillStyle = '#0af';
-    ctx.fillRect(CELL_SIZE, CELL_SIZE, siegeWallX - CELL_SIZE, ARENA_H - CELL_SIZE * 2);
-    // Tint the zombie area (right of wall) with a danger tone
+    ctx.fillRect(siegeWallLeftX, CELL_SIZE, siegeWallRightX - siegeWallLeftX, ARENA_H - CELL_SIZE * 2);
+    // Tint the zombie areas (left and right) with a danger tone
     ctx.fillStyle = '#f40';
-    ctx.fillRect(siegeWallX, CELL_SIZE, ARENA_W - siegeWallX - CELL_SIZE, ARENA_H - CELL_SIZE * 2);
+    ctx.fillRect(CELL_SIZE, CELL_SIZE, siegeWallLeftX - CELL_SIZE, ARENA_H - CELL_SIZE * 2);
+    ctx.fillRect(siegeWallRightX, CELL_SIZE, ARENA_W - siegeWallRightX - CELL_SIZE, ARENA_H - CELL_SIZE * 2);
     ctx.globalAlpha = 1;
-    for (const sec of siegeWall) {
-      const pct = sec.hp / sec.maxHp;
-      if (pct <= 0) {
-        // Broken section — hollow outline showing the gap
-        const pulse = 0.08 + Math.sin(_now * 0.003) * 0.03;
-        ctx.globalAlpha = pulse;
-        ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
-        ctx.strokeRect(siegeWallX - 6, sec.y + 2, 12, sec.height - 4);
-        ctx.globalAlpha = 0.03;
-        ctx.fillStyle = '#f44';
-        ctx.fillRect(siegeWallX - 6, sec.y + 2, 12, sec.height - 4);
-        ctx.globalAlpha = 1;
-        continue;
-      }
-      const wc = pct > 0.6 ? '#0ff' : pct > 0.3 ? '#fa0' : '#f44';
-      const pulse = 0.6 + Math.sin(_now * 0.004) * 0.15;
-      const isFlashing = sec._flashTimer > 0;
-      const isRepairing = pct < 1 && pct > 0;
-      // Repair blink — wall blinks rapidly while being rebuilt
-      let repairBlink = 1;
-      if (isRepairing && pct < 0.15) repairBlink = Math.sin(_now * 0.02) > 0 ? 1 : 0.2;
-      // Damage flash — bright white flash when taking hits
-      if (isFlashing) {
-        ctx.globalAlpha = 0.6;
-        ctx.shadowColor = '#fff'; ctx.shadowBlur = 25; ctx.strokeStyle = '#fff'; ctx.lineWidth = 12;
-        ctx.beginPath(); ctx.moveTo(siegeWallX, sec.y); ctx.lineTo(siegeWallX, sec.y + sec.height); ctx.stroke();
+    // Helper to render one wall
+    const _drawWall = (wall, wallX, hpBarOffset) => {
+      for (const sec of wall) {
+        const pct = sec.hp / sec.maxHp;
+        if (pct <= 0) {
+          const pulse = 0.08 + Math.sin(_now * 0.003) * 0.03;
+          ctx.globalAlpha = pulse;
+          ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
+          ctx.strokeRect(wallX - 6, sec.y + 2, 12, sec.height - 4);
+          ctx.globalAlpha = 0.03;
+          ctx.fillStyle = '#f44';
+          ctx.fillRect(wallX - 6, sec.y + 2, 12, sec.height - 4);
+          ctx.globalAlpha = 1;
+          continue;
+        }
+        const wc = pct > 0.6 ? '#0ff' : pct > 0.3 ? '#fa0' : '#f44';
+        const pulse = 0.6 + Math.sin(_now * 0.004) * 0.15;
+        const isFlashing = sec._flashTimer > 0;
+        const isRepairing = pct < 1 && pct > 0;
+        let repairBlink = 1;
+        if (isRepairing && pct < 0.15) repairBlink = Math.sin(_now * 0.02) > 0 ? 1 : 0.2;
+        if (isFlashing) {
+          ctx.globalAlpha = 0.6;
+          ctx.shadowColor = '#fff'; ctx.shadowBlur = 25; ctx.strokeStyle = '#fff'; ctx.lineWidth = 12;
+          ctx.beginPath(); ctx.moveTo(wallX, sec.y); ctx.lineTo(wallX, sec.y + sec.height); ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+        ctx.globalAlpha = pulse * 0.2 * repairBlink;
+        ctx.shadowColor = wc; ctx.shadowBlur = 15; ctx.strokeStyle = wc; ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.moveTo(wallX, sec.y); ctx.lineTo(wallX, sec.y + sec.height); ctx.stroke();
+        ctx.globalAlpha = pulse * 0.8 * repairBlink;
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(wallX, sec.y); ctx.lineTo(wallX, sec.y + sec.height); ctx.stroke();
         ctx.shadowBlur = 0;
+        // HP bar on house side of the wall
+        const barW = 3, barH = sec.height - 4;
+        ctx.globalAlpha = 0.3; ctx.fillStyle = '#111'; ctx.fillRect(wallX + hpBarOffset, sec.y + 2, barW, barH);
+        ctx.globalAlpha = 0.7; ctx.fillStyle = wc; ctx.fillRect(wallX + hpBarOffset, sec.y + 2 + barH * (1 - pct), barW, barH * pct);
+        ctx.globalAlpha = 1;
       }
-      // Glow
-      ctx.globalAlpha = pulse * 0.2 * repairBlink;
-      ctx.shadowColor = wc; ctx.shadowBlur = 15; ctx.strokeStyle = wc; ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.moveTo(siegeWallX, sec.y); ctx.lineTo(siegeWallX, sec.y + sec.height); ctx.stroke();
-      // Main line
-      ctx.globalAlpha = pulse * 0.8 * repairBlink;
-      ctx.lineWidth = 4;
-      ctx.beginPath(); ctx.moveTo(siegeWallX, sec.y); ctx.lineTo(siegeWallX, sec.y + sec.height); ctx.stroke();
-      ctx.shadowBlur = 0;
-      // HP bar next to wall section
-      const barW = 3, barH = sec.height - 4;
-      ctx.globalAlpha = 0.3; ctx.fillStyle = '#111'; ctx.fillRect(siegeWallX - 10, sec.y + 2, barW, barH);
-      ctx.globalAlpha = 0.7; ctx.fillStyle = wc; ctx.fillRect(siegeWallX - 10, sec.y + 2 + barH * (1 - pct), barW, barH * pct);
-      ctx.globalAlpha = 1;
-    }
-    // "HOUSE" label on left side
+    };
+    _drawWall(siegeWallLeft, siegeWallLeftX, 6);    // HP bar to the right (house side)
+    _drawWall(siegeWallRight, siegeWallRightX, -10); // HP bar to the left (house side)
+    // "HOUSE" label in the center
     ctx.globalAlpha = 0.08;
     ctx.fillStyle = '#0ff'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('HOUSE', siegeWallX / 2, ARENA_H / 2);
+    ctx.fillText('HOUSE', (siegeWallLeftX + siegeWallRightX) / 2, ARENA_H / 2);
     ctx.globalAlpha = 1;
   }
 
