@@ -64,6 +64,8 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 .mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
 .mobile-btn.dash-cooldown { border-color: #222; color: #333; box-shadow: none; }
 .mobile-btn.reload-btn { border-color: #a4f; color: #a4f; box-shadow: 0 0 8px rgba(170,68,255,0.25); text-shadow: 0 0 6px rgba(170,68,255,0.4); }
+.mobile-btn.repair-btn { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
+.mobile-btn.repair-btn.repairing { background: #0ff; color: #030308; box-shadow: 0 0 20px rgba(0,255,255,0.7); }
 
 #minimap { display: none; }
 
@@ -157,6 +159,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
 <div id="weapon-slots" style="display:none"></div>
 <div id="mobile-buttons">
   <div class="mobile-btn dash-ready" id="btn-dash">BLAST</div>
+  <div class="mobile-btn repair-btn" id="btn-repair" style="display:none">FIX</div>
   <div class="mobile-btn reload-btn" id="btn-reload" style="display:none">RLD</div>
   <div id="btn-swap" style="display:none;position:fixed;bottom:calc(180px + env(safe-area-inset-bottom));right:calc(20px + env(safe-area-inset-right));z-index:22;width:70px;height:70px;border-radius:50%;border:3px solid #f0c040;background:rgba(240,192,64,0.2);color:#f0c040;font-family:'Courier New',monospace;font-size:10px;font-weight:bold;text-align:center;line-height:1.2;touch-action:manipulation;-webkit-tap-highlight-color:transparent;cursor:pointer;padding-top:22px;box-sizing:border-box"></div>
 </div>
@@ -434,6 +437,7 @@ let siegeWallLeftX = 0, siegeWallRightX = 0;
 let siegeTimer = 0;
 let siegeWave = 0, siegeWaveState = 'rest', siegeWaveTimer = 0; // wave system
 let siegeWaveZombiesLeft = 0;
+let siegeRepairHeld = false; // player is holding the REPAIR button
 
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
 let waveSummaryActive = false, waveSummaryTimer = 0;
@@ -2927,6 +2931,18 @@ document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.pr
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
 document.getElementById('btn-reload').addEventListener('touchstart', (e) => { e.preventDefault(); reloadWeapon(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-reload').addEventListener('mousedown', () => reloadWeapon());
+// Repair button — hold to fix the wall
+(() => {
+  const rb = document.getElementById('btn-repair');
+  const start = (e) => { if (e) e.preventDefault(); siegeRepairHeld = true; rb.classList.add('repairing'); };
+  const end = (e) => { if (e) e.preventDefault(); siegeRepairHeld = false; rb.classList.remove('repairing'); };
+  rb.addEventListener('touchstart', start, { passive: false });
+  rb.addEventListener('touchend', end, { passive: false });
+  rb.addEventListener('touchcancel', end, { passive: false });
+  rb.addEventListener('mousedown', start);
+  rb.addEventListener('mouseup', end);
+  rb.addEventListener('mouseleave', end);
+})();
 document.getElementById('btn-swap').addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); tryPickup(true); }, { passive: false });
 document.getElementById('btn-swap').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); tryPickup(true); });
 
@@ -2937,6 +2953,8 @@ function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; hazeParticles = [];
+  // Hide siege repair button by default; startSiege will re-show it
+  siegeRepairHeld = false; { const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = 'none'; }
   runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
   // Reset joysticks to prevent stuck state on restart
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
@@ -2994,6 +3012,7 @@ function resetSurvivalState() {
 function startMultiplayerGame() {
   initAudio(); loadSfx(); isMultiplayer = true; gameState = 'playing';
   score = 0; kills = 0; gameTime = 0; spawnTimer = 0; resetPerks();
+  siegeRepairHeld = false; { const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = 'none'; }
   window._currentLevelSeed = lobbySeed;
   if (gameMode === 'survival') {
     generateArena(lobbySeed);
@@ -3051,8 +3070,8 @@ function startMultiplayerGame() {
 // ============================================================
 // INPUT
 // ============================================================
-function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(true); if (e.key === ' ') { e.preventDefault(); dash(); } } }
-function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; }
+function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(true); if (e.key === ' ') { e.preventDefault(); dash(); } if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); } } }
+function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 document.addEventListener('keydown', handleKeyDown);
@@ -3647,10 +3666,13 @@ function generateSiegeArena(seed) {
 
 function startSiege() {
   siegeTimer = 0;
+  siegeRepairHeld = false;
   const el = document.getElementById('wave-announce');
   document.getElementById('wave-num').textContent = 'SIEGE';
-  document.getElementById('wave-sub').textContent = 'Defend the wall. Repair it. Survive.';
+  document.getElementById('wave-sub').textContent = 'Defend the wall. Hold FIX to repair. Survive.';
   el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  // Show the repair button (siege only)
+  const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = '';
   playWaveStartSound();
 }
 
@@ -3765,27 +3787,29 @@ function updateSiege() {
     }
   }
 
-  // ---- Player repairs either wall ----
-  const _repairWall = (wall, wallX) => {
-    for (const p of players) {
-      if (!p.alive) continue;
-      for (const sec of wall) {
-        if (sec.hp >= sec.maxHp) continue;
-        if (Math.abs(p.x - wallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
-          const wasZero = sec.hp <= 0;
-          sec.hp = Math.min(sec.maxHp, sec.hp + 0.4);
-          sec._repairShield = 30;
-          if (gameTime % 6 === 0) {
-            for (let sp = 0; sp < 3; sp++) particles.push({ x: wallX + (Math.random() - 0.5) * 12, y: sec.y + Math.random() * sec.height, vx: (Math.random() - 0.5) * 3, vy: -1.5 - Math.random() * 2, life: 15, maxLife: 15, size: 2 + Math.random() * 2, color: Math.random() > 0.3 ? '#0ff' : '#fff', type: 'spark' });
-            if (gameTime % 12 === 0) playRepairSound();
+  // ---- Player repairs either wall (only while REPAIR button is held) ----
+  if (siegeRepairHeld) {
+    const _repairWall = (wall, wallX) => {
+      for (const p of players) {
+        if (!p.alive) continue;
+        for (const sec of wall) {
+          if (sec.hp >= sec.maxHp) continue;
+          if (Math.abs(p.x - wallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
+            const wasZero = sec.hp <= 0;
+            sec.hp = Math.min(sec.maxHp, sec.hp + 0.4);
+            sec._repairShield = 30;
+            if (gameTime % 6 === 0) {
+              for (let sp = 0; sp < 3; sp++) particles.push({ x: wallX + (Math.random() - 0.5) * 12, y: sec.y + Math.random() * sec.height, vx: (Math.random() - 0.5) * 3, vy: -1.5 - Math.random() * 2, life: 15, maxLife: 15, size: 2 + Math.random() * 2, color: Math.random() > 0.3 ? '#0ff' : '#fff', type: 'spark' });
+              if (gameTime % 12 === 0) playRepairSound();
+            }
+            if (wasZero && sec.hp > 0) addFloatingText(wallX, sec.y + sec.height / 2, 'REPAIRING!', '#0ff');
           }
-          if (wasZero && sec.hp > 0) addFloatingText(wallX, sec.y + sec.height / 2, 'REPAIRING!', '#0ff');
         }
       }
-    }
-  };
-  _repairWall(siegeWallLeft, siegeWallLeftX);
-  _repairWall(siegeWallRight, siegeWallRightX);
+    };
+    _repairWall(siegeWallLeft, siegeWallLeftX);
+    _repairWall(siegeWallRight, siegeWallRightX);
+  }
 
   // ---- Spawn a chest in the house every 45s — shoot to reveal ----
   if (siegeTimer % 2700 === 600) spawnSiegeChest();
