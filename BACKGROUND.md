@@ -1,4 +1,4 @@
-# NEONCROPOLIS — Background & Knowledge Dump
+# NECROWAVE — Background & Knowledge Dump
 
 This document captures everything a future Claude Code session needs to understand the game, its history, what works, what doesn't, and where it's headed. Read this alongside `CLAUDE.md` (technical architecture) and `IDEAS.md` (future plans).
 
@@ -6,7 +6,7 @@ This document captures everything a future Claude Code session needs to understa
 
 ## What Is This Game?
 
-**NEONCROPOLIS** (the neon city of the dead) is a top-down zombie survival shooter built as a single HTML file. It runs in any browser, supports up to 4 players via WebSocket multiplayer, and has full mobile touch controls. The vibe is dark, gory, frantic arcade action — pick up and play, no install, no tutorial. Think Vampire Survivors meets Hotline Miami meets Left 4 Dead, but in a browser.
+**NECROWAVE** (necro + synthwave — zombies meet 80s neon) is a top-down zombie survival shooter built as a single HTML file. It runs in any browser, supports up to 4 players via WebSocket multiplayer, and has full mobile touch controls. The vibe is dark, gory, frantic arcade action — pick up and play, no install, no tutorial. Think Vampire Survivors meets Hotline Miami meets Left 4 Dead, but in a browser.
 
 The entire game lives in `index.html` (~5000+ lines of JS in a single `<script>` tag). The server (`server.js`) is a stateless WebSocket relay that handles lobbies and message passing — zero game logic on the server.
 

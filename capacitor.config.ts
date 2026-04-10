@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.deadzone.app',
-  appName: 'Neoncropolis',
+  appName: 'Necrowave',
   webDir: 'www',
   server: {
     // iOS WKWebView settings
