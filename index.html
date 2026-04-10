@@ -4370,6 +4370,9 @@ function update() {
 
   // ---- Particles, texts, explosions ----
   for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;if(p.gravity)p.vy+=p.gravity;p.vx*=0.95;p.vy*=0.95;p.life--;if(p.life<=0)particles.splice(i,1);}
+  // Hard cap: drop oldest particles to avoid frame drops during heavy effects
+  const PARTICLE_CAP = 500;
+  if (particles.length > PARTICLE_CAP) particles.splice(0, particles.length - PARTICLE_CAP);
   for(let i=floatingTexts.length-1;i>=0;i--){floatingTexts[i].y+=floatingTexts[i].vy;floatingTexts[i].life--;if(floatingTexts[i].life<=0)floatingTexts.splice(i,1);}
 
   // ---- Ground haze wisps ----
@@ -5413,21 +5416,43 @@ function render() {
     ctx.restore();
   }
 
-  // Particles
-  for(const p of particles){ctx.globalAlpha=p.life/p.maxLife;
+  // Particles — offscreen cull + shadowBlur only when worth it
+  const _pViewL = camera.x - canvas.width/2 - 40, _pViewR = camera.x + canvas.width/2 + 40;
+  const _pViewT = camera.y - canvas.height/2 - 40, _pViewB = camera.y + canvas.height/2 + 40;
+  for(const p of particles){
+    // Offscreen cull (skip lightning since it has separate endpoints)
+    if (p.type !== 'lightning' && (p.x < _pViewL || p.x > _pViewR || p.y < _pViewT || p.y > _pViewB)) continue;
+    ctx.globalAlpha=p.life/p.maxLife;
     if(p.type==='lightning'&&p.tx!==undefined){
-      // Draw dramatic jagged lightning arc with glow
-      const jitter = 25 * (p.life/p.maxLife); // jitter decreases as bolt fades
+      // Cull lightning if BOTH endpoints are offscreen
+      if ((p.x<_pViewL||p.x>_pViewR||p.y<_pViewT||p.y>_pViewB) && (p.tx<_pViewL||p.tx>_pViewR||p.ty<_pViewT||p.ty>_pViewB)) continue;
+      const jitter = 25 * (p.life/p.maxLife);
       const segs=6;
-      // Outer glow
       ctx.strokeStyle='#4ff';ctx.lineWidth=6;ctx.shadowColor='#4ff';ctx.shadowBlur=18;ctx.beginPath();ctx.moveTo(p.x,p.y);
       for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter);}
       ctx.stroke();
-      // Bright core
       ctx.strokeStyle=p.color==='#fff'?'#fff':'#aff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(p.x,p.y);
       for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter*0.6,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter*0.6);}
       ctx.stroke();ctx.shadowBlur=0;
-    } else {const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);if(p.type==='dashtrail'){ctx.shadowColor=p.color;ctx.shadowBlur=10;ctx.globalAlpha=(p.life/p.maxLife)*0.2;ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;}else if(p.type==='explosion'||p.type==='spark'){ctx.shadowColor=p.color;ctx.shadowBlur=sz*2;ctx.fillStyle='#fff';ctx.globalAlpha=(p.life/p.maxLife)*0.7;ctx.beginPath();ctx.arc(p.x,p.y,sz*0.5,0,Math.PI*2);ctx.fill();ctx.fillStyle=p.color;ctx.globalAlpha=p.life/p.maxLife*0.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}else{ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();}}}ctx.globalAlpha=1;
+    } else {
+      const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
+      // Skip glow (shadowBlur) for tiny particles — it's the most expensive op per particle
+      const useGlow = sz >= 3;
+      if(p.type==='dashtrail'){
+        if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=10; }
+        ctx.globalAlpha=(p.life/p.maxLife)*0.2;ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
+        if (useGlow) ctx.shadowBlur=0;
+      } else if(p.type==='explosion'||p.type==='spark'){
+        if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=sz*2; }
+        ctx.fillStyle='#fff';ctx.globalAlpha=(p.life/p.maxLife)*0.7;ctx.beginPath();ctx.arc(p.x,p.y,sz*0.5,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle=p.color;ctx.globalAlpha=p.life/p.maxLife*0.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();
+        if (useGlow) ctx.shadowBlur=0;
+      } else {
+        ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();
+      }
+    }
+  }
+  ctx.globalAlpha=1;
 
   // Floating texts
   for(const ft of floatingTexts){ctx.globalAlpha=ft.life/ft.maxLife;ctx.shadowColor=ft.color;ctx.shadowBlur=8;ctx.fillStyle=ft.color;ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.fillText(ft.text,ft.x,ft.y);ctx.shadowBlur=0;}ctx.globalAlpha=1;
