@@ -3325,13 +3325,16 @@ function updateSiege() {
           }
         }
       }
-      // Block zombies at intact wall sections — push outward (away from house)
-      if (z.x > wallX - CELL_SIZE && z.x < wallX + CELL_SIZE) {
+      // Block zombies at intact wall sections — but only if they're still on the
+      // outside. Zombies that already crossed into the house (via a breach) are
+      // free to move around without snapping back to the wall.
+      // dir = 1 for left wall → outside means z.x < wallX
+      // dir = -1 for right wall → outside means z.x > wallX
+      const isOutside = dir > 0 ? z.x < wallX : z.x > wallX;
+      if (isOutside && z.x > wallX - CELL_SIZE && z.x < wallX + CELL_SIZE) {
         for (const sec of wall) {
           if (sec.hp <= 0) continue; // breach — no blocking
           if (z.y + z.radius > sec.y && z.y - z.radius < sec.y + sec.height) {
-            // dir = 1 for left wall (push zombies to the left, away from house center)
-            // dir = -1 for right wall (push zombies to the right)
             if (dir > 0) z.x = Math.min(z.x, wallX - CELL_SIZE * 0.6);
             else z.x = Math.max(z.x, wallX + CELL_SIZE * 0.6);
             break;
@@ -3382,8 +3385,8 @@ function updateSiege() {
   _repairWall(siegeWallLeft, siegeWallLeftX);
   _repairWall(siegeWallRight, siegeWallRightX);
 
-  // ---- Spawn a chest in the house every 25s — shoot to reveal ----
-  if (siegeTimer % 1500 === 450) spawnSiegeChest();
+  // ---- Spawn a chest in the house every 45s — shoot to reveal ----
+  if (siegeTimer % 2700 === 600) spawnSiegeChest();
   // Tick timers on both walls
   for (const sec of siegeWallLeft) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
   for (const sec of siegeWallRight) { if (sec._flashTimer > 0) sec._flashTimer--; if (sec._repairShield > 0) sec._repairShield--; }
@@ -4057,6 +4060,26 @@ function update() {
                   zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){
+        // Siege mode: zombie bullets damage wall sections they pass through
+        if(gameMode==='siege'){
+          let hitWall=false;
+          const _checkWall=(wall,wallX)=>{
+            if(Math.abs(b.x-wallX)<b.size+4){
+              for(const sec of wall){
+                if(sec.hp<=0)continue;
+                if(b.y>=sec.y&&b.y<=sec.y+sec.height){
+                  sec.hp-=8; sec._flashTimer=6;
+                  for(let sp=0;sp<3;sp++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10,maxLife:10,size:2,color:'#f80',type:'spark'});
+                  if(sec.hp<=0){sec.hp=0;addFloatingText(wallX,sec.y+sec.height/2,'BREACH!','#f44');screenShake.intensity=Math.max(screenShake.intensity,10);playExplosionSound();for(let k=0;k<20;k++){const a=Math.random()*Math.PI*2,s=2+Math.random()*5;particles.push({x:wallX,y:sec.y+Math.random()*sec.height,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:25,maxLife:40,size:3+Math.random()*3,color:['#f44','#f80','#fa0'][Math.floor(Math.random()*3)],type:'explosion'});}}
+                  bullets.splice(i,1);hitWall=true;return;
+                }
+              }
+            }
+          };
+          _checkWall(siegeWallLeft,siegeWallLeftX);
+          if(!hitWall) _checkWall(siegeWallRight,siegeWallRightX);
+          if(hitWall)continue;
+        }
         // Shield force field deflects projectiles (works for any player with shield)
         let deflected=false;
         for(const p of players){if(!p.alive)continue;
