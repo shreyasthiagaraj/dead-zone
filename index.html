@@ -167,6 +167,12 @@ body.mobile #mobile-buttons { display: block; }
 .mode-card .mc-best { font-size: 9px; letter-spacing: 1.5px; margin-top: auto; padding-top: 6px; opacity: 0.75; border-top: 1px solid currentColor; border-color: rgba(255,255,255,0.08); }
 .mode-card .mc-best b { color: #fff; font-weight: bold; margin: 0 2px; }
 
+/* Death screen leaderboard: drop the time column on very narrow screens */
+@media (max-width: 400px) { .lb-time { display: none !important; } }
+
+/* pulse animation used by the NEW BEST badge */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
 /* Lobby */
 .lobby-code { font-size: 48px; color: #ff0; letter-spacing: 12px; font-weight: bold; margin: 16px 0; text-shadow: 0 0 20px rgba(255,255,0,0.4), 0 0 40px rgba(255,255,0,0.15); }
 .lobby-players { list-style: none; margin: 16px 0; }
@@ -250,8 +256,15 @@ body.mobile #mobile-buttons { display: block; }
       <button class="menu-btn" id="btn-codex" style="border-color:#f0f;color:#f0f;box-shadow:0 0 10px rgba(255,0,255,0.3);text-shadow:0 0 6px rgba(255,0,255,0.5)">CODEX</button>
     </div>
   </div>
-  <div style="display:none" id="start-controls"></div>
-  <div id="install-prompt" style="display:none"></div>
+  <!-- Small circular install button in the corner instead of a full banner -->
+  <button id="install-prompt" style="display:none;position:absolute;top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right));width:44px;height:44px;border-radius:12px;border:2px solid #0f0;background:rgba(3,6,14,0.7);color:#0f0;cursor:pointer;padding:0;z-index:10;box-shadow:0 0 12px rgba(0,255,0,0.35);" aria-label="Install app">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="margin:auto;filter:drop-shadow(0 0 4px currentColor)">
+      <path d="M12 3 L12 16"/>
+      <polyline points="7 11 12 16 17 11"/>
+      <line x1="5" y1="20" x2="19" y2="20"/>
+    </svg>
+  </button>
+  <div id="start-controls" style="display:none"></div>
 </div>
 
 <!-- ---- SOLO MODE PICKER ---- -->
@@ -478,9 +491,9 @@ function pollGamepad() {
 try { screen.orientation?.lock?.('landscape').catch(()=>{}); } catch(e) {}
 document.body.classList.add(isMobile ? 'mobile' : 'desktop');
 
+// Controls hint: moved into the codex MODES tab; no persistent overlay on the start screen.
 const controlsEl = document.getElementById('start-controls');
-if (!isMobile) controlsEl.innerHTML = '<span style="color:#999">WASD</span> Move <span style="color:#999">MOUSE</span> Aim <span style="color:#999">CLICK</span> Shoot <span style="color:#999">R</span> Reload <span style="color:#999">SPACE</span> Blast <span style="color:#999">F</span> Fix <span style="color:#999">E</span> Pickup <span style="color:#999">1-0</span> Weapons · <span style="color:#6af">Gamepad</span>: LS move · RS aim · R2/□ shoot · ○ blast · △ fix · R1 reload';
-else controlsEl.innerHTML = 'Left thumb: Move | Right thumb: Aim+Shoot';
+if (controlsEl) controlsEl.style.display = 'none';
 
 // ---- CONSTANTS ----
 const CELL_SIZE = 40;
@@ -2551,27 +2564,63 @@ function showDeathScreen() {
 
   const dc = document.getElementById('death-content');
 
-  const bestMsg = isNewBest ? `<div style="color:#0f0;font-size:11px;text-shadow:0 0 8px rgba(0,255,0,0.4);margin-top:4px">★ NEW PERSONAL BEST ★</div>` : prevBest.time ? `<div style="color:#8af;font-size:10px;margin-top:4px">Best: ${Math.floor(prevBest.time/60)}:${(prevBest.time%60).toString().padStart(2,'0')} · ${prevBest.score.toLocaleString()} pts</div>` : '';
-  const circleMsg = (gameMode==='horde'&&hordeCircleLost) ? `<div style="color:#f44;font-size:clamp(10px,2.5vw,13px);text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:2px">THE CIRCLE HAS FALLEN</div>` : '';
+  // Rebuild mobile-friendly leaderboard — drop the "TIME" column on narrow screens via CSS
+  const lbRowsCompact = lbHistory.map((r, i) => {
+    const isThis = r.date === thisRun.date;
+    const t = `${Math.floor(r.time/60)}:${(r.time%60).toString().padStart(2,'0')}`;
+    const rowColor = isThis ? '#0f0' : '#8af';
+    const bg = isThis ? 'rgba(0,255,0,0.1)' : 'transparent';
+    const glow = isThis ? 'text-shadow:0 0 6px rgba(0,255,0,0.5)' : '';
+    return `<tr style="color:${rowColor};background:${bg};${glow}"><td style="padding:2px 6px;text-align:right;width:24px;opacity:0.7">${i+1}</td><td style="padding:2px 6px;text-align:left;font-weight:bold">${r.score.toLocaleString()}</td><td class="lb-time" style="padding:2px 6px;text-align:right;opacity:0.85">${t}</td></tr>`;
+  }).join('');
+  const lbHtml2 = `<div style="margin-top:10px;max-height:150px;overflow-y:auto;border:1px solid rgba(255,0,255,0.2);border-radius:8px;padding:6px 4px;background:rgba(3,6,14,0.4)">
+    <div style="color:#f0f;font-size:10px;letter-spacing:2px;margin-bottom:4px;text-shadow:0 0 6px rgba(255,0,255,0.3);font-weight:bold">LEADERBOARD</div>
+    <table style="width:100%;font-size:11px;border-collapse:collapse;font-family:'Courier New',monospace">
+      ${lbRowsCompact}
+    </table>
+  </div>`;
 
-  dc.innerHTML = `<div class="menu-panel" style="text-align:center;border-color:#f0f4">
+  const circleMsg = (gameMode==='horde'&&hordeCircleLost) ? `<div style="color:#f44;font-size:11px;letter-spacing:2px;text-shadow:0 0 10px rgba(255,68,68,0.5);margin-bottom:6px">THE CIRCLE HAS FALLEN</div>` : '';
+  const bestMsg = isNewBest
+    ? `<div style="display:inline-block;padding:4px 12px;margin:6px 0 4px 0;color:#0f0;font-size:11px;font-weight:bold;letter-spacing:2px;border:1px solid #0f0;border-radius:8px;background:rgba(0,255,0,0.1);text-shadow:0 0 8px rgba(0,255,0,0.6);box-shadow:0 0 14px rgba(0,255,0,0.4);animation:pulse 0.8s ease-in-out infinite">★ NEW PERSONAL BEST ★</div>`
+    : (prevBest && prevBest.score) ? `<div style="color:#8af;font-size:10px;margin-top:4px;opacity:0.7">prev best: ${prevBest.score.toLocaleString()}</div>` : '';
+
+  const canShare = !!navigator.share;
+
+  dc.innerHTML = `<div class="menu-panel" style="text-align:center;border-color:#f0f4;max-width:360px">
     ${circleMsg}
-    <div style="color:#f0f;font-size:clamp(16px,3.5vw,24px);text-shadow:0 0 12px rgba(255,0,255,0.5);letter-spacing:3px;margin-bottom:4px">GAME OVER</div>
-    <div style="color:#0ff;font-size:clamp(28px,7vw,48px);font-weight:bold;text-shadow:0 0 20px rgba(0,255,255,0.5);letter-spacing:3px;line-height:1">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
-    <div style="color:#0ff8;font-size:9px;margin-top:1px;letter-spacing:2px;margin-bottom:6px">SURVIVED</div>
-    <div style="font-size:13px;color:#ff0;margin:4px 0;text-shadow:0 0 8px rgba(255,255,0,0.3)">SCORE: ${score.toLocaleString()}</div>
+    <div style="color:#f0f;font-size:20px;text-shadow:0 0 12px rgba(255,0,255,0.5);letter-spacing:4px;margin-bottom:2px">GAME OVER</div>
+    <div style="color:#888;font-size:9px;letter-spacing:2px;margin-bottom:10px">${(gameMode||'dungeon').toUpperCase()}</div>
+    <div style="display:flex;justify-content:center;align-items:flex-end;gap:18px;margin-top:4px">
+      <div>
+        <div style="color:#0ff;font-size:34px;font-weight:bold;text-shadow:0 0 14px #0ff,0 0 28px rgba(0,255,255,0.4);line-height:1">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
+        <div style="color:#0ff8;font-size:9px;letter-spacing:2px;margin-top:2px">SURVIVED</div>
+      </div>
+      <div>
+        <div style="color:#ff0;font-size:26px;font-weight:bold;text-shadow:0 0 14px #ff0,0 0 28px rgba(255,255,0,0.4);line-height:1">${score.toLocaleString()}</div>
+        <div style="color:#ff08;font-size:9px;letter-spacing:2px;margin-top:2px">SCORE</div>
+      </div>
+    </div>
     ${bestMsg}
-    <div style="color:#ff0;font-size:10px;margin-top:2px;text-shadow:0 0 6px rgba(255,255,0,0.3)">HIGH SCORE: ${highScore.toLocaleString()}</div>
-    ${lbHtml}
-    <div style="margin-top:8px;display:flex;flex-direction:column;align-items:center;gap:6px">
-      <button class="menu-btn primary" id="btn-restart" style="padding:10px 28px;min-width:160px">PLAY AGAIN</button>
-      <button class="menu-btn danger" id="btn-quit-death" style="padding:6px 20px;font-size:12px;min-width:160px">QUIT</button>
+    ${lbHtml2}
+    <div style="margin-top:10px;display:flex;flex-direction:row;justify-content:center;gap:6px;flex-wrap:wrap">
+      <button class="menu-btn primary" id="btn-restart" style="padding:8px 20px;font-size:13px;min-width:120px">PLAY AGAIN</button>
+      ${canShare ? '<button class="menu-btn" id="btn-share" style="padding:8px 14px;font-size:12px">SHARE</button>' : ''}
+      <button class="menu-btn danger" id="btn-quit-death" style="padding:8px 14px;font-size:12px">QUIT</button>
     </div>
   </div>`;
 
-  // Re-bind restart and quit buttons with touch highlight
+  // Re-bind buttons
   addBtn('btn-restart', () => { startSoloGame(gameMode); });
   addBtn('btn-quit-death', () => { showScreen('start-screen'); if(ws)ws.close(); playMusic('music_menu',2.0); });
+  if (canShare) {
+    addBtn('btn-share', () => {
+      navigator.share({
+        title: 'NECROWAVE',
+        text: `I scored ${score.toLocaleString()} and survived ${survivalMin}:${survivalSec.toString().padStart(2,'0')} on ${(gameMode||'').toUpperCase()} in NECROWAVE.`,
+      }).catch(() => {});
+    });
+  }
 
   showScreen('death-screen');
   playGameOverSound(); screenShake.intensity = 15;
@@ -2754,6 +2803,12 @@ const CODEX_CATEGORIES = [
   { id: 'powerups', name: 'POWER-UPS', color: '#ff0' },
   { id: 'elements', name: 'ELEMENTS',  color: '#f8f' },
   { id: 'modes',    name: 'MODES',     color: '#0f0' },
+  { id: 'controls', name: 'CONTROLS',  color: '#6af' },
+];
+const CONTROLS_LIST = [
+  { key: 'keyboard', name: 'KEYBOARD + MOUSE', color: '#6af', icon: '⌨', desc: 'Move with WASD or arrow keys. Aim with the mouse. Left-click to shoot. Space blasts. F repairs (Siege). R reloads. E picks up. 1-0 switch weapons. Esc pauses.' },
+  { key: 'gamepad',  name: 'GAMEPAD (PS5/XBOX)', color: '#6af', icon: '🎮', desc: 'Left stick moves. Right stick aims. R2 or Square shoots. Circle blasts. Triangle repairs (hold, Siege only). R1 reloads. L1 picks up. Options/Start pauses.' },
+  { key: 'mobile',   name: 'TOUCH', color: '#6af', icon: '📱', desc: 'Dual virtual joysticks — left thumb moves, right thumb aims (full extent = shoot). Tap the BLAST button for shockwave, the FIX button to repair walls in Siege.' },
 ];
 const WEAPON_DESCS = {
   pistol: 'Reliable sidearm with infinite ammo. Never runs dry.',
@@ -2796,6 +2851,7 @@ function codexItemsFor(cat) {
   if (cat === 'powerups') return POWERUP_TYPES.map(p => ({ key: p.id, name: p.name, color: p.color }));
   if (cat === 'elements') return ELEMENT_TYPES.map(e => ({ key: e.id, name: e.name, color: e.color }));
   if (cat === 'modes') return MODE_LIST.map(m => ({ key: m.id, name: m.name, color: m.color }));
+  if (cat === 'controls') return CONTROLS_LIST.map(c => ({ key: c.key, name: c.name, color: c.color }));
   return [];
 }
 
@@ -2927,6 +2983,11 @@ function renderCodexDetail() {
     color = def.color; title = def.name; desc = def.desc;
     stats = codexStat('TYPE', 'SOLO/COOP', color);
   }
+  else if (category === 'controls') {
+    const def = CONTROLS_LIST.find(c => c.key === itemKey); if (!def) return;
+    color = def.color; title = def.name; desc = def.desc;
+    stats = '';
+  }
 
   el.innerHTML = `
     <div style="padding:2px 4px 6px 4px">
@@ -2943,6 +3004,7 @@ function renderCodexDetail() {
     else if (category === 'powerups') { const def = POWERUP_TYPES.find(p => p.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
     else if (category === 'elements') { const def = ELEMENT_TYPES.find(e => e.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
     else if (category === 'modes') { const def = MODE_LIST.find(m => m.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
+    else if (category === 'controls') { const def = CONTROLS_LIST.find(c => c.key === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
   }
 }
 
