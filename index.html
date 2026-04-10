@@ -172,6 +172,7 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
     <div style="margin-top:10px;display:flex;flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center">
       <button class="menu-btn" id="btn-solo">SOLO</button>
       <button class="menu-btn" id="btn-multi">MULTIPLAYER</button>
+      <button class="menu-btn" id="btn-codex" style="border-color:#f0f;color:#f0f;box-shadow:0 0 10px rgba(255,0,255,0.3);text-shadow:0 0 6px rgba(255,0,255,0.5)">CODEX</button>
     </div>
   </div>
   <div style="display:none" id="start-controls"></div>
@@ -265,9 +266,25 @@ body.mobile #mobile-buttons { display: flex; flex-direction: column; gap: 8px; r
     <div style="color:#0ff;font-size:clamp(18px,4vw,28px);font-weight:bold;letter-spacing:4px;margin-bottom:4px;text-shadow:0 0 12px rgba(0,255,255,0.5)">PAUSED</div>
     <div id="pause-mode-label" style="color:#888;font-size:11px;margin-bottom:6px"></div>
     <div id="pause-inventory" style="text-align:left;margin-bottom:8px;font-size:10px;max-height:25vh;overflow-y:auto"></div>
-    <div style="display:flex;flex-direction:row;align-items:center;gap:8px;justify-content:center">
+    <div style="display:flex;flex-direction:row;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap">
       <button class="menu-btn primary" id="btn-resume">RESUME</button>
+      <button class="menu-btn" id="btn-pause-codex" style="border-color:#f0f;color:#f0f">CODEX</button>
       <button class="menu-btn danger" id="btn-quit-game">QUIT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ---- CODEX (encyclopedia) ---- -->
+<div id="codex-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:50;background:rgba(3,3,12,0.95);font-family:'Courier New',monospace;overflow-y:auto">
+  <div style="max-width:760px;margin:0 auto;padding:calc(16px + env(safe-area-inset-top)) 16px 80px 16px">
+    <div style="text-align:center;margin-bottom:12px">
+      <div style="color:#f0f;font-size:clamp(22px,5vw,34px);font-weight:bold;letter-spacing:6px;text-shadow:0 0 14px rgba(255,0,255,0.6)">CODEX</div>
+      <div style="color:#888;font-size:11px;letter-spacing:2px">KNOW YOUR ENEMY. KNOW YOUR ARSENAL.</div>
+    </div>
+    <div id="codex-tabs" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:12px"></div>
+    <div id="codex-content" style="color:#ccc;font-size:12px;line-height:1.5"></div>
+    <div style="text-align:center;margin-top:16px">
+      <button class="menu-btn danger" id="btn-codex-back" style="font-size:12px;padding:8px 22px">BACK</button>
     </div>
   </div>
 </div>
@@ -2422,6 +2439,9 @@ function addBtn(id, fn) {
   el.addEventListener('touchcancel', () => { el.classList.remove('tapped'); });
 }
 addBtn('btn-solo', () => { showScreen('solo-mode-screen'); });
+addBtn('btn-codex', () => { openCodex(); });
+addBtn('btn-pause-codex', () => { openCodex(); });
+addBtn('btn-codex-back', () => { closeCodex(); });
 addBtn('btn-solo-descent', () => { isMultiplayer = false; gameMode = 'descent'; startSoloGame(); });
 addBtn('btn-solo-dungeon', () => { isMultiplayer = false; gameMode = 'descent'; startSoloGame(); });
 addBtn('btn-solo-survival', () => { isMultiplayer = false; gameMode = 'survival'; startSoloGame(); });
@@ -2545,6 +2565,135 @@ function togglePauseMenu() {
     if (!isMultiplayer) gameState = 'paused';
   }
 }
+
+// ---- CODEX / ENCYCLOPEDIA ----
+const ZOMBIE_CODEX = {
+  normal:   { name: 'SHAMBLER',  desc: 'The baseline undead. Slow and dumb, but they come in crowds.' },
+  fast:     { name: 'SPRINTER',  desc: 'Charges at high speed in short bursts. Close the gap before it does.' },
+  tank:     { name: 'BRUISER',   desc: 'Heavy hitter with massive HP. Resists knockback. Ground pound attack.' },
+  spitter:  { name: 'SPITTER',   desc: 'Keeps distance and fires a 3-spread of acid projectiles.' },
+  exploder: { name: 'BOMBER',    desc: 'Rushes in and detonates on death. Radius damage.' },
+  boss:     { name: 'SUMMONER',  desc: 'Boss. Retreats and summons more zombies. Very tough.' },
+  splitter: { name: 'SHIELDER',  desc: 'Front-facing energy shield blocks bullets. Flank it.' },
+  mini:     { name: 'SNIPER',    desc: 'Stays far, charges a laser sight, fires a fast precision shot.' },
+  brute:    { name: 'BRUTE',     desc: 'Heavy mid-tier melee. More HP than normal, hits harder.' },
+  stalker:  { name: 'STALKER',   desc: 'Lightweight and agile. Flanks the player.' },
+};
+
+let codexCurrentTab = 'enemies';
+function hexToRgba(hex, a) {
+  const h = hex.replace('#','');
+  const f = h.length === 3 ? h.split('').map(c=>c+c).join('') : h;
+  const r = parseInt(f.slice(0,2),16), g = parseInt(f.slice(2,4),16), b = parseInt(f.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function codexCard(color, title, icon, body) {
+  return `<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;margin-bottom:8px;border:2px solid ${color};border-radius:8px;background:${hexToRgba(color,0.06)};box-shadow:0 0 12px ${hexToRgba(color,0.2)},inset 0 0 6px ${hexToRgba(color,0.1)}">
+    <div style="flex-shrink:0;width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:${hexToRgba(color,0.15)};border:1px solid ${color};color:${color};font-size:20px;text-shadow:0 0 8px ${color},0 0 14px ${color}">${icon}</div>
+    <div style="flex:1;min-width:0">
+      <div style="color:${color};font-weight:bold;letter-spacing:1px;text-shadow:0 0 6px ${color};margin-bottom:3px;font-size:13px">${title}</div>
+      <div style="color:#ccd;font-size:11px;line-height:1.55">${body}</div>
+    </div>
+  </div>`;
+}
+function codexStat(label, value, color) {
+  return `<span style="display:inline-block;padding:1px 6px;margin:1px 2px 1px 0;border:1px solid ${color}66;border-radius:4px;background:${hexToRgba(color,0.08)};color:${color};font-size:10px">${label}: <b style="color:#fff">${value}</b></span>`;
+}
+function renderCodex(tab) {
+  codexCurrentTab = tab;
+  // Build tabs
+  const tabs = [
+    { id: 'enemies',  name: 'ENEMIES',   color: '#f44' },
+    { id: 'weapons',  name: 'WEAPONS',   color: '#0ff' },
+    { id: 'powerups', name: 'POWER-UPS', color: '#ff0' },
+    { id: 'elements', name: 'ELEMENTS',  color: '#f8f' },
+    { id: 'modes',    name: 'MODES',     color: '#0f0' },
+  ];
+  const tabEl = document.getElementById('codex-tabs');
+  tabEl.innerHTML = tabs.map(t => {
+    const active = t.id === tab;
+    return `<button class="codex-tab" data-tab="${t.id}" style="padding:6px 14px;border:2px solid ${t.color};border-radius:6px;background:${active?hexToRgba(t.color,0.3):hexToRgba(t.color,0.08)};color:${t.color};font-family:'Courier New',monospace;font-size:11px;font-weight:bold;letter-spacing:1px;cursor:pointer;text-shadow:0 0 6px ${t.color};box-shadow:${active?`0 0 14px ${hexToRgba(t.color,0.6)}`:`0 0 8px ${hexToRgba(t.color,0.2)}`}">${t.name}</button>`;
+  }).join('');
+  tabEl.querySelectorAll('.codex-tab').forEach(b => b.addEventListener('click', () => renderCodex(b.dataset.tab)));
+
+  const c = document.getElementById('codex-content');
+  let html = '';
+
+  if (tab === 'enemies') {
+    for (const [key, def] of Object.entries(ZOMBIE_TYPES)) {
+      const info = ZOMBIE_CODEX[key] || { name: key.toUpperCase(), desc: '—' };
+      const color = def.color || '#f44';
+      const stats = codexStat('HP', def.hp, color) + codexStat('DMG', def.damage, color) + codexStat('SPD', def.speed.toFixed(1), color) + codexStat('SIZE', def.radius, color) + codexStat('SCORE', def.score, color);
+      // Simple shape icon
+      const shape = key === 'fast' ? '▲' : (key === 'tank' || key === 'boss') ? '■' : key === 'brute' ? '⬢' : key === 'spitter' ? '◆' : key === 'exploder' ? '✦' : key === 'stalker' ? '◐' : key === 'splitter' ? '⬟' : '●';
+      html += codexCard(color, info.name, shape, `${info.desc}<br><div style="margin-top:5px">${stats}</div>`);
+    }
+  }
+  else if (tab === 'weapons') {
+    const descs = {
+      pistol: 'Reliable sidearm with infinite ammo.',
+      revolver: 'Hand cannon — slow fire, massive damage per shot, strong knockback.',
+      smg: 'Bullet hose. High fire rate, low damage per shot.',
+      burst: 'Precise 3-round burst on each trigger pull.',
+      shotgun: 'Devastating close-range spread. 10 pellets per shell.',
+      rifle: 'Long-range sniper. High damage, slow fire, pierces 3 enemies.',
+      minigun: 'Wall of bullets. Wide spread, huge ammo pool.',
+      flamethrower: 'Short-range area denial. Ignites enemies with fire trail.',
+      laser: 'Instant-hit pierce beam. Cuts through 99 enemies.',
+      lightning: 'Tesla. Chain lightning jumps between 3 enemies.',
+      rpg: 'Massive explosion. Instakill radius.',
+    };
+    for (const [key, def] of Object.entries(WEAPON_DEFS)) {
+      const color = def.color;
+      const stats = codexStat('DMG', def.damage, color) +
+        codexStat('RATE', `${def.fireRate}ms`, color) +
+        codexStat('MAG', def.magSize === 999 ? '∞' : def.magSize, color) +
+        codexStat('RANGE', def.bulletSpeed >= 25 ? 'long' : def.bulletSpeed >= 15 ? 'med' : 'short', color) +
+        codexStat('KB', def.knockback, color) +
+        (def.pierce ? codexStat('PIERCE', def.pierce >= 99 ? '∞' : def.pierce, color) : '') +
+        (def.pellets ? codexStat('PELLETS', def.pellets, color) : '') +
+        (def.explosive ? codexStat('BLAST', `${def.explosionRadius}px`, color) : '') +
+        (def.chain ? codexStat('CHAIN', def.chainCount, color) : '');
+      html += codexCard(color, def.name.toUpperCase(), '▰', `${descs[key] || ''}<br><div style="margin-top:5px">${stats}</div>`);
+    }
+  }
+  else if (tab === 'powerups') {
+    for (const p of POWERUP_TYPES) {
+      const durTxt = p.duration > 1 ? `${Math.round(p.duration/60)}s` : 'instant';
+      const stats = codexStat('DURATION', durTxt, p.color);
+      html += codexCard(p.color, p.name, p.icon, `${p.desc}<br><div style="margin-top:5px">${stats}</div>`);
+    }
+  }
+  else if (tab === 'elements') {
+    const elDescs = {
+      fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies.',
+      ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
+      lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
+    };
+    for (const e of ELEMENT_TYPES) {
+      html += codexCard(e.color, e.name, e.icon, `${elDescs[e.id] || ''}<br><div style="margin-top:5px;color:#888;font-size:10px">Pick up an element zone to apply this effect to all your bullets for 10s.</div>`);
+    }
+  }
+  else if (tab === 'modes') {
+    const modes = [
+      { name: 'DESCENT', color: '#f0f', desc: 'Vertical dungeon — clear each section to unlock the gate below. Boss every 5 sections.' },
+      { name: 'SURVIVAL', color: '#ff0', desc: 'Endless waves in a single arena. Pick a perk between waves.' },
+      { name: 'HORDE', color: '#0ff', desc: 'Nonstop chaos. Defend the center circle. How long can you survive?' },
+      { name: 'SIEGE', color: '#f80', desc: 'Two walls flanking your house. Waves attack from both sides. Repair the wall between waves. Shoot chests for power-ups.' },
+    ];
+    for (const m of modes) html += codexCard(m.color, m.name, '◆', m.desc);
+  }
+
+  c.innerHTML = html;
+}
+function openCodex() {
+  document.getElementById('codex-screen').style.display = 'block';
+  renderCodex(codexCurrentTab);
+}
+function closeCodex() {
+  document.getElementById('codex-screen').style.display = 'none';
+}
+
 // Action buttons: trigger action AND activate right joystick so user can hold+drag to aim
 function activateRightJoystickFromButton(touch) {
   if (!rightJoystick.active) {
