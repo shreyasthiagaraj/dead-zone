@@ -68,7 +68,8 @@ body.mobile #mobile-buttons { display: block; }
 #btn-reload { width: 52px; height: 52px; font-size: 11px; right: calc(34px + env(safe-area-inset-right) * 0.5); bottom: calc(325px + env(safe-area-inset-bottom)); }
 .mobile-btn:active, .mobile-btn.pressed { background: #0ff; border-color: #0ff; color: #030308; transform: scale(1.1); box-shadow: 0 0 20px rgba(0,255,255,0.5); text-shadow: none; filter: drop-shadow(0 0 8px rgba(0,255,255,0.6)); }
 .mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 14px rgba(0,255,255,0.4); text-shadow: 0 0 8px rgba(0,255,255,0.6); }
-.mobile-btn.dash-cooldown { border-color: #222; color: #333; box-shadow: none; filter: grayscale(1) brightness(0.5); }
+.mobile-btn.dash-cooldown { border-color: #0ff; color: #0ff; }
+.mobile-btn.dash-cooldown svg { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
 .mobile-btn.reload-btn { border-color: #a4f; color: #a4f; box-shadow: 0 0 8px rgba(170,68,255,0.25); text-shadow: 0 0 6px rgba(170,68,255,0.4); }
 .mobile-btn.repair-btn { border-color: #0ff; color: #0ff; box-shadow: 0 0 10px rgba(0,255,255,0.3); text-shadow: 0 0 6px rgba(0,255,255,0.5); }
 .mobile-btn.repair-btn.disabled { border-color: #234; color: #345; box-shadow: none; opacity: 0.4; pointer-events: none; cursor: default; }
@@ -5231,7 +5232,30 @@ function updateHUD() {
   hb.style.width=hp+'%';hb.style.background=hp>50?'#4f4':hp>25?'#fa0':'#f44';
   document.getElementById('health-text').textContent=`${Math.ceil(lp.hp)} HP`;
   // Blast cooldown indicator
-  const db=document.getElementById('btn-dash');if(db)db.className=lp.dashCooldown>0?'mobile-btn dash-cooldown':'mobile-btn dash-ready';
+  const db=document.getElementById('btn-dash');
+  if (db) {
+    if (lp.dashCooldown > 0) {
+      // Cooldown: start in "pressed" look (cyan fill, dark icon) and fade back to ready
+      const prog = Math.max(0, Math.min(1, 1 - lp.dashCooldown / DASH_COOLDOWN));
+      db.className = 'mobile-btn dash-cooldown';
+      // Background fades from solid cyan (pressed) to transparent dark (ready)
+      const bgA = (1 - prog) * 0.85;
+      db.style.background = `rgba(0, 255, 255, ${bgA.toFixed(3)})`;
+      // Icon/text/border color interpolates from dark (#030308) to neon cyan (#00ffff)
+      const r = Math.round(3 + prog * (0 - 3));
+      const g = Math.round(3 + prog * (255 - 3));
+      const b = Math.round(8 + prog * (255 - 8));
+      db.style.color = `rgb(${r}, ${g}, ${b})`;
+      db.style.borderColor = prog < 0.5 ? `rgba(0, 255, 255, ${(0.3 + prog).toFixed(3)})` : '#0ff';
+      db.style.boxShadow = `0 0 ${Math.round(6 + prog * 14)}px rgba(0,255,255,${(0.15 + prog * 0.35).toFixed(3)})`;
+    } else {
+      db.className = 'mobile-btn dash-ready';
+      db.style.background = '';
+      db.style.color = '';
+      db.style.borderColor = '';
+      db.style.boxShadow = '';
+    }
+  }
   // Siege repair button — only enabled when the local player is near a damaged wall section
   if (gameMode === 'siege') {
     const rb2 = document.getElementById('btn-repair');
