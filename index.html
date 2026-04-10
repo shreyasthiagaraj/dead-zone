@@ -5910,19 +5910,29 @@ function gameLoop(){update();render();requestAnimationFrame(gameLoop);}
 // audio files decode in parallel so the music buffer is ready by the time the user clicks.
 try { initAudio(); loadSfx(); } catch(e) {}
 
+// Detect native mobile app wrapper (Capacitor) — these don't enforce browser autoplay policy
+const _isNativeApp = !!(window.Capacitor || window.cordova || /wv|WebView/i.test(navigator.userAgent));
+
 let _menuMusicStarted = false;
 function tryStartMenuMusic() {
   if (_menuMusicStarted) return;
   _menuMusicStarted = true;
   // Fallback if eager init failed (e.g. on some older Safari)
   if (!audioCtx) { initAudio(); loadSfx(); }
-  // Context may still be suspended — resume on this user gesture
+  // Context may still be suspended — resume on this user gesture (or ignored in native)
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   // If buffer already loaded, play immediately; otherwise poll until ready
   const _tryPlay = () => { if (sfxBuffers['music_menu']) playMusic('music_menu', 2.0); else setTimeout(_tryPlay, 200); };
   _tryPlay();
 }
-// Capture phase so we fire BEFORE any button handlers that call stopPropagation
+// Native app: try to autoplay without waiting for user interaction
+if (_isNativeApp) {
+  const _nativeAutoplay = () => { if (_menuMusicStarted) return; try { tryStartMenuMusic(); } catch(e) {} };
+  _nativeAutoplay();
+  setTimeout(_nativeAutoplay, 500);
+  setTimeout(_nativeAutoplay, 1500);
+}
+// Web/fallback: start on first interaction. Capture phase so we fire BEFORE any button handlers that call stopPropagation
 document.addEventListener('click', tryStartMenuMusic, { once: true, capture: true });
 document.addEventListener('touchstart', tryStartMenuMusic, { once: true, capture: true });
 document.addEventListener('keydown', tryStartMenuMusic, { once: true, capture: true });
