@@ -201,5 +201,5 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`DEAD ZONE server running on http://localhost:${PORT}`);
+  console.log(`NEONCROPOLIS server running on http://localhost:${PORT}`);
 });
