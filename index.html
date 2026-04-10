@@ -173,6 +173,18 @@ body.mobile #mobile-buttons { display: block; }
 /* pulse animation used by the NEW BEST badge */
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
+/* ---- Ambient start-screen motion ---- */
+#start-ambient { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: -1; }
+#start-ambient .orb { position: absolute; width: 160px; height: 160px; border-radius: 50%; filter: blur(60px); opacity: 0.32; mix-blend-mode: screen; }
+#start-ambient .orb-a { background: #f0f; left: 12%; top: 22%; animation: orbA 18s ease-in-out infinite alternate; }
+#start-ambient .orb-b { background: #0ff; right: 14%; top: 30%; animation: orbB 22s ease-in-out infinite alternate; }
+#start-ambient .orb-c { background: #ff0; left: 40%; bottom: 18%; animation: orbC 26s ease-in-out infinite alternate; width: 220px; height: 220px; opacity: 0.2; }
+#start-ambient .scanline { position: absolute; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(0,255,255,0.35), transparent); top: 0; animation: scanlineDrift 12s linear infinite; opacity: 0.5; }
+@keyframes orbA { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(80px,-40px) scale(1.2); } }
+@keyframes orbB { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(-60px,40px) scale(1.15); } }
+@keyframes orbC { 0% { transform: translate(0,0) scale(1); } 100% { transform: translate(-40px,-60px) scale(1.1); } }
+@keyframes scanlineDrift { 0% { top: 0; opacity: 0; } 10%, 90% { opacity: 0.5; } 100% { top: 100%; opacity: 0; } }
+
 /* Lobby */
 .lobby-code { font-size: 48px; color: #ff0; letter-spacing: 12px; font-weight: bold; margin: 16px 0; text-shadow: 0 0 20px rgba(255,255,0,0.4), 0 0 40px rgba(255,255,0,0.15); }
 .lobby-players { list-style: none; margin: 16px 0; }
@@ -247,9 +259,11 @@ body.mobile #mobile-buttons { display: block; }
 
 <!-- ---- MAIN MENU ---- -->
 <div class="screen-overlay" id="start-screen">
+  <div id="start-ambient"><div class="orb orb-a"></div><div class="orb orb-b"></div><div class="orb orb-c"></div><div class="scanline"></div></div>
   <div class="menu-panel">
     <h1 style="font-size:clamp(40px,12vw,80px);letter-spacing:8px">NECROWAVE</h1>
     <div class="subtitle">NEON NEVER DIES</div>
+    <div id="title-best" style="color:#ff08;font-size:10px;letter-spacing:2px;margin-top:2px;margin-bottom:4px;opacity:0.75;min-height:12px"></div>
     <div style="margin-top:10px;display:flex;flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center">
       <button class="menu-btn" id="btn-solo">SOLO</button>
       <button class="menu-btn" id="btn-multi">MULTIPLAYER</button>
@@ -2480,6 +2494,25 @@ function showScreen(id) {
   const inGame = !id || id === 'pause-screen' || id === 'wave-summary-screen' || id === 'perk-screen';
   const hudVis = inGame ? '' : 'none';
   ['hud-topleft','mobile-buttons','center-hud','effects-bar'].forEach(h => { const el=document.getElementById(h); if(el) el.style.display = hudVis === 'none' ? 'none' : (h === 'hud-topleft' ? 'flex' : ''); });
+  // Populate the best-run line under the main title when returning to the start screen
+  if (id === 'start-screen') {
+    try {
+      let bestScore = 0, bestMode = null, bestTime = 0;
+      for (const m of MODE_CARDS) {
+        const b = JSON.parse(localStorage.getItem(`deadzone_best_${m.id}`) || '{}');
+        if (b && b.score && b.score > bestScore) { bestScore = b.score; bestMode = m; bestTime = b.time || 0; }
+      }
+      const el = document.getElementById('title-best');
+      if (el) {
+        if (bestScore > 0 && bestMode) {
+          const mm = Math.floor(bestTime/60), ss = (bestTime%60).toString().padStart(2,'0');
+          el.innerHTML = `BEST: <span style="color:${bestMode.color};text-shadow:0 0 6px ${bestMode.color}">${bestScore.toLocaleString()}</span> · ${mm}:${ss} · <span style="color:${bestMode.color}">${bestMode.title}</span>`;
+        } else {
+          el.textContent = '';
+        }
+      }
+    } catch (e) {}
+  }
 }
 
 function showLobbyScreen() { showScreen('lobby-screen'); document.getElementById('lobby-code').textContent = lobbyCode; updateLobbyUI(); }
@@ -3063,6 +3096,39 @@ function openCodex() {
 function closeCodex() {
   document.getElementById('codex-screen').style.display = 'none';
 }
+// Keyboard navigation in the codex: ↑↓ to move within items, ←→ to move categories, Esc to close
+document.addEventListener('keydown', (e) => {
+  const cs = document.getElementById('codex-screen');
+  if (!cs || cs.style.display === 'none') return;
+  const k = e.key;
+  if (k === 'Escape') { e.preventDefault(); closeCodex(); return; }
+  if (k === 'ArrowUp' || k === 'ArrowDown') {
+    e.preventDefault();
+    const items = codexItemsFor(codexState.category);
+    if (items.length === 0) return;
+    let idx = items.findIndex(i => i.key === codexState.itemKey);
+    if (idx === -1) idx = 0;
+    idx = (idx + (k === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+    codexState.itemKey = items[idx].key;
+    renderCodexItems();
+    renderCodexDetail();
+    // scroll the selected item into view
+    const sel = document.querySelector('#codex-items .codex-list-item.selected');
+    if (sel) sel.scrollIntoView({ block: 'nearest' });
+  }
+  if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    e.preventDefault();
+    let idx = CODEX_CATEGORIES.findIndex(c => c.id === codexState.category);
+    if (idx === -1) idx = 0;
+    idx = (idx + (k === 'ArrowRight' ? 1 : -1) + CODEX_CATEGORIES.length) % CODEX_CATEGORIES.length;
+    codexState.category = CODEX_CATEGORIES[idx].id;
+    const items = codexItemsFor(codexState.category);
+    codexState.itemKey = items.length > 0 ? items[0].key : null;
+    renderCodexCategories();
+    renderCodexItems();
+    renderCodexDetail();
+  }
+});
 
 // Action buttons: trigger action AND activate right joystick so user can hold+drag to aim
 function activateRightJoystickFromButton(touch) {
