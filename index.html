@@ -3044,17 +3044,24 @@ addBtn('btn-quit-game', () => {
 });
 
 let gamePaused = false;
+function _resetJoysticks() {
+  leftJoystick.active = false; leftJoystick.dx = 0; leftJoystick.dy = 0; leftJoystick.nx = 0; leftJoystick.ny = 0;
+  rightJoystick.active = false; rightJoystick.dx = 0; rightJoystick.dy = 0; rightJoystick.nx = 0; rightJoystick.ny = 0;
+  rightJoystick.aiming = false; rightJoystick.firing = false;
+}
 function togglePauseMenu() {
   if (gameState !== 'playing' && !gamePaused) return;
   const pauseEl = document.getElementById('pause-screen');
   if (gamePaused) {
-    // Resume
+    // Resume — clear any joystick state so a stuck (mid-touch) joystick doesn't carry over
+    _resetJoysticks();
     gamePaused = false;
     pauseEl.style.display = 'none';
     gameState = 'playing';
     canvas.focus();
   } else {
-    // Pause
+    // Pause — clear joystick state so the player isn't still "moving" in the background
+    _resetJoysticks();
     gamePaused = true;
     pauseEl.style.display = 'block';
     // Only actually freeze the game loop in single player
@@ -3554,7 +3561,7 @@ canvas.addEventListener('mousedown', () => canvas.focus());
 // Touch
 function handleTouchStart(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; const hw=window.innerWidth/2; if (tx<hw&&!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (tx>=hw&&!rightJoystick.active) { rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false; } } }
 function handleTouchMove(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_RIGHT_MAX){dx=dx/d*JOYSTICK_RIGHT_MAX;dy=dy/d*JOYSTICK_RIGHT_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_RIGHT_MAX;rightJoystick.ny=dy/JOYSTICK_RIGHT_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
-function handleTouchEnd(e) { if (gameState !== 'playing') return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } }
+function handleTouchEnd(e) { for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } if (gameState === 'playing') e.preventDefault(); }
 if (isMobile) {
   // Listen on canvas and joystick zones for touch start
   canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
@@ -5166,7 +5173,7 @@ function update() {
           else if(zd<120){z.vx=-zdx/zd*z.speed*0.6;z.vy=-zdy/zd*z.speed*0.6;}else{z.vx*=0.9;z.vy*=0.9;}
           if(_now-z.lastFired>z.fireRate){z.lastFired=_now;
             for(let si=-1;si<=1;si++){const sa=z.angle+si*0.25;bullets.push({x:z.x,y:z.y,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});}
-            playZombieAttackSound();}
+          }
         }
         // ---- BOMBER: throws bombs that land and explode after 2s ----
         else if(zt?.bomber){
