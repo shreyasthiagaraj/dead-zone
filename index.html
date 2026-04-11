@@ -669,6 +669,284 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
 const BASE_GUN = { damage: 30, fireRate: 180, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0 };
+
+// ============================================================
+// NARRATIVE CONTENT — Ghostwave lore threaded through gameplay
+// ============================================================
+// The fiction: you are THE REVENANT, an uncorrupted consciousness trapped in a failed
+// upload mesh called NECROWAVE. Every death respawns a new instance. Zombies = corrupted
+// uploads ("glitch processes"). Elements = system exploits. Crypt = core memory restoration.
+// Nothing in this block is mechanical — it all plumbs into existing UI (wave-announce,
+// death screen, floating text, card picker).
+
+// Per-section titles for Trench. 20 sections with escalating corruption flavor.
+const TRENCH_SECTION_LORE = [
+  { name: 'ENTRY CACHE',      sub: 'minor process drift' },
+  { name: 'SUBNET 01',        sub: 'routine traffic' },
+  { name: 'DATA REGISTRY',    sub: 'minor process drift' },
+  { name: 'MEMORY BANK 4A',   sub: 'localized corruption' },
+  { name: 'ROUTING HUB',      sub: 'admin process nearby' },
+  { name: 'STACK FRAME 06',   sub: 'localized corruption' },
+  { name: 'TRASH COLLECTOR',  sub: 'residual decay' },
+  { name: 'LEGACY CACHE',     sub: 'moderate corruption' },
+  { name: 'ARCHIVE SHAFT',    sub: 'moderate corruption' },
+  { name: 'CORRUPTED HEAP',   sub: 'admin process nearby' },
+  { name: 'HALF-DELETED',     sub: 'fragmented memory' },
+  { name: 'PACKET LOSS ZONE', sub: 'heavy corruption' },
+  { name: 'ORPHAN PROCESSES', sub: 'heavy corruption' },
+  { name: 'BROKEN POINTERS',  sub: 'untethered daemons' },
+  { name: 'KERNEL FAULT',     sub: 'admin process nearby' },
+  { name: 'RECURSION WELL',   sub: 'runaway loops' },
+  { name: 'UNBOUND MEMORY',   sub: 'critical corruption' },
+  { name: 'SEGFAULT LAYER',   sub: 'critical corruption' },
+  { name: 'VOID SUBNET',      sub: 'signal failing' },
+  { name: 'EXIT GATEWAY',     sub: 'the mesh ends here' },
+];
+
+// Per-section titles for Descent. Same vibe, different metaphor (going down into old storage).
+const DESCENT_SECTION_LORE = [
+  { name: 'SURFACE SHAFT',    sub: 'old warm memory' },
+  { name: 'COLD STORAGE',     sub: 'infrequently accessed' },
+  { name: 'LEGACY DRIVE 01',  sub: 'decaying sectors' },
+  { name: 'DEEP INDEX',       sub: 'fragmented' },
+  { name: 'THE DELETED',      sub: 'admin process nearby' },
+  { name: 'OLD LOGS',         sub: 'half-corrupted' },
+  { name: 'BURNED SECTOR',    sub: 'unreadable' },
+  { name: 'CHECKSUM FAIL',    sub: 'data rot' },
+  { name: 'GHOST PARTITION',  sub: 'something lives here' },
+  { name: 'WALLED ARCHIVE',   sub: 'admin process nearby' },
+  { name: 'FORGOTTEN ROOT',   sub: 'pre-upload echoes' },
+  { name: 'SILENCE LAYER',    sub: 'no signals' },
+  { name: 'BROKEN INDEX',     sub: 'recursive fault' },
+  { name: 'THE WELL',         sub: 'descending' },
+  { name: 'UNNAMED SECTOR',   sub: 'admin process nearby' },
+  { name: 'SOURCE RUINS',     sub: 'original code' },
+  { name: 'FIRST UPLOAD',     sub: 'critical corruption' },
+  { name: 'PATIENT ZERO',     sub: 'critical corruption' },
+  { name: 'BEDROCK',          sub: 'signal failing' },
+  { name: 'THE BOTTOM',       sub: 'the mesh ends here' },
+];
+
+// Gauntlet room lore — named arenas
+const GAUNTLET_ROOM_LORE = [
+  { name: 'DIAGNOSTIC BAY', sub: 'calibration in progress' },
+  { name: 'HOLDING CELL',   sub: 'containment breach' },
+  { name: 'SANDBOX',        sub: 'testing environment' },
+  { name: 'QUARANTINE',     sub: 'failed containment' },
+  { name: 'BOSS ARENA',     sub: 'admin process nearby' },
+  { name: 'THE CRUCIBLE',   sub: 'stress test' },
+  { name: 'DEEP STACK',     sub: 'legacy hostile' },
+  { name: 'SERVER ROOM',    sub: 'hardware failing' },
+  { name: 'COOLING LOOP',   sub: 'thermal runaway' },
+  { name: 'THE FORGE',      sub: 'admin process nearby' },
+];
+
+// First-time-seen callout for each zombie/glitch type. Shown as a bottom-screen banner.
+// Whisper is a corrupted last-words line — implied horror of "these were people."
+const GLITCH_LORE = {
+  normal:   { title: 'GLITCH: SHAMBLER',  sub: 'motor cortex rot',           whisper: '"i was walking somewhere"' },
+  fast:     { title: 'GLITCH: SPRINTER',  sub: 'hijacked adrenaline loop',   whisper: '"run. run. run."' },
+  tank:     { title: 'GLITCH: BRUISER',   sub: 'bloated memory leak',        whisper: '"i used to be somebody"' },
+  brute:    { title: 'GLITCH: BRUTE',     sub: 'dissociative rage fragment', whisper: '"everything hurts"' },
+  spitter:  { title: 'GLITCH: SPITTER',   sub: 'vocal packet worm',          whisper: '"static. static."' },
+  exploder: { title: 'GLITCH: BOMBER',    sub: 'stack overflow imminent',    whisper: '"one of us"' },
+  splitter: { title: 'GLITCH: SHIELDER',  sub: 'firewall fragment',          whisper: '"no trespassers"' },
+  mini:     { title: 'GLITCH: SNIPER',    sub: 'targeted attack vector',     whisper: '"i saw you"' },
+  stalker:  { title: 'GLITCH: STALKER',   sub: 'pursuit daemon',             whisper: '"keep running"' },
+  boss:     { title: 'ADMIN: THE WARDEN', sub: 'corrupted firewall core',    whisper: '"i locked the doors"' },
+};
+
+// Randomized cause of death for the death screen header
+const DEATH_CAUSES = [
+  'MEMORY OVERFLOW',
+  'BUFFER CORRUPTION',
+  'KERNEL PANIC',
+  'STACK UNDERFLOW',
+  'PROCESS TERMINATED',
+  'NODE DISCONNECTED',
+  'INSTANCE FAULT',
+  'HEAP EXHAUSTED',
+  'SIGNAL LOST',
+  'CORE DUMPED',
+];
+
+// Ambient whispers — fired at random intervals during combat. Short, lonely, diagnostic.
+// Shown as floating text at screen edge with an italic ghost style.
+const AMBIENT_WHISPERS = [
+  'process located',
+  'diagnostic ping',
+  'is anyone there',
+  'i remember my mother',
+  'am i the only one',
+  'subnet compromised',
+  'rerouting around damage',
+  'we were going to live forever',
+  'the others are quiet now',
+  'help failed',
+  'the mesh is singing',
+  'can you hear me',
+  'i forget things now',
+  'what year is it',
+  'please respond',
+  'integrity check failed',
+];
+
+// Corrupted memory fragments — short haunting lines placed as floor decals in sections.
+// The player reads them while passing through, adding emotional texture.
+const MEMORY_FRAGMENTS = [
+  'she said she\'d come back',
+  'no one told me i was already inside',
+  'HELP [FAILED]',
+  'i remember my name. i think.',
+  'the mesh is beautiful',
+  'we uploaded on tuesday',
+  'please ping me',
+  'the last thing i saw was',
+  'i can\'t hear the fans anymore',
+  'tell mom i\'m okay',
+  'timestamp corrupted',
+  'uptime: 47311 years',
+  'everything is light',
+  'am i still me',
+  'dr. kaplan said it would work',
+  'i kept my promise',
+  'good morning (cached)',
+  'the other side is quiet',
+];
+
+// Track which glitch types have been seen this run (reset at startSoloGame / startMultiplayerGame)
+let _seenGlitchTypes = new Set();
+// Cooldown frames between ambient whispers
+let _whisperCooldown = 0;
+// Corrupted memory fragments — floor text you read while passing by
+let memoryFragments = []; // { x, y, text, glitchTimer, rot }
+// Swap a few characters in a string with corrupted ones (for glitch text flicker)
+function _corruptText(s) {
+  const glitchChars = '█░▓▒╳◆▪◢◣◤◥◧◨!?';
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (Math.random() < 0.25 && s[i] !== ' ') {
+      out += glitchChars[Math.floor(Math.random() * glitchChars.length)];
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
+// Spawn a memory fragment at a world position with a random corrupted string
+function spawnMemoryFragment(x, y) {
+  if (memoryFragments.length > 40) memoryFragments.shift();
+  const text = MEMORY_FRAGMENTS[Math.floor(Math.random() * MEMORY_FRAGMENTS.length)];
+  memoryFragments.push({
+    x, y, text,
+    rot: (Math.random() - 0.5) * 0.25,
+    glitchTimer: Math.random() * 100,
+  });
+}
+
+// Show a section/room title card in the wave-announce div.
+// Used everywhere a new section/wave begins.
+function showSectionTitleCard(title, subtitle, isBoss) {
+  const el = document.getElementById('wave-announce');
+  if (!el) return;
+  const numEl = document.getElementById('wave-num');
+  const subEl = document.getElementById('wave-sub');
+  if (numEl) {
+    numEl.textContent = title;
+    numEl.style.color = isBoss ? '#f44' : '#f0f';
+    numEl.style.textShadow = isBoss
+      ? '0 0 14px #f44, 0 0 28px rgba(255,68,68,0.5)'
+      : '0 0 14px #f0f, 0 0 28px rgba(255,0,255,0.5)';
+  }
+  if (subEl) {
+    subEl.textContent = isBoss ? '⚠ ADMIN PROCESS DETECTED' : (subtitle || '');
+    subEl.style.color = isBoss ? '#fa8' : '#0ff';
+  }
+  el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2500);
+}
+
+// Pick a random death cause tagline for flavor on the death screen.
+function pickDeathCause() {
+  return DEATH_CAUSES[Math.floor(Math.random() * DEATH_CAUSES.length)];
+}
+
+// Fire a new-enemy callout. Shows the glitch name + subtitle + corrupted whisper
+// in the wave-announce div so players learn what they're fighting the first time they see it.
+function showGlitchCallout(type) {
+  const lore = GLITCH_LORE[type];
+  if (!lore) return;
+  const el = document.getElementById('wave-announce');
+  if (!el) return;
+  const numEl = document.getElementById('wave-num');
+  const subEl = document.getElementById('wave-sub');
+  if (numEl) {
+    numEl.textContent = lore.title;
+    numEl.style.color = type === 'boss' ? '#f44' : '#fa8';
+    numEl.style.textShadow = '0 0 14px ' + (type === 'boss' ? '#f44' : '#fa8') + ', 0 0 28px rgba(255,128,80,0.45)';
+  }
+  if (subEl) {
+    subEl.innerHTML = `${lore.sub}<br><span style="color:#666;font-style:italic;font-size:0.75em">${lore.whisper}</span>`;
+    subEl.style.color = '#fa8';
+  }
+  el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2800);
+}
+
+// Per-frame narrative update. Fires:
+//  - First-time-seen callouts for each glitch type on screen (except bosses — handled at spawn site)
+//  - Ambient whispers on a random cooldown
+function updateNarrativeBeats() {
+  // First-time-seen glitch callouts
+  for (const z of zombies) {
+    if (!z.type || z.type === 'boss' || _seenGlitchTypes.has(z.type)) continue;
+    _seenGlitchTypes.add(z.type);
+    if (GLITCH_LORE[z.type]) showGlitchCallout(z.type);
+    break; // fire only one per frame to avoid overlap
+  }
+  // Ambient whispers — show a ghostly italic line near the edge of the screen every ~20-40s
+  if (_whisperCooldown > 0) _whisperCooldown--;
+  if (_whisperCooldown === 0 && zombies.length > 2) {
+    _whisperCooldown = 1200 + Math.floor(Math.random() * 1200); // 20-40s
+    const lp = getLocalPlayer();
+    if (lp) {
+      const msg = AMBIENT_WHISPERS[Math.floor(Math.random() * AMBIENT_WHISPERS.length)];
+      // Place the whisper at a random offset near the player so it reads like an ambient voice
+      const ox = (Math.random() - 0.5) * 220;
+      const oy = -80 - Math.random() * 60;
+      floatingTexts.push({
+        x: lp.x + ox, y: lp.y + oy,
+        text: '"' + msg + '"',
+        color: '#aac',
+        vy: -0.35,
+        life: 140, maxLife: 140,
+        _whisper: true, // flag for render styling
+      });
+    }
+  }
+}
+
+// Show a full-screen "THE REVENANT — INSTANCE #N" splash at run start.
+// Uses the wave-announce div so it overlaps cleanly with the section card that follows.
+function showRunStartSplash() {
+  const el = document.getElementById('wave-announce');
+  if (!el) return;
+  const numEl = document.getElementById('wave-num');
+  const subEl = document.getElementById('wave-sub');
+  const instance = (metaStats.totalRuns || 0) + 1;
+  if (numEl) {
+    numEl.textContent = 'THE REVENANT';
+    numEl.style.color = '#0ff';
+    numEl.style.textShadow = '0 0 16px #0ff, 0 0 32px rgba(0,255,255,0.55)';
+  }
+  if (subEl) {
+    subEl.textContent = `instance #${instance} · recompiling`;
+    subEl.style.color = '#8cf';
+  }
+  el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2200);
+}
 // Run stats for after-action report
 let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
 
@@ -710,43 +988,43 @@ function updateStreak() {}
 // ASCENDANT passive bonus for that element.
 const UPGRADE_POOL = [
   // Offense — common/rare
-  { id:'savage',     name:'SAVAGE ROUNDS',  desc:'+15% bullet damage',              rarity:'common',    max:8, icon:'⚔',  color:'#f44' },
-  { id:'rapid',      name:'RAPID FIRE',     desc:'+12% fire rate',                  rarity:'common',    max:8, icon:'⚡', color:'#ff0' },
-  { id:'pierce',     name:'OVERPENETRATOR', desc:'+1 bullet pierce',                rarity:'rare',      max:6, icon:'➟',  color:'#0cf' },
-  { id:'bigbullets', name:'BIGGER BULLETS', desc:'+20% bullet size',                rarity:'common',    max:4, icon:'●',  color:'#fa0' },
-  { id:'crit',       name:'CRITICAL STRIKE',desc:'+5% crit chance',                 rarity:'rare',      max:8, icon:'✹',  color:'#f0f' },
-  { id:'overkill',   name:'OVERKILL',       desc:'+50% crit damage',                rarity:'rare',      max:4, icon:'✢',  color:'#f08' },
-  { id:'hollow',     name:'HOLLOW POINTS',  desc:'+25% dmg vs hurt enemies (<50%)', rarity:'rare',      max:4, icon:'◎',  color:'#f60' },
-  { id:'overcharge', name:'OVERCHARGE',     desc:'Every 6th shot deals 3x damage',  rarity:'rare',      max:3, icon:'⫸',  color:'#ff8' },
+  { id:'savage',     name:'SAVAGE ROUNDS',  desc:'+15% bullet damage',              flavor:'overclocked instruction set — every packet bites harder', rarity:'common',    max:8, icon:'⚔',  color:'#f44' },
+  { id:'rapid',      name:'RAPID FIRE',     desc:'+12% fire rate',                  flavor:'fire control loop unshackled',                              rarity:'common',    max:8, icon:'⚡', color:'#ff0' },
+  { id:'pierce',     name:'OVERPENETRATOR', desc:'+1 bullet pierce',                flavor:'walls barely slow them now',                                rarity:'rare',      max:6, icon:'➟',  color:'#0cf' },
+  { id:'bigbullets', name:'BIGGER BULLETS', desc:'+20% bullet size',                flavor:'intentional buffer overflow',                               rarity:'common',    max:4, icon:'●',  color:'#fa0' },
+  { id:'crit',       name:'CRITICAL STRIKE',desc:'+5% crit chance',                 flavor:'targeted vulnerability scanner',                            rarity:'rare',      max:8, icon:'✹',  color:'#f0f' },
+  { id:'overkill',   name:'OVERKILL',       desc:'+50% crit damage',                flavor:'critical failure cascades through the target',              rarity:'rare',      max:4, icon:'✢',  color:'#f08' },
+  { id:'hollow',     name:'HOLLOW POINTS',  desc:'+25% dmg vs hurt enemies (<50%)', flavor:'exploits already-failing processes',                        rarity:'rare',      max:4, icon:'◎',  color:'#f60' },
+  { id:'overcharge', name:'OVERCHARGE',     desc:'Every 6th shot deals 3x damage',  flavor:'manual capacitor discharge. timed.',                        rarity:'rare',      max:3, icon:'⫸',  color:'#ff8' },
   // Bullet elements — rare, stack up to 4 levels
-  { id:'firebul',    name:'FIRE BULLETS',   desc:'Chance to ignite targets',        rarity:'rare',      max:4, icon:'🜂',  color:'#f80' },
-  { id:'icebul',     name:'ICE BULLETS',    desc:'Chance to slow & freeze targets', rarity:'rare',      max:4, icon:'❄',  color:'#8ef' },
-  { id:'chainbul',   name:'CHAIN BULLETS',  desc:'Chance to chain to nearest',      rarity:'rare',      max:4, icon:'⚡',  color:'#4ff' },
-  { id:'windbul',    name:'WIND BULLETS',   desc:'+1 pierce, +15% bullet speed',    rarity:'rare',      max:4, icon:'💨', color:'#cef' },
-  // Blast / smash elements — epic, stack up to 3 levels. Each compound with other smashes.
-  { id:'firesmash',  name:'FIRE SMASH',     desc:'Blast ignites + burns longer',    rarity:'epic',      max:3, icon:'💥', color:'#f60' },
-  { id:'icesmash',   name:'ICE SMASH',      desc:'Blast freezes hit enemies',       rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
-  { id:'chainsmash', name:'CHAIN SMASH',    desc:'Blast chains between enemies',    rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
-  { id:'windsmash',  name:'VORTEX SMASH',   desc:'Blast locks enemies in place',    rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
+  { id:'firebul',    name:'FIRE BULLETS',   desc:'Chance to ignite targets',        flavor:'thermal throttle exploit — they cook from the inside',      rarity:'rare',      max:4, icon:'🜂',  color:'#f80' },
+  { id:'icebul',     name:'ICE BULLETS',    desc:'Chance to slow & freeze targets', flavor:'clock-cycle freeze. time slows for the target',             rarity:'rare',      max:4, icon:'❄',  color:'#8ef' },
+  { id:'chainbul',   name:'CHAIN BULLETS',  desc:'Chance to chain to nearest',      flavor:'shared-bus signal jumps between nodes',                     rarity:'rare',      max:4, icon:'⚡',  color:'#4ff' },
+  { id:'windbul',    name:'WIND BULLETS',   desc:'+1 pierce, +15% bullet speed',    flavor:'priority hack. your packets beat theirs to the wire',       rarity:'rare',      max:4, icon:'💨', color:'#cef' },
+  // Blast / smash elements — epic, stack up to 3 levels
+  { id:'firesmash',  name:'FIRE SMASH',     desc:'Blast ignites + burns longer',    flavor:'blast pulse overheats nearby cores',                        rarity:'epic',      max:3, icon:'💥', color:'#f60' },
+  { id:'icesmash',   name:'ICE SMASH',      desc:'Blast freezes hit enemies',       flavor:'cryogenic quiesce — halts the clock',                       rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
+  { id:'chainsmash', name:'CHAIN SMASH',    desc:'Blast chains between enemies',    flavor:'bus cascade — an EMP with personality',                     rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
+  { id:'windsmash',  name:'VORTEX SMASH',   desc:'Blast locks enemies in place',    flavor:'scheduler purge. nothing gets to run.',                     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
   // Area / orbital — epic
-  { id:'orbital',    name:'ORBITAL RING',   desc:'A bullet orbits you (stacks: +1)',rarity:'epic',      max:4, icon:'◉',  color:'#a8f' },
-  { id:'blastcd',    name:'BLAST MASTERY',  desc:'-25% shockwave cooldown',         rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
-  { id:'blastr',     name:'BIGGER BLAST',   desc:'+30% shockwave radius',           rarity:'epic',      max:3, icon:'◯',  color:'#8df' },
-  { id:'deathexp',   name:'DEATH EXPLOSION',desc:'Kills explode (stacks: +dmg)',    rarity:'epic',      max:4, icon:'✸',  color:'#f80' },
+  { id:'orbital',    name:'ORBITAL RING',   desc:'A bullet orbits you (stacks: +1)',flavor:'uncorrupted satellite still running its old routine',       rarity:'epic',      max:4, icon:'◉',  color:'#a8f' },
+  { id:'blastcd',    name:'BLAST MASTERY',  desc:'-25% shockwave cooldown',         flavor:'capacitor tuning. recharge faster.',                        rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
+  { id:'blastr',     name:'BIGGER BLAST',   desc:'+30% shockwave radius',           flavor:'overclocked shockwave. wider reach.',                       rarity:'epic',      max:3, icon:'◯',  color:'#8df' },
+  { id:'deathexp',   name:'DEATH EXPLOSION',desc:'Kills explode (stacks: +dmg)',    flavor:'kill signal cascades into a small overload',                rarity:'epic',      max:4, icon:'✸',  color:'#f80' },
   // Survival — common/rare
-  { id:'vamp',       name:'VAMPIRISM',      desc:'+1 HP on kill',                   rarity:'rare',      max:5, icon:'♥',  color:'#f48' },
-  { id:'lifesteal',  name:'LIFESTEAL',      desc:'Crits heal you +5 HP',            rarity:'rare',      max:3, icon:'✚',  color:'#f4a' },
-  { id:'hpup',       name:'REINFORCED',     desc:'+25 max HP, heal to full',        rarity:'common',    max:6, icon:'＋', color:'#4f4' },
-  { id:'adrenaline', name:'ADRENALINE',     desc:'+15% fire rate below 50% HP',     rarity:'rare',      max:3, icon:'⚝',  color:'#ff4' },
-  { id:'thick',      name:'THICK SKIN',     desc:'-5% damage taken',                rarity:'rare',      max:6, icon:'◍',  color:'#aaa' },
+  { id:'vamp',       name:'VAMPIRISM',      desc:'+1 HP on kill',                   flavor:'absorb orphaned process data on each purge',                rarity:'rare',      max:5, icon:'♥',  color:'#f48' },
+  { id:'lifesteal',  name:'LIFESTEAL',      desc:'Crits heal you +5 HP',            flavor:'critical strikes write healing to your core',               rarity:'rare',      max:3, icon:'✚',  color:'#f4a' },
+  { id:'hpup',       name:'REINFORCED',     desc:'+25 max HP, heal to full',        flavor:'memory reallocated — more of yourself to spare',            rarity:'common',    max:6, icon:'＋', color:'#4f4' },
+  { id:'adrenaline', name:'ADRENALINE',     desc:'+15% fire rate below 50% HP',     flavor:'emergency subroutine pumps the clock',                      rarity:'rare',      max:3, icon:'⚝',  color:'#ff4' },
+  { id:'thick',      name:'THICK SKIN',     desc:'-5% damage taken',                flavor:'error-correction cache smooths the incoming',               rarity:'rare',      max:6, icon:'◍',  color:'#aaa' },
   // Mobility / Utility — common
-  { id:'swift',      name:'SWIFT BOOTS',    desc:'+10% move speed',                 rarity:'common',    max:5, icon:'»',  color:'#0ff' },
-  { id:'magnet',     name:'MAGNETISM',      desc:'+50% XP pickup radius',           rarity:'common',    max:4, icon:'◈',  color:'#8cf' },
-  { id:'xp',         name:'XP AMPLIFIER',   desc:'+20% XP from kills',              rarity:'common',    max:4, icon:'✦',  color:'#0fc' },
+  { id:'swift',      name:'SWIFT BOOTS',    desc:'+10% move speed',                 flavor:'motor daemons unclipped',                                   rarity:'common',    max:5, icon:'»',  color:'#0ff' },
+  { id:'magnet',     name:'MAGNETISM',      desc:'+50% XP pickup radius',           flavor:'attraction field for loose fragment packets',               rarity:'common',    max:4, icon:'◈',  color:'#8cf' },
+  { id:'xp',         name:'XP AMPLIFIER',   desc:'+20% XP from kills',              flavor:'fortified fragment parser',                                 rarity:'common',    max:4, icon:'✦',  color:'#0fc' },
   // Unique / legendary — 1 copy only
-  { id:'revive',     name:'SECOND CHANCE',  desc:'Revive once with 50% HP',         rarity:'legendary', max:1, icon:'☥',  color:'#0f0' },
-  { id:'berserk',    name:'BERSERKER',      desc:'+60% dmg, -25% max HP',           rarity:'legendary', max:1, icon:'☠',  color:'#f00' },
-  { id:'frag',       name:'FRAGMENTATION',  desc:'Bullets split into 2 on hit',     rarity:'legendary', max:1, icon:'✳',  color:'#f4f' },
+  { id:'revive',     name:'SECOND CHANCE',  desc:'Revive once with 50% HP',         flavor:'one-time emergency rollback. use wisely.',                  rarity:'legendary', max:1, icon:'☥',  color:'#0f0' },
+  { id:'berserk',    name:'BERSERKER',      desc:'+60% dmg, -25% max HP',           flavor:'manual overclock. fragile but furious.',                    rarity:'legendary', max:1, icon:'☠',  color:'#f00' },
+  { id:'frag',       name:'FRAGMENTATION',  desc:'Bullets split into 2 on hit',     flavor:'bullet fragmentation payload. splits on impact.',           rarity:'legendary', max:1, icon:'✳',  color:'#f4f' },
 ];
 
 const _UPGRADE_BY_ID = Object.fromEntries(UPGRADE_POOL.map(u => [u.id, u]));
@@ -1249,9 +1527,16 @@ function spawnDescentSection(idx) {
     const by = sec.y + (0.2 + Math.random() * 0.6) * sec.height;
     barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
   }
-  // Announce section
-  addFloatingText(cx, sec.y + 100, `SECTION ${idx + 1}`, '#f0c040');
-  if (sec.isBoss) addFloatingText(cx, sec.y + 130, 'BOSS', '#f44');
+  // Corrupted memory fragments
+  const _dfragCount = 1 + Math.floor(Math.random() * 2);
+  for (let fi = 0; fi < _dfragCount; fi++) {
+    const fx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
+    const fy = sec.y + (0.2 + Math.random() * 0.6) * sec.height;
+    spawnMemoryFragment(fx, fy);
+  }
+  // Narrative title card — descent section name + flavor
+  const _dlore = DESCENT_SECTION_LORE[idx] || { name: `DEPTH ${idx + 1}`, sub: 'deeper than it should be' };
+  showSectionTitleCard(`DEPTH ${idx + 1}: ${_dlore.name}`, _dlore.sub, sec.isBoss);
   if (sec.isDark) addFloatingText(cx, sec.y + 130, 'DARKNESS', '#888');
 }
 
@@ -1423,6 +1708,7 @@ function spawnTrenchSection(idx) {
     const bossHp = (bt.hp + tier * 200) * (1 + idx * 0.10);
     const bossDmg = Math.round(bt.damage * (1 + idx * 0.04));
     zombies.push({ zid: _nextZombieId++, x: sec.x + TW * 0.7, y: cy, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true });
+    showGlitchCallout('boss');
   }
   // Element chest — break it to release a temporary element zone
   const ezx = sec.x + (0.4 + Math.random() * 0.3) * TW;
@@ -1434,8 +1720,16 @@ function spawnTrenchSection(idx) {
     const by = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
     barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
   }
-  addFloatingText(cx, cy - 60, `SECTION ${idx + 1}`, '#f0c040');
-  if (sec.isBoss) addFloatingText(cx, cy - 36, 'BOSS', '#f44');
+  // Corrupted memory fragments — ghostly floor text scattered through the section
+  const _fragCount = 1 + Math.floor(Math.random() * 2);
+  for (let fi = 0; fi < _fragCount; fi++) {
+    const fx = sec.x + (0.15 + Math.random() * 0.7) * TW;
+    const fy = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
+    spawnMemoryFragment(fx, fy);
+  }
+  // Narrative title card — section name + flavor
+  const _lore = TRENCH_SECTION_LORE[idx] || { name: `SECTOR ${idx + 1}`, sub: 'unknown territory' };
+  showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
   if (sec.isDark) addFloatingText(cx, cy - 36, 'DARKNESS', '#888');
   if (sec.waves.length > 1) addFloatingText(cx, cy - 12, `${sec.waves.length} WAVES`, '#ff8040');
 }
@@ -3548,8 +3842,9 @@ function showDeathScreen() {
     <!-- LEFT: game over heading, stats, actions -->
     <div class="death-left">
       ${circleMsg}
-      <div class="death-title">GAME OVER</div>
-      <div class="death-mode">${(gameMode||'dungeon').toUpperCase()} · LV ${runLevel}</div>
+      <div class="death-title">INSTANCE #${metaStats.totalRuns} TERMINATED</div>
+      <div class="death-mode" style="color:#f48">CAUSE: ${pickDeathCause()}</div>
+      <div class="death-mode">${(gameMode||'dungeon').toUpperCase()} · STRIDE LV ${runLevel}</div>
       <div class="death-stats">
         ${showProg ? `<div class="death-stat">
           <div class="death-stat-val" style="color:#f0f;text-shadow:0 0 14px #f0f,0 0 24px rgba(255,0,255,0.4)">${progValue}</div>
@@ -3912,6 +4207,7 @@ function _renderLevelupCards() {
       <div style="font-size:13px; font-weight:bold; letter-spacing:1.5px; color:${u.color}; text-shadow:0 0 6px ${u.color}">${u.name}</div>
       <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${u.rarity}${owned?` · OWNED ×${owned}`:''}</div>
       <div style="font-size:11px; color:#ccc; line-height:1.35; margin-top:2px; text-align:left">${u.desc}</div>
+      ${u.flavor ? `<div style="font-size:9px; line-height:1.3; color:#888; font-style:italic; margin-top:3px; border-top:1px solid rgba(255,255,255,0.08); padding-top:4px; text-align:left">${u.flavor}</div>` : ''}
     `;
     card.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectUpgradeCard(u.id); });
     card.addEventListener('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectUpgradeCard(u.id); }, { passive: false });
@@ -4350,7 +4646,12 @@ function startSoloGame() {
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
+  _seenGlitchTypes = new Set();
+  _whisperCooldown = 600; // first whisper after ~10s
+  memoryFragments = [];
   rebuildRunMods();
+  // Narrative splash: "THE REVENANT — instance #N" fades in as the run starts
+  showRunStartSplash();
   // Arsenal meta node: grant +1..+3 random starting upgrades
   {
     const arsenalLevels = getMetaLevel('arsenal');
@@ -4428,7 +4729,11 @@ function startMultiplayerGame() {
   // Reset run-scoped progression (each client tracks their own XP/upgrades)
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
+  _seenGlitchTypes = new Set();
+  _whisperCooldown = 600;
+  memoryFragments = [];
   rebuildRunMods();
+  showRunStartSplash();
   siegeRepairHeld = false; { const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = 'none'; }
   window._currentLevelSeed = lobbySeed;
   if (gameMode === 'survival') {
@@ -5038,6 +5343,7 @@ function spawnBossZombie() {
   const bossSpeed = 1.2 + tier * 0.1;
   const bossRadius = 28 + Math.min(tier * 2, 10);
   zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bossSpeed, radius: bossRadius, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 80 + tier * 10, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
+  showGlitchCallout('boss');
 }
 
 function updateSurvivalWaves() {
@@ -5488,12 +5794,9 @@ function startGauntlet() {
 }
 
 function announceGauntletRoom() {
-  const el = document.getElementById('wave-announce');
   const isBoss = gauntletRoom % 5 === 0;
-  const roomInfo = GAUNTLET_ROOMS[(gauntletRoom - 1) % GAUNTLET_ROOMS.length];
-  document.getElementById('wave-num').textContent = isBoss ? `ROOM ${gauntletRoom}: BOSS` : `ROOM ${gauntletRoom}`;
-  document.getElementById('wave-sub').textContent = roomInfo.sub;
-  el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  const lore = GAUNTLET_ROOM_LORE[(gauntletRoom - 1) % GAUNTLET_ROOM_LORE.length];
+  showSectionTitleCard(`ROOM ${gauntletRoom}: ${lore.name}`, lore.sub, isBoss);
   playWaveStartSound();
 }
 
@@ -5510,6 +5813,7 @@ function spawnGauntletZombies() {
     const tier = Math.floor(gauntletRoom / 5);
     const bossHp = 600 + tier * 300;
     zombies.push({ zid: _nextZombieId++, x: bossX, y: bossY, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: 1.4 + tier * 0.1, radius: 30, color: '#f44', damage: 35 + tier * 5, score: 1000 + tier * 500, type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true });
+    showGlitchCallout('boss');
   }
   // Spawn barrels and element zones
   spawnBarrels(2 + Math.floor(Math.random() * 3));
@@ -5925,6 +6229,7 @@ function update() {
     updateOrbital();
     updateXPOrbs();
     updateRunOrbitals();
+    updateNarrativeBeats();
     // Level-up check: in section-based modes (trench/descent/gauntlet), level-ups queue
     // up and get redeemed at the section's end via a dramatic stride chest. In other
     // modes (horde/siege/survival/dungeon), they trigger immediately mid-combat.
@@ -7325,6 +7630,45 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
+  // Corrupted memory fragments — ghostly floor text you read while passing through
+  if (memoryFragments.length > 0) {
+    const _fvL = camera.x - canvas.width/2 - 200, _fvR = camera.x + canvas.width/2 + 200;
+    const _fvT = camera.y - canvas.height/2 - 80,  _fvB = camera.y + canvas.height/2 + 80;
+    ctx.save();
+    ctx.font = 'italic 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const _now = performance.now();
+    for (const mf of memoryFragments) {
+      if (mf.x < _fvL || mf.x > _fvR || mf.y < _fvT || mf.y > _fvB) continue;
+      mf.glitchTimer = (mf.glitchTimer || 0) + 1;
+      // Distance from player — fragments become more legible / brighter when nearby
+      const lpf = getLocalPlayer();
+      let proxT = 1;
+      if (lpf && lpf.alive) {
+        const dx = lpf.x - mf.x, dy = lpf.y - mf.y;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        proxT = Math.max(0.15, Math.min(1, 1 - d / 320));
+      }
+      // Glitch: every ~1.5s the text flickers through a character-swap burst
+      const glitchCycle = (mf.glitchTimer % 90) / 90;
+      const isFlickering = glitchCycle < 0.08;
+      const text = isFlickering ? _corruptText(mf.text) : mf.text;
+      const baseAlpha = 0.45 * proxT;
+      ctx.save();
+      ctx.translate(mf.x, mf.y);
+      ctx.rotate(mf.rot || 0);
+      // Soft glow behind text
+      ctx.shadowColor = '#f0f';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = `rgba(255,200,255,${baseAlpha})`;
+      ctx.fillText(text, 0, 0);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   // Ground haze wisps — brighter in flashlight beam
   {const _hlp=getLocalPlayer();
   const _ha=_hlp?_hlp.angle:0;
@@ -8131,7 +8475,18 @@ function render() {
   ctx.globalAlpha=1;
 
   // Floating texts
-  for(const ft of floatingTexts){ctx.globalAlpha=ft.life/ft.maxLife;ctx.shadowColor=ft.color;ctx.shadowBlur=8;ctx.fillStyle=ft.color;ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.fillText(ft.text,ft.x,ft.y);ctx.shadowBlur=0;}ctx.globalAlpha=1;
+  for(const ft of floatingTexts){
+    ctx.globalAlpha = ft.life / ft.maxLife;
+    ctx.shadowColor = ft.color;
+    ctx.shadowBlur = ft._whisper ? 4 : 8;
+    ctx.fillStyle = ft.color;
+    // Whispers use italic serif for a ghostly feel; normal floating text stays monospace bold
+    ctx.font = ft._whisper ? 'italic 11px monospace' : 'bold 14px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
 
   ctx.restore();
 
