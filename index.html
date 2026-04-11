@@ -4991,14 +4991,16 @@ function fireWeaponForPlayer(p) {
     bullets.push({
       x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed*_windSpeedMult, vy: s*gun.bulletSpeed*_windSpeedMult,
       damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?bSize+2:bSize,
-      knockback: 0, pierce: gun.pierce + _windPierceBonus, pierced: 0, life: 35,
+      knockback: 0, pierce: gun.pierce + _windPierceBonus, pierced: 0,
+      // Short bullet life — max range ≈ 224px at base speed. This FORCES the player
+      // to close with enemies instead of sniping from the back of the arena. Wind
+      // bullets (bulletSpeedMult) extend effective range by flying farther per frame.
+      life: 14, maxLife: 14,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
       _element: activeElement?.id || null, _homing: false, _bouncing: 0,
-      // Range falloff origin: used to compute travel distance at hit time
-      _originX: p.x, _originY: p.y,
     });
   }
   // Sound pitch shifts slightly with power
@@ -6474,46 +6476,30 @@ function update() {
                   // Shielder: block bullets from the front
                   if(ZOMBIE_TYPES[z.type]?.shielded&&z._shieldAngle!==undefined){const ba=Math.atan2(b.vy,b.vx);let sd=ba-z._shieldAngle;while(sd>Math.PI)sd-=Math.PI*2;while(sd<-Math.PI)sd+=Math.PI*2;if(Math.abs(sd)<1.2){b.pierced=(b.pierced||0)+99;particles.push({x:b.x,y:b.y,vx:-b.vx*0.2,vy:-b.vy*0.2,life:8,maxLife:8,size:3,color:'#4af',type:'spark'});playSound(800,0.03,'sine',0.1);continue;}}
                   const a=Math.atan2(b.vy,b.vx);
-                  // Apply upgrade modifiers at hit time (crit / hollow point / lifesteal / frag)
+                  // Apply upgrade modifiers at hit time (crit / hollow point)
                   let _dmg = b.damage;
                   const _mods = runMods || {};
                   const _isLocal = b.ownerId === getLocalPlayer()?.id;
-                  // ---- RANGE FALLOFF ----
-                  // Player bullets do less damage the further they've traveled. Computed
-                  // from the bullet's origin (set at fire time). Applied BEFORE crit/hollow
-                  // so those multipliers stack on top of the scaled base damage.
-                  let _falloff = 1.0;
-                  if (b.owner === 'player' && b._originX !== undefined) {
-                    const _tdx = b.x - b._originX, _tdy = b.y - b._originY;
-                    const _traveled = Math.sqrt(_tdx * _tdx + _tdy * _tdy);
-                    _falloff = computeRangeFalloff(_traveled);
-                    _dmg = _dmg * _falloff;
-                  }
                   if (_isLocal) {
-                    // Crit (base 5% chance from crit upgrade, or forced by bullet's own crit flag from overcharge)
                     if (!b.crit && _mods.critChance > 0 && Math.random() < _mods.critChance) {
                       _dmg = Math.floor(_dmg * (1 + _mods.critDamageMult));
                       b.crit = true;
                     }
-                    // Hollow points — bonus vs low-HP targets
                     if (_mods.hollowPoint > 0 && z.hp < z.maxHp * 0.5) {
                       _dmg = Math.floor(_dmg * (1 + _mods.hollowPoint));
                     }
                   }
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
-                  // ---- DAMAGE NUMBER (color-coded by falloff) ----
-                  // Throttle per zombie so rapid-fire doesn't spam. Crits override with magenta.
-                  if (_isLocal && (!z._lastDmgShownAt || gameTime - z._lastDmgShownAt > 6)) {
-                    z._lastDmgShownAt = gameTime;
+                  // Crits still float a magenta number — regular hits don't spam the screen.
+                  if (_isLocal && b.crit) {
                     floatingTexts.push({
                       x: z.x + (Math.random() - 0.5) * 16,
                       y: z.y - z.radius - 4,
                       text: Math.max(1, Math.floor(_dmg)).toString(),
-                      color: b.crit ? '#f0f' : _falloffColorHex(_falloff),
+                      color: '#f0f',
                       vy: -1.4,
-                      life: 26, maxLife: 26,
-                      _dmgNum: true,
-                      _crit: b.crit,
+                      life: 28, maxLife: 28,
+                      _dmgNum: true, _crit: true,
                     });
                   }
                   if (_isLocal) {
@@ -6577,7 +6563,7 @@ function update() {
                       const ang = Math.atan2(b.vy, b.vx);
                       for (let fi = -1; fi <= 1; fi += 2) {
                         const fa = ang + fi * (Math.PI * 0.4);
-                        bullets.push({ x: b.x, y: b.y, vx: Math.cos(fa)*12, vy: Math.sin(fa)*12, damage: Math.floor(b.damage * 0.35), color: b.color, size: Math.max(1.5, b.size*0.6), knockback:0, pierce:0, pierced:0, life:20, owner:'player', ownerId:b.ownerId, trail:[], crit:false, _element:b._element||null, _frag: true, _originX: b.x, _originY: b.y });
+                        bullets.push({ x: b.x, y: b.y, vx: Math.cos(fa)*12, vy: Math.sin(fa)*12, damage: Math.floor(b.damage * 0.35), color: b.color, size: Math.max(1.5, b.size*0.6), knockback:0, pierce:0, pierced:0, life:10, maxLife:10, owner:'player', ownerId:b.ownerId, trail:[], crit:false, _element:b._element||null, _frag: true });
                       }
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
@@ -8237,18 +8223,18 @@ function render() {
 
   // Bullets
   for(const b of bullets){
-    // Travel-distance freshness for player bullets. Bullets visibly decay as they fly,
-    // selling the range-falloff mechanic at a glance: crisp and bright up close,
-    // translucent and shrunken at long range (signal degradation in the mesh).
-    let _bFresh = 1;
-    if (b.owner === 'player' && b._originX !== undefined) {
-      const _btx = b.x - b._originX, _bty = b.y - b._originY;
-      const _btraveled = Math.sqrt(_btx*_btx + _bty*_bty);
-      _bFresh = computeRangeFalloff(_btraveled); // 1.0 → 0.3
+    // Lifetime-based shrink for player bullets. Bullets stay full size for the first
+    // ~60% of their short life, then shrink to nothing over the final 40%. Combined
+    // with the shortened bullet life (14 frames base), this makes bullets visibly
+    // die before they reach the back of the arena — you have to close the distance.
+    let _bSizeMult = 1, _bAlphaMult = 1;
+    if (b.owner === 'player') {
+      const _lifeT = b.maxLife ? Math.max(0, b.life / b.maxLife) : 1;
+      // Full size until 60% life remaining, shrink to ~15% over the last 40%
+      const _shrink = _lifeT > 0.4 ? 1 : _lifeT / 0.4;
+      _bSizeMult = 0.15 + 0.85 * _shrink;
+      _bAlphaMult = 0.25 + 0.75 * _shrink;
     }
-    // Map freshness to render size/alpha multipliers so bullets never vanish entirely
-    const _bSizeMult = 0.55 + 0.45 * _bFresh;   // 1.0 at close, 0.69 at 360+
-    const _bAlphaMult = 0.45 + 0.55 * _bFresh;  // 1.0 at close, 0.615 at 360+
     if(b.tracer&&b.trail.length>1){
     // Laser glow: intense neon beam with wide glow
     if(b.laserGlow){
@@ -8509,38 +8495,8 @@ function render() {
     aimLineAlpha = lerp(aimLineAlpha, aimTarget, aimTarget > aimLineAlpha ? 0.15 : 0.08);
     if(aimLineAlpha > 0.01){
     const lp=getLocalPlayer();
-    if(lp&&lp.alive){
-      // ---- RANGE FALLOFF GROUND RINGS ----
-      // Three subtle concentric circles on the ground at the falloff band boundaries.
-      // They're barely visible when calm, gently brightening as enemies approach. The
-      // inner ring pulses white when the player is in "optimal damage range" — you can
-      // feel the reward of closing the distance. 360° — no facing bias.
-      ctx.save();
-      const _nd = _playerNearestZombieDist;
-      // Gentle global boost as enemies close the distance (0 when calm, 1 at close range)
-      const _engage = _nd < 420 ? Math.max(0, Math.min(1, (420 - _nd) / 300)) : 0;
-      const _pulse = 0.85 + Math.sin(performance.now() * 0.004) * 0.15;
-      const _innerActive = _nd < RANGE_FALLOFF_NEAR;
-      ctx.lineWidth = 1.5;
-      // Outer band — orange, faintest
-      ctx.strokeStyle = '#ff9030';
-      ctx.globalAlpha = (0.04 + 0.08 * _engage) * aimLineAlpha;
-      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_FAR, 0, Math.PI * 2); ctx.stroke();
-      // Mid band — yellow
-      ctx.strokeStyle = '#ffff60';
-      ctx.globalAlpha = (0.06 + 0.12 * _engage) * aimLineAlpha;
-      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_MID, 0, Math.PI * 2); ctx.stroke();
-      // Inner band — white, pulses hard when an enemy is inside it (the "adrenaline" ring)
-      ctx.strokeStyle = _innerActive ? '#ffffff' : '#ffffff';
-      ctx.lineWidth = _innerActive ? 2.2 : 1.5;
-      const _innerAlpha = _innerActive ? (0.18 + 0.12 * _pulse) : (0.08 + 0.14 * _engage);
-      ctx.globalAlpha = _innerAlpha * aimLineAlpha;
-      if (_innerActive) { ctx.shadowColor = '#fff'; ctx.shadowBlur = 12; }
-      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_NEAR, 0, Math.PI * 2); ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
+    // Range falloff rings removed — bullets now physically can't reach far targets
+    // (see bullet life / shrink in the bullet render block).
     }
   }
 
@@ -8835,27 +8791,21 @@ function render() {
       // Pulse effect at critical HP
       if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
     }
-    // ---- ADRENALINE ZONE VIGNETTE ----
-    // Pulses red around screen edges when any enemy is within the close-range damage band.
-    // Reinforces the range-falloff mechanic: you FEEL the bonus kick in when you close the distance.
-    if (lp2.alive && _playerNearestZombieDist < 220) {
-      // Zone intensity ramps as enemies get closer. Peak at ~60px, taper to 0 at 220px.
-      const _closeT = Math.max(0, Math.min(1, (220 - _playerNearestZombieDist) / 160));
+    // ---- MELEE DANGER VIGNETTE ----
+    // Fires when an enemy is in true melee range (~100px). Warns the player "they're
+    // on you" — pair with the shortened bullet range: you HAVE to be close to hit,
+    // and when you're this close, the danger is immediate.
+    if (lp2.alive && _playerNearestZombieDist < 110) {
+      const _closeT = Math.max(0, Math.min(1, (110 - _playerNearestZombieDist) / 80));
       if (_closeT > 0.02) {
-        // Pulse faster when very close — heartbeat vibe
-        const _pulse = (0.7 + 0.3 * Math.sin(performance.now() * (0.006 + _closeT * 0.005)));
-        const _alpha = 0.18 * _closeT * _pulse;
+        const _pulse = (0.7 + 0.3 * Math.sin(performance.now() * 0.008));
+        const _alpha = 0.22 * _closeT * _pulse;
         const _zg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.25, canvas.width/2, canvas.height/2, canvas.width*0.72);
         _zg.addColorStop(0, 'rgba(0,0,0,0)');
-        _zg.addColorStop(0.55, 'rgba(255,50,20,0)');
-        _zg.addColorStop(1, `rgba(255,40,20,${_alpha})`);
+        _zg.addColorStop(0.55, 'rgba(255,40,20,0)');
+        _zg.addColorStop(1, `rgba(255,30,20,${_alpha})`);
         ctx.fillStyle = _zg;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        // Inner warm tint at very close range — the "adrenaline" feel
-        if (_closeT > 0.55) {
-          ctx.fillStyle = `rgba(255,80,40,${0.04 * (_closeT - 0.55) / 0.45})`;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
       }
     }
     // Power-up screen tints
