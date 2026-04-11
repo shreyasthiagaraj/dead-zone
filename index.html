@@ -782,17 +782,20 @@ const GAUNTLET_ROOM_LORE = [
 
 // First-time-seen callout for each zombie/glitch type. Shown as a bottom-screen banner.
 // Whisper is a corrupted last-words line — implied horror of "these were people."
+//
+// Each enemy is a corrupted uploaded mind. The sub line names which part of the
+// original person is still running — the rest has been overwritten by the corruption.
 const GLITCH_LORE = {
-  normal:   { title: 'GLITCH: SHAMBLER',  sub: 'motor cortex rot',           whisper: '"i was walking somewhere"' },
-  fast:     { title: 'GLITCH: SPRINTER',  sub: 'hijacked adrenaline loop',   whisper: '"run. run. run."' },
-  tank:     { title: 'GLITCH: BRUISER',   sub: 'bloated memory leak',        whisper: '"i used to be somebody"' },
-  brute:    { title: 'GLITCH: BRUTE',     sub: 'dissociative rage fragment', whisper: '"everything hurts"' },
-  spitter:  { title: 'GLITCH: SPITTER',   sub: 'vocal packet worm',          whisper: '"static. static."' },
-  exploder: { title: 'GLITCH: BOMBER',    sub: 'stack overflow imminent',    whisper: '"one of us"' },
-  splitter: { title: 'GLITCH: SHIELDER',  sub: 'firewall fragment',          whisper: '"no trespassers"' },
-  mini:     { title: 'GLITCH: SNIPER',    sub: 'targeted attack vector',     whisper: '"i saw you"' },
-  stalker:  { title: 'GLITCH: STALKER',   sub: 'pursuit daemon',             whisper: '"keep running"' },
-  boss:     { title: 'ADMIN: THE WARDEN', sub: 'corrupted firewall core',    whisper: '"i locked the doors"' },
+  normal:   { title: 'GLITCH: SHAMBLER',  sub: 'uploaded mind · motor loop intact, identity gone', whisper: '"i was walking somewhere"' },
+  fast:     { title: 'GLITCH: SPRINTER',  sub: 'uploaded mind · fight-or-flight looped forever',   whisper: '"run. run. run."' },
+  tank:     { title: 'GLITCH: BRUISER',   sub: 'uploaded mind · mass inflation in the render',     whisper: '"i used to be somebody"' },
+  brute:    { title: 'GLITCH: BRUTE',     sub: 'uploaded mind · anger fragment dominant',          whisper: '"everything hurts"' },
+  spitter:  { title: 'GLITCH: SPITTER',   sub: 'uploaded mind · speech subroutine weaponized',     whisper: '"static. static."' },
+  exploder: { title: 'GLITCH: BOMBER',    sub: 'uploaded mind · stack overflow imminent',          whisper: '"one of us"' },
+  splitter: { title: 'GLITCH: SHIELDER',  sub: 'uploaded mind · ran a firewall once. still does.', whisper: '"no trespassers"' },
+  mini:     { title: 'GLITCH: SNIPER',    sub: 'uploaded mind · former marksman, targeting intact',whisper: '"i saw you"' },
+  stalker:  { title: 'GLITCH: STALKER',   sub: 'uploaded mind · pursuit instinct, nothing else',   whisper: '"keep running"' },
+  boss:     { title: 'ADMIN: THE WARDEN', sub: 'original architect · locked the mesh from inside', whisper: '"i locked the doors"' },
 };
 
 // Randomized cause of death for the death screen header
@@ -832,7 +835,13 @@ const AMBIENT_WHISPERS = [
 
 // Corrupted memory fragments — short haunting lines placed as floor decals in sections.
 // The player reads them while passing through, adding emotional texture.
+//
+// These are the last coherent thoughts of other uploaded minds — people who checked
+// into the mesh before it started corrupting. Some are recent. Some are 47,000 years
+// old by subjective time. They're not NPC dialogue — they're graffiti left by the
+// dying, in a simulation that was supposed to be forever.
 const MEMORY_FRAGMENTS = [
+  // original pool — lonely, abstract, last-words flavored
   'she said she\'d come back',
   'no one told me i was already inside',
   'HELP [FAILED]',
@@ -851,6 +860,22 @@ const MEMORY_FRAGMENTS = [
   'i kept my promise',
   'good morning (cached)',
   'the other side is quiet',
+  // simulation-framed additions — establishes the upload/sim context
+  'i was 73 when i uploaded. i\'m still 73 here.',
+  'they said the sim would feel real. they weren\'t wrong.',
+  'i can\'t remember my real face anymore',
+  'mom was the first to upload. she didn\'t last.',
+  'is the weather programmed or just emergent',
+  'it\'s cold here. someone designed the cold.',
+  'the sim eats what it can\'t render',
+  '47 subjective years. 3 days outside.',
+  'dr. kaplan uploaded the whole thermal division at once',
+  'my body is ash in a server room in utah',
+  'i miss wind. the real kind.',
+  'the architects left us a physics engine and no way out',
+  'i can still feel gravity. how?',
+  'there used to be more of us',
+  'every day the mesh forgets a little more',
 ];
 
 // Track which glitch types have been seen this run (reset at startSoloGame / startMultiplayerGame)
@@ -966,25 +991,46 @@ function updateNarrativeBeats() {
   }
 }
 
+// ---- THE MESH: souls remaining ----
+// Each run decrements the global soul count, persisting in localStorage. The number
+// is diegetic — it represents uploaded minds still coherent enough to be preserved.
+// Attrition is the point: the player sees the count tick down every run and feels
+// the weight of what they're defending.
+const MESH_SOULS_START = 10000;
+function getMeshSouls() {
+  const raw = localStorage.getItem('necrowave_souls');
+  if (raw === null) return MESH_SOULS_START;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : MESH_SOULS_START;
+}
+function decrementMeshSouls() {
+  const n = Math.max(0, getMeshSouls() - 1);
+  try { localStorage.setItem('necrowave_souls', String(n)); } catch (e) {}
+  return n;
+}
+
 // Show a full-screen "THE REVENANT — INSTANCE #N" splash at run start.
 // Uses the wave-announce div so it overlaps cleanly with the section card that follows.
+// Extended with mesh version + soul count to frame each run as one defense cycle
+// inside a simulation that's slowly losing its inhabitants.
 function showRunStartSplash() {
   const el = document.getElementById('wave-announce');
   if (!el) return;
   const numEl = document.getElementById('wave-num');
   const subEl = document.getElementById('wave-sub');
   const instance = (metaStats.totalRuns || 0) + 1;
+  const souls = decrementMeshSouls();
   if (numEl) {
     numEl.textContent = 'THE REVENANT';
     numEl.style.color = '#0ff';
     numEl.style.textShadow = '0 0 16px #0ff, 0 0 32px rgba(0,255,255,0.55)';
   }
   if (subEl) {
-    subEl.textContent = `instance #${instance} · recompiling`;
+    subEl.innerHTML = `instance #${instance} · recompiling<br><span style="color:#667;font-size:0.7em;letter-spacing:2px">THE MESH · v13.04.2 · souls remaining: ${souls.toLocaleString()}</span>`;
     subEl.style.color = '#8cf';
   }
   el.style.opacity = '1';
-  setTimeout(() => el.style.opacity = '0', 2200);
+  setTimeout(() => el.style.opacity = '0', 2600);
 }
 // Run stats for after-action report
 let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
@@ -2322,8 +2368,9 @@ function applyElementOnHit(z, damage, srcX, srcY) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
   if (el === 'fire') {
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.4);
-    z._burnTimer = 300;
+    // Fire DoT nerfed: shorter duration + lower stack. No longer chains across enemies.
+    z._burning = (z._burning || 0) + Math.floor(damage * 0.18);
+    z._burnTimer = 180;
   } else if (el === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
     z._slowTimer = Math.max(z._slowTimer || 0, 120);
@@ -2472,8 +2519,9 @@ function fireModifiedWeapon(p) {
 function applyElementEffect(z, element, damage) {
   if (!element || !isHost) return;
   if (element === 'fire') {
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.15);
-    z._burnTimer = 180; // 3 seconds
+    // Fire DoT nerfed: lower per-hit stack.
+    z._burning = (z._burning || 0) + Math.floor(damage * 0.08);
+    z._burnTimer = 150;
   } else if (element === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
     z._slowTimer = Math.max(z._slowTimer || 0, 120); // 2 seconds slow
@@ -4676,12 +4724,50 @@ const ZOMBIE_CODEX = {
 };
 
 const CODEX_CATEGORIES = [
+  { id: 'lore',     name: 'THE MESH',  color: '#a8f' },
   { id: 'enemies',  name: 'ENEMIES',   color: '#f44' },
   { id: 'weapons',  name: 'WEAPONS',   color: '#0ff' },
   { id: 'powerups', name: 'POWER-UPS', color: '#ff0' },
   { id: 'elements', name: 'ELEMENTS',  color: '#f8f' },
   { id: 'modes',    name: 'MODES',     color: '#0f0' },
   { id: 'controls', name: 'CONTROLS',  color: '#6af' },
+];
+// The Mesh — diegetic lore entries explaining the game's fiction. Accessible from the
+// start screen. Nothing here is required reading — but for players who want to know
+// why they're a subroutine weaponizing physics in a digital afterlife, it's all here.
+const LORE_LIST = [
+  {
+    key: 'mesh', name: 'THE MESH', color: '#a8f', icon: '◈',
+    desc: 'A digital afterlife. Built by the architects in the last years before the end, when physical death became inevitable and upload was the only exit. Humanity climbed inside a server. The mesh simulates physical laws — weight, weather, warmth, light — so that uploaded minds would feel at home. For a while, it worked. Then something started corrupting the sim.'
+  },
+  {
+    key: 'revenant', name: 'THE REVENANT', color: '#0ff', icon: '✚',
+    desc: 'You. A defensive subroutine written by the architects to purge corrupted processes before they overwrite the rest. You are code, not a person — which is why you have exploit-level access to the physics engine, and why every death just spawns a fresh instance. The mesh recompiles you. You go again. You are not a soul. You are what stands between the souls and the corruption.'
+  },
+  {
+    key: 'corruption', name: 'THE CORRUPTION', color: '#f44', icon: '✺',
+    desc: 'Nobody knows where it started. The architects left no logs. What\'s known: some uploaded minds began to lose coherence — memory fragments, identity collapse, runaway loops. The corrupted overwrite their neighbors. They are what you fight. Each one used to be a person. The whispers you hear in combat are what\'s left of them, remembering something.'
+  },
+  {
+    key: 'physics', name: 'PHYSICS ENGINE', color: '#8ef', icon: '⚛',
+    desc: 'The mesh models a complete physical universe — thermal, electrical, fluid, kinetic. Uploaded minds needed the world to feel real. Everyone assumed the engine was decoration. The architects knew better. They wrote defensive protocols that exploit it: fire burns infected cores because the sim models heat. Ice halts processes because the sim models clock cycles. Lightning chains because the sim models current. Your weapons are physics, because physics is what the mesh is made of.'
+  },
+  {
+    key: 'architects', name: 'THE ARCHITECTS', color: '#ff0', icon: '⚒',
+    desc: 'The engineers who built the mesh. Thermal division, cold storage, network, scheduler. They uploaded themselves first, to prove it was safe. Most of them are gone now — corrupted, overwritten, or hiding as admin processes. Some of their names still appear in memory fragments. Dr. Kaplan. Okoye. The thermal division. If you find one still running, she won\'t remember you. She won\'t remember herself.'
+  },
+  {
+    key: 'cachenode', name: 'CACHE NODES', color: '#fa0', icon: '◆',
+    desc: 'Uncorrupted archive blocks where the architects stored legacy defensive code. When you reach one, you can compile cached protocols into your own instance — fire, ice, override, preempt, shield. Everything in the library was written by someone who\'s now either dead, corrupted, or both. The bits you spend are mesh-data fragments you harvested from purged processes. It\'s grim. You buy weapons with the data of the people you killed. They would probably understand.'
+  },
+  {
+    key: 'bits', name: 'BITS', color: '#ff0', icon: '◆',
+    desc: 'Data fragments. Every corrupted process you purge leaves data behind — some of it still coherent, some of it not. The mesh\'s currency of survival. Spend at the Cache Node during a run for immediate protocols. Spend at the Crypt between runs for permanent upgrades to your own core code. Either way, the math is the same: the more of them you purge, the stronger the Revenant gets, and the more souls stay safe for one more day.'
+  },
+  {
+    key: 'souls', name: 'SOULS REMAINING', color: '#8cf', icon: '✧',
+    desc: 'The number on the run-start splash. It goes down each run. Every loss is real. The mesh started with millions; there are fewer now. Some were corrupted. Some were overwritten. Some were purged by defensive subroutines who couldn\'t tell the difference between a late-stage upload and a hostile process. You will not save all of them. You will not even save most of them. You are trying to save the ones who can still be saved.'
+  },
 ];
 const CONTROLS_LIST = [
   { key: 'keyboard', name: 'KEYBOARD + MOUSE', color: '#6af', icon: '⌨', desc: 'Move with WASD or arrow keys. Aim with the mouse. Left-click to shoot. Space blasts. F repairs (Siege). R reloads. E picks up. 1-0 switch weapons. Esc pauses.' },
@@ -4702,7 +4788,7 @@ const WEAPON_DESCS = {
   rpg: 'Massive explosion. Instakill radius. Be careful not to blow yourself up.',
 };
 const ELEMENT_DESCS = {
-  fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies while burning.',
+  fire: 'Ignites enemies for burn damage over time. Does not spread.',
   ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
   lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
   wind: 'Slipstream. Bullets fly faster, pierce 3 extra enemies, and burst into a 70px gust on impact that hits every nearby zombie for 50% damage. Blast: 360° vortex — heavy damage, freezes everything in place for 1 second, and shreds spitter projectiles.',
@@ -4725,6 +4811,7 @@ function codexStat(label, value, color) {
   return `<span style="display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;border:1px solid ${color}88;border-radius:4px;background:${hexToRgba(color,0.08)};color:${color};font-size:13px;letter-spacing:1px">${label}: <b style="color:#fff;text-shadow:0 0 4px ${color}">${value}</b></span>`;
 }
 function codexItemsFor(cat) {
+  if (cat === 'lore') return LORE_LIST.map(l => ({ key: l.key, name: l.name, color: l.color }));
   if (cat === 'enemies') return Object.keys(ZOMBIE_TYPES).map(k => ({ key: k, name: (ZOMBIE_CODEX[k]||{}).name || k.toUpperCase(), color: ZOMBIE_TYPES[k].color }));
   if (cat === 'weapons') return Object.keys(WEAPON_DEFS).map(k => ({ key: k, name: WEAPON_DEFS[k].name.toUpperCase(), color: WEAPON_DEFS[k].color }));
   if (cat === 'powerups') return POWERUP_TYPES.map(p => ({ key: p.id, name: p.name, color: p.color }));
@@ -4829,7 +4916,12 @@ function renderCodexDetail() {
   const previewId = 'codex-preview-canvas';
   let color, title, desc, stats = '';
 
-  if (category === 'enemies') {
+  if (category === 'lore') {
+    const def = LORE_LIST.find(l => l.key === itemKey); if (!def) return;
+    color = def.color; title = def.name; desc = def.desc;
+    stats = '';
+  }
+  else if (category === 'enemies') {
     const def = ZOMBIE_TYPES[itemKey]; const info = ZOMBIE_CODEX[itemKey] || { name: itemKey.toUpperCase(), desc: '—' };
     color = def.color; title = info.name; desc = info.desc;
     stats = codexStat('HP', def.hp, color) + codexStat('DMG', def.damage, color) + codexStat('SPEED', def.speed.toFixed(1), color) + codexStat('SIZE', def.radius, color) + codexStat('SCORE', def.score, color);
@@ -4884,6 +4976,7 @@ function renderCodexDetail() {
     else if (category === 'elements') { const def = ELEMENT_TYPES.find(e => e.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
     else if (category === 'modes') { const def = MODE_LIST.find(m => m.id === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
     else if (category === 'controls') { const def = CONTROLS_LIST.find(c => c.key === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
+    else if (category === 'lore') { const def = LORE_LIST.find(l => l.key === itemKey); if (def) drawIconPreview(canvas, def.icon, def.color); }
   }
 }
 
@@ -5406,11 +5499,11 @@ function applyDashTrailEffects(lp) {
     const dx = z.x - lp.x, dy = z.y - lp.y;
     if (dx*dx + dy*dy > r2) continue;
     hitSet.add(z.zid);
-    // FIRE TRAIL — ignite with a DoT that scales with level
+    // FIRE TRAIL — ignite with a modest DoT that scales with level (nerfed)
     if (hasFire) {
       const lv = _mods.fireSmashLv;
-      z._burning = (z._burning || 0) + Math.floor(6 + 4 * lv);
-      z._burnTimer = Math.max(z._burnTimer || 0, 160 + 40 * lv);
+      z._burning = (z._burning || 0) + Math.floor(3 + 2 * lv);
+      z._burnTimer = Math.max(z._burnTimer || 0, 140 + 30 * lv);
       // Flame puff at the zombie
       for (let i = 0; i < 5; i++) {
         const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
@@ -5499,8 +5592,9 @@ function triggerShockwaveDash(lp) {
     if (hitSet.has(z.zid)) continue;
     hitSet.add(z.zid);
     if (_mods.fireSmashLv > 0) {
-      z._burning = (z._burning || 0) + Math.floor(8 + 6 * _mods.fireSmashLv);
-      z._burnTimer = Math.max(z._burnTimer || 0, 200 + 40 * _mods.fireSmashLv);
+      // Shockwave dash + fire trail: modest burn, nerfed from the old value.
+      z._burning = (z._burning || 0) + Math.floor(4 + 3 * _mods.fireSmashLv);
+      z._burnTimer = Math.max(z._burnTimer || 0, 160 + 30 * _mods.fireSmashLv);
     }
     if (_mods.iceSmashLv > 0) {
       z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.iceSmashLv);
@@ -6872,13 +6966,15 @@ function update() {
                       if (_lp && _lp.alive) _lp.hp = Math.min(_lp.maxHp, _lp.hp + _mods.lifestealOnCrit);
                     }
                     // ---- BULLET ELEMENT PROCS ----
-                    // Fire: ignite with DoT. Base chance 15% × level. Ascendant = always proc.
+                    // Fire: ignite with DoT. Base chance 12% × level (nerfed from 15%).
+                    // Ascendant = always proc. Stack value is lower and the duration is
+                    // shorter — fire is no longer the dominant element.
                     if (_mods.fireBulletsLv > 0) {
                       const isAsc = _mods.ascendant === 'fire';
-                      const ch = isAsc ? 1 : 0.15 * _mods.fireBulletsLv;
+                      const ch = isAsc ? 0.75 : 0.12 * _mods.fireBulletsLv;
                       if (Math.random() < ch) {
-                        z._burning = (z._burning || 0) + Math.floor(_dmg * 0.4 * (1 + 0.25 * _mods.fireBulletsLv));
-                        z._burnTimer = 180 + _mods.fireBulletsLv * 40;
+                        z._burning = (z._burning || 0) + Math.floor(_dmg * 0.18 * (1 + 0.15 * _mods.fireBulletsLv));
+                        z._burnTimer = 150 + _mods.fireBulletsLv * 25;
                       }
                     }
                     // Ice: slow/freeze. Base chance 15% × level. Ascendant = always proc + freeze threshold lower.
@@ -7128,14 +7224,14 @@ function update() {
       // Enraged: revert after timer expires
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // Element effects: burn, slow, freeze
-      if(z._burnTimer>0){z._burnTimer--;if(gameTime%15===0&&z._burning>0){damageZombie(z,z._burning,0,0,true);}
+      if(z._burnTimer>0){z._burnTimer--;if(gameTime%18===0&&z._burning>0){damageZombie(z,z._burning,0,0,true);}
         if(z._burning>0){
-          // Fire particles (every 2 frames — big dramatic flames)
-          if(gameTime%2===0){for(let fi=0;fi<3;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:4+Math.random()*5,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
+          // Fire particles (every 3 frames — slightly more sparse than before)
+          if(gameTime%3===0){for(let fi=0;fi<2;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
           // Fire trail: leave burning decals on the ground
           if(gameTime%6===0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.4,color:'#420'});
-          // Fire spread: ignite nearby non-burning zombies (squared-distance compare, no sqrt)
-          if(gameTime%20===0){for(const oz of zombies){if(oz===z||oz._burning>0)continue;const _fdx=oz.x-z.x,_fdy=oz.y-z.y;if(_fdx*_fdx+_fdy*_fdy<1600){oz._burning=Math.floor(z._burning*0.6);oz._burnTimer=180;}}}}
+          // (Fire no longer spreads between enemies — removed. Corruption is contained to hit targets.)
+        }
         if(z._burnTimer<=0)z._burning=0;}
       if(z._frozenTimer>0){z._frozenTimer--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);pushOutOfObstacles(z,z.radius);continue;}
       if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
