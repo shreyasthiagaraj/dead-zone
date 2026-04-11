@@ -627,6 +627,25 @@ function spawnOrbitalPickup(x, y) {
   pickups.push({ type: 'orbital', orbitalId: orb.id, x: x + (Math.random()-0.5)*60, y: y + (Math.random()-0.5)*60, bobTimer: Math.random()*Math.PI*2 });
 }
 
+// ---- Chest helpers (all power-ups across the game come from chests) ----
+// content forms: { type:'powerup', id:'rage' } | { type:'orbital' } | { type:'health' } | { type:'element', id:'fire' }
+function spawnChest(x, y, content) {
+  barrels.push({ x, y, radius: 16, hp: 3, maxHp: 3, _chest: true, _content: content, _bobTimer: Math.random() * Math.PI * 2 });
+}
+function spawnRandomPowerupChest(x, y, opts) {
+  const orbitalChance = (opts && opts.orbitalChance != null) ? opts.orbitalChance : 0.15;
+  let content;
+  if (Math.random() < orbitalChance) {
+    content = { type: 'orbital' };
+  } else {
+    const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
+    const pwr = pool[Math.floor(Math.random() * pool.length)];
+    content = { type: 'powerup', id: pwr.id };
+  }
+  spawnChest(x, y, content);
+  addFloatingText(x, y - 25, 'CHEST', '#ff0');
+}
+
 function activateOrbital(id) {
   const def = ORBITAL_TYPES.find(o => o.id === id);
   if (!def) return;
@@ -921,7 +940,15 @@ function spawnTrenchWave(idx, waveIdx) {
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     const ex = sec.x + (0.5 + Math.random() * 0.4) * TW;
     const ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
-    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale, maxHp: t.hp * hpScale, speed: t.speed + speedBoost, radius: t.radius, color: t.color, damage: Math.round(t.damage * dmgScale), score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
+    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale, maxHp: t.hp * hpScale, speed: t.speed + speedBoost, radius: t.radius, color: t.color, damage: Math.round(t.damage * dmgScale), score: t.score, type: tk, attackCooldown: 30, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: 30, _spawnAnimMax: 30 });
+    // Spawn-in burst: pink/cyan sparks + a brief vertical lightning crackle
+    for (let pi = 0; pi < 18; pi++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 1 + Math.random() * 4;
+      particles.push({ x: ex, y: ey, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 24 + Math.random() * 14, maxLife: 38, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#f0f' : '#0ff', type: 'spark' });
+    }
+    particles.push({ x: ex, y: ey + 28, tx: ex, ty: ey - 28, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#fff', type: 'lightning' });
+    particles.push({ x: ex - 18, y: ey, tx: ex + 18, ty: ey, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#f0f', type: 'lightning' });
   }
 }
 
@@ -1007,9 +1034,8 @@ function updateTrench() {
     if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
     playExitFoundSound();
     if (sec.isBoss && !hasPowerUpAnywhere()) {
-      const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
       const lpb = getLocalPlayer();
-      if (lpb) pickups.push({ type: 'powerup', powerupId: pwr.id, x: lpb.x + 60, y: lpb.y, bobTimer: 0 });
+      if (lpb) spawnRandomPowerupChest(lpb.x + 60, lpb.y);
     }
   }
   // Door trigger: when cleared and any player is at the right wall in the door y range
@@ -1116,8 +1142,8 @@ function updateDescent() {
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
     playExitFoundSound();
     if (sec.isBoss && !hasPowerUpAnywhere()) {
-      const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-      pickups.push({ type: 'powerup', powerupId: pwr.id, x: getLocalPlayer().x, y: getLocalPlayer().y + 30, bobTimer: 0 });
+      const lp3 = getLocalPlayer();
+      if (lp3) spawnRandomPowerupChest(lp3.x, lp3.y + 30);
     }
   }
   // Check if player passed through the gate to next section
@@ -1178,7 +1204,7 @@ function applyElementOnHit(z, damage, srcX, srcY) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
   if (el === 'fire') {
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.8);
+    z._burning = (z._burning || 0) + Math.floor(damage * 0.4);
     z._burnTimer = 300;
   } else if (el === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
@@ -1193,9 +1219,9 @@ function applyElementOnHit(z, damage, srcX, srcY) {
     particles.push({x:_sx,y:_sy,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
     playSfx('zap',0.2);
     for(let si=0;si<4;si++)particles.push({x:z.x+(Math.random()-0.5)*15,y:z.y+(Math.random()-0.5)*15,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:12,maxLife:12,size:2+Math.random()*3,color:'#4ff',type:'spark'});
-    // Chain to 5 enemies at 20% damage each
+    // Chain to 2 nearby enemies at 20% damage each (3 total including primary)
     let lastZ = z; const hitSet = new Set();
-    for (let ci = 0; ci < 5; ci++) {
+    for (let ci = 0; ci < 2; ci++) {
       let bestD = 150, bestZ = null;
       for (const oz of zombies) { if (oz === lastZ || hitSet.has(oz)) continue; const d = Math.sqrt((oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2); if (d < bestD) { bestD = d; bestZ = oz; } }
       if (!bestZ) break; hitSet.add(bestZ);
@@ -4108,11 +4134,10 @@ function updateHorde() {
   }
   // Items spawn at ring positions, not center
   if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
-  // Power-up orb every 35 seconds
+  // Power-up chest every 35 seconds — spawned around the defend circle, not at the center
   if (hordeTimer % 2100 === 0 && hordeTimer > 0 && !hasPowerUpAnywhere()) {
     const pos = getHordeEdgePos();
-    if (Math.random() < 0.2) { spawnOrbitalPickup(pos.x, pos.y); }
-    else { const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke'); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 }); }
+    spawnRandomPowerupChest(pos.x, pos.y, { orbitalChance: 0.2 });
   }
   // Element zone every 15 seconds
   if (hordeTimer % 900 === 0 && hordeTimer > 0) spawnElementZone();
@@ -4529,13 +4554,11 @@ function updateGauntlet() {
       score += 300 * gauntletRoom;
       addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'EXIT UNLOCKED!', '#0ff');
       playExitFoundSound();
-      // Drop loot — health only every 3 rooms, power-up on boss
+      // Drop loot — health every 3 rooms, power-up chest on boss rooms
       if (gauntletRoom % 3 === 0) spawnHealthPickup();
       if (gauntletRoom % 5 === 0 && !hasPowerUpAnywhere()) {
-        const pool = POWERUP_TYPES.filter(p => p.duration > 1);
-        const pwr = pool[Math.floor(Math.random() * pool.length)];
         const pos = getRandomFloorPos();
-        pickups.push({ type: 'powerup', powerupId: pwr.id, x: pos.x, y: pos.y, bobTimer: Math.random() * Math.PI * 2 });
+        spawnRandomPowerupChest(pos.x, pos.y);
       }
     }
     return;
@@ -4582,27 +4605,23 @@ function spawnSurvivalZombie() {
   zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
 }
 
-function hasPowerUpOnMap() { return pickups.some(p => p.type === 'powerup' || p.type === 'orbital'); }
+function hasPowerUpOnMap() {
+  if (pickups.some(p => p.type === 'powerup' || p.type === 'orbital')) return true;
+  return barrels.some(b => b._chest && b._content && (b._content.type === 'powerup' || b._content.type === 'orbital'));
+}
 function hasPowerUpAnywhere() { return hasPowerUpOnMap() || activePowerUps.length > 0 || activeOrbital; }
 
 function dropZombieLoot(z) {
   // Siege mode: no enemy drops — all items come from scheduled spawns
   if (gameMode === 'siege') return;
-  const r = Math.random();
+  // Enemies only drop health, and only rarely. Power-ups always come from chests.
   if (z.boss) {
-    // Boss: health + guaranteed power-up or shadow clone
+    // Bosses are rare encounters — guaranteed health drop, but no power-up.
     pickups.push({ type: 'health', amount: 30, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
-    if (!hasPowerUpAnywhere()) {
-      if (Math.random() < 0.3) { spawnOrbitalPickup(z.x, z.y); }
-      else { const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x + (Math.random()-0.5)*20, y: z.y + (Math.random()-0.5)*20, bobTimer: Math.random() * Math.PI * 2 }); }
-    }
-  } else if (r < 0.03) {
-    // 3% health drop
+    return;
+  }
+  if (Math.random() < 0.025) {
     pickups.push({ type: 'health', amount: 10, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 });
-  } else if (r < 0.06 && !hasPowerUpAnywhere()) {
-    // 3% power-up or shadow clone drop
-    if (Math.random() < 0.15) { spawnOrbitalPickup(z.x, z.y); }
-    else { const pool = POWERUP_TYPES.filter(p => p.duration > 1); const pwr = pool[Math.floor(Math.random() * pool.length)]; pickups.push({ type: 'powerup', powerupId: pwr.id, x: z.x, y: z.y, bobTimer: Math.random() * Math.PI * 2 }); }
   }
 }
 
@@ -5149,6 +5168,18 @@ function update() {
     // Zombies
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      // Trench spawn-in animation: locked in place + intangible until anim ends
+      if(z._spawnAnim>0){
+        z._spawnAnim--;
+        z.vx=0; z.vy=0; z.attackCooldown=Math.max(z.attackCooldown,5);
+        // Trail of pink/cyan sparks during materialization
+        if(gameTime%3===0){
+          const ang=Math.random()*Math.PI*2, sp=0.5+Math.random()*1.8;
+          particles.push({x:z.x,y:z.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,life:14,maxLife:14,size:1.5+Math.random(),color:Math.random()<0.5?'#f0f':'#0ff',type:'spark'});
+        }
+        if(z._spawnAnim<=0){delete z._spawnAnim;}
+        continue;
+      }
       // Shocked: brief full stun (can't move OR attack) + zap damage, then wears off
       if(z._shocked>0){z._shocked--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);pushOutOfObstacles(z,z.radius);if(gameTime%20===0)damageZombie(z,10,0,0,true);if(z._shocked<=0){z._shocked=0;}continue;}
       // Enraged: revert after timer expires
@@ -6239,7 +6270,7 @@ function render() {
     ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.fillStyle=dColor;ctx.shadowColor=dColor;ctx.shadowBlur=8;
     const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ DOOR OPEN ▶':'✕ LOCKED ✕';
-    ctx.fillText(lbl,(dx1+dx2)/2,(doorY1+doorY2)/2);
+    ctx.fillText(lbl,dx1,(doorY1+doorY2)/2);
     ctx.shadowBlur=0;ctx.textBaseline='alphabetic';
   }
 
@@ -6334,7 +6365,36 @@ function render() {
   }
   // Zombie bodies
   for(const z of zombies){
+    // Trench spawn-in: render a pulsing portal ring at the spawn point + scale + alpha the body
+    if(z._spawnAnim>0){
+      const t=1-z._spawnAnim/(z._spawnAnimMax||30);
+      // Pulsing ring that closes inward
+      ctx.save();
+      ctx.translate(z.x,z.y);
+      ctx.globalAlpha=Math.max(0,1-t)*0.9;
+      ctx.shadowColor='#f0f';ctx.shadowBlur=20;
+      ctx.strokeStyle='#f0f';ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.arc(0,0,z.radius+18-t*16,0,Math.PI*2);ctx.stroke();
+      ctx.shadowColor='#0ff';
+      ctx.strokeStyle='#0ff';ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.arc(0,0,z.radius+24-t*20,0,Math.PI*2);ctx.stroke();
+      // Vertical light beam
+      ctx.globalAlpha=Math.max(0,1-t)*0.5;
+      const _bg=ctx.createLinearGradient(0,-50,0,50);
+      _bg.addColorStop(0,'rgba(255,0,255,0)');
+      _bg.addColorStop(0.5,'rgba(255,0,255,0.6)');
+      _bg.addColorStop(1,'rgba(255,0,255,0)');
+      ctx.fillStyle=_bg;
+      ctx.fillRect(-3,-50,6,100);
+      ctx.shadowBlur=0;
+      ctx.restore();
+    }
     ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
+    if(z._spawnAnim>0){
+      const t=1-z._spawnAnim/(z._spawnAnimMax||30);
+      const sc=0.25+t*0.75;
+      ctx.scale(sc,sc);
+    }
     // Boss glow effect
     if(z.boss||z.type==='boss'){const pulse=0.3+Math.sin(performance.now()*0.005)*0.15;ctx.globalAlpha=pulse;ctx.shadowColor='#f44';ctx.shadowBlur=30;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Shielder: front-facing energy barrier
