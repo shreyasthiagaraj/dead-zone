@@ -1063,6 +1063,10 @@ function startTrenchFade() {
   for (const p of players) {
     if (p.alive) p.invincible = Math.max(p.invincible || 0, 90);
   }
+  // Discard active power-ups + orbital + element on section change — fresh start each section
+  activePowerUps = [];
+  activeOrbital = null;
+  activeElement = null;
 }
 
 function updateTrenchFade() {
@@ -1073,6 +1077,10 @@ function updateTrenchFade() {
       _trenchPrevSection = trenchSection;
       trenchFadeAlpha = 1;
       trenchFadeDir = -1;
+      // Discard local power-ups so non-host matches host on section transition
+      activePowerUps = [];
+      activeOrbital = null;
+      activeElement = null;
     }
   }
   if (trenchFadeDir === 1) {
@@ -1170,7 +1178,8 @@ function updateDescent() {
 const ELEMENT_TYPES = [
   { id: 'fire',      name: 'FIRE',      color: '#f80', icon: '🔥' },
   { id: 'ice',       name: 'ICE',       color: '#aef', icon: '🧊' },
-  { id: 'lightning',  name: 'LIGHTNING', color: '#4ff', icon: '⚡' },
+  { id: 'lightning', name: 'LIGHTNING', color: '#4ff', icon: '⚡' },
+  { id: 'wind',      name: 'WIND',      color: '#cef', icon: '💨' },
 ];
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
@@ -1236,6 +1245,38 @@ function applyElementOnHit(z, damage, srcX, srcY) {
     }
     // Lightning chains detonate nearby barrels
     for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-z.x)**2+(br.y-z.y)**2);if(bd<100){explodeBarrel(br,bi);break;}}
+  } else if (el === 'wind') {
+    // Massive directional knockback in the bullet's direction of travel
+    const _wsx = srcX !== undefined ? srcX : z.x;
+    const _wsy = srcY !== undefined ? srcY : z.y;
+    let _wdx = z.x - _wsx, _wdy = z.y - _wsy;
+    const _wd = Math.sqrt(_wdx * _wdx + _wdy * _wdy) || 1;
+    _wdx /= _wd; _wdy /= _wd;
+    const _wkbScale = Math.pow(13 / (z.radius || 13), 2);
+    const _wkbForce = 22; // big push on top of the bullet's base knockback
+    z.vx += _wdx * _wkbForce * _wkbScale;
+    z.vy += _wdy * _wkbForce * _wkbScale;
+    z.staggerTimer = Math.max(z.staggerTimer, 28);
+    // Gust: ripples out and shoves up to 2 nearby zombies for 30% damage
+    let _gust = 0;
+    for (const oz of zombies) {
+      if (oz === z || _gust >= 2) continue;
+      const _gd = Math.sqrt((oz.x - z.x) ** 2 + (oz.y - z.y) ** 2);
+      if (_gd < 80 && _gd > 0.1) {
+        const _gnx = (oz.x - z.x) / _gd, _gny = (oz.y - z.y) / _gd;
+        const _gozScale = Math.pow(13 / (oz.radius || 13), 2);
+        damageZombie(oz, Math.floor(damage * 0.3), _gnx * 10 * _gozScale, _gny * 10 * _gozScale);
+        oz.staggerTimer = Math.max(oz.staggerTimer, 18);
+        _gust++;
+      }
+    }
+    // Dust streak particles in the bullet direction
+    const _wAng = Math.atan2(_wdy, _wdx);
+    for (let _wpi = 0; _wpi < 10; _wpi++) {
+      const _wpa = _wAng + (Math.random() - 0.5) * 0.7;
+      const _wpsp = 2 + Math.random() * 5;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_wpa) * _wpsp, vy: Math.sin(_wpa) * _wpsp, life: 16 + Math.random() * 8, maxLife: 24, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#fff' : '#cef', type: 'spark' });
+    }
   }
 }
 
@@ -3192,6 +3233,7 @@ const ELEMENT_DESCS = {
   fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies while burning.',
   ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
   lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
+  wind: 'Massive knockback. Bullets send enemies flying and a gust ripples to nearby zombies. Blast: 360° vortex that yeets everything and clears spitter projectiles.',
 };
 const MODE_LIST = [
   { id: 'descent', name: 'DESCENT', color: '#f0f', icon: '▼', desc: 'Vertical dungeon. Clear each section to unlock the gate below. Boss every 5 sections. How deep can you go?' },
@@ -3734,14 +3776,16 @@ function dash() {
   const SHOCKWAVE_RADIUS = 150;
   const blastElem = activeElement?.id || null;
   if (isHost) {
+    const _windBlast = blastElem === 'wind';
+    const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.2 : SHOCKWAVE_RADIUS;
     for (const z of zombies) {
       const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
-      if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
-        const closeness = 1 - sd/SHOCKWAVE_RADIUS;
-        const pushForce = 10 + closeness * 30;
-        const dmg = Math.floor(100 * closeness);
+      if (sd < _blastR && sd > 0.1) {
+        const closeness = 1 - sd/_blastR;
+        const pushForce = _windBlast ? (40 + closeness * 80) : (10 + closeness * 30);
+        const dmg = _windBlast ? Math.floor(35 * closeness) : Math.floor(100 * closeness);
         damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
-        z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
+        z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(35 + closeness * 35) : Math.floor(15 + closeness * 20));
         // Apply element from blast
         if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
         else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
@@ -3749,11 +3793,22 @@ function dash() {
       }
     }
     // Blast detonates nearby barrels
-    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-lp.x)**2+(br.y-lp.y)**2);if(bd<SHOCKWAVE_RADIUS){explodeBarrel(br,bi);}}
+    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-lp.x)**2+(br.y-lp.y)**2);if(bd<_blastR){explodeBarrel(br,bi);}}
+    // Wind blast clears spitter projectiles in the radius
+    if (_windBlast) {
+      for (let _wbi = bullets.length - 1; _wbi >= 0; _wbi--) {
+        const _wb = bullets[_wbi];
+        if (_wb.owner === 'zombie' && Math.sqrt((_wb.x - lp.x) ** 2 + (_wb.y - lp.y) ** 2) < _blastR) {
+          // Burst of dust particles where the projectile dies
+          for (let _pi = 0; _pi < 5; _pi++) { const _pa = Math.random() * Math.PI * 2, _ps = 1 + Math.random() * 3; particles.push({ x: _wb.x, y: _wb.y, vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps, life: 14, maxLife: 14, size: 2, color: '#cef', type: 'spark' }); }
+          bullets.splice(_wbi, 1);
+        }
+      }
+    }
   }
   // Elemental shockwave visuals — color and effect match element
-  const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : '#4af';
-  const blastColor2 = blastElem === 'fire' ? '#fa0' : blastElem === 'ice' ? '#cef' : blastElem === 'lightning' ? '#8ff' : '#fff';
+  const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : blastElem === 'wind' ? '#cef' : '#4af';
+  const blastColor2 = blastElem === 'fire' ? '#fa0' : blastElem === 'ice' ? '#cef' : blastElem === 'lightning' ? '#8ff' : blastElem === 'wind' ? '#fff' : '#fff';
   for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
   for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:blastColor2,type:'spark'}); }
   // Lightning blast: chain arcs between hit enemies + radiating bolts
@@ -3798,15 +3853,34 @@ function dash() {
       for(let si=0;si<2;si++){particles.push({x:tx+(Math.random()-0.5)*10,y:ty+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*5,vy:(Math.random()-0.5)*5,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*3,color:Math.random()>0.4?'#4ff':'#fff',type:'spark'});}
     }
   }
+  // Wind blast: swirling vortex of dust streaks spiraling outward
+  if (blastElem === 'wind') {
+    const _wbR = SHOCKWAVE_RADIUS * 1.2;
+    for (let _ws = 0; _ws < 60; _ws++) {
+      const _wa = (_ws / 60) * Math.PI * 2;
+      const _wr0 = 30 + Math.random() * 30;
+      const _wr1 = 80 + Math.random() * (_wbR - 80);
+      const _swirl = 0.6 + Math.random() * 0.5; // tangential bias
+      const _vx = Math.cos(_wa) * 5 + (-Math.sin(_wa)) * _swirl * 4;
+      const _vy = Math.sin(_wa) * 5 + Math.cos(_wa) * _swirl * 4;
+      particles.push({ x: lp.x + Math.cos(_wa) * _wr0, y: lp.y + Math.sin(_wa) * _wr0, vx: _vx, vy: _vy, life: 22 + Math.random() * 10, maxLife: 32, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#fff' : '#cef', type: 'spark' });
+    }
+    // Outer expanding ring of mist
+    for (let _ws = 0; _ws < 24; _ws++) {
+      const _wa = (_ws / 24) * Math.PI * 2;
+      particles.push({ x: lp.x + Math.cos(_wa) * 50, y: lp.y + Math.sin(_wa) * 50, vx: Math.cos(_wa) * 9, vy: Math.sin(_wa) * 9, life: 18, maxLife: 18, size: 5, color: '#cef', type: 'spark' });
+    }
+  }
   // Ground decal from elemental blast
-  if (blastElem) { for (let di = 0; di < 8; di++) { const da = di/8*Math.PI*2, dd = 40+Math.random()*80; decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:10+Math.random()*15,alpha:0.4,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'}); } }
-  decals.push({x:lp.x,y:lp.y,size:60+Math.random()*20,alpha:0.3,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':'#223'});
+  if (blastElem) { for (let di = 0; di < 8; di++) { const da = di/8*Math.PI*2, dd = 40+Math.random()*80; decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:10+Math.random()*15,alpha:0.4,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':blastElem==='wind'?'#345':'#223'}); } }
+  decals.push({x:lp.x,y:lp.y,size:60+Math.random()*20,alpha:0.3,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':blastElem==='wind'?'#345':'#223'});
   screenShake.intensity = Math.max(screenShake.intensity, 10);
   // Elemental blast sound — layered: base blast + elemental SFX
   playSfx('blast_default', 0.4);
   if (blastElem === 'fire') { playSfx('blast_fire', 0.5); }
   else if (blastElem === 'ice') { playSfx('blast_ice', 0.5); }
   else if (blastElem === 'lightning') { playSfx('blast_lightning', 0.5); }
+  else if (blastElem === 'wind') { playSound(180, 0.25, 'sawtooth', 0.18); playSound(420, 0.18, 'sine', 0.12); }
 }
 
 
@@ -3917,15 +3991,16 @@ function explodeBarrel(barrel, idx) {
     barrels.splice(idx, 1);
     return;
   }
-  createExplosion(barrel.x, barrel.y, 100, 280, 'any');
+  createExplosion(barrel.x, barrel.y, 160, 600, 'any');
+  screenShake.intensity = Math.max(screenShake.intensity, 12);
   // Fire burst particles
-  for (let k = 0; k < 15; k++) { const a = Math.random()*Math.PI*2, s = 2+Math.random()*5; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:25+Math.random()*15,maxLife:40,size:4+Math.random()*4,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
+  for (let k = 0; k < 30; k++) { const a = Math.random()*Math.PI*2, s = 3+Math.random()*7; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*18,maxLife:48,size:5+Math.random()*5,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
   barrels.splice(idx, 1);
-  // Chain reaction: explode nearby barrels
+  // Chain reaction: explode nearby barrels (radius scales with the bigger boom)
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
     if (b2._chest) continue; // don't chain to chests
-    if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 90) {
+    if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 160) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
   }
@@ -4923,20 +4998,30 @@ function update() {
           p.invincible = Math.max(p.invincible, 200);
           const SHOCKWAVE_RADIUS = 150;
           const blastElem = inp.activeElement || null;
+          const _windBlast = blastElem === 'wind';
+          const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.2 : SHOCKWAVE_RADIUS;
           for (const z of zombies) {
             const sd = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
-            if (sd < SHOCKWAVE_RADIUS && sd > 0.1) {
-              const closeness = 1 - sd/SHOCKWAVE_RADIUS;
-              const pushForce = 10 + closeness * 30;
-              const dmg = Math.floor(100 * closeness);
+            if (sd < _blastR && sd > 0.1) {
+              const closeness = 1 - sd/_blastR;
+              const pushForce = _windBlast ? (40 + closeness * 80) : (10 + closeness * 30);
+              const dmg = _windBlast ? Math.floor(35 * closeness) : Math.floor(100 * closeness);
               damageZombie(z, dmg, (z.x-p.x)/sd * pushForce, (z.y-p.y)/sd * pushForce);
-              z.staggerTimer = Math.max(z.staggerTimer, Math.floor(15 + closeness * 20));
+              z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(35 + closeness * 35) : Math.floor(15 + closeness * 20));
               if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
               else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
               else if (blastElem === 'lightning') { z._shocked = 45; z.staggerTimer = Math.max(z.staggerTimer, 25); damageZombie(z, 15, 0, 0); }
             }
           }
-          for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-p.x)**2+(br.y-p.y)**2);if(bd<SHOCKWAVE_RADIUS){explodeBarrel(br,bi);}}
+          for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-p.x)**2+(br.y-p.y)**2);if(bd<_blastR){explodeBarrel(br,bi);}}
+          if (_windBlast) {
+            for (let _wbi2 = bullets.length - 1; _wbi2 >= 0; _wbi2--) {
+              const _wb2 = bullets[_wbi2];
+              if (_wb2.owner === 'zombie' && Math.sqrt((_wb2.x - p.x) ** 2 + (_wb2.y - p.y) ** 2) < _blastR) {
+                bullets.splice(_wbi2, 1);
+              }
+            }
+          }
           // Shockwave visuals (visible to host)
           const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : '#4af';
           for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:p.x+Math.cos(sa)*15,y:p.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
@@ -5355,6 +5440,24 @@ function update() {
         if(pd<meleeRange&&z.attackCooldown<=0){damagePlayerObj(p,z.damage);z.attackCooldown=30;}
       }
       if(z.attackCooldown>0)z.attackCooldown--;
+    }
+    // Trench: hard-clamp zombies to current section's interior so wind/blast knockback can't tunnel them through walls
+    if (gameMode === 'trench') {
+      const _tsec = trenchSections[trenchSection];
+      if (_tsec) {
+        const _tTW = TRENCH_SECTION_W * CELL_SIZE;
+        for (const _tz of zombies) {
+          const _tLeft = _tsec.x + CELL_SIZE + _tz.radius + 1;
+          const _tRight = _tsec.x + _tTW - CELL_SIZE - _tz.radius - 1;
+          if (_tz.x < _tLeft) { _tz.x = _tLeft; _tz.vx = 0; }
+          if (_tz.x > _tRight) { _tz.x = _tRight; _tz.vx = 0; }
+          // Vertical clamp inside the section's playable area
+          const _tTop = CELL_SIZE + _tz.radius + 1;
+          const _tBot = (TRENCH_HEIGHT - 1) * CELL_SIZE - _tz.radius - 1;
+          if (_tz.y < _tTop) { _tz.y = _tTop; _tz.vy = 0; }
+          if (_tz.y > _tBot) { _tz.y = _tBot; _tz.vy = 0; }
+        }
+      }
     }
     // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(dz.hp<=0){
