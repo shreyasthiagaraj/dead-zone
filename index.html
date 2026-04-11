@@ -320,22 +320,18 @@ body.mobile #mobile-buttons { display: block; }
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
 <div id="effects-bar" style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right) * 0.5);z-index:20;pointer-events:none;display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap"></div>
 <div id="mobile-buttons">
-  <div class="mobile-btn dash-ready" id="btn-dash" aria-label="Blast">
-    <svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-linecap="round">
-      <!-- Concentric shockwave rings -->
-      <circle cx="20" cy="20" r="4" stroke-width="2.2"/>
-      <circle cx="20" cy="20" r="9" stroke-width="1.7" opacity="0.75"/>
-      <circle cx="20" cy="20" r="14" stroke-width="1.2" opacity="0.4"/>
-      <!-- 8 radial spokes -->
-      <g stroke-width="2">
-        <line x1="20" y1="1" x2="20" y2="5"/>
-        <line x1="20" y1="35" x2="20" y2="39"/>
-        <line x1="1" y1="20" x2="5" y2="20"/>
-        <line x1="35" y1="20" x2="39" y2="20"/>
-        <line x1="6.4" y1="6.4" x2="9.2" y2="9.2"/>
-        <line x1="30.8" y1="30.8" x2="33.6" y2="33.6"/>
-        <line x1="33.6" y1="6.4" x2="30.8" y2="9.2"/>
-        <line x1="9.2" y1="30.8" x2="6.4" y2="33.6"/>
+  <div class="mobile-btn dash-ready" id="btn-dash" aria-label="Dash">
+    <svg viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Forward-pointing double chevron (dash) -->
+      <g stroke-width="3">
+        <polyline points="10 10 22 20 10 30"/>
+        <polyline points="20 10 32 20 20 30"/>
+      </g>
+      <!-- Speed lines behind -->
+      <g stroke-width="2" opacity="0.55">
+        <line x1="2" y1="14" x2="7" y2="14"/>
+        <line x1="2" y1="20" x2="8" y2="20"/>
+        <line x1="2" y1="26" x2="7" y2="26"/>
       </g>
     </svg>
   </div>
@@ -4406,7 +4402,7 @@ const CODEX_CATEGORIES = [
 const CONTROLS_LIST = [
   { key: 'keyboard', name: 'KEYBOARD + MOUSE', color: '#6af', icon: '⌨', desc: 'Move with WASD or arrow keys. Aim with the mouse. Left-click to shoot. Space blasts. F repairs (Siege). R reloads. E picks up. 1-0 switch weapons. Esc pauses.' },
   { key: 'gamepad',  name: 'GAMEPAD (PS5/XBOX)', color: '#6af', icon: '🎮', desc: 'Left stick moves. Right stick aims. R2 or Square shoots. Circle blasts. Triangle repairs (hold, Siege only). R1 reloads. L1 picks up. Options/Start pauses.' },
-  { key: 'mobile',   name: 'TOUCH', color: '#6af', icon: '📱', desc: 'Dual virtual joysticks — left thumb moves, right thumb aims (full extent = shoot). Tap the BLAST button for shockwave, the FIX button to repair walls in Siege.' },
+  { key: 'mobile',   name: 'TOUCH', color: '#6af', icon: '📱', desc: 'Dual virtual joysticks — left thumb moves, right thumb aims (full extent = shoot). Tap the DASH button for an invincible lunge, the FIX button to repair walls in Siege.' },
 ];
 const WEAPON_DESCS = {
   pistol: 'Reliable sidearm with infinite ammo. Never runs dry.',
@@ -5037,155 +5033,65 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
   particles.push({x:p.x+(-s2)*8,y:p.y+c2*8,vx:(-s2)*(2+Math.random())+(Math.random()-0.5),vy:c2*(2+Math.random())+(Math.random()-0.5),life:30,maxLife:30,size:2,color:'#da3',type:'casing',gravity:0.1});
 }
 
+// Dash — a short invincible lunge in the player's current movement or facing direction.
+// Replaces the old shockwave-blast. A future STRIDE upgrade can layer a shockwave on top.
 function dash() {
-  const lp=getLocalPlayer(); if(!lp||!lp.alive||lp.dashCooldown>0) return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive || lp.dashCooldown > 0) return;
   const _mods = runMods || {};
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
-  lp.invincible=Math.max(lp.invincible, 200); // brief invincibility during shockwave
-  // ---- ELEMENTAL SHOCKWAVE — smash cards stack additively ----
   runStats.shockwavesUsed++;
-  const _fSmash = _mods.fireSmashLv || 0;
-  const _iSmash = _mods.iceSmashLv || 0;
-  const _cSmash = _mods.chainSmashLv || 0;
-  const _wSmash = _mods.windSmashLv || 0;
-  const _anySmash = _fSmash + _iSmash + _cSmash + _wSmash;
-  const _windBlast = _wSmash > 0;
-  // Wind Smash widens the radius slightly
-  const SHOCKWAVE_RADIUS = 150 * (_mods.blastRadiusMult || 1) * (1 + 0.08 * _wSmash);
-  if (isHost) {
-    const _blastR = SHOCKWAVE_RADIUS;
-    for (const z of zombies) {
-      const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
-      if (sd < _blastR && sd > 0.1) {
-        const closeness = 1 - sd/_blastR;
-        // Knockback: reduced by wind smash (vortex lock) but still present otherwise
-        const pushForce = _windBlast ? 0 : (10 + closeness * 30);
-        // Damage: base 100 + +15% per chain smash level (epic scaling)
-        const baseDmg = 100 * (1 + 0.15 * _cSmash);
-        const dmg = Math.floor(baseDmg * closeness);
-        damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
-        // Stagger: wind smash locks for a long time
-        const staggerBase = _windBlast ? 60 + _wSmash * 30 : 15 + closeness * 20;
-        z.staggerTimer = Math.max(z.staggerTimer, Math.floor(staggerBase));
-        if (_windBlast) { z.attackCooldown = Math.max(z.attackCooldown, 60 + _wSmash * 30); z.vx = 0; z.vy = 0; }
-        // Fire Smash: longer, deeper burn
-        if (_fSmash > 0) {
-          z._burning = (z._burning||0) + 20 + _fSmash * 15;
-          z._burnTimer = 180 + _fSmash * 90;
-        }
-        // Ice Smash: instant freeze (scales with level)
-        if (_iSmash > 0) {
-          z._slowTimer = Math.max(z._slowTimer||0, 180);
-          z._frozenTimer = 60 + _iSmash * 45;
-          z._iceStacks = 0;
-        }
-        // Chain Smash: stun + extra electrical damage
-        if (_cSmash > 0) {
-          z._shocked = 45 + _cSmash * 20;
-          z.staggerTimer = Math.max(z.staggerTimer, 30 + _cSmash * 10);
-          damageZombie(z, 10 + _cSmash * 10, 0, 0);
-        }
-      }
-    }
-    // Blast detonates nearby barrels
-    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-lp.x)**2+(br.y-lp.y)**2);if(bd<_blastR){explodeBarrel(br,bi);}}
-    // Wind smash clears zombie projectiles in the radius
-    if (_windBlast) {
-      for (let _wbi = bullets.length - 1; _wbi >= 0; _wbi--) {
-        const _wb = bullets[_wbi];
-        if (_wb.owner === 'zombie' && Math.sqrt((_wb.x - lp.x) ** 2 + (_wb.y - lp.y) ** 2) < _blastR) {
-          for (let _pi = 0; _pi < 5; _pi++) { const _pa = Math.random() * Math.PI * 2, _ps = 1 + Math.random() * 3; particles.push({ x: _wb.x, y: _wb.y, vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps, life: 14, maxLife: 14, size: 2, color: '#cef', type: 'spark' }); }
-          bullets.splice(_wbi, 1);
-        }
-      }
-    }
+  // Direction: current movement direction if moving, else aim/facing angle.
+  let dx = lp.vx || 0, dy = lp.vy || 0;
+  const mag = Math.sqrt(dx * dx + dy * dy);
+  if (mag < 0.2) {
+    dx = Math.cos(lp.angle || 0);
+    dy = Math.sin(lp.angle || 0);
+  } else {
+    dx /= mag; dy /= mag;
   }
-  // Determine the primary visual element for this blast (for particle color / visuals below).
-  // Uses 'lightning' as the legacy key for chain-smash for backwards compat with the visual code.
-  let _primarySmash = null;
-  if (_anySmash > 0) {
-    const _max = Math.max(_fSmash, _iSmash, _cSmash, _wSmash);
-    _primarySmash = _max === _fSmash ? 'fire'
-      : _max === _iSmash ? 'ice'
-      : _max === _cSmash ? 'lightning'
-      : 'wind';
+  lp.dashDirX = dx;
+  lp.dashDirY = dy;
+  lp.dashAngle = Math.atan2(dy, dx);
+  // Dash duration: ~10 frames of forward lunge (166ms at 60fps).
+  // dashTimer ticks down in ms (gets reduced by 16.67/frame elsewhere) for compat with
+  // the remote-player system; we set it to a frame-based value and also track _dashFrames
+  // for the local player's actual motion.
+  lp.dashTimer = 180;   // 180ms of visible dash state (broadcasts to MP)
+  lp._dashFrames = 10;  // 10 actual dash-motion frames
+  // Invincible for the dash + a brief recovery window
+  lp.invincible = Math.max(lp.invincible, 600);
+  // Celebratory particle burst from the origin — cyan explosion of speed
+  for (let i = 0; i < 24; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 2 + Math.random() * 5;
+    particles.push({
+      x: lp.x, y: lp.y,
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 22, maxLife: 22,
+      size: 2 + Math.random() * 2,
+      color: Math.random() < 0.5 ? '#0ff' : '#fff',
+      type: 'spark',
+    });
   }
-  const blastElem = _primarySmash;
-  // Elemental shockwave visuals — color and effect match element
-  const blastColor = blastElem === 'fire' ? '#f80' : blastElem === 'ice' ? '#aef' : blastElem === 'lightning' ? '#4ff' : blastElem === 'wind' ? '#cef' : '#4af';
-  const blastColor2 = blastElem === 'fire' ? '#fa0' : blastElem === 'ice' ? '#cef' : blastElem === 'lightning' ? '#8ff' : blastElem === 'wind' ? '#fff' : '#fff';
-  for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*15,y:lp.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
-  for (let si = 0; si < 16; si++) { const sa = si/16*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*6,vy:Math.sin(sa)*6,life:18,maxLife:18,size:4,color:blastColor2,type:'spark'}); }
-  // Lightning blast: chain arcs between hit enemies + radiating bolts
-  if (blastElem === 'lightning') {
-    // Gather enemies hit by the blast
-    const hitZombies = zombies.filter(z => { const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2); return sd < SHOCKWAVE_RADIUS && sd > 0.1; });
-    // Arc from player to each hit enemy
-    for (const hz of hitZombies) {
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:22,maxLife:22,size:1,color:'#4ff',type:'lightning',tx:hz.x,ty:hz.y});
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#fff',type:'lightning',tx:hz.x,ty:hz.y});
-      for(let li=0;li<4;li++){particles.push({x:hz.x+(Math.random()-0.5)*14,y:hz.y+(Math.random()-0.5)*14,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
-    }
-    // Chain arcs between hit enemies (nearest-neighbor chain)
-    if (hitZombies.length >= 2) {
-      const chained = new Set();
-      let lastZ = hitZombies[0]; chained.add(lastZ);
-      for (let ci = 0; ci < hitZombies.length - 1; ci++) {
-        let bestD = Infinity, bestZ = null;
-        for (const hz of hitZombies) { if (chained.has(hz)) continue; const cd = Math.sqrt((hz.x-lastZ.x)**2+(hz.y-lastZ.y)**2); if (cd < bestD) { bestD = cd; bestZ = hz; } }
-        if (!bestZ) break; chained.add(bestZ);
-        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:20,maxLife:20,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
-        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#fff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
-        for(let li=0;li<3;li++){particles.push({x:bestZ.x+(Math.random()-0.5)*10,y:bestZ.y+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
-        lastZ = bestZ;
-      }
-    }
-    // Radiating lightning bolts from player — always visible even with no enemies
-    const boltCount = 8 + Math.floor(Math.random() * 4);
-    for (let bi = 0; bi < boltCount; bi++) {
-      const ba = (bi / boltCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
-      const bDist = 80 + Math.random() * (SHOCKWAVE_RADIUS - 80);
-      const tx = lp.x + Math.cos(ba) * bDist, ty = lp.y + Math.sin(ba) * bDist;
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:18+Math.floor(Math.random()*8),maxLife:26,size:1,color:'#4ff',type:'lightning',tx,ty});
-      // Branch bolt from midpoint of some arcs
-      if (Math.random() > 0.5) {
-        const mx = lp.x + Math.cos(ba) * bDist * 0.5, my = lp.y + Math.sin(ba) * bDist * 0.5;
-        const branchA = ba + (Math.random() - 0.5) * 1.2;
-        const branchD = 40 + Math.random() * 60;
-        particles.push({x:mx,y:my,vx:0,vy:0,life:14+Math.floor(Math.random()*6),maxLife:20,size:1,color:'#8ff',type:'lightning',tx:mx+Math.cos(branchA)*branchD,ty:my+Math.sin(branchA)*branchD});
-      }
-      // Sparks at bolt endpoints
-      for(let si=0;si<2;si++){particles.push({x:tx+(Math.random()-0.5)*10,y:ty+(Math.random()-0.5)*10,vx:(Math.random()-0.5)*5,vy:(Math.random()-0.5)*5,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*3,color:Math.random()>0.4?'#4ff':'#fff',type:'spark'});}
-    }
+  // Backward speed lines from the player opposing the dash direction
+  for (let i = 0; i < 8; i++) {
+    const offset = (Math.random() - 0.5) * PLAYER_RADIUS;
+    const perpX = -dy, perpY = dx;
+    particles.push({
+      x: lp.x + perpX * offset,
+      y: lp.y + perpY * offset,
+      vx: -dx * (4 + Math.random() * 3),
+      vy: -dy * (4 + Math.random() * 3),
+      life: 14, maxLife: 14,
+      size: 1.5,
+      color: '#0ff',
+      type: 'spark',
+    });
   }
-  // Wind blast: swirling vortex of dust streaks spiraling outward
-  if (blastElem === 'wind') {
-    const _wbR = SHOCKWAVE_RADIUS * 1.2;
-    for (let _ws = 0; _ws < 60; _ws++) {
-      const _wa = (_ws / 60) * Math.PI * 2;
-      const _wr0 = 30 + Math.random() * 30;
-      const _wr1 = 80 + Math.random() * (_wbR - 80);
-      const _swirl = 0.6 + Math.random() * 0.5; // tangential bias
-      const _vx = Math.cos(_wa) * 5 + (-Math.sin(_wa)) * _swirl * 4;
-      const _vy = Math.sin(_wa) * 5 + Math.cos(_wa) * _swirl * 4;
-      particles.push({ x: lp.x + Math.cos(_wa) * _wr0, y: lp.y + Math.sin(_wa) * _wr0, vx: _vx, vy: _vy, life: 22 + Math.random() * 10, maxLife: 32, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#fff' : '#cef', type: 'spark' });
-    }
-    // Outer expanding ring of mist
-    for (let _ws = 0; _ws < 24; _ws++) {
-      const _wa = (_ws / 24) * Math.PI * 2;
-      particles.push({ x: lp.x + Math.cos(_wa) * 50, y: lp.y + Math.sin(_wa) * 50, vx: Math.cos(_wa) * 9, vy: Math.sin(_wa) * 9, life: 18, maxLife: 18, size: 5, color: '#cef', type: 'spark' });
-    }
-  }
-  // Ground decal from elemental blast
-  if (blastElem) { for (let di = 0; di < 8; di++) { const da = di/8*Math.PI*2, dd = 40+Math.random()*80; decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:10+Math.random()*15,alpha:0.4,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':blastElem==='wind'?'#345':'#223'}); } }
-  decals.push({x:lp.x,y:lp.y,size:60+Math.random()*20,alpha:0.3,color:blastElem==='fire'?'#420':blastElem==='ice'?'#245':blastElem==='lightning'?'#234':blastElem==='wind'?'#345':'#223'});
-  screenShake.intensity = Math.max(screenShake.intensity, 10);
-  // Elemental blast sound — layered: base blast + elemental SFX
-  playSfx('blast_default', 0.4);
-  if (blastElem === 'fire') { playSfx('blast_fire', 0.5); }
-  else if (blastElem === 'ice') { playSfx('blast_ice', 0.5); }
-  else if (blastElem === 'lightning') { playSfx('blast_lightning', 0.5); }
-  else if (blastElem === 'wind') { playSound(180, 0.25, 'sawtooth', 0.18); playSound(420, 0.18, 'sine', 0.12); }
+  screenShake.intensity = Math.max(screenShake.intensity, 5);
+  playSfx('dash', 0.3) || playSound(680, 0.08, 'sine', 0.2);
+  playSound(420, 0.04, 'square', 0.12);
 }
 
 
@@ -6215,6 +6121,31 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
+    // ---- DASH OVERRIDE ----
+    // When the dash is active, slam velocity to the dash direction × dash speed and spawn
+    // afterimage particles. Normal input is ignored for the duration.
+    if (lp._dashFrames && lp._dashFrames > 0) {
+      lp._dashFrames--;
+      lp.vx = (lp.dashDirX || 1) * DASH_SPEED;
+      lp.vy = (lp.dashDirY || 0) * DASH_SPEED;
+      // Afterimage ghost of the player each frame
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: PLAYER_RADIUS, color: '#0ff', type: 'dashtrail' });
+      // Leading-edge speed sparkles
+      if (gameTime % 2 === 0) {
+        const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
+        const _off = (Math.random() - 0.5) * PLAYER_RADIUS * 1.2;
+        particles.push({
+          x: lp.x + _perpX * _off,
+          y: lp.y + _perpY * _off,
+          vx: -(lp.dashDirX || 1) * (2 + Math.random() * 2),
+          vy: -(lp.dashDirY || 0) * (2 + Math.random() * 2),
+          life: 10, maxLife: 10,
+          size: 1.5,
+          color: '#fff',
+          type: 'spark',
+        });
+      }
+    }
     lp.x+=lp.vx;lp.y+=lp.vy;
     lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     // Siege: hard clamp player between the two walls — no crossing even through breaches
@@ -6370,49 +6301,16 @@ function update() {
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
         // Remote player's siege repair button state
         p._siegeRepair = !!inp.siegeRepair;
-        // Detect remote player shockwave blast
+        // Detect remote player dash — apply brief invincibility + spawn a cyan
+        // burst so other players can see it. No shockwave damage.
         const prevDashCD = p.dashCooldown||0;
         p.dashCooldown = inp.dashCooldown||0;
         if (p.dashCooldown > prevDashCD + 100) {
-          // Remote player just dashed — apply shockwave damage + visuals
-          p.invincible = Math.max(p.invincible, 200);
-          const SHOCKWAVE_RADIUS_BASE = 150;
-          // Remote player's smash levels from their broadcast
-          const _remSm = Array.isArray(inp.smLvs) ? inp.smLvs : [0,0,0,0];
-          const _rfSmash = _remSm[0]||0, _riSmash = _remSm[1]||0, _rcSmash = _remSm[2]||0, _rwSmash = _remSm[3]||0;
-          const _rWind = _rwSmash > 0;
-          const _blastR = SHOCKWAVE_RADIUS_BASE * (1 + 0.08 * _rwSmash);
-          for (const z of zombies) {
-            const sd = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
-            if (sd < _blastR && sd > 0.1) {
-              const closeness = 1 - sd/_blastR;
-              const pushForce = _rWind ? 0 : (10 + closeness * 30);
-              const baseDmg = 100 * (1 + 0.15 * _rcSmash);
-              const dmg = Math.floor(baseDmg * closeness);
-              damageZombie(z, dmg, (z.x-p.x)/sd * pushForce, (z.y-p.y)/sd * pushForce);
-              const staggerBase = _rWind ? 60 + _rwSmash * 30 : 15 + closeness * 20;
-              z.staggerTimer = Math.max(z.staggerTimer, Math.floor(staggerBase));
-              if (_rWind) { z.attackCooldown = Math.max(z.attackCooldown, 60 + _rwSmash * 30); z.vx = 0; z.vy = 0; }
-              if (_rfSmash > 0) { z._burning = (z._burning||0) + 20 + _rfSmash * 15; z._burnTimer = 180 + _rfSmash * 90; }
-              if (_riSmash > 0) { z._slowTimer = Math.max(z._slowTimer||0, 180); z._frozenTimer = 60 + _riSmash * 45; z._iceStacks = 0; }
-              if (_rcSmash > 0) { z._shocked = 45 + _rcSmash * 20; z.staggerTimer = Math.max(z.staggerTimer, 30 + _rcSmash * 10); damageZombie(z, 10 + _rcSmash * 10, 0, 0); }
-            }
+          p.invincible = Math.max(p.invincible, 600);
+          for (let si = 0; si < 18; si++) {
+            const sa = Math.random() * Math.PI * 2, ss = 2 + Math.random() * 4;
+            particles.push({ x: p.x, y: p.y, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss, life: 18, maxLife: 18, size: 2.5, color: Math.random() < 0.5 ? '#0ff' : '#fff', type: 'spark' });
           }
-          for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-p.x)**2+(br.y-p.y)**2);if(bd<_blastR){explodeBarrel(br,bi);}}
-          if (_rWind) {
-            for (let _wbi2 = bullets.length - 1; _wbi2 >= 0; _wbi2--) {
-              const _wb2 = bullets[_wbi2];
-              if (_wb2.owner === 'zombie' && Math.sqrt((_wb2.x - p.x) ** 2 + (_wb2.y - p.y) ** 2) < _blastR) {
-                bullets.splice(_wbi2, 1);
-              }
-            }
-          }
-          // Shockwave visuals (visible to host) — color by the remote's dominant smash element
-          const _rMax = Math.max(_rfSmash, _riSmash, _rcSmash, _rwSmash);
-          const _rPrim = _rMax === 0 ? null : _rMax === _rfSmash ? 'fire' : _rMax === _riSmash ? 'ice' : _rMax === _rcSmash ? 'lightning' : 'wind';
-          const blastColor = _rPrim === 'fire' ? '#f80' : _rPrim === 'ice' ? '#aef' : _rPrim === 'lightning' ? '#4ff' : _rPrim === 'wind' ? '#cef' : '#4af';
-          for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:p.x+Math.cos(sa)*15,y:p.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:blastColor,type:'spark'}); }
-          screenShake.intensity = Math.max(screenShake.intensity, 6);
         }
         if (inp.maxHp) p.maxHp = inp.maxHp;
         if (inp.perks) p._remotePerks = inp.perks;
@@ -7308,14 +7206,15 @@ function applyHostState(msg) {
     p._remoteFiring = pd.firing||false;
     p._remoteWeaponType = pd.weaponType||'pistol';
     p._remotePowerUp = pd.powerUp||null;
-    // Detect remote player shockwave blast for visuals
+    // Detect remote player dash — cyan burst + trail visuals on this client
     const _prevDC = p.dashCooldown||0;
     p.dashCooldown = pd.dashCooldown||0;
     if (p.dashCooldown > _prevDC + 100) {
-      // Remote player dashed — create shockwave visuals on this client
-      const bc = '#4af';
-      for (let si = 0; si < 32; si++) { const sa = si/32*Math.PI*2; particles.push({x:p.x+Math.cos(sa)*15,y:p.y+Math.sin(sa)*15,vx:Math.cos(sa)*10,vy:Math.sin(sa)*10,life:22,maxLife:22,size:5,color:bc,type:'spark'}); }
-      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      for (let si = 0; si < 18; si++) {
+        const sa = Math.random() * Math.PI * 2, ss = 2 + Math.random() * 4;
+        particles.push({ x: p.x, y: p.y, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss, life: 18, maxLife: 18, size: 2.5, color: Math.random() < 0.5 ? '#0ff' : '#fff', type: 'spark' });
+      }
+      screenShake.intensity = Math.max(screenShake.intensity, 3);
     }
     p._waveKills = pd.waveKills||0; p._totalKills = pd.totalKills||0;
     if (pd.weapon !== undefined && pd.weapon < p.weapons.length) p.currentWeapon = pd.weapon;
