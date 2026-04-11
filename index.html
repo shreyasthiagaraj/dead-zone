@@ -8510,50 +8510,34 @@ function render() {
     if(aimLineAlpha > 0.01){
     const lp=getLocalPlayer();
     if(lp&&lp.alive){
-      const a=lp.angle, cos=Math.cos(a), sin=Math.sin(a);
-      const startDist = PLAYER_RADIUS + 14;
-      const af = aimLineAlpha; // fade multiplier
-      // ---- RANGE FALLOFF AIM LINE ----
-      // The aim line is drawn as four segments — one per falloff band. Each segment's
-      // color tells the player how much damage they'd deal at that range, BEFORE they
-      // pull the trigger. This is the most important teaching tool for the falloff system.
+      // ---- RANGE FALLOFF GROUND RINGS ----
+      // Three subtle concentric circles on the ground at the falloff band boundaries.
+      // They're barely visible when calm, gently brightening as enemies approach. The
+      // inner ring pulses white when the player is in "optimal damage range" — you can
+      // feel the reward of closing the distance. 360° — no facing bias.
       ctx.save();
-      const bands = [
-        { from: 0,                  to: RANGE_FALLOFF_NEAR, color: '#ffffff', alpha: 0.55, w: 2.0, dash: [6, 4] },   // bright white, full damage
-        { from: RANGE_FALLOFF_NEAR, to: RANGE_FALLOFF_MID,  color: '#ffff60', alpha: 0.42, w: 1.7, dash: [5, 5] },   // yellow, falloff begins
-        { from: RANGE_FALLOFF_MID,  to: RANGE_FALLOFF_FAR,  color: '#ff9030', alpha: 0.32, w: 1.4, dash: [4, 6] },   // orange, chip damage
-        { from: RANGE_FALLOFF_FAR,  to: RANGE_FALLOFF_FAR + 120, color: '#ff4040', alpha: 0.22, w: 1.1, dash: [3, 7] }, // dull red, floor damage
-      ];
-      for (const b of bands) {
-        const sx = lp.x + cos * (startDist + b.from);
-        const sy = lp.y + sin * (startDist + b.from);
-        const ex = lp.x + cos * (startDist + b.to);
-        const ey = lp.y + sin * (startDist + b.to);
-        ctx.strokeStyle = b.color;
-        ctx.lineWidth = b.w;
-        ctx.globalAlpha = b.alpha * af;
-        ctx.setLineDash(b.dash);
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(ex, ey);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      // Band boundary ticks — small perpendicular marks at 120/240/360 so the player
-      // can SEE where the falloff bands start and end.
-      ctx.globalAlpha = 0.55 * af;
-      for (const dist of [RANGE_FALLOFF_NEAR, RANGE_FALLOFF_MID, RANGE_FALLOFF_FAR]) {
-        const mx = lp.x + cos * (startDist + dist);
-        const my = lp.y + sin * (startDist + dist);
-        const perpX = -sin, perpY = cos;
-        const tickLen = 5;
-        ctx.strokeStyle = dist === RANGE_FALLOFF_NEAR ? '#ffffff' : dist === RANGE_FALLOFF_MID ? '#ffff60' : '#ff9030';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(mx - perpX * tickLen, my - perpY * tickLen);
-        ctx.lineTo(mx + perpX * tickLen, my + perpY * tickLen);
-        ctx.stroke();
-      }
+      const _nd = _playerNearestZombieDist;
+      // Gentle global boost as enemies close the distance (0 when calm, 1 at close range)
+      const _engage = _nd < 420 ? Math.max(0, Math.min(1, (420 - _nd) / 300)) : 0;
+      const _pulse = 0.85 + Math.sin(performance.now() * 0.004) * 0.15;
+      const _innerActive = _nd < RANGE_FALLOFF_NEAR;
+      ctx.lineWidth = 1.5;
+      // Outer band — orange, faintest
+      ctx.strokeStyle = '#ff9030';
+      ctx.globalAlpha = (0.04 + 0.08 * _engage) * aimLineAlpha;
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_FAR, 0, Math.PI * 2); ctx.stroke();
+      // Mid band — yellow
+      ctx.strokeStyle = '#ffff60';
+      ctx.globalAlpha = (0.06 + 0.12 * _engage) * aimLineAlpha;
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_MID, 0, Math.PI * 2); ctx.stroke();
+      // Inner band — white, pulses hard when an enemy is inside it (the "adrenaline" ring)
+      ctx.strokeStyle = _innerActive ? '#ffffff' : '#ffffff';
+      ctx.lineWidth = _innerActive ? 2.2 : 1.5;
+      const _innerAlpha = _innerActive ? (0.18 + 0.12 * _pulse) : (0.08 + 0.14 * _engage);
+      ctx.globalAlpha = _innerAlpha * aimLineAlpha;
+      if (_innerActive) { ctx.shadowColor = '#fff'; ctx.shadowBlur = 12; }
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, RANGE_FALLOFF_NEAR, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       ctx.restore();
     }
