@@ -1049,11 +1049,13 @@ const UPGRADE_POOL = [
   { id:'icebul',     name:'ICE BULLETS',    desc:'Chance to slow & freeze targets', flavor:'clock-cycle freeze. time slows for the target',             rarity:'rare',      max:4, icon:'❄',  color:'#8ef' },
   { id:'chainbul',   name:'CHAIN BULLETS',  desc:'Chance to chain to nearest',      flavor:'shared-bus signal jumps between nodes',                     rarity:'rare',      max:4, icon:'⚡',  color:'#4ff' },
   { id:'windbul',    name:'WIND BULLETS',   desc:'+1 pierce, +15% bullet speed',    flavor:'priority hack. your packets beat theirs to the wire',       rarity:'rare',      max:4, icon:'💨', color:'#cef' },
-  // Blast / smash elements — epic, stack up to 3 levels
-  { id:'firesmash',  name:'FIRE SMASH',     desc:'Blast ignites + burns longer',    flavor:'blast pulse overheats nearby cores',                        rarity:'epic',      max:3, icon:'💥', color:'#f60' },
-  { id:'icesmash',   name:'ICE SMASH',      desc:'Blast freezes hit enemies',       flavor:'cryogenic quiesce — halts the clock',                       rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
-  { id:'chainsmash', name:'CHAIN SMASH',    desc:'Blast chains between enemies',    flavor:'bus cascade — an EMP with personality',                     rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
-  { id:'windsmash',  name:'VORTEX SMASH',   desc:'Blast locks enemies in place',    flavor:'scheduler purge. nothing gets to run.',                     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
+  // Dash element trails — epic, stack up to 3 levels. Leave elemental effects in the dash's wake.
+  { id:'firesmash',  name:'FLAME TRAIL',    desc:'Dash ignites enemies in its wake', flavor:'exhaust ports vent coolant fire across the path',          rarity:'epic',      max:3, icon:'🜂', color:'#f60' },
+  { id:'icesmash',   name:'FROST TRAIL',    desc:'Dash freezes enemies in its wake', flavor:'thermal sinks crash the clock of everything you pass',     rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
+  { id:'chainsmash', name:'STORM TRAIL',    desc:'Dash shocks enemies in its wake',  flavor:'discharge arcs off your hull — nothing grounded survives', rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
+  { id:'windsmash',  name:'GALE TRAIL',     desc:'Dash staggers enemies in its wake',flavor:'pressure wake flings them — their packets go nowhere',     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
+  // Dash shockwave — triggers a blast at dash end position. Combines with trail elements above.
+  { id:'shockdash',  name:'SHOCKWAVE DASH', desc:'Dash ends in a shockwave blast',   flavor:'deceleration releases stored kinetic as an outward pulse',  rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
   // Area / orbital — epic
   { id:'orbital',    name:'ORBITAL RING',   desc:'A bullet orbits you (stacks: +1)',flavor:'uncorrupted satellite still running its old routine',       rarity:'epic',      max:4, icon:'◉',  color:'#a8f' },
   { id:'blastcd',    name:'BLAST MASTERY',  desc:'-25% shockwave cooldown',         flavor:'capacitor tuning. recharge faster.',                        rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
@@ -1088,8 +1090,10 @@ function rebuildRunMods() {
     lifestealOnCrit: 0, // heal per crit
     // Bullet element levels (independent — you can stack multiple)
     fireBulletsLv: 0, iceBulletsLv: 0, chainBulletsLv: 0, windBulletsLv: 0,
-    // Smash element levels (independent — a blast applies all of them additively)
+    // Dash trail element levels — apply effects to enemies in the dash path
     fireSmashLv: 0, iceSmashLv: 0, chainSmashLv: 0, windSmashLv: 0,
+    // Shockwave dash — triggers an explosion at the dash end position
+    shockDashLv: 0,
     // Ascendant: element (fire/ice/chain/wind) that has >= 3 total levels across bullets + smash
     ascendant: null,
     // Dominant bullet element — used by the renderer to tint bullets toward the highest-stacked bullet element
@@ -1118,11 +1122,12 @@ function rebuildRunMods() {
       case 'icebul':     m.iceBulletsLv   += n; break;
       case 'chainbul':   m.chainBulletsLv += n; break;
       case 'windbul':    m.windBulletsLv  += n; m.pierceAdd += n; m.bulletSpeedMult += 0.15 * n; break;
-      // Smash elements
+      // Dash trail elements
       case 'firesmash':  m.fireSmashLv    += n; break;
       case 'icesmash':   m.iceSmashLv     += n; break;
       case 'chainsmash': m.chainSmashLv   += n; break;
       case 'windsmash':  m.windSmashLv    += n; break;
+      case 'shockdash':  m.shockDashLv    += n; break;
       case 'orbital':    m.orbitalCount  += n; break;
       case 'blastcd':    m.blastCdMult   *= Math.pow(0.75, n); break;
       case 'blastr':     m.blastRadiusMult *= Math.pow(1.30, n); break;
@@ -5095,6 +5100,139 @@ function dash() {
   screenShake.intensity = Math.max(screenShake.intensity, 5);
   playSfx('dash', 0.3) || playSound(680, 0.08, 'sine', 0.2);
   playSound(420, 0.04, 'square', 0.12);
+  // Seed tracking so element effects don't proc repeatedly on the same zombie during one dash
+  lp._dashHitSet = new Set();
+}
+
+// ---- DASH TRAIL ELEMENT EFFECTS ----
+// Called each frame during the dash. Walks nearby zombies and applies element procs
+// (fire burn / ice slow+freeze / chain shock / wind stagger) based on dash trail upgrades.
+// Tracks already-affected zombies in lp._dashHitSet so each zombie is hit once per dash.
+const DASH_TRAIL_RADIUS = 60;
+function applyDashTrailEffects(lp) {
+  if (!lp || !lp.alive) return;
+  const _mods = runMods || {};
+  const hasFire  = _mods.fireSmashLv  > 0;
+  const hasIce   = _mods.iceSmashLv   > 0;
+  const hasChain = _mods.chainSmashLv > 0;
+  const hasWind  = _mods.windSmashLv  > 0;
+  if (!hasFire && !hasIce && !hasChain && !hasWind) return;
+  const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
+  const r2 = DASH_TRAIL_RADIUS * DASH_TRAIL_RADIUS;
+  for (const z of zombies) {
+    if (!z || z.hp <= 0) continue;
+    if (hitSet.has(z.zid)) continue;
+    const dx = z.x - lp.x, dy = z.y - lp.y;
+    if (dx*dx + dy*dy > r2) continue;
+    hitSet.add(z.zid);
+    // FIRE TRAIL — ignite with a DoT that scales with level
+    if (hasFire) {
+      const lv = _mods.fireSmashLv;
+      z._burning = (z._burning || 0) + Math.floor(6 + 4 * lv);
+      z._burnTimer = Math.max(z._burnTimer || 0, 160 + 40 * lv);
+      // Flame puff at the zombie
+      for (let i = 0; i < 5; i++) {
+        const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 1,
+          life: 18, maxLife: 18, size: 2 + Math.random()*2, color: '#f80', type: 'spark' });
+      }
+    }
+    // FROST TRAIL — slow + stack toward freeze
+    if (hasIce) {
+      const lv = _mods.iceSmashLv;
+      z._slowTimer = Math.max(z._slowTimer || 0, 120 + 40 * lv);
+      z._iceStacks = (z._iceStacks || 0) + 1 + Math.floor(lv / 2);
+      const freezeThreshold = Math.max(2, 4 - lv);
+      if (z._iceStacks >= freezeThreshold) {
+        z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * lv);
+        z._iceStacks = 0;
+      }
+      for (let i = 0; i < 4; i++) {
+        const a = Math.random() * Math.PI * 2, s = 0.5 + Math.random();
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+          life: 20, maxLife: 20, size: 2 + Math.random(), color: '#8ef', type: 'spark' });
+      }
+    }
+    // STORM TRAIL — shock + stagger; damage tick comes from the existing _shocked DoT
+    if (hasChain) {
+      const lv = _mods.chainSmashLv;
+      z._shocked = Math.max(z._shocked || 0, 45 + 10 * lv);
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+      z.attackCooldown = Math.max(z.attackCooldown || 0, 30);
+      // Arc effect
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+        size: 1, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+    }
+    // GALE TRAIL — stagger + push along dash direction
+    if (hasWind) {
+      const lv = _mods.windSmashLv;
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 30 + 10 * lv);
+      z.attackCooldown = Math.max(z.attackCooldown || 0, 20);
+      const dirX = lp.dashDirX || 0, dirY = lp.dashDirY || 0;
+      const push = 6 + 2 * lv;
+      z.vx += dirX * push;
+      z.vy += dirY * push;
+      for (let i = 0; i < 3; i++) {
+        particles.push({ x: z.x, y: z.y, vx: dirX*3, vy: dirY*3,
+          life: 16, maxLife: 16, size: 1.5, color: '#cef', type: 'spark' });
+      }
+    }
+  }
+}
+
+// ---- SHOCKWAVE DASH ----
+// Called once when the dash's motion frames end. Creates an explosion at the dash's
+// exit position. Damage and radius scale with level, and combine flavors when paired
+// with trail elements.
+function triggerShockwaveDash(lp) {
+  if (!lp || !lp.alive) return;
+  const _mods = runMods || {};
+  const lv = _mods.shockDashLv || 0;
+  if (lv <= 0) return;
+  const baseRadius = 90 + 18 * lv;
+  const radius = baseRadius * (_mods.blastRadiusMult || 1);
+  const damage = 35 + 20 * lv;
+  // Color tint — shifts toward the strongest trail element if any
+  let tint = '#4af';
+  if (_mods.fireSmashLv  >= _mods.iceSmashLv && _mods.fireSmashLv  >= _mods.chainSmashLv && _mods.fireSmashLv  >= _mods.windSmashLv && _mods.fireSmashLv  > 0) tint = '#f80';
+  else if (_mods.iceSmashLv   >= _mods.chainSmashLv && _mods.iceSmashLv   >= _mods.windSmashLv && _mods.iceSmashLv   > 0) tint = '#8ef';
+  else if (_mods.chainSmashLv >= _mods.windSmashLv && _mods.chainSmashLv > 0) tint = '#4ff';
+  else if (_mods.windSmashLv > 0) tint = '#cef';
+  createExplosion(lp.x, lp.y, radius, damage, 'player');
+  // Element-flavored ring burst so the shockwave visually fuses with the trail element
+  for (let i = 0; i < 32; i++) {
+    const a = (Math.PI * 2 * i) / 32;
+    const s = 4 + Math.random() * 3;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 26, maxLife: 26, size: 2 + Math.random()*2, color: tint, type: 'spark' });
+  }
+  screenShake.intensity = Math.max(screenShake.intensity, 10);
+  // Also apply trail element procs to every zombie the shockwave touches — makes the
+  // combined "shockwave + element" read as a single cohesive burst.
+  const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
+  const r2 = radius * radius;
+  for (const z of zombies) {
+    if (!z || z.hp <= 0) continue;
+    const dx = z.x - lp.x, dy = z.y - lp.y;
+    if (dx*dx + dy*dy > r2) continue;
+    if (hitSet.has(z.zid)) continue;
+    hitSet.add(z.zid);
+    if (_mods.fireSmashLv > 0) {
+      z._burning = (z._burning || 0) + Math.floor(8 + 6 * _mods.fireSmashLv);
+      z._burnTimer = Math.max(z._burnTimer || 0, 200 + 40 * _mods.fireSmashLv);
+    }
+    if (_mods.iceSmashLv > 0) {
+      z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.iceSmashLv);
+      z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * _mods.iceSmashLv);
+    }
+    if (_mods.chainSmashLv > 0) {
+      z._shocked = Math.max(z._shocked || 0, 60 + 10 * _mods.chainSmashLv);
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
+    }
+    if (_mods.windSmashLv > 0) {
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 40 + 10 * _mods.windSmashLv);
+    }
+  }
 }
 
 
@@ -6131,8 +6269,15 @@ function update() {
       lp._dashFrames--;
       lp.vx = (lp.dashDirX || 1) * DASH_SPEED;
       lp.vy = (lp.dashDirY || 0) * DASH_SPEED;
-      // Afterimage ghost of the player each frame
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: PLAYER_RADIUS, color: '#0ff', type: 'dashtrail' });
+      // Afterimage ghost of the player each frame. Tint toward the dominant trail element
+      // so the dash itself reads as "on fire" / "icy" / "crackling" when loaded out.
+      const _mods = runMods || {};
+      let _trailColor = '#0ff';
+      if (_mods.fireSmashLv  > 0 && _mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0)) _trailColor = '#f80';
+      else if (_mods.iceSmashLv   > 0 && _mods.iceSmashLv   >= (_mods.chainSmashLv||0) && _mods.iceSmashLv   >= (_mods.windSmashLv||0)) _trailColor = '#8ef';
+      else if (_mods.chainSmashLv > 0 && _mods.chainSmashLv >= (_mods.windSmashLv||0)) _trailColor = '#4ff';
+      else if (_mods.windSmashLv  > 0) _trailColor = '#cef';
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: PLAYER_RADIUS, color: _trailColor, type: 'dashtrail' });
       // Leading-edge speed sparkles
       if (gameTime % 2 === 0) {
         const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
@@ -6147,6 +6292,13 @@ function update() {
           color: '#fff',
           type: 'spark',
         });
+      }
+      // Element trails: apply fire/ice/chain/wind effects to any zombie within the dash
+      // radius this frame. Per-dash hit set prevents double-procs.
+      applyDashTrailEffects(lp);
+      // On the final frame of the dash, trigger the shockwave if the upgrade is taken.
+      if (lp._dashFrames === 0) {
+        triggerShockwaveDash(lp);
       }
     }
     lp.x+=lp.vx;lp.y+=lp.vy;
@@ -6272,9 +6424,10 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    // Compact per-player smash levels so the host can apply remote blasts correctly
+    // Compact per-player dash trail levels + shockwave-dash level so remote dashes
+    // visually carry over the correct element. Indexes: [fire, ice, chain, wind, shock]
     const _sm = runMods || {};
-    const smLvs = [_sm.fireSmashLv||0, _sm.iceSmashLv||0, _sm.chainSmashLv||0, _sm.windSmashLv||0];
+    const smLvs = [_sm.fireSmashLv||0, _sm.iceSmashLv||0, _sm.chainSmashLv||0, _sm.windSmashLv||0, _sm.shockDashLv||0];
     sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (mouse.down || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, smLvs, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
   }
 
@@ -8137,18 +8290,18 @@ function render() {
 
   // Bullets
   for(const b of bullets){
-    // Lifetime-based fade for player bullets. Bullets stay crisp for the first ~55% of
-    // their life, then noticeably fade + shrink over the final 45% — pairs with the
-    // drift-with-distance system so far shots are visibly weak AND unreliable.
+    // Lifetime-based fade for player bullets. Bullets stay crisp for the first ~30% of
+    // life, then gradually dissolve over the remaining 70% — gentle linear curve so
+    // they clearly trail off into nothing rather than popping out of existence.
     let _bSizeMult = 1, _bAlphaMult = 1;
     if (b.owner === 'player') {
       const _lifeT = b.maxLife ? Math.max(0, b.life / b.maxLife) : 1;
-      // Full size until 55% life remaining, shrink harder to near-zero over the last 45%
-      const _shrink = _lifeT > 0.45 ? 1 : (_lifeT / 0.45);
-      // Quadratic ease — the shrink accelerates as the bullet dies
-      const _shrinkEased = _shrink * _shrink;
-      _bSizeMult = 0.10 + 0.90 * _shrinkEased;
-      _bAlphaMult = 0.15 + 0.85 * _shrinkEased;
+      // Full strength while life > 70% remaining; smoothly fade over the remaining 70% of life.
+      const _shrink = _lifeT > 0.70 ? 1 : (_lifeT / 0.70);
+      // Gentle ease-out so fade is visible throughout, not bunched at the end.
+      const _shrinkEased = 1 - (1 - _shrink) * (1 - _shrink);
+      _bSizeMult = 0.02 + 0.98 * _shrinkEased;
+      _bAlphaMult = 0.02 + 0.98 * _shrinkEased;
     }
     if(b.tracer&&b.trail.length>1){
     // Laser glow: intense neon beam with wide glow
