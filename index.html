@@ -202,8 +202,8 @@ body.mobile #mobile-buttons { display: block; }
 .death-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .death-stat-val { font-size: 26px; font-weight: bold; line-height: 1; letter-spacing: 1px; }
 .death-stat-lab { font-size: 11px; letter-spacing: 2px; }
-.death-actions { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 8px; }
-.death-actions-row { display: flex; flex-direction: row; justify-content: center; gap: 4px; flex-wrap: wrap; }
+.death-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 10px; }
+.death-actions-row { display: flex; flex-direction: row; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .death-layout .menu-btn { font-size: 13px !important; margin: 0 !important; }
 /* Portrait / small screens — stack vertically */
 @media (max-width: 540px), (orientation: portrait) {
@@ -785,11 +785,10 @@ function spawnDescentSection(idx) {
     zombies.push({ zid: _nextZombieId++, x: cx, y: sec.y + sec.height * 0.4, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bt.damage, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true });
     descentEnemiesTotal++; // boss counts
   }
-  // Spawn element zone
+  // Element chest — break it to release a temporary element zone
   const ezx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
   const ezy = sec.y + (0.4 + Math.random() * 0.3) * sec.height;
-  const elem = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
-  elementZones.push({ x: ezx, y: ezy, radius: 40, element: elem.id, life: 9999 }); // persist until section clears
+  spawnElementZone(ezx, ezy);
   // Spawn barrels
   for (let bi = 0; bi < 2; bi++) {
     const bx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
@@ -971,11 +970,10 @@ function spawnTrenchSection(idx) {
     const bossDmg = Math.round(bt.damage * (1 + idx * 0.04));
     zombies.push({ zid: _nextZombieId++, x: sec.x + TW * 0.7, y: cy, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true });
   }
-  // Element zone — picked up as the player advances
+  // Element chest — break it to release a temporary element zone
   const ezx = sec.x + (0.4 + Math.random() * 0.3) * TW;
   const ezy = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
-  const elem = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
-  elementZones.push({ x: ezx, y: ezy, radius: 40, element: elem.id, life: 9999 });
+  spawnElementZone(ezx, ezy);
   // A couple of barrels for fun
   for (let bi = 0; bi < 2; bi++) {
     const bx = sec.x + (0.35 + Math.random() * 0.45) * TW;
@@ -1184,10 +1182,14 @@ const ELEMENT_TYPES = [
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
 
-function spawnElementZone() {
-  const pos = getRandomFloorPos();
+// All element zone spawns route through chests now — break the chest to release the zone.
+function spawnElementZone(x, y) {
+  let px, py;
+  if (x !== undefined && y !== undefined) { px = x; py = y; }
+  else { const pos = getRandomFloorPos(); px = pos.x; py = pos.y; }
   const elem = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
-  elementZones.push({ x: pos.x, y: pos.y, radius: 40, element: elem.id, life: 900 }); // 15 seconds on ground
+  spawnChest(px, py, { type: 'element', id: elem.id });
+  addFloatingText(px, py - 25, 'CHEST', '#ff0');
 }
 
 function updateElementZones() {
@@ -1246,36 +1248,30 @@ function applyElementOnHit(z, damage, srcX, srcY) {
     // Lightning chains detonate nearby barrels
     for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-z.x)**2+(br.y-z.y)**2);if(bd<100){explodeBarrel(br,bi);break;}}
   } else if (el === 'wind') {
-    // Massive directional knockback in the bullet's direction of travel
-    const _wsx = srcX !== undefined ? srcX : z.x;
-    const _wsy = srcY !== undefined ? srcY : z.y;
-    let _wdx = z.x - _wsx, _wdy = z.y - _wsy;
-    const _wd = Math.sqrt(_wdx * _wdx + _wdy * _wdy) || 1;
-    _wdx /= _wd; _wdy /= _wd;
-    const _wkbScale = Math.pow(13 / (z.radius || 13), 2);
-    const _wkbForce = 22; // big push on top of the bullet's base knockback
-    z.vx += _wdx * _wkbForce * _wkbScale;
-    z.vy += _wdy * _wkbForce * _wkbScale;
-    z.staggerTimer = Math.max(z.staggerTimer, 28);
-    // Gust: ripples out and shoves up to 2 nearby zombies for 30% damage
-    let _gust = 0;
+    // Slipstream gust: NO knockback. Instead, an AoE shockwave damages every nearby
+    // zombie (50% bullet damage in a 70px radius). Bullets that fly with wind already
+    // pierce more and travel faster (set at fire time in fireWeaponForPlayer).
     for (const oz of zombies) {
-      if (oz === z || _gust >= 2) continue;
+      if (oz === z) continue;
       const _gd = Math.sqrt((oz.x - z.x) ** 2 + (oz.y - z.y) ** 2);
-      if (_gd < 80 && _gd > 0.1) {
-        const _gnx = (oz.x - z.x) / _gd, _gny = (oz.y - z.y) / _gd;
-        const _gozScale = Math.pow(13 / (oz.radius || 13), 2);
-        damageZombie(oz, Math.floor(damage * 0.3), _gnx * 10 * _gozScale, _gny * 10 * _gozScale);
-        oz.staggerTimer = Math.max(oz.staggerTimer, 18);
-        _gust++;
+      if (_gd < 70 && _gd > 0.1) {
+        damageZombie(oz, Math.floor(damage * 0.5), 0, 0);
+        oz.staggerTimer = Math.max(oz.staggerTimer, 8);
       }
     }
-    // Dust streak particles in the bullet direction
-    const _wAng = Math.atan2(_wdy, _wdx);
-    for (let _wpi = 0; _wpi < 10; _wpi++) {
+    // Dust streak particles in the bullet direction (visual only — no displacement)
+    const _wsx = srcX !== undefined ? srcX : z.x;
+    const _wsy = srcY !== undefined ? srcY : z.y;
+    const _wAng = Math.atan2(z.y - _wsy, z.x - _wsx);
+    for (let _wpi = 0; _wpi < 12; _wpi++) {
       const _wpa = _wAng + (Math.random() - 0.5) * 0.7;
       const _wpsp = 2 + Math.random() * 5;
       particles.push({ x: z.x, y: z.y, vx: Math.cos(_wpa) * _wpsp, vy: Math.sin(_wpa) * _wpsp, life: 16 + Math.random() * 8, maxLife: 24, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#fff' : '#cef', type: 'spark' });
+    }
+    // Outward ring of mist at the impact (the "puff")
+    for (let _wri = 0; _wri < 10; _wri++) {
+      const _ra = (_wri / 10) * Math.PI * 2;
+      particles.push({ x: z.x + Math.cos(_ra) * 8, y: z.y + Math.sin(_ra) * 8, vx: Math.cos(_ra) * 5, vy: Math.sin(_ra) * 5, life: 14, maxLife: 14, size: 3, color: '#cef', type: 'spark' });
     }
   }
 }
@@ -3233,7 +3229,7 @@ const ELEMENT_DESCS = {
   fire: 'Ignites enemies for burn damage over time. Spreads to nearby enemies while burning.',
   ice: 'Slows enemies 50%. After 3 hits the target freezes solid.',
   lightning: 'Chains to 2 nearby enemies on hit. Briefly stuns targets.',
-  wind: 'Massive knockback. Bullets send enemies flying and a gust ripples to nearby zombies. Blast: 360° vortex that yeets everything and clears spitter projectiles.',
+  wind: 'Slipstream. Bullets fly faster, pierce 3 extra enemies, and burst into a 70px gust on impact that hits every nearby zombie for 50% damage. Blast: 360° vortex — heavy damage, freezes everything in place for 1 second, and shreds spitter projectiles.',
 };
 const MODE_LIST = [
   { id: 'descent', name: 'DESCENT', color: '#f0f', icon: '▼', desc: 'Vertical dungeon. Clear each section to unlock the gate below. Boss every 5 sections. How deep can you go?' },
@@ -3712,6 +3708,10 @@ function fireWeaponForPlayer(p) {
   const isTriple = hasPowerUp('triple');
   const shotCount = isTriple ? 3 : 1;
   if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
+  // Wind: bullets pierce more and fly faster (slipstream)
+  const _windActive = activeElement?.id === 'wind';
+  const _windPierceBonus = _windActive ? 3 : 0;
+  const _windSpeedMult = _windActive ? 1.3 : 1;
   for (let si = 0; si < shotCount; si++) {
     const spreadOff = shotCount > 1 ? (si - 1) * 0.15 : 0;
     const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
@@ -3723,9 +3723,9 @@ function fireWeaponForPlayer(p) {
     const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
     const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize; // triple: smaller bullets
     bullets.push({
-      x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
+      x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed*_windSpeedMult, vy: s*gun.bulletSpeed*_windSpeedMult,
       damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?bSize+2:bSize,
-      knockback: 0, pierce: gun.pierce, pierced: 0, life: 35,
+      knockback: 0, pierce: gun.pierce + _windPierceBonus, pierced: 0, life: 35,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
@@ -3777,15 +3777,17 @@ function dash() {
   const blastElem = activeElement?.id || null;
   if (isHost) {
     const _windBlast = blastElem === 'wind';
-    const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.2 : SHOCKWAVE_RADIUS;
+    const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.25 : SHOCKWAVE_RADIUS;
     for (const z of zombies) {
       const sd = Math.sqrt((z.x-lp.x)**2+(z.y-lp.y)**2);
       if (sd < _blastR && sd > 0.1) {
         const closeness = 1 - sd/_blastR;
-        const pushForce = _windBlast ? (40 + closeness * 80) : (10 + closeness * 30);
-        const dmg = _windBlast ? Math.floor(35 * closeness) : Math.floor(100 * closeness);
+        // Wind blast: NO knockback (so enemies stay in front of you), heavy damage, long stagger lock
+        const pushForce = _windBlast ? 0 : (10 + closeness * 30);
+        const dmg = _windBlast ? Math.floor(120 * closeness) : Math.floor(100 * closeness);
         damageZombie(z, dmg, (z.x-lp.x)/sd * pushForce, (z.y-lp.y)/sd * pushForce);
-        z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(35 + closeness * 35) : Math.floor(15 + closeness * 20));
+        z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(60 + closeness * 60) : Math.floor(15 + closeness * 20));
+        if (_windBlast) { z.attackCooldown = Math.max(z.attackCooldown, 90); z.vx = 0; z.vy = 0; }
         // Apply element from blast
         if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
         else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
@@ -3991,16 +3993,16 @@ function explodeBarrel(barrel, idx) {
     barrels.splice(idx, 1);
     return;
   }
-  createExplosion(barrel.x, barrel.y, 160, 600, 'any');
-  screenShake.intensity = Math.max(screenShake.intensity, 12);
+  createExplosion(barrel.x, barrel.y, 110, 500, 'any');
+  screenShake.intensity = Math.max(screenShake.intensity, 10);
   // Fire burst particles
-  for (let k = 0; k < 30; k++) { const a = Math.random()*Math.PI*2, s = 3+Math.random()*7; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*18,maxLife:48,size:5+Math.random()*5,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
+  for (let k = 0; k < 24; k++) { const a = Math.random()*Math.PI*2, s = 2.5+Math.random()*6; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:28+Math.random()*16,maxLife:44,size:4+Math.random()*5,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
   barrels.splice(idx, 1);
-  // Chain reaction: explode nearby barrels (radius scales with the bigger boom)
+  // Chain reaction: explode nearby barrels
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
     if (b2._chest) continue; // don't chain to chests
-    if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 160) {
+    if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 120) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
   }
@@ -4214,8 +4216,8 @@ function updateHorde() {
     const pos = getHordeEdgePos();
     spawnRandomPowerupChest(pos.x, pos.y, { orbitalChance: 0.2 });
   }
-  // Element zone every 15 seconds
-  if (hordeTimer % 900 === 0 && hordeTimer > 0) spawnElementZone();
+  // Element chest every 15 seconds — spawned around the defend circle, not the center
+  if (hordeTimer % 900 === 0 && hordeTimer > 0) { const _ec = getHordeEdgePos(); spawnElementZone(_ec.x, _ec.y); }
   // Extra health every 30 seconds
   if (hordeTimer % 1800 === 0) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
   // ---- DEFEND THE CIRCLE: check if zombies are inside ----
@@ -4726,8 +4728,9 @@ function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast')
 
 function createExplosion(x,y,radius,damage,source='player') {
   explosions.push({x,y,radius,life:15,maxLife:15});screenShake.intensity=Math.max(screenShake.intensity,12);playExplosionSound();
-  if(isHost&&source==='player'){for(const z of zombies){const dx=z.x-x,dy=z.y-y,d=Math.sqrt(dx*dx+dy*dy);if(d<radius+z.radius)damageZombie(z,damage*(1-d/(radius+z.radius)),dx/d*10,dy/d*10);}}
-  if(isHost&&(source!=='player'||source==='any')){for(const p of players){if(!p.alive)continue;const dx=p.x-x,dy=p.y-y;if(Math.sqrt(dx*dx+dy*dy)<radius+PLAYER_RADIUS)damagePlayerObj(p,damage*0.5);}}
+  // Source 'player' = friendly fire only damages zombies. 'any' = damages both. Anything else = enemies-only blast (damages players).
+  if(isHost&&(source==='player'||source==='any')){for(const z of zombies){const dx=z.x-x,dy=z.y-y,d=Math.sqrt(dx*dx+dy*dy);if(d<radius+z.radius)damageZombie(z,damage*(1-d/(radius+z.radius)),dx/d*10,dy/d*10);}}
+  if(isHost&&source!=='player'){for(const p of players){if(!p.alive)continue;const dx=p.x-x,dy=p.y-y;if(Math.sqrt(dx*dx+dy*dy)<radius+PLAYER_RADIUS)damagePlayerObj(p,damage*0.5);}}
   for(let i=0;i<30;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*6;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*20,maxLife:40,size:3+Math.random()*4,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});}
   for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*3;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*30,maxLife:60,size:5+Math.random()*6,color:'#555',type:'smoke'});}
 }
@@ -4999,15 +5002,16 @@ function update() {
           const SHOCKWAVE_RADIUS = 150;
           const blastElem = inp.activeElement || null;
           const _windBlast = blastElem === 'wind';
-          const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.2 : SHOCKWAVE_RADIUS;
+          const _blastR = _windBlast ? SHOCKWAVE_RADIUS * 1.25 : SHOCKWAVE_RADIUS;
           for (const z of zombies) {
             const sd = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
             if (sd < _blastR && sd > 0.1) {
               const closeness = 1 - sd/_blastR;
-              const pushForce = _windBlast ? (40 + closeness * 80) : (10 + closeness * 30);
-              const dmg = _windBlast ? Math.floor(35 * closeness) : Math.floor(100 * closeness);
+              const pushForce = _windBlast ? 0 : (10 + closeness * 30);
+              const dmg = _windBlast ? Math.floor(120 * closeness) : Math.floor(100 * closeness);
               damageZombie(z, dmg, (z.x-p.x)/sd * pushForce, (z.y-p.y)/sd * pushForce);
-              z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(35 + closeness * 35) : Math.floor(15 + closeness * 20));
+              z.staggerTimer = Math.max(z.staggerTimer, _windBlast ? Math.floor(60 + closeness * 60) : Math.floor(15 + closeness * 20));
+              if (_windBlast) { z.attackCooldown = Math.max(z.attackCooldown, 90); z.vx = 0; z.vy = 0; }
               if (blastElem === 'fire') { z._burning = (z._burning||0) + 20; z._burnTimer = 240; }
               else if (blastElem === 'ice') { z._iceStacks = (z._iceStacks||0) + 2; z._slowTimer = Math.max(z._slowTimer||0, 180); if (z._iceStacks >= 3) { z._frozenTimer = 150; z._iceStacks = 0; } }
               else if (blastElem === 'lightning') { z._shocked = 45; z.staggerTimer = Math.max(z.staggerTimer, 25); damageZombie(z, 15, 0, 0); }
