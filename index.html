@@ -466,8 +466,9 @@ body.mobile #mobile-buttons { display: block; }
   <div style="display:flex;flex-direction:column;align-items:center;gap:14px;max-width:760px;width:100%">
     <div style="color:#ff0;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #ff0,0 0 24px rgba(255,255,0,0.4);animation:pulse 1s ease-in-out infinite">★ LEVEL UP ★</div>
     <div id="levelup-level" style="color:#f0f;font-size:28px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 14px #f0f,0 0 28px rgba(255,0,255,0.6);line-height:1">LEVEL 2</div>
-    <div style="color:#0ff;font-size:11px;letter-spacing:3px;margin-top:-4px">CHOOSE A STRIDE CARD</div>
+    <div id="levelup-subtitle" style="color:#0ff;font-size:11px;letter-spacing:3px;margin-top:-4px">CHOOSE A STRIDE CARD</div>
     <div id="levelup-cards" style="display:flex;flex-direction:row;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:10px;width:100%"></div>
+    <button class="menu-btn success" id="btn-levelup-confirm" style="margin-top:10px;padding:11px 32px;font-size:14px;letter-spacing:3px;min-width:180px;opacity:0.35;pointer-events:none">CONFIRM</button>
   </div>
 </div>
 
@@ -912,6 +913,38 @@ function spawnOrbitalPickup(x, y) {
 function spawnChest(x, y, content) {
   barrels.push({ x, y, radius: 16, hp: 3, maxHp: 3, _chest: true, _content: content, _bobTimer: Math.random() * Math.PI * 2 });
 }
+function _anyStrideChestActive() {
+  for (const b of barrels) if (b._strideChest) return true;
+  return false;
+}
+
+// Stride chest — the dramatic reward chest that spawns at section end when the player
+// has queued level-ups. Breaking it opens the STRIDE card picker.
+function spawnStrideChest(x, y) {
+  barrels.push({
+    x, y,
+    radius: 26, // big
+    hp: 1, maxHp: 1, // one shot breaks it
+    _chest: true,
+    _strideChest: true,
+    _content: { type: '_stride_reward' },
+    _bobTimer: 0,
+    _spawnAnim: 70,       // 70-frame dramatic entrance
+    _spawnAnimMax: 70,
+    _glowAng: 0,          // rotating ring animation
+  });
+  // Big center-screen announce (floating text over the chest)
+  addFloatingText(x, y - 56, '★ STRIDE CHEST ★', '#ff0');
+  // Burst of gold particles to signal its arrival
+  for (let i = 0; i < 48; i++) {
+    const a = (i / 48) * Math.PI * 2;
+    const s = 2 + Math.random() * 5;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 40 + Math.random() * 20, maxLife: 60, size: 3 + Math.random() * 2, color: Math.random() < 0.5 ? '#ff0' : '#fff', type: 'spark' });
+  }
+  screenShake.intensity = Math.max(screenShake.intensity, 8);
+  playSfx('level_up', 0.4) || playSound(800, 0.3, 'sine', 0.25);
+}
+
 function spawnRandomPowerupChest(x, y, opts) {
   const orbitalChance = (opts && opts.orbitalChance != null) ? opts.orbitalChance : 0.15;
   let content;
@@ -1456,6 +1489,11 @@ function updateTrench() {
       const lpb = getLocalPlayer();
       if (lpb) spawnRandomPowerupChest(lpb.x + 60, lpb.y);
     }
+    // Stride chest — spawn a dramatic reward chest if level-ups are queued
+    if (pendingLevelUps > 0 && !_anyStrideChestActive()) {
+      const lpc = getLocalPlayer();
+      if (lpc) spawnStrideChest(lpc.x, lpc.y);
+    }
   }
   // Door trigger: when cleared and any player is at the right wall in the door y range
   if (sec.cleared && _trenchPendingNext < 0) {
@@ -1571,6 +1609,11 @@ function updateDescent() {
     if (sec.isBoss && !hasPowerUpAnywhere()) {
       const lp3 = getLocalPlayer();
       if (lp3) spawnRandomPowerupChest(lp3.x, lp3.y + 30);
+    }
+    // Stride chest on section clear
+    if (pendingLevelUps > 0 && !_anyStrideChestActive()) {
+      const lpc = getLocalPlayer();
+      if (lpc) spawnStrideChest(lpc.x, lpc.y + 40);
     }
   }
   // Check if player passed through the gate to next section
@@ -3751,6 +3794,7 @@ addBtn('btn-restart', () => {
 });
 addBtn('btn-menu', () => { togglePauseMenu(); });
 addBtn('btn-resume', () => { togglePauseMenu(); });
+addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
 addBtn('btn-quit-game', () => {
   document.getElementById('pause-screen').style.display = 'none';
   gameState = 'menu';
@@ -3788,6 +3832,13 @@ function togglePauseMenu() {
 // ============================================================
 // LEVEL-UP CARD PICKER
 // ============================================================
+// Two-step level-up flow:
+// 1. Trigger picker: draft 3 cards, show overlay, NO card selected yet (CONFIRM disabled)
+// 2. Player selects a card (highlight) → CONFIRM button becomes active
+// 3. Player confirms → upgrade applies → if more pending level-ups, re-draft 3 more
+//    cards and stay on screen; otherwise hide overlay and resume.
+let _levelupSelectedId = null; // currently highlighted card id
+
 function triggerLevelUpPicker() {
   const choices = draftUpgradeCards();
   if (choices.length === 0) {
@@ -3797,8 +3848,9 @@ function triggerLevelUpPicker() {
     return;
   }
   levelUpChoices = choices;
+  _levelupSelectedId = null;
   _resetJoysticks();
-  // 1) Pre-flash: gold screen wash + burst particles around the player + "LEVEL UP!" floating text
+  // Pre-flash: gold screen wash + burst particles around the player
   const flashEl = document.getElementById('levelup-flash');
   if (flashEl) {
     flashEl.classList.remove('fading');
@@ -3814,32 +3866,46 @@ function triggerLevelUpPicker() {
       const ps = 4 + Math.random() * 4;
       particles.push({ x: lp.x, y: lp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 32, maxLife: 32, size: 3 + Math.random()*2, color: Math.random() < 0.5 ? '#ff0' : '#fff', type: 'spark' });
     }
-    // Screen shake beat
     screenShake.intensity = Math.max(screenShake.intensity, 6);
   }
   playSfx('level_up', 0.3) || playSound(1600, 0.1, 'sine', 0.22);
-  // 2) Freeze game (solo) immediately so subsequent frames stop — MP doesn't freeze
+  // Freeze game in SP so the section is paused while picking
   if (!isMultiplayer) gameState = 'levelup';
-  // 3) Build the card DOM
+  _renderLevelupCards();
   const el = document.getElementById('levelup-screen');
   if (!el) return;
+  const lv = document.getElementById('levelup-level');
+  if (lv) lv.textContent = 'LEVEL ' + runLevel;
+  el.style.display = 'flex';
+  el.classList.remove('visible');
+  void el.offsetWidth;
+  setTimeout(() => { el.classList.add('visible'); }, 180);
+}
+
+// Rebuild the card DOM (called on first draft AND after each confirm to show fresh cards)
+function _renderLevelupCards() {
   const list = document.getElementById('levelup-cards');
+  if (!list || !levelUpChoices) return;
   list.innerHTML = '';
-  for (let i = 0; i < choices.length; i++) {
-    const u = choices[i];
+  for (let i = 0; i < levelUpChoices.length; i++) {
+    const u = levelUpChoices[i];
     const owned = runUpgrades[u.id] || 0;
     const rarityColor = u.rarity === 'legendary' ? '#ff0' : u.rarity === 'epic' ? '#a8f' : u.rarity === 'rare' ? '#0cf' : '#fff';
     const rarityGlow = u.rarity === 'legendary' ? '0 0 24px rgba(255,255,0,0.5),0 0 48px rgba(255,255,0,0.25)' : u.rarity === 'epic' ? '0 0 18px rgba(168,136,255,0.5)' : u.rarity === 'rare' ? '0 0 12px rgba(0,204,255,0.4)' : '0 0 8px rgba(255,255,255,0.2)';
+    const isSelected = _levelupSelectedId === u.id;
     const card = document.createElement('button');
-    card.className = 'levelup-card';
+    card.className = 'levelup-card' + (isSelected ? ' selected' : '');
+    card.dataset.cardId = u.id;
     card.style.cssText = `
       flex:1 1 0; min-width:0; max-width:220px; padding:14px 12px;
-      border:2px solid ${u.color}; border-radius:14px;
-      background:rgba(3,3,12,0.94);
-      box-shadow:${rarityGlow}, inset 0 0 12px rgba(0,0,0,0.7);
+      border:${isSelected ? '3' : '2'}px solid ${u.color};
+      border-radius:14px;
+      background:${isSelected ? `rgba(${parseInt(u.color.slice(1,3)||'0',16)||255},${parseInt(u.color.slice(3,5)||'0',16)||255},${parseInt(u.color.slice(5,7)||'0',16)||0},0.12)` : 'rgba(3,3,12,0.94)'};
+      box-shadow:${isSelected ? '0 0 28px ' + u.color + ', inset 0 0 18px rgba(0,0,0,0.5)' : rarityGlow + ', inset 0 0 12px rgba(0,0,0,0.7)'};
       display:flex; flex-direction:column; gap:6px;
       font-family:'Courier New',monospace; color:#fff;
       cursor:pointer; -webkit-tap-highlight-color:transparent;
+      ${isSelected ? 'transform:translateY(-4px) scale(1.02);' : ''}
     `;
     card.innerHTML = `
       <div style="font-size:30px; line-height:1; color:${u.color}; text-shadow:0 0 10px ${u.color}, 0 0 18px ${u.color}; margin-bottom:4px">${u.icon}</div>
@@ -3847,26 +3913,40 @@ function triggerLevelUpPicker() {
       <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${u.rarity}${owned?` · OWNED ×${owned}`:''}</div>
       <div style="font-size:11px; color:#ccc; line-height:1.35; margin-top:2px; text-align:left">${u.desc}</div>
     `;
-    card.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); pickUpgradeCard(u.id); });
-    card.addEventListener('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); pickUpgradeCard(u.id); }, { passive: false });
+    card.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectUpgradeCard(u.id); });
+    card.addEventListener('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectUpgradeCard(u.id); }, { passive: false });
     list.appendChild(card);
   }
-  // Show the level number
-  const lv = document.getElementById('levelup-level');
-  if (lv) lv.textContent = 'LEVEL ' + runLevel;
-  // 4) Delay the overlay appearance so the flash + particles land first
-  el.style.display = 'flex';
-  el.classList.remove('visible');
-  // Force reflow so the transition actually animates from opacity 0
-  void el.offsetWidth;
-  setTimeout(() => { el.classList.add('visible'); }, 180);
+  _updateConfirmButtonState();
 }
 
-function pickUpgradeCard(upgradeId) {
+function _updateConfirmButtonState() {
+  const btn = document.getElementById('btn-levelup-confirm');
+  if (!btn) return;
+  if (_levelupSelectedId) {
+    btn.style.opacity = '1';
+    btn.style.pointerEvents = 'auto';
+  } else {
+    btn.style.opacity = '0.35';
+    btn.style.pointerEvents = 'none';
+  }
+}
+
+// Highlight a card (does NOT apply it)
+function selectUpgradeCard(upgradeId) {
   if (!levelUpChoices) return;
+  _levelupSelectedId = upgradeId;
+  _renderLevelupCards();
+  playSfx('ui_hover', 0.2) || playSound(900, 0.04, 'sine', 0.12);
+}
+
+// Apply the currently-selected card
+function confirmUpgradeCard() {
+  if (!levelUpChoices || !_levelupSelectedId) return;
+  const upgradeId = _levelupSelectedId;
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
-  // Instant feedback: apply max-HP bumps immediately
+  // Instant feedback: max-HP bump + speed recompute
   {
     const lp = getLocalPlayer();
     if (lp) {
@@ -3874,31 +3954,51 @@ function pickUpgradeCard(upgradeId) {
       const newMax = Math.max(10, Math.round(targetMaxHp));
       const bump = newMax - lp.maxHp;
       lp.maxHp = newMax;
-      if (upgradeId === 'hpup') lp.hp = lp.maxHp; // Reinforced heals
-      else if (bump > 0) lp.hp += bump; // keep absolute HP, raise max
-    }
-  }
-  // Instant feedback: recompute speed
-  {
-    const lp = getLocalPlayer();
-    if (lp) {
+      if (upgradeId === 'hpup') lp.hp = lp.maxHp;
+      else if (bump > 0) lp.hp += bump;
       lp.speed = 6 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
     }
   }
-  levelUpChoices = null;
   pendingLevelUps--;
+  _levelupSelectedId = null;
+  playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
+  // Celebrate on the player
+  const clp = getLocalPlayer();
+  if (clp) {
+    for (let pi = 0; pi < 20; pi++) {
+      const pa = Math.random() * Math.PI * 2;
+      const ps = 2 + Math.random() * 4;
+      particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 22, maxLife: 22, size: 2.5, color: '#ff0', type: 'spark' });
+    }
+  }
+  // If more level-ups are queued, re-draft and stay on screen
+  if (pendingLevelUps > 0) {
+    const next = draftUpgradeCards();
+    if (next.length > 0) {
+      levelUpChoices = next;
+      _renderLevelupCards();
+      const lv = document.getElementById('levelup-level');
+      if (lv) lv.textContent = 'LEVEL ' + (runLevel - pendingLevelUps + 1);
+      return;
+    }
+  }
+  // No more pending → fade overlay out and resume
+  levelUpChoices = null;
   const el = document.getElementById('levelup-screen');
   if (el) {
     el.classList.remove('visible');
     setTimeout(() => {
-      // Only actually hide if we're not immediately about to show another level-up
       if (!levelUpChoices) el.style.display = 'none';
     }, 240);
   }
-  playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
-  // Resume game
   if (gameState === 'levelup') gameState = 'playing';
-  // If more level-ups are queued, the next update tick will call triggerLevelUpPicker again
+}
+
+// Legacy alias — some code paths still call pickUpgradeCard; keep it as a compat shim
+// that goes through the new select+confirm flow (auto-confirms for backwards compat).
+function pickUpgradeCard(upgradeId) {
+  selectUpgradeCard(upgradeId);
+  confirmUpgradeCard();
 }
 
 // ---- CODEX / ENCYCLOPEDIA ----
@@ -4400,7 +4500,29 @@ function startMultiplayerGame() {
 // ============================================================
 // INPUT
 // ============================================================
-function handleKeyDown(e) { keys[e.key.toLowerCase()] = true; if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); } if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; } if (gameState === 'playing') { if (e.key === 'r') reloadWeapon(); if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1); if (e.key === '0') switchWeapon(9); if (e.key === 'e') tryPickup(true); if (e.key === ' ') { e.preventDefault(); dash(); } if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); } } }
+function handleKeyDown(e) {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === 'F9') { debugLighting = !debugLighting; e.preventDefault(); }
+  // Level-up picker: 1/2/3 select a card, Enter confirms
+  if (levelUpChoices && levelUpChoices.length > 0) {
+    if (e.key >= '1' && e.key <= '9') {
+      const idx = parseInt(e.key, 10) - 1;
+      if (idx >= 0 && idx < levelUpChoices.length) { e.preventDefault(); selectUpgradeCard(levelUpChoices[idx].id); return; }
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (_levelupSelectedId) { e.preventDefault(); confirmUpgradeCard(); return; }
+    }
+  }
+  if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; }
+  if (gameState === 'playing') {
+    if (e.key === 'r') reloadWeapon();
+    if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1);
+    if (e.key === '0') switchWeapon(9);
+    if (e.key === 'e') tryPickup(true);
+    if (e.key === ' ') { e.preventDefault(); dash(); }
+    if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
+  }
+}
 function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
@@ -4760,6 +4882,27 @@ function spawnBarrels(count) {
   }
 }
 function explodeBarrel(barrel, idx) {
+  // Stride chest — open the level-up card picker
+  if (barrel._strideChest) {
+    // Huge celebration burst
+    for (let k = 0; k < 60; k++) {
+      const a = (k / 60) * Math.PI * 2;
+      const s = 3 + Math.random() * 7;
+      particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 36 + Math.random() * 18, maxLife: 54, size: 3 + Math.random() * 3, color: Math.random() < 0.5 ? '#ff0' : '#fff', type: 'spark' });
+    }
+    for (let k = 0; k < 12; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 1 + Math.random() * 3;
+      particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.5, life: 40 + Math.random() * 20, maxLife: 60, size: 5 + Math.random() * 4, color: '#fa0', type: 'smoke' });
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 10);
+    playPickupSound();
+    addFloatingText(barrel.x, barrel.y - 30, 'STRIDE UNLOCKED!', '#ff0');
+    barrels.splice(idx, 1);
+    // Trigger the level-up picker (even if we're in a deferred mode)
+    triggerLevelUpPicker();
+    return;
+  }
   // Chest: reveal the item inside instead of exploding
   if (barrel._chest) {
     const c = barrel._content;
@@ -5425,6 +5568,11 @@ function updateGauntlet() {
         const pos = getRandomFloorPos();
         spawnRandomPowerupChest(pos.x, pos.y);
       }
+      // Stride chest on room clear
+      if (pendingLevelUps > 0 && !_anyStrideChestActive()) {
+        const lpc = getLocalPlayer();
+        if (lpc) spawnStrideChest(lpc.x, lpc.y);
+      }
     }
     return;
   }
@@ -5777,9 +5925,12 @@ function update() {
     updateOrbital();
     updateXPOrbs();
     updateRunOrbitals();
-    // Level-up check: if pending and not already showing the picker
+    // Level-up check: in section-based modes (trench/descent/gauntlet), level-ups queue
+    // up and get redeemed at the section's end via a dramatic stride chest. In other
+    // modes (horde/siege/survival/dungeon), they trigger immediately mid-combat.
     if (pendingLevelUps > 0 && !levelUpChoices && gameState === 'playing') {
-      triggerLevelUpPicker();
+      const _deferMode = gameMode === 'trench' || gameMode === 'descent' || gameMode === 'gauntlet';
+      if (!_deferMode) triggerLevelUpPicker();
     }
 
     const w=lp.weapons[lp.currentWeapon];
@@ -7309,6 +7460,109 @@ function render() {
 
   // Barrels + chests
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
+    // ---- STRIDE CHEST: dramatic entrance + rotating rings + light beam ----
+    if (br._strideChest) {
+      if (br._hitFlash > 0) br._hitFlash--;
+      // Tick entrance animation
+      if (br._spawnAnim > 0) br._spawnAnim--;
+      const animT = 1 - (br._spawnAnim || 0) / (br._spawnAnimMax || 70);
+      const easedT = animT * animT * (3 - 2 * animT); // smoothstep
+      const scale = 0.25 + easedT * 0.9;
+      const pulse = 0.7 + Math.sin(performance.now() * 0.006) * 0.3;
+      // Ambient gold glow cloud
+      const glowR = (br.radius + 28) * scale;
+      ctx.shadowColor = '#ff0';
+      ctx.shadowBlur = 50;
+      ctx.globalAlpha = 0.35 * pulse * easedT;
+      ctx.fillStyle = '#ff0';
+      ctx.beginPath(); ctx.arc(0, 0, glowR, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // Vertical light beam from above — tall rectangle with gradient fade
+      const beamH = 420 * easedT;
+      const beamAlpha = (0.55 * pulse * (1 - Math.min(1, animT * 0.7)));
+      if (beamAlpha > 0.02) {
+        const _grd = ctx.createLinearGradient(0, -beamH, 0, 10);
+        _grd.addColorStop(0, 'rgba(255,255,120,0)');
+        _grd.addColorStop(0.7, `rgba(255,230,80,${beamAlpha * 0.65})`);
+        _grd.addColorStop(1, `rgba(255,255,220,${beamAlpha})`);
+        ctx.fillStyle = _grd;
+        ctx.fillRect(-16 * scale, -beamH, 32 * scale, beamH + 8);
+      }
+      // Three rotating rings that slowly spin — only visible after the initial scale-in
+      if (easedT > 0.5) {
+        const ringOpacity = (easedT - 0.5) * 2;
+        ctx.strokeStyle = '#ff0';
+        ctx.shadowColor = '#ff0';
+        ctx.shadowBlur = 12;
+        ctx.globalAlpha = ringOpacity * 0.85;
+        for (let ri = 0; ri < 3; ri++) {
+          const rAng = performance.now() * (0.0018 + ri * 0.0008) + ri * Math.PI / 1.5;
+          const rR = (br.radius + 12 + ri * 9) * scale;
+          ctx.lineWidth = 2.5 - ri * 0.4;
+          ctx.beginPath();
+          ctx.arc(0, 0, rR, rAng, rAng + Math.PI * 1.6);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      }
+      // Chest body
+      ctx.globalAlpha = easedT;
+      ctx.fillStyle = '#0a0a12';
+      const w = br.radius * 1.45 * scale;
+      const h = br.radius * 1.15 * scale;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-w, -h, w * 2, h * 2, 4); else ctx.rect(-w, -h, w * 2, h * 2);
+      ctx.fill();
+      ctx.strokeStyle = br._hitFlash > 0 ? '#fff' : '#ff0';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#ff0';
+      ctx.shadowBlur = 14;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Lid split line + inner seam
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 1.8;
+      ctx.globalAlpha = 0.75 * easedT;
+      ctx.beginPath(); ctx.moveTo(-w + 3, -h * 0.3); ctx.lineTo(w - 3, -h * 0.3); ctx.stroke();
+      // Big star icon
+      ctx.globalAlpha = easedT;
+      ctx.fillStyle = '#ff0';
+      ctx.font = 'bold 18px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#ff0';
+      ctx.shadowBlur = 10;
+      ctx.fillText('★', 0, 2);
+      ctx.shadowBlur = 0;
+      // Orbiting sparkle dots (when fully materialized)
+      if (easedT > 0.8) {
+        const orbT = performance.now() * 0.004;
+        for (let oi = 0; oi < 6; oi++) {
+          const oa = orbT + oi * (Math.PI / 3);
+          const orr = (br.radius + 16) * scale;
+          const ox = Math.cos(oa) * orr;
+          const oy = Math.sin(oa) * orr;
+          ctx.fillStyle = '#ff0';
+          ctx.shadowColor = '#ff0'; ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(ox, oy, 2.5 + Math.sin(orbT * 2 + oi) * 1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      // Auto-break on player proximity — makes the chest easy to claim
+      const _lpProx = getLocalPlayer();
+      if (_lpProx && _lpProx.alive && br._spawnAnim <= 0) {
+        const _pdx = _lpProx.x - br.x, _pdy = _lpProx.y - br.y;
+        if (_pdx * _pdx + _pdy * _pdy < (br.radius + PLAYER_RADIUS + 6) ** 2) {
+          const _bi = barrels.indexOf(br);
+          if (_bi >= 0) explodeBarrel(br, _bi);
+        }
+      }
+      continue;
+    }
     if (br._chest) {
       // Tick hit flash
       if (br._hitFlash > 0) br._hitFlash--;
