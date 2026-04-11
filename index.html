@@ -977,6 +977,31 @@ function showRunStartSplash() {
 // Run stats for after-action report
 let runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: 0 };
 
+// ============================================================
+// RANGE FALLOFF — player bullets do less damage at long range.
+// Forces the player to close the distance instead of kiting from the back.
+//   0-120px: 100% | 120-240px: 100→60% | 240-360px: 60→30% | 360+: 30%
+// ============================================================
+const RANGE_FALLOFF_NEAR = 120;
+const RANGE_FALLOFF_MID  = 240;
+const RANGE_FALLOFF_FAR  = 360;
+function computeRangeFalloff(d) {
+  if (d <= RANGE_FALLOFF_NEAR) return 1.0;
+  if (d <= RANGE_FALLOFF_MID)  return 1.0 - (d - RANGE_FALLOFF_NEAR) / (RANGE_FALLOFF_MID - RANGE_FALLOFF_NEAR) * 0.4;
+  if (d <= RANGE_FALLOFF_FAR)  return 0.6 - (d - RANGE_FALLOFF_MID)  / (RANGE_FALLOFF_FAR - RANGE_FALLOFF_MID) * 0.3;
+  return 0.3;
+}
+// Color-code damage numbers (and bullet tints) by falloff multiplier
+function _falloffColorHex(f) {
+  if (f >= 0.9)  return '#ffffff';
+  if (f >= 0.65) return '#ffff80';
+  if (f >= 0.45) return '#ff9030';
+  return '#ff4040';
+}
+// Cached nearest-enemy-to-player distance — updated once per frame, used for the
+// close-range vignette and adrenaline-zone effects.
+let _playerNearestZombieDist = Infinity;
+
 function getScaledGun() {
   const m = runMods || {};
   const dmgMult = (1 + (m.damageMult || 0)) * (1 + (getMetaBonus('power')));
@@ -4972,6 +4997,8 @@ function fireWeaponForPlayer(p) {
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
       _element: activeElement?.id || null, _homing: false, _bouncing: 0,
+      // Range falloff origin: used to compute travel distance at hit time
+      _originX: p.x, _originY: p.y,
     });
   }
   // Sound pitch shifts slightly with power
@@ -6451,6 +6478,17 @@ function update() {
                   let _dmg = b.damage;
                   const _mods = runMods || {};
                   const _isLocal = b.ownerId === getLocalPlayer()?.id;
+                  // ---- RANGE FALLOFF ----
+                  // Player bullets do less damage the further they've traveled. Computed
+                  // from the bullet's origin (set at fire time). Applied BEFORE crit/hollow
+                  // so those multipliers stack on top of the scaled base damage.
+                  let _falloff = 1.0;
+                  if (b.owner === 'player' && b._originX !== undefined) {
+                    const _tdx = b.x - b._originX, _tdy = b.y - b._originY;
+                    const _traveled = Math.sqrt(_tdx * _tdx + _tdy * _tdy);
+                    _falloff = computeRangeFalloff(_traveled);
+                    _dmg = _dmg * _falloff;
+                  }
                   if (_isLocal) {
                     // Crit (base 5% chance from crit upgrade, or forced by bullet's own crit flag from overcharge)
                     if (!b.crit && _mods.critChance > 0 && Math.random() < _mods.critChance) {
@@ -6463,6 +6501,21 @@ function update() {
                     }
                   }
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
+                  // ---- DAMAGE NUMBER (color-coded by falloff) ----
+                  // Throttle per zombie so rapid-fire doesn't spam. Crits override with magenta.
+                  if (_isLocal && (!z._lastDmgShownAt || gameTime - z._lastDmgShownAt > 6)) {
+                    z._lastDmgShownAt = gameTime;
+                    floatingTexts.push({
+                      x: z.x + (Math.random() - 0.5) * 16,
+                      y: z.y - z.radius - 4,
+                      text: Math.max(1, Math.floor(_dmg)).toString(),
+                      color: b.crit ? '#f0f' : _falloffColorHex(_falloff),
+                      vy: -1.4,
+                      life: 26, maxLife: 26,
+                      _dmgNum: true,
+                      _crit: b.crit,
+                    });
+                  }
                   if (_isLocal) {
                     // Lifesteal: crits restore HP
                     if (b.crit && _mods.lifestealOnCrit > 0) {
@@ -6524,7 +6577,7 @@ function update() {
                       const ang = Math.atan2(b.vy, b.vx);
                       for (let fi = -1; fi <= 1; fi += 2) {
                         const fa = ang + fi * (Math.PI * 0.4);
-                        bullets.push({ x: b.x, y: b.y, vx: Math.cos(fa)*12, vy: Math.sin(fa)*12, damage: Math.floor(b.damage * 0.35), color: b.color, size: Math.max(1.5, b.size*0.6), knockback:0, pierce:0, pierced:0, life:20, owner:'player', ownerId:b.ownerId, trail:[], crit:false, _element:b._element||null, _frag: true });
+                        bullets.push({ x: b.x, y: b.y, vx: Math.cos(fa)*12, vy: Math.sin(fa)*12, damage: Math.floor(b.damage * 0.35), color: b.color, size: Math.max(1.5, b.size*0.6), knockback:0, pierce:0, pierced:0, life:20, owner:'player', ownerId:b.ownerId, trail:[], crit:false, _element:b._element||null, _frag: true, _originX: b.x, _originY: b.y });
                       }
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
@@ -7529,6 +7582,21 @@ function renderMenuBackground() {
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   if (gameState !== 'playing' && gameState !== 'paused') { renderMenuBackground(); renderMinimap(); return; }
+  // Cache nearest-zombie distance for the local player — used by the close-range vignette
+  {
+    _playerNearestZombieDist = Infinity;
+    const _lp = getLocalPlayer();
+    if (_lp && _lp.alive && zombies.length > 0) {
+      let _best2 = Infinity;
+      for (let _zi = 0; _zi < zombies.length; _zi++) {
+        const _z = zombies[_zi];
+        const _dx = _z.x - _lp.x, _dy = _z.y - _lp.y;
+        const _d2 = _dx * _dx + _dy * _dy;
+        if (_d2 < _best2) _best2 = _d2;
+      }
+      _playerNearestZombieDist = Math.sqrt(_best2);
+    }
+  }
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.translate(ox,oy);
 
@@ -8168,7 +8236,20 @@ function render() {
   for(const e of explosions){const t=e.life/e.maxLife;ctx.globalAlpha=t*0.5;ctx.fillStyle='#f80';ctx.beginPath();ctx.arc(e.x,e.y,e.radius*(1.2-t*0.2),0,Math.PI*2);ctx.fill();ctx.globalAlpha=t*0.3;ctx.fillStyle='#ff0';ctx.beginPath();ctx.arc(e.x,e.y,e.radius*0.5*t,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
 
   // Bullets
-  for(const b of bullets){if(b.tracer&&b.trail.length>1){
+  for(const b of bullets){
+    // Travel-distance freshness for player bullets. Bullets visibly decay as they fly,
+    // selling the range-falloff mechanic at a glance: crisp and bright up close,
+    // translucent and shrunken at long range (signal degradation in the mesh).
+    let _bFresh = 1;
+    if (b.owner === 'player' && b._originX !== undefined) {
+      const _btx = b.x - b._originX, _bty = b.y - b._originY;
+      const _btraveled = Math.sqrt(_btx*_btx + _bty*_bty);
+      _bFresh = computeRangeFalloff(_btraveled); // 1.0 → 0.3
+    }
+    // Map freshness to render size/alpha multipliers so bullets never vanish entirely
+    const _bSizeMult = 0.55 + 0.45 * _bFresh;   // 1.0 at close, 0.69 at 360+
+    const _bAlphaMult = 0.45 + 0.55 * _bFresh;  // 1.0 at close, 0.615 at 360+
+    if(b.tracer&&b.trail.length>1){
     // Laser glow: intense neon beam with wide glow
     if(b.laserGlow){
       ctx.shadowColor=b.color;ctx.shadowBlur=20;ctx.strokeStyle=b.color;ctx.lineWidth=5;ctx.globalAlpha=0.3;
@@ -8193,7 +8274,21 @@ function render() {
     ctx.shadowColor=b.color;ctx.shadowBlur=25;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
-    }else{ctx.shadowColor=b.color;ctx.shadowBlur=14;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size*0.6,0,Math.PI*2);ctx.fill();ctx.globalAlpha=0.5;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*1.5,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.shadowBlur=0;}}
+    }else{
+      // Default bullet render — scales with travel distance so they visibly decay at range
+      const _bRenderSize = b.size * _bSizeMult;
+      ctx.shadowColor = b.color;
+      ctx.shadowBlur = 14 * _bAlphaMult;
+      ctx.globalAlpha = _bAlphaMult;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 0.6, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.5 * _bAlphaMult;
+      ctx.fillStyle = b.color;
+      ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 1.5, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+    }
+  }
 
   // Zombies (shape helper is defined at module scope above)
   // Viewport bounds for culling off-screen zombies (saves per-zombie work)
@@ -8415,53 +8510,52 @@ function render() {
     if(aimLineAlpha > 0.01){
     const lp=getLocalPlayer();
     if(lp&&lp.alive){
-      const w=lp.weapons[lp.currentWeapon],def=WEAPON_DEFS[w.type];
-      const aimType=def.aimLine||'short';
-      const jColor=rightJoystick.firing?'#f04040':'#f0c040';
-      const a=lp.angle,cos=Math.cos(a),sin=Math.sin(a);
-      const startDist=PLAYER_RADIUS+14;
-      const af=aimLineAlpha; // fade multiplier
+      const a=lp.angle, cos=Math.cos(a), sin=Math.sin(a);
+      const startDist = PLAYER_RADIUS + 14;
+      const af = aimLineAlpha; // fade multiplier
+      // ---- RANGE FALLOFF AIM LINE ----
+      // The aim line is drawn as four segments — one per falloff band. Each segment's
+      // color tells the player how much damage they'd deal at that range, BEFORE they
+      // pull the trigger. This is the most important teaching tool for the falloff system.
       ctx.save();
-      // Helper: draw a line that fades out along its length
-      function drawFadingAimLine(sx,sy,ex,ey,lineW,alpha,dashed){
-        const grad=ctx.createLinearGradient(sx,sy,ex,ey);
-        grad.addColorStop(0,jColor);
-        grad.addColorStop(0.6,jColor);
-        grad.addColorStop(1,'rgba(0,0,0,0)');
-        ctx.strokeStyle=grad;ctx.lineWidth=lineW;ctx.globalAlpha=alpha*af;
-        if(dashed)ctx.setLineDash(dashed);
-        ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.stroke();
-        if(dashed)ctx.setLineDash([]);
+      const bands = [
+        { from: 0,                  to: RANGE_FALLOFF_NEAR, color: '#ffffff', alpha: 0.55, w: 2.0, dash: [6, 4] },   // bright white, full damage
+        { from: RANGE_FALLOFF_NEAR, to: RANGE_FALLOFF_MID,  color: '#ffff60', alpha: 0.42, w: 1.7, dash: [5, 5] },   // yellow, falloff begins
+        { from: RANGE_FALLOFF_MID,  to: RANGE_FALLOFF_FAR,  color: '#ff9030', alpha: 0.32, w: 1.4, dash: [4, 6] },   // orange, chip damage
+        { from: RANGE_FALLOFF_FAR,  to: RANGE_FALLOFF_FAR + 120, color: '#ff4040', alpha: 0.22, w: 1.1, dash: [3, 7] }, // dull red, floor damage
+      ];
+      for (const b of bands) {
+        const sx = lp.x + cos * (startDist + b.from);
+        const sy = lp.y + sin * (startDist + b.from);
+        const ex = lp.x + cos * (startDist + b.to);
+        const ey = lp.y + sin * (startDist + b.to);
+        ctx.strokeStyle = b.color;
+        ctx.lineWidth = b.w;
+        ctx.globalAlpha = b.alpha * af;
+        ctx.setLineDash(b.dash);
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
       }
-      if(aimType==='sniper'){
-        const len=500;
-        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.5,[6,8]);
-      } else if(aimType==='cone'){
-        const len=120,spread=def.spread;
-        for(let i=-1;i<=1;i++){
-          const sa=a+spread*i*1.2,sc=Math.cos(sa),ss=Math.sin(sa);
-          drawFadingAimLine(lp.x+sc*startDist,lp.y+ss*startDist,lp.x+sc*(startDist+len),lp.y+ss*(startDist+len),1.5,0.35,[4,6]);
-        }
-      } else if(aimType==='wide'){
-        const len=100,spread=def.spread;
-        for(let i=-2;i<=2;i++){
-          const sa=a+spread*i*0.8,sc=Math.cos(sa),ss=Math.sin(sa);
-          drawFadingAimLine(lp.x+sc*startDist,lp.y+ss*startDist,lp.x+sc*(startDist+len),lp.y+ss*(startDist+len),1,0.25,[3,5]);
-        }
-      } else if(aimType==='arc'){
-        const len=300;
-        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),2,0.4,[8,6]);
-        // Explosion radius preview
-        ctx.globalAlpha=0.15*af;ctx.strokeStyle=jColor;ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
-        ctx.beginPath();ctx.arc(lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),def.explosionRadius||80,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
-      } else if(aimType==='medium'){
-        const len=160;
-        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.4,[5,7]);
-      } else {
-        const len=90;
-        drawFadingAimLine(lp.x+cos*startDist,lp.y+sin*startDist,lp.x+cos*(startDist+len),lp.y+sin*(startDist+len),1.5,0.35,[4,6]);
+      ctx.setLineDash([]);
+      // Band boundary ticks — small perpendicular marks at 120/240/360 so the player
+      // can SEE where the falloff bands start and end.
+      ctx.globalAlpha = 0.55 * af;
+      for (const dist of [RANGE_FALLOFF_NEAR, RANGE_FALLOFF_MID, RANGE_FALLOFF_FAR]) {
+        const mx = lp.x + cos * (startDist + dist);
+        const my = lp.y + sin * (startDist + dist);
+        const perpX = -sin, perpY = cos;
+        const tickLen = 5;
+        ctx.strokeStyle = dist === RANGE_FALLOFF_NEAR ? '#ffffff' : dist === RANGE_FALLOFF_MID ? '#ffff60' : '#ff9030';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(mx - perpX * tickLen, my - perpY * tickLen);
+        ctx.lineTo(mx + perpX * tickLen, my + perpY * tickLen);
+        ctx.stroke();
       }
-      ctx.globalAlpha=1;ctx.restore();
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
     }
   }
@@ -8537,12 +8631,21 @@ function render() {
   for(const ft of floatingTexts){
     ctx.globalAlpha = ft.life / ft.maxLife;
     ctx.shadowColor = ft.color;
-    ctx.shadowBlur = ft._whisper ? 4 : 8;
-    ctx.fillStyle = ft.color;
-    // Whispers use italic serif for a ghostly feel; normal floating text stays monospace bold
-    ctx.font = ft._whisper ? 'italic 11px monospace' : 'bold 14px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(ft.text, ft.x, ft.y);
+    // Damage numbers: bigger for crits, smaller/subtler otherwise
+    if (ft._dmgNum) {
+      ctx.shadowBlur = ft._crit ? 10 : 5;
+      ctx.fillStyle = ft.color;
+      ctx.font = ft._crit ? 'bold 18px monospace' : 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(ft.text, ft.x, ft.y);
+    } else {
+      ctx.shadowBlur = ft._whisper ? 4 : 8;
+      ctx.fillStyle = ft.color;
+      // Whispers use italic serif for a ghostly feel; normal floating text stays monospace bold
+      ctx.font = ft._whisper ? 'italic 11px monospace' : 'bold 14px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(ft.text, ft.x, ft.y);
+    }
     ctx.shadowBlur = 0;
   }
   ctx.globalAlpha = 1;
@@ -8747,6 +8850,29 @@ function render() {
       ctx.fillStyle=grd;ctx.fillRect(0,0,canvas.width,canvas.height);
       // Pulse effect at critical HP
       if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+    }
+    // ---- ADRENALINE ZONE VIGNETTE ----
+    // Pulses red around screen edges when any enemy is within the close-range damage band.
+    // Reinforces the range-falloff mechanic: you FEEL the bonus kick in when you close the distance.
+    if (lp2.alive && _playerNearestZombieDist < 220) {
+      // Zone intensity ramps as enemies get closer. Peak at ~60px, taper to 0 at 220px.
+      const _closeT = Math.max(0, Math.min(1, (220 - _playerNearestZombieDist) / 160));
+      if (_closeT > 0.02) {
+        // Pulse faster when very close — heartbeat vibe
+        const _pulse = (0.7 + 0.3 * Math.sin(performance.now() * (0.006 + _closeT * 0.005)));
+        const _alpha = 0.18 * _closeT * _pulse;
+        const _zg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.25, canvas.width/2, canvas.height/2, canvas.width*0.72);
+        _zg.addColorStop(0, 'rgba(0,0,0,0)');
+        _zg.addColorStop(0.55, 'rgba(255,50,20,0)');
+        _zg.addColorStop(1, `rgba(255,40,20,${_alpha})`);
+        ctx.fillStyle = _zg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Inner warm tint at very close range — the "adrenaline" feel
+        if (_closeT > 0.55) {
+          ctx.fillStyle = `rgba(255,80,40,${0.04 * (_closeT - 0.55) / 0.45})`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
     }
     // Power-up screen tints
     if(hasPowerUp('rage')){ctx.fillStyle='rgba(255,40,0,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
