@@ -783,6 +783,254 @@ function spawnDescentSection(idx) {
   if (sec.isDark) addFloatingText(cx, sec.y + 130, 'DARKNESS', '#888');
 }
 
+// ---- THE TRENCH (horizontal clone of descent) ----
+const TRENCH_SECTION_W = 22; // cells per section horizontally
+const TRENCH_HEIGHT = 18;    // cells tall
+const TRENCH_NUM_SECTIONS = 20;
+const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
+let trenchSection = 0;
+let trenchSections = []; // { x (px), width, enemyCount, types, spawned, cleared, isBoss, isDark }
+let trenchFadeAlpha = 0;
+let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
+let _trenchPrevSection = 0;
+let _trenchPendingNext = -1;
+
+function generateTrenchMap(seed) {
+  const totalW = TRENCH_NUM_SECTIONS * TRENCH_SECTION_W * CELL_SIZE;
+  const totalH = TRENCH_HEIGHT * CELL_SIZE;
+  setArenaDimensions(totalW, totalH);
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  // Each section is a fully walled box. The right wall has a closed door (still a wall in the grid)
+  // — the door is purely a logical trigger zone the player walks against.
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    const baseX = si * TRENCH_SECTION_W;
+    for (let y = 1; y < TRENCH_HEIGHT - 1; y++) {
+      for (let dx = 1; dx < TRENCH_SECTION_W - 1; dx++) {
+        if (baseX + dx < GRID_W) dungeonGrid[y][baseX + dx] = true;
+      }
+    }
+    rooms.push({ x: baseX, y: 0, w: TRENCH_SECTION_W, h: TRENCH_HEIGHT, theme: ROOM_THEMES[4], brightness: 1.0, flicker: false });
+  }
+  // Build wall obstacles from grid
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) {
+    let rs = -1;
+    for (let x = 0; x <= GRID_W; x++) {
+      const isW = x < GRID_W ? !dungeonGrid[y][x] : true;
+      if (isW && rs === -1) rs = x;
+      else if (!isW && rs !== -1) {
+        obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' });
+        rs = -1;
+      }
+    }
+  }
+  // Build roomGrid (every interior cell points to its section)
+  roomGrid = [];
+  for (let y = 0; y < GRID_H; y++) {
+    roomGrid[y] = new Int8Array(GRID_W);
+    roomGrid[y].fill(-1);
+    for (let si = 0; si < TRENCH_NUM_SECTIONS && si < 127; si++) {
+      const baseX = si * TRENCH_SECTION_W;
+      if (y >= 1 && y < TRENCH_HEIGHT - 1) {
+        for (let dx = 1; dx < TRENCH_SECTION_W - 1; dx++) {
+          if (baseX + dx < GRID_W) roomGrid[y][baseX + dx] = 0;
+        }
+      }
+    }
+  }
+  rooms[0].theme = ROOM_THEMES[4];
+  roomDetails = [{ ri: 0, theme: rooms[0].theme, details: [], brightness: 1.0, flicker: false }];
+  uploadDungeonGrid();
+}
+
+function initTrenchSections() {
+  trenchSections = [];
+  for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
+    const sectionX = i * TRENCH_SECTION_W * CELL_SIZE;
+    const isBoss = i > 0 && i % 5 === 0;
+    const isDark = i > 3 && i % 4 === 3;
+    let enemyCount = Math.min(8, 3 + Math.floor(i * 0.7));
+    if (isBoss) enemyCount = Math.floor(enemyCount * 0.5);
+    const types = ['normal'];
+    if (i >= 2) types.push('fast');
+    if (i >= 3) types.push('spitter');
+    if (i >= 4) types.push('tank');
+    if (i >= 5) types.push('splitter');
+    if (i >= 7) types.push('mini');
+    if (i >= 8) types.push('exploder');
+    trenchSections.push({
+      x: sectionX,
+      width: TRENCH_SECTION_W * CELL_SIZE,
+      enemyCount,
+      types,
+      spawned: false,
+      cleared: false,
+      isBoss,
+      isDark,
+    });
+  }
+}
+
+function startTrench() {
+  trenchSection = 0;
+  _trenchPrevSection = 0;
+  _trenchPendingNext = -1;
+  trenchFadeAlpha = 0;
+  trenchFadeDir = 0;
+  initTrenchSections();
+  const el = document.getElementById('wave-announce');
+  document.getElementById('wave-num').textContent = 'THE TRENCH';
+  document.getElementById('wave-sub').textContent = 'Push forward. Never look back.';
+  el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2500);
+  playWaveStartSound();
+  spawnTrenchSection(0);
+}
+
+function spawnTrenchSection(idx) {
+  const sec = trenchSections[idx];
+  if (!sec || sec.spawned) return;
+  sec.spawned = true;
+  const TW = TRENCH_SECTION_W * CELL_SIZE;
+  const cx = sec.x + TW / 2;
+  const cy = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+  // Spawn enemies in the right portion of the section (away from where the player enters)
+  for (let ei = 0; ei < sec.enemyCount; ei++) {
+    const tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    const t = ZOMBIE_TYPES[tk]; if (!t) continue;
+    const ex = sec.x + (0.45 + Math.random() * 0.45) * TW;
+    const ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
+    const sc = 1 + idx * 0.06;
+    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * sc, maxHp: t.hp * sc, speed: t.speed + idx * 0.01, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
+  }
+  if (sec.isBoss) {
+    const bt = ZOMBIE_TYPES.boss;
+    const tier = Math.floor(idx / 5);
+    const bossHp = bt.hp + tier * 200;
+    zombies.push({ zid: _nextZombieId++, x: sec.x + TW * 0.7, y: cy, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bt.damage, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true });
+  }
+  // Element zone — picked up as the player advances
+  const ezx = sec.x + (0.4 + Math.random() * 0.3) * TW;
+  const ezy = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
+  const elem = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
+  elementZones.push({ x: ezx, y: ezy, radius: 40, element: elem.id, life: 9999 });
+  // A couple of barrels for fun
+  for (let bi = 0; bi < 2; bi++) {
+    const bx = sec.x + (0.35 + Math.random() * 0.45) * TW;
+    const by = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
+    barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
+  }
+  addFloatingText(cx, cy - 60, `SECTION ${idx + 1}`, '#f0c040');
+  if (sec.isBoss) addFloatingText(cx, cy - 36, 'BOSS', '#f44');
+  if (sec.isDark) addFloatingText(cx, cy - 36, 'DARKNESS', '#888');
+}
+
+function updateTrench() {
+  if (!isHost || gameMode !== 'trench') return;
+  if (trenchFadeDir !== 0) return; // mid-transition: don't process
+  const sec = trenchSections[trenchSection];
+  if (!sec) return;
+  const TW = TRENCH_SECTION_W * CELL_SIZE;
+  const xMin = sec.x, xMax = sec.x + TW;
+  const sectionZombies = zombies.filter(z => z.x >= xMin && z.x < xMax);
+  if (sec.spawned && sectionZombies.length === 0 && !sec.cleared) {
+    sec.cleared = true;
+    score += 200 * (trenchSection + 1);
+    if (trenchSection >= TRENCH_NUM_SECTIONS - 1) {
+      const lp = getLocalPlayer();
+      score += 5000;
+      if (lp) {
+        addFloatingText(lp.x, lp.y - 50, 'YOU ESCAPED!', '#f0c040');
+        addFloatingText(lp.x, lp.y - 25, '+5000 BONUS', '#4f4');
+      }
+      screenShake.intensity = 15;
+      playLevelCompleteSound();
+      setTimeout(() => showDeathScreen(), 2500);
+      return;
+    }
+    const lp2 = getLocalPlayer();
+    if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
+    playExitFoundSound();
+    if (sec.isBoss && !hasPowerUpAnywhere()) {
+      const pwr = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+      const lpb = getLocalPlayer();
+      if (lpb) pickups.push({ type: 'powerup', powerupId: pwr.id, x: lpb.x + 60, y: lpb.y, bobTimer: 0 });
+    }
+  }
+  // Door trigger: when cleared and any player is at the right wall in the door y range
+  if (sec.cleared && _trenchPendingNext < 0) {
+    const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
+    const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
+    const rightWallX = sec.x + TW - CELL_SIZE;
+    const triggerX = rightWallX - PLAYER_RADIUS - 6;
+    for (const p of players) {
+      if (!p.alive) continue;
+      if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
+        _trenchPendingNext = trenchSection + 1;
+        startTrenchFade();
+        break;
+      }
+    }
+  }
+}
+
+function startTrenchFade() {
+  if (trenchFadeDir !== 0) return;
+  trenchFadeDir = 1;
+  trenchFadeAlpha = 0;
+  // Brief invincibility for everyone so they don't get killed mid-transition
+  for (const p of players) {
+    if (p.alive) p.invincible = Math.max(p.invincible || 0, 90);
+  }
+}
+
+function updateTrenchFade() {
+  if (gameMode !== 'trench') return;
+  // Non-host: detect host's section change → snap to black, then fade in
+  if (!isHost) {
+    if (trenchSection !== _trenchPrevSection) {
+      _trenchPrevSection = trenchSection;
+      trenchFadeAlpha = 1;
+      trenchFadeDir = -1;
+    }
+  }
+  if (trenchFadeDir === 1) {
+    trenchFadeAlpha += 1/12; // ~12 frames to fully black (200ms)
+    if (trenchFadeAlpha >= 1) {
+      trenchFadeAlpha = 1;
+      // At black: host performs the teleport + spawn
+      if (isHost && _trenchPendingNext >= 0) {
+        const newIdx = _trenchPendingNext;
+        const newSec = trenchSections[newIdx];
+        if (newSec) {
+          trenchSection = newIdx;
+          _trenchPrevSection = newIdx;
+          const spawnX = newSec.x + 2.5 * CELL_SIZE;
+          const spawnY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+          for (const p of players) {
+            if (p.alive) { p.x = spawnX; p.y = spawnY; p.vx = 0; p.vy = 0; }
+          }
+          const lp = getLocalPlayer();
+          if (lp) { camera.x = lp.x; camera.y = lp.y; }
+          // Clear leftover zombie projectiles from prev section so nothing lingers
+          bullets = bullets.filter(b => b.owner !== 'zombie');
+          spawnTrenchSection(newIdx);
+        }
+        _trenchPendingNext = -1;
+      }
+      trenchFadeDir = -1;
+    }
+  } else if (trenchFadeDir === -1) {
+    trenchFadeAlpha -= 1/12;
+    if (trenchFadeAlpha <= 0) {
+      trenchFadeAlpha = 0;
+      trenchFadeDir = 0;
+    }
+  }
+}
+
 function updateDescent() {
   if (!isHost || gameMode !== 'descent') return;
   const sec = descentSections[descentSection];
@@ -2369,7 +2617,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent';
+  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench';
   const baseBright = _brightMode ? 0.35 : 0.25;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -2573,7 +2821,7 @@ function updateLobbyUI() {
   document.getElementById('lobby-code').textContent = lobbyCode;
   // Show game mode label
   const modeDisp = document.getElementById('mode-display');
-  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : 'MODE: CO-OP';
+  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'trench' ? 'MODE: TRENCH' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : gameMode === 'siege' ? 'MODE: SIEGE' : 'MODE: CO-OP';
 }
 
 function showDeathScreen() {
@@ -2598,8 +2846,8 @@ function showDeathScreen() {
 
   // Mode-specific progression stat (horde has no progression — it's one continuous level)
   const showProg = gameMode !== 'horde';
-  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
-  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
+  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
+  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
 
   // Leaderboard history — store up to 50 runs per mode, display all of them in a scrollable list
   const lbKey = `deadzone_lb_${gameMode}`;
@@ -2710,6 +2958,7 @@ addBtn('btn-codex-back', () => { closeCodex(); });
 // ---- Mode picker ----
 const MODE_CARDS = [
   { id: 'descent',  title: 'DESCENT',  color: '#0f0', desc: 'How deep can you go?',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 L18 4 M6 10 L18 10 M6 16 L18 16 M12 20 L7 15 M12 20 L17 15"/></svg>' },
+  { id: 'trench',   title: 'TRENCH',   color: '#0af', desc: 'Push through. One door at a time.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="4" y2="18"/><line x1="10" y1="6" x2="10" y2="18"/><line x1="16" y1="6" x2="16" y2="18"/><path d="M4 12 L18 12 M14 8 L18 12 L14 16"/></svg>' },
   { id: 'horde',    title: 'HORDE',    color: '#0ff', desc: 'Nonstop chaos. Defend the circle.',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>' },
   { id: 'siege',    title: 'SIEGE',    color: '#f80', desc: 'Two walls. Waves from both sides.',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="17" y2="21"/><line x1="11" y1="8" x2="11" y2="16"/><line x1="13" y1="8" x2="13" y2="16"/></svg>' },
 ];
@@ -3169,6 +3418,9 @@ function startSoloGame() {
   if (gameMode === 'descent') {
     generateDescentMap(window._currentLevelSeed);
     exitPos = null;
+  } else if (gameMode === 'trench') {
+    generateTrenchMap(window._currentLevelSeed);
+    exitPos = null;
   } else if (gameMode === 'survival') {
     generateArena(window._currentLevelSeed);
     exitPos = null;
@@ -3189,7 +3441,7 @@ function startSoloGame() {
   }
   const _spawnArena = rooms[0];
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'trench' ? { x: 2.5 * CELL_SIZE, y: (TRENCH_HEIGHT/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
@@ -3201,6 +3453,7 @@ function startSoloGame() {
   playMusic((gameMode === 'horde' || gameMode === 'siege') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'descent') startDescent();
+  else if (gameMode === 'trench') startTrench();
   else if (gameMode === 'survival') startSurvivalWave();
   else if (gameMode === 'horde') startHorde();
   else if (gameMode === 'siege') startSiege();
@@ -3232,6 +3485,12 @@ function startMultiplayerGame() {
     generateDescentMap(lobbySeed);
     initDescentSections();
     exitPos = null;
+  } else if (gameMode === 'trench') {
+    generateTrenchMap(lobbySeed);
+    initTrenchSections();
+    exitPos = null;
+    trenchSection = 0; _trenchPrevSection = 0; _trenchPendingNext = -1;
+    trenchFadeAlpha = 0; trenchFadeDir = 0;
   } else if (gameMode === 'siege') {
     generateSiegeArena(lobbySeed);
     exitPos = null;
@@ -3243,7 +3502,7 @@ function startMultiplayerGame() {
     generateDungeon(lobbySeed);
   }
   const marginX2 = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
-  const c = gameMode === 'descent' ? { x: (marginX2 + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX2 + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'trench' ? { x: 2.5 * CELL_SIZE, y: (TRENCH_HEIGHT/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : getRoomCenter(rooms[0]);
   players = [];
   for (let i = 0; i < lobbyPlayers.length; i++) {
     const lp = lobbyPlayers[i];
@@ -3264,6 +3523,7 @@ function startMultiplayerGame() {
   document.activeElement?.blur(); canvas.focus();
   if (isHost) {
     if (gameMode === 'descent') startDescent();
+    else if (gameMode === 'trench') startTrench();
     else if (gameMode === 'survival') startSurvivalWave();
     else if (gameMode === 'horde') startHorde();
     else if (gameMode === 'siege') startSiege();
@@ -4460,6 +4720,19 @@ function update() {
         if(_ls) { const bl = _ls.y + _ls.height * 0.8; if(lp.y > bl) lp.y = bl; }
       }
     }
+    // Trench: hard clamp player to current section's interior; freeze during transition
+    if(gameMode==='trench'){
+      const _tsec = trenchSections[trenchSection];
+      if(_tsec){
+        const _tTW = TRENCH_SECTION_W * CELL_SIZE;
+        const _tLeft = _tsec.x + CELL_SIZE + PLAYER_RADIUS + 1;
+        const _tRight = _tsec.x + _tTW - CELL_SIZE - PLAYER_RADIUS - 1;
+        if (lp.x < _tLeft) lp.x = _tLeft;
+        if (lp.x > _tRight) lp.x = _tRight;
+      }
+      // Freeze movement while fading (visual safety)
+      if (trenchFadeDir !== 0) { lp.vx = 0; lp.vy = 0; }
+    }
     if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}
     else if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){lp.angle=Math.atan2(gamepad.ry,gamepad.rx);}
     else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
@@ -4786,9 +5059,14 @@ function update() {
   }
 
   // ---- Host runs simulation ----
+  // Trench fade: runs on host AND client every frame
+  updateTrenchFade();
+
   if (isHost) {
     if (gameMode === 'descent') {
       updateDescent();
+    } else if (gameMode === 'trench') {
+      updateTrench();
     } else if (gameMode === 'horde') {
       updateHorde();
     } else if (gameMode === 'siege') {
@@ -5190,7 +5468,7 @@ function update() {
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0 });
   }
 
   updateHUD();
@@ -5201,6 +5479,7 @@ function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
   if (msg.hordeTimer !== undefined) { hordeTimer = msg.hordeTimer; if (msg.hordeCircleTimer !== undefined) hordeCircleTimer = msg.hordeCircleTimer; }
   if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
+  if (msg.trenchSection !== undefined) { trenchSection = msg.trenchSection; }
   if (msg.elemZones) { elementZones = msg.elemZones; }
   if (msg.gauntletRoom !== undefined) {
     // Detect room change for non-host: regenerate arena and show announcement
@@ -5388,6 +5667,7 @@ function updateHUD() {
     const _mk = (label) => `<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.5);letter-spacing:3px;padding:4px 14px">${label}</div>`;
     if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_ch.innerHTML=_mk(`${_m}:${_ss<10?'0':''}${_ss}`);_ch.style.display='block';}
     else if(gameMode==='descent'){_ch.innerHTML=_mk(`SECTION ${descentSection+1}`);_ch.style.display='block';}
+    else if(gameMode==='trench'){_ch.innerHTML=_mk(`SECTION ${trenchSection+1}`);_ch.style.display='block';}
     else if(gameMode==='survival'){_ch.innerHTML=_mk(`WAVE ${survivalWave}`);_ch.style.display='block';}
     else if(gameMode==='siege'){let mainLabel;if(siegeWaveState==='rest'&&siegeWave>0){const restLeft=Math.ceil((600-siegeWaveTimer)/60);mainLabel=`NEXT WAVE IN ${restLeft}s`;}else if(siegeWaveState==='rest'){mainLabel='GET READY';}else{mainLabel=`WAVE ${siegeWave}`;}_ch.innerHTML=_mk(mainLabel);_ch.style.display='block';}
     else{_ch.style.display='none';}
@@ -5877,6 +6157,31 @@ function render() {
     if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#100008';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
   }
 
+  // Trench door
+  if(gameMode==='trench'&&trenchSections[trenchSection]){
+    const sec=trenchSections[trenchSection];
+    const TW=TRENCH_SECTION_W*CELL_SIZE;
+    const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
+    const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
+    const dx1=sec.x+TW-CELL_SIZE;
+    const dx2=sec.x+TW;
+    const open=sec.cleared;
+    const isLast=trenchSection>=TRENCH_NUM_SECTIONS-1;
+    const dColor=isLast?'#0f0':open?'#0ff':'#f44';
+    const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
+    ctx.globalAlpha=open?0.6*pulse:0.3;
+    ctx.shadowColor=dColor;ctx.shadowBlur=12;
+    ctx.strokeStyle=dColor;ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(dx1,doorY1);ctx.lineTo(dx1,doorY2);ctx.stroke();
+    ctx.globalAlpha=0.18;ctx.fillStyle=dColor;
+    ctx.fillRect(dx1-2,doorY1,(dx2-dx1)+2,doorY2-doorY1);
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+    ctx.font='bold 12px monospace';ctx.textAlign='center';
+    ctx.fillStyle=dColor;ctx.shadowColor=dColor;ctx.shadowBlur=8;
+    const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ DOOR OPEN ▶':'✕ LOCKED ✕';
+    ctx.fillText(lbl,(dx1+dx2)/2,doorY1-10);ctx.shadowBlur=0;
+  }
+
   // Exit portal
   if(exitPos){
     const locked=exitPos._locked;
@@ -6230,7 +6535,7 @@ function render() {
 
   // ---- Lighting (WebGL with canvas 2D fallback) ----
   {
-    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent') ? 1200 : 900;
+    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
     const lp3 = getLocalPlayer();
     // Gather all alive players as light sources
     const lights = [];
@@ -6271,7 +6576,7 @@ function render() {
       if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
       const fc = window._fogCanvas, fctx = window._fogCtx;
       fc.width = canvas.width; fc.height = canvas.height;
-      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent') ? 'rgba(0,0,8,0.5)' : 'rgba(0,0,8,0.6)';
+      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench') ? 'rgba(0,0,8,0.5)' : 'rgba(0,0,8,0.6)';
       fctx.fillRect(0, 0, fc.width, fc.height);
       fctx.globalCompositeOperation = 'destination-out';
       const fox = -camera.x + canvas.width/2 + screenShake.x;
@@ -6482,6 +6787,12 @@ function render() {
 
   if(isMobile&&gameState==='playing')renderJoysticks();
   renderMinimap();
+
+  // Trench transition fade — drawn last so it covers the entire viewport (HUD included)
+  if(gameMode==='trench'&&trenchFadeAlpha>0){
+    ctx.fillStyle=`rgba(0,0,0,${Math.min(1,trenchFadeAlpha)})`;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
 }
 
 function renderJoysticks(){
