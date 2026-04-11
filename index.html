@@ -673,7 +673,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 12;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -1704,6 +1704,57 @@ function maybeDropXPOrb(zombie) {
   if (zombie.boss || Math.random() < 0.9) dropXPOrb(zombie.x, zombie.y, zombie);
 }
 
+// ---- ENEMY ITEM DROPS ----
+// Replaces chest-based power-up / element spawns. Every kill has a small chance
+// to drop a pickup; elite kills roll better odds; bosses always drop something
+// good. Drop distribution skews toward health/ammo for normal kills and toward
+// power-ups/elements for elites/bosses.
+//
+// Expected totals per ~500-kill run (roughly):
+//   ~2-3 element drops, ~3-5 power-ups, ~7-10 health, ~6-8 ammo
+// That's "rare but felt" — a few notable drops per run, not a flood.
+function maybeDropPickup(zombie) {
+  if (!zombie || !isHost) return;
+  const t = zombie.type;
+  const isBoss = !!zombie.boss;
+  const isElite = !isBoss && (t === 'tank' || t === 'brute' || t === 'sniper' || t === 'shielder' || t === 'splitter' || t === 'stalker');
+  let dropChance = 0.03; // normal enemies: 3% total drop rate
+  if (isElite) dropChance = 0.20;
+  if (isBoss)  dropChance = 1.0;
+  if (Math.random() > dropChance) return;
+
+  const x = zombie.x, y = zombie.y;
+  const r = Math.random();
+  let kind;
+  if (isBoss) {
+    // Bosses skew heavily toward power-ups and elements
+    if (r < 0.40)      kind = 'element';
+    else if (r < 0.85) kind = 'powerup';
+    else               kind = 'health';
+  } else {
+    // Normal/elite kills: mostly health/ammo, some power-ups, rarely elements
+    if (r < 0.10)      kind = 'element';
+    else if (r < 0.25) kind = 'powerup';
+    else if (r < 0.65) kind = 'health';
+    else               kind = 'ammo';
+  }
+
+  if (kind === 'element') {
+    const el = ELEMENT_TYPES[Math.floor(Math.random() * ELEMENT_TYPES.length)];
+    pickups.push({ type: 'element', elementId: el.id, x, y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (kind === 'powerup') {
+    // Exclude nuke from the drop pool — it's too strong for a common drop. Still
+    // reachable via the special boss / guaranteed spawns if we ever add them back.
+    const pool = POWERUP_TYPES.filter(p => p.id !== 'nuke');
+    const pw = pool[Math.floor(Math.random() * pool.length)];
+    pickups.push({ type: 'powerup', powerupId: pw.id, x, y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (kind === 'health') {
+    pickups.push({ type: 'health', amount: 20, x, y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (kind === 'ammo') {
+    pickups.push({ type: 'ammo', x, y, bobTimer: Math.random() * Math.PI * 2 });
+  }
+}
+
 function updateXPOrbs() {
   const lp = getLocalPlayer();
   if (!lp) return;
@@ -2227,10 +2278,7 @@ function updateTrench() {
     const lp2 = getLocalPlayer();
     if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
     playExitFoundSound();
-    if (sec.isBoss && !hasPowerUpAnywhere()) {
-      const lpb = getLocalPlayer();
-      if (lpb) spawnRandomPowerupChest(lpb.x + 60, lpb.y);
-    }
+    // (Boss power-up chest removed — power-ups now drop directly from enemies.)
     // Cache Node (shop chest) — spawn every SHOP_SECTION_INTERVAL cleared sections
     if (!_anyShopChestActive() && shouldSpawnShopChest()) {
       const lpc = getLocalPlayer();
@@ -2350,10 +2398,7 @@ function updateDescent() {
     descentGateOpen = true;
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
     playExitFoundSound();
-    if (sec.isBoss && !hasPowerUpAnywhere()) {
-      const lp3 = getLocalPlayer();
-      if (lp3) spawnRandomPowerupChest(lp3.x, lp3.y + 30);
-    }
+    // (Boss power-up chest removed — power-ups now drop directly from enemies.)
     // Cache Node on section clear (every SHOP_SECTION_INTERVAL sections)
     if (!_anyShopChestActive() && shouldSpawnShopChest()) {
       const lpc = getLocalPlayer();
@@ -5579,20 +5624,25 @@ function dash() {
   lp._dashFrames = 10;  // 10 actual dash-motion frames
   // Invincible for the dash + a brief recovery window
   lp.invincible = Math.max(lp.invincible, 600);
-  // Celebratory particle burst from the origin — cyan explosion of speed
-  for (let i = 0; i < 24; i++) {
+  // ---- GLITCH BURST: the Revenant briefly de-syncs from the simulation ----
+  // The dash is reframed as a priority-override exploit that breaks physics
+  // for ~10 frames. Visually, everything goes glitchy at the origin.
+  triggerGlitchSurge(0.4, 20);
+  // Origin burst: mix of cyan + magenta (chromatic) sparks instead of cyan+white
+  for (let i = 0; i < 28; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 2 + Math.random() * 5;
+    const _cr = Math.random();
     particles.push({
       x: lp.x, y: lp.y,
       vx: Math.cos(a) * s, vy: Math.sin(a) * s,
       life: 22, maxLife: 22,
       size: 2 + Math.random() * 2,
-      color: Math.random() < 0.5 ? '#0ff' : '#fff',
+      color: _cr < 0.35 ? '#0ff' : _cr < 0.7 ? '#f0f' : '#fff',
       type: 'spark',
     });
   }
-  // Backward speed lines from the player opposing the dash direction
+  // Backward speed lines opposing dash direction
   for (let i = 0; i < 8; i++) {
     const offset = (Math.random() - 0.5) * PLAYER_RADIUS;
     const perpX = -dy, perpY = dx;
@@ -5603,8 +5653,22 @@ function dash() {
       vy: -dy * (4 + Math.random() * 3),
       life: 14, maxLife: 14,
       size: 1.5,
-      color: '#0ff',
+      color: Math.random() < 0.5 ? '#0ff' : '#f0f',
       type: 'spark',
+    });
+  }
+  // Glitch character rain at the origin — the simulation dropping frames
+  const _glitchChars = '█░▓▒╳◆▪◢◣◤◥!?';
+  for (let i = 0; i < 6; i++) {
+    const a = Math.random() * Math.PI * 2;
+    particles.push({
+      x: lp.x + Math.cos(a) * 8, y: lp.y + Math.sin(a) * 8,
+      vx: Math.cos(a) * 1.5, vy: Math.sin(a) * 1.5 - 1,
+      life: 22, maxLife: 22,
+      size: 11,
+      color: Math.random() < 0.5 ? '#0ff' : '#f0f',
+      type: 'glitchtext',
+      text: _glitchChars[Math.floor(Math.random() * _glitchChars.length)],
     });
   }
   screenShake.intensity = Math.max(screenShake.intensity, 5);
@@ -5777,6 +5841,19 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
       else if(p.type==='orbital'){
         if(isLocalUI){activateOrbital(p.orbitalId);playPickupSound();}
         pickups.splice(i,1);}
+      else if(p.type==='element'){
+        // Temporary element-infused ammo — 12s of fire/ice/lightning/wind bullets.
+        // Replaces the old walk-into element zones.
+        if (isLocalUI) {
+          const et = ELEMENT_TYPES.find(e => e.id === p.elementId);
+          if (et) {
+            activeElement = { id: p.elementId, timer: 720 };
+            showPickupMsg(`${et.icon} ELEMENT MOD · ${et.name}`, '12s — bullets infused');
+            playPickupSound();
+          }
+        }
+        pickups.splice(i, 1);
+      }
     }
   }
 }
@@ -6113,13 +6190,7 @@ function updateHorde() {
   }
   // Items spawn at ring positions, not center
   if (hordeTimer === 480 || (hordeTimer > 480 && hordeTimer % 1800 === 0)) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
-  // Power-up chest every 35 seconds — spawned around the defend circle, not at the center
-  if (hordeTimer % 2100 === 0 && hordeTimer > 0 && !hasPowerUpAnywhere()) {
-    const pos = getHordeEdgePos();
-    spawnRandomPowerupChest(pos.x, pos.y, { orbitalChance: 0.2 });
-  }
-  // Element chest every 15 seconds — spawned around the defend circle, not the center
-  if (hordeTimer % 900 === 0 && hordeTimer > 0) { const _ec = getHordeEdgePos(); spawnElementZone(_ec.x, _ec.y); }
+  // (Horde power-up chest + element zone removed — both now drop directly from enemies.)
   // Extra health every 30 seconds
   if (hordeTimer % 1800 === 0) { const hp=getHordeEdgePos(); pickups.push({type:'health',amount:25,x:hp.x,y:hp.y,bobTimer:Math.random()*Math.PI*2}); }
   // ---- DEFEND THE CIRCLE: check if zombies are inside ----
@@ -6532,12 +6603,8 @@ function updateGauntlet() {
       score += 300 * gauntletRoom;
       addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'EXIT UNLOCKED!', '#0ff');
       playExitFoundSound();
-      // Drop loot — health every 3 rooms, power-up chest on boss rooms
+      // Drop loot — health every 3 rooms; power-ups + elements now come from enemy drops
       if (gauntletRoom % 3 === 0) spawnHealthPickup();
-      if (gauntletRoom % 5 === 0 && !hasPowerUpAnywhere()) {
-        const pos = getRandomFloorPos();
-        spawnRandomPowerupChest(pos.x, pos.y);
-      }
       // Cache Node on room clear (every SHOP_SECTION_INTERVAL cleared rooms)
       if (!_anyShopChestActive() && shouldSpawnShopChest()) {
         const lpc = getLocalPlayer();
@@ -6598,6 +6665,9 @@ function hasPowerUpAnywhere() { return hasPowerUpOnMap() || activePowerUps.lengt
 function dropZombieLoot(z) {
   // XP crystal — the core dopamine loop. 90% of normals, 100% of bosses.
   if (isHost) maybeDropXPOrb(z);
+  // Item drop roll — health / ammo / power-up / element. Rare on normals,
+  // common on elites, guaranteed on bosses. Replaces chest-based spawns.
+  if (isHost) maybeDropPickup(z);
   // Vampirism: heal local player per kill
   const mods = runMods || {};
   const lp = getLocalPlayer();
@@ -6796,23 +6866,42 @@ function update() {
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
     // ---- DASH OVERRIDE ----
     // When the dash is active, slam velocity to the dash direction × dash speed and spawn
-    // afterimage particles. Normal input is ignored for the duration.
+    // chromatic glitch afterimages. Normal input is ignored for the duration.
     if (lp._dashFrames && lp._dashFrames > 0) {
       lp._dashFrames--;
       lp.vx = (lp.dashDirX || 1) * DASH_SPEED;
       lp.vy = (lp.dashDirY || 0) * DASH_SPEED;
-      // Afterimage ghost of the player each frame. Tint toward the dominant trail element
-      // so the dash itself reads as "on fire" / "icy" / "crackling" when loaded out.
+      // Element trail color — dominant dash element determines tint
       const _mods = runMods || {};
       let _trailColor = '#0ff';
       if (_mods.fireSmashLv  > 0 && _mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0)) _trailColor = '#f80';
       else if (_mods.iceSmashLv   > 0 && _mods.iceSmashLv   >= (_mods.chainSmashLv||0) && _mods.iceSmashLv   >= (_mods.windSmashLv||0)) _trailColor = '#8ef';
       else if (_mods.chainSmashLv > 0 && _mods.chainSmashLv >= (_mods.windSmashLv||0)) _trailColor = '#4ff';
       else if (_mods.windSmashLv  > 0) _trailColor = '#cef';
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: PLAYER_RADIUS, color: _trailColor, type: 'dashtrail' });
+      // Chromatic triple-afterimage: primary (element tint), plus cyan/magenta ghosts
+      // offset perpendicular to the dash direction. Produces a de-synced "RGB split" feel.
+      const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
+      const _split = 4 + Math.random() * 2;
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: PLAYER_RADIUS, color: _trailColor, type: 'dashtrail' });
+      particles.push({ x: lp.x + _perpX * _split, y: lp.y + _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: '#0ff', type: 'dashtrail' });
+      particles.push({ x: lp.x - _perpX * _split, y: lp.y - _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: '#f0f', type: 'dashtrail' });
+      // Glitch character rain behind the player — the simulation dropping frames
+      if (gameTime % 2 === 0) {
+        const _glitchChars2 = '█░▓▒╳◆▪◢◣!?';
+        const _goffX = -(lp.dashDirX || 0) * (4 + Math.random() * 8) + _perpX * ((Math.random() - 0.5) * 14);
+        const _goffY = -(lp.dashDirY || 0) * (4 + Math.random() * 8) + _perpY * ((Math.random() - 0.5) * 14);
+        particles.push({
+          x: lp.x + _goffX, y: lp.y + _goffY,
+          vx: -(lp.dashDirX || 0) * 1.0, vy: -(lp.dashDirY || 0) * 1.0,
+          life: 16, maxLife: 16,
+          size: 10,
+          color: Math.random() < 0.5 ? '#0ff' : '#f0f',
+          type: 'glitchtext',
+          text: _glitchChars2[Math.floor(Math.random() * _glitchChars2.length)],
+        });
+      }
       // Leading-edge speed sparkles
       if (gameTime % 2 === 0) {
-        const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
         const _off = (Math.random() - 0.5) * PLAYER_RADIUS * 1.2;
         particles.push({
           x: lp.x + _perpX * _off,
@@ -7786,7 +7875,7 @@ function update() {
     });
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
-    const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
+    const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,powerupId:p.powerupId,elementId:p.elementId,orbitalId:p.orbitalId,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
     // Siege walls: only send HP arrays, positions are already known from map gen
@@ -8853,7 +8942,7 @@ function render() {
     ctx.globalAlpha=0.3+bt*0.3;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,p._radius*(1-bt),0,Math.PI*2);ctx.stroke();
     ctx.globalAlpha=0.8;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,5,0,Math.PI*2);ctx.fill();
     ctx.restore();continue;}
-    const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}ctx.restore();}
+    const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}else if(p.type==='element'){const ed=ELEMENT_TYPES.find(e=>e.id===p.elementId);if(ed){const pulse=0.55+Math.sin(performance.now()*0.009)*0.45;ctx.globalAlpha=pulse;ctx.shadowColor=ed.color;ctx.shadowBlur=24;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.3;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,18+Math.sin(performance.now()*0.006)*2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ed.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=ed.color;ctx.fillText(ed.name,0,22);}}ctx.restore();}
 
   // Descent gate
   if(gameMode==='descent'&&descentSections[descentSection]){
@@ -9249,8 +9338,23 @@ function render() {
       const useGlow = sz >= 3;
       if(p.type==='dashtrail'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=10; }
-        ctx.globalAlpha=(p.life/p.maxLife)*0.2;ctx.strokeStyle=p.color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
+        ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
         if (useGlow) ctx.shadowBlur=0;
+      } else if(p.type==='glitchtext'){
+        // Flickering glitch character — dashes / death / corruption spills
+        const _flicker = Math.random() > 0.25 ? 1 : 0.25;
+        ctx.globalAlpha = (p.life/p.maxLife) * 0.85 * _flicker;
+        ctx.shadowColor = p.color; ctx.shadowBlur = 6;
+        ctx.fillStyle = p.color;
+        ctx.font = `bold ${p.size}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(p.text || '█', p.x, p.y);
+        // Occasional character swap while in-flight — text stays glitchy
+        if (Math.random() < 0.2 && p.text) {
+          const _glc = '█░▓▒╳◆▪!?';
+          p.text = _glc[Math.floor(Math.random() * _glc.length)];
+        }
+        ctx.shadowBlur = 0;
       } else if(p.type==='explosion'||p.type==='spark'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=sz*2; }
         ctx.fillStyle='#fff';ctx.globalAlpha=(p.life/p.maxLife)*0.7;ctx.beginPath();ctx.arc(p.x,p.y,sz*0.5,0,Math.PI*2);ctx.fill();
