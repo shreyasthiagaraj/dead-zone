@@ -4988,15 +4988,18 @@ function fireWeaponForPlayer(p) {
       x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed*_windSpeedMult, vy: s*gun.bulletSpeed*_windSpeedMult,
       damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?bSize+2:bSize,
       knockback: 0, pierce: gun.pierce + _windPierceBonus, pierced: 0,
-      // Short bullet life — max range ≈ 224px at base speed. This FORCES the player
-      // to close with enemies instead of sniping from the back of the arena. Wind
-      // bullets (bulletSpeedMult) extend effective range by flying farther per frame.
-      life: 14, maxLife: 14,
+      // Extended bullet life with drift — bullets travel further (~352px base) but
+      // become unreliable as they age. See _angVel below: each bullet has a random
+      // angular velocity that amplifies with age, causing the shot to visibly drift
+      // off course at long range. Close shots stay accurate; far shots are a prayer.
+      life: 22, maxLife: 22,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
       _element: activeElement?.id || null, _homing: false, _bouncing: 0,
+      // Per-bullet sway: small random angular velocity, amplified quadratically with age
+      _angVel: (Math.random() - 0.5) * 0.022,
     });
   }
   // Sound pitch shifts slightly with power
@@ -6353,6 +6356,18 @@ function update() {
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
     // Homing behavior: curve toward nearest zombie
     if(b._homing&&b.owner==='player'){let bestD=300,bestZ=null;for(const z of zombies){const d=Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);if(d<bestD){bestD=d;bestZ=z;}}if(bestZ){const ta=Math.atan2(bestZ.y-b.y,bestZ.x-b.x),ba=Math.atan2(b.vy,b.vx);let da=ta-ba;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;const turn=0.08;const na=ba+da*turn;const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
+    // ---- BULLET SPREAD OVER DISTANCE ----
+    // Player bullets sway off course as they age — quadratic amplification so close shots
+    // stay true and far shots drift visibly. Age ≈ 0 at muzzle, 1 at end of life.
+    if (b.owner === 'player' && b._angVel && b.maxLife) {
+      const _age = Math.max(0, Math.min(1, 1 - b.life / b.maxLife));
+      // Quadratic curve — early shots barely sway, late shots drift hard
+      const _swayThisFrame = b._angVel * (0.2 + _age * _age * 2.0);
+      const _sc = Math.cos(_swayThisFrame), _ss = Math.sin(_swayThisFrame);
+      const _nvx = b.vx * _sc - b.vy * _ss;
+      const _nvy = b.vx * _ss + b.vy * _sc;
+      b.vx = _nvx; b.vy = _nvy;
+    }
     const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
     // Bouncing behavior: ricochet off walls
     if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;continue;}
@@ -8122,17 +8137,18 @@ function render() {
 
   // Bullets
   for(const b of bullets){
-    // Lifetime-based shrink for player bullets. Bullets stay full size for the first
-    // ~60% of their short life, then shrink to nothing over the final 40%. Combined
-    // with the shortened bullet life (14 frames base), this makes bullets visibly
-    // die before they reach the back of the arena — you have to close the distance.
+    // Lifetime-based fade for player bullets. Bullets stay crisp for the first ~55% of
+    // their life, then noticeably fade + shrink over the final 45% — pairs with the
+    // drift-with-distance system so far shots are visibly weak AND unreliable.
     let _bSizeMult = 1, _bAlphaMult = 1;
     if (b.owner === 'player') {
       const _lifeT = b.maxLife ? Math.max(0, b.life / b.maxLife) : 1;
-      // Full size until 60% life remaining, shrink to ~15% over the last 40%
-      const _shrink = _lifeT > 0.4 ? 1 : _lifeT / 0.4;
-      _bSizeMult = 0.15 + 0.85 * _shrink;
-      _bAlphaMult = 0.25 + 0.75 * _shrink;
+      // Full size until 55% life remaining, shrink harder to near-zero over the last 45%
+      const _shrink = _lifeT > 0.45 ? 1 : (_lifeT / 0.45);
+      // Quadratic ease — the shrink accelerates as the bullet dies
+      const _shrinkEased = _shrink * _shrink;
+      _bSizeMult = 0.10 + 0.90 * _shrinkEased;
+      _bAlphaMult = 0.15 + 0.85 * _shrinkEased;
     }
     if(b.tracer&&b.trail.length>1){
     // Laser glow: intense neon beam with wide glow
