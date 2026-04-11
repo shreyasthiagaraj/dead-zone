@@ -3077,6 +3077,8 @@ const MODE_CARDS = [
   { id: 'trench',   title: 'TRENCH',   color: '#0af', desc: 'Push through. One door at a time.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="4" y2="18"/><line x1="10" y1="6" x2="10" y2="18"/><line x1="16" y1="6" x2="16" y2="18"/><path d="M4 12 L18 12 M14 8 L18 12 L14 16"/></svg>' },
   { id: 'horde',    title: 'HORDE',    color: '#0ff', desc: 'Nonstop chaos. Defend the circle.',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>' },
   { id: 'siege',    title: 'SIEGE',    color: '#f80', desc: 'Two walls. Waves from both sides.',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="17" y2="21"/><line x1="11" y1="8" x2="11" y2="16"/><line x1="13" y1="8" x2="13" y2="16"/></svg>' },
+  { id: 'gauntlet', title: 'GAUNTLET', color: '#fa4', desc: 'Room by room. Boss every 5.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="6" height="12"/><rect x="9" y="6" width="6" height="12"/><rect x="15" y="6" width="6" height="12"/></svg>' },
+  { id: 'survival', title: 'SURVIVAL', color: '#ff0', desc: 'Endless waves. Pick a perk each wave.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L14 9 L20 9 L15 13 L17 20 L12 16 L7 20 L9 13 L4 9 L10 9 Z"/></svg>' },
 ];
 function renderModeGrid(containerId, onPick) {
   const el = document.getElementById(containerId);
@@ -3653,6 +3655,12 @@ function startMultiplayerGame() {
     else if (gameMode === 'siege') startSiege();
     else if (gameMode === 'gauntlet') startGauntlet();
     else startLevel();
+  } else {
+    // Non-host siege setup: show repair button + reset state (host handles wall sim)
+    if (gameMode === 'siege') {
+      const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = '';
+      siegeRepairHeld = false;
+    }
   }
 }
 
@@ -4404,11 +4412,14 @@ function updateSiege() {
     if (p.x > rightBound) p.x = rightBound;
   }
 
-  // ---- Player repairs either wall (only while REPAIR button is held) ----
-  if (siegeRepairHeld) {
+  // ---- Player repairs either wall (any player whose REPAIR button is held) ----
+  {
     const _repairWall = (wall, wallX) => {
       for (const p of players) {
         if (!p.alive) continue;
+        // Local host uses the siegeRepairHeld global; remote players send their state via _siegeRepair
+        const _wantsRepair = (p.id === myId) ? siegeRepairHeld : p._siegeRepair;
+        if (!_wantsRepair) continue;
         for (const sec of wall) {
           if (sec.hp >= sec.maxHp) continue;
           if (Math.abs(p.x - wallX) < CELL_SIZE * 1.2 && p.y > sec.y - 10 && p.y < sec.y + sec.height + 10) {
@@ -4714,7 +4725,17 @@ function splitZombie(z) {
   for (let k = 0; k < 12; k++) { const a2 = Math.random() * Math.PI * 2, s = 2 + Math.random() * 5; particles.push({ x: z.x, y: z.y, vx: Math.cos(a2) * s, vy: Math.sin(a2) * s, life: 20 + Math.random() * 15, maxLife: 35, size: 3 + Math.random() * 4, color: ['#8a5', '#6b4', '#5a3'][Math.floor(Math.random() * 3)], type: 'blood' }); }
 }
 
-function getNearestAlivePlayer(x,y) { let best=null,bd=Infinity; for(const p of players){if(!p.alive)continue;const d=Math.sqrt((p.x-x)**2+(p.y-y)**2);if(d<bd){bd=d;best=p;}} return {player:best,dist:bd}; }
+function getNearestAlivePlayer(x,y) {
+  // Squared-distance compare avoids the sqrt in the inner loop. We only sqrt once at the end.
+  let best=null,bd2=Infinity;
+  for(let i=0;i<players.length;i++){
+    const p=players[i]; if(!p.alive) continue;
+    const dx=p.x-x, dy=p.y-y;
+    const d2=dx*dx+dy*dy;
+    if(d2<bd2){bd2=d2;best=p;}
+  }
+  return {player:best, dist:best?Math.sqrt(bd2):Infinity};
+}
 
 function spawnZombie() {
   const ts=getZombieTypesForLevel(level),tk=ts[Math.floor(Math.random()*ts.length)],t=ZOMBIE_TYPES[tk];
@@ -4966,7 +4987,7 @@ function update() {
 
   // ---- Send input to host (non-host multiplayer) ----
   if (isMultiplayer && !isHost && gameTime % NET_SEND_RATE === 0) {
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (mouse.down || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, activeElement: activeElement ? activeElement.id : null } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (mouse.down || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, activeElement: activeElement ? activeElement.id : null, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -4993,6 +5014,8 @@ function update() {
         // HP and alive are HOST-AUTHORITATIVE — never accept from client input
         // Sync dash, reload, maxHp, and perk state from remote player
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
+        // Remote player's siege repair button state
+        p._siegeRepair = !!inp.siegeRepair;
         // Detect remote player shockwave blast
         const prevDashCD = p.dashCooldown||0;
         p.dashCooldown = inp.dashCooldown||0;
@@ -5124,8 +5147,8 @@ function update() {
                   addFloatingText(z.x,z.y-20,`+${z.score}`,'#ff0');if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // 5% chance to drop a small health orb
                   if(isHost&&Math.random()<0.05)pickups.push({type:'health',amount:5,x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,bobTimer:Math.random()*Math.PI*2});
-                  // Enrage nearby zombies (they saw their friend die)
-                  for(const nz of zombies){if(nz===z)continue;const nd=Math.sqrt((nz.x-z.x)**2+(nz.y-z.y)**2);if(nd<120&&!nz._enraged){nz._enraged=180;nz.speed*=1.4;nz.color='#f44';}}
+                  // Enrage nearby zombies — squared-distance compare, no sqrt
+                  for(const nz of zombies){if(nz===z)continue;if(nz._enraged)continue;const _edx=nz.x-z.x,_edy=nz.y-z.y;if(_edx*_edx+_edy*_edy<14400){nz._enraged=180;nz.speed*=1.4;nz.color='#f44';}}
                   // Directional blood burst — blood flies in bullet direction
                   const _ba=Math.atan2(b.vy,b.vx);
                   for(let k=0;k<40;k++){const a2=_ba+(Math.random()-0.5)*Math.PI*1.2,s=1+Math.random()*10;particles.push({x:z.x,y:z.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:35+Math.random()*25,maxLife:60,size:3+Math.random()*6,color:['#f0f','#f4a','#d0f','#f08','#b0f','#f26','#e0e'][Math.floor(Math.random()*7)],type:'blood'});}
@@ -5255,6 +5278,23 @@ function update() {
     }
 
     // Zombies
+    // Cache nearest alive player on each zombie ONCE per frame — reused by AI loop and render passes
+    // (was being recomputed 3-4× per zombie via getNearestAlivePlayer + bare for-loops)
+    {
+      let _firstAlive = null;
+      for (let _pi = 0; _pi < players.length; _pi++) { if (players[_pi].alive) { _firstAlive = players[_pi]; break; } }
+      for (const _zc of zombies) {
+        let bestP = null, bestD2 = Infinity;
+        for (let _pi = 0; _pi < players.length; _pi++) {
+          const _p = players[_pi]; if (!_p.alive) continue;
+          const _dx = _p.x - _zc.x, _dy = _p.y - _zc.y;
+          const _d2 = _dx*_dx + _dy*_dy;
+          if (_d2 < bestD2) { bestD2 = _d2; bestP = _p; }
+        }
+        _zc._np = bestP;
+        _zc._npD = bestP ? Math.sqrt(bestD2) : Infinity;
+      }
+    }
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
       // Trench spawn-in animation: locked in place + intangible until anim ends
@@ -5280,13 +5320,13 @@ function update() {
           if(gameTime%2===0){for(let fi=0;fi<3;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:4+Math.random()*5,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
           // Fire trail: leave burning decals on the ground
           if(gameTime%6===0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.4,color:'#420'});
-          // Fire spread: ignite nearby non-burning zombies
-          if(gameTime%20===0){for(const oz of zombies){if(oz===z||oz._burning>0)continue;const fd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(fd<40){oz._burning=Math.floor(z._burning*0.6);oz._burnTimer=180;}}}}
+          // Fire spread: ignite nearby non-burning zombies (squared-distance compare, no sqrt)
+          if(gameTime%20===0){for(const oz of zombies){if(oz===z||oz._burning>0)continue;const _fdx=oz.x-z.x,_fdy=oz.y-z.y;if(_fdx*_fdx+_fdy*_fdy<1600){oz._burning=Math.floor(z._burning*0.6);oz._burnTimer=180;}}}}
         if(z._burnTimer<=0)z._burning=0;}
       if(z._frozenTimer>0){z._frozenTimer--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);pushOutOfObstacles(z,z.radius);continue;}
       if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.8;z.vy*=0.8;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);continue;}
-      let{player:np,dist:zd}=getNearestAlivePlayer(z.x,z.y);
+      let np=z._np, zd=z._npD;
       if(!np)continue;
       // Siege mode: zombies target wall they came from, noticing nearby breaches
       if(gameMode==='siege'&&z._siegeWallTarget){
@@ -5427,9 +5467,10 @@ function update() {
       for(const fp of players){if(!fp.alive)continue;const fdx=z.x-fp.x,fdy=z.y-fp.y,fd=Math.sqrt(fdx*fdx+fdy*fdy);if(fd<400){const fa=Math.atan2(fdy,fdx),diff=Math.abs(((fa-fp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(diff<0.5){z.vx*=0.8;z.vy*=0.8;break;}}}
       const _zaH=ARENA_H;
       z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
-      for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd=Math.sqrt(sx*sx+sy*sy),md2=z.radius+o.radius;if(sd<md2&&sd>0){const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
+      // Separation: squared-distance compare first so we only sqrt when actually overlapping
+      for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd2=sx*sx+sy*sy,md2=z.radius+o.radius,md22=md2*md2;if(sd2<md22&&sd2>0){const sd=Math.sqrt(sd2);const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
       // Push zombies out of players — prevent visual overlap
-      for(const p of players){if(!p.alive)continue;const sx=z.x-p.x,sy=z.y-p.y,sd=Math.sqrt(sx*sx+sy*sy),md2=z.radius+PLAYER_RADIUS;if(sd<md2&&sd>0.1){const push=(md2-sd)/sd*0.5;z.x+=sx*push;z.y+=sy*push;}}
+      for(const p of players){if(!p.alive)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd*0.5;z.x+=sx*push;z.y+=sy*push;}}
       // Melee all players — velocity-compensated for remote players
       for(const p of players){if(!p.alive)continue;
         const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
@@ -5577,11 +5618,35 @@ function update() {
   }
 
   // ---- Particles, texts, explosions ----
-  for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;if(p.gravity)p.vy+=p.gravity;const drag=p.type==='blood'?0.985:0.95;p.vx*=drag;p.vy*=drag;p.life--;if(p.life<=0)particles.splice(i,1);}
-  // Hard cap: drop oldest particles to avoid frame drops during heavy effects
-  const PARTICLE_CAP = 500;
-  if (particles.length > PARTICLE_CAP) particles.splice(0, particles.length - PARTICLE_CAP);
-  for(let i=floatingTexts.length-1;i>=0;i--){floatingTexts[i].y+=floatingTexts[i].vy;floatingTexts[i].life--;if(floatingTexts[i].life<=0)floatingTexts.splice(i,1);}
+  // In-place compact: update + filter in one pass, no O(n²) splice storm.
+  {
+    let _pw = 0;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.gravity) p.vy += p.gravity;
+      const drag = p.type === 'blood' ? 0.985 : 0.95;
+      p.vx *= drag; p.vy *= drag;
+      p.life--;
+      if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; }
+    }
+    particles.length = _pw;
+    // Hard cap: drop oldest entries via one slice-reassign (avoids O(n²) splice shifts)
+    const PARTICLE_CAP = 450;
+    if (particles.length > PARTICLE_CAP) {
+      particles.splice(0, particles.length - PARTICLE_CAP);
+    }
+  }
+  {
+    let _tw = 0;
+    for (let i = 0; i < floatingTexts.length; i++) {
+      const t = floatingTexts[i];
+      t.y += t.vy;
+      t.life--;
+      if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; }
+    }
+    floatingTexts.length = _tw;
+  }
 
   // ---- Ground haze wisps ----
   {const lp=getLocalPlayer();
@@ -5640,7 +5705,8 @@ function update() {
       // Render bomb as pulsing red circle (visual warning)
     }
   }
-  if(decals.length>200)decals.splice(0,decals.length-200);
+  // Decal cap: drop oldest via a single splice (rare event, O(n) but only when cap exceeded)
+  if(decals.length>180)decals.splice(0,decals.length-180);
 
   // Camera follows local player (or spectate alive player) with aim-look-ahead
   let camTarget = lp;
@@ -5660,13 +5726,29 @@ function update() {
   // ---- Host broadcasts state ----
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0,powerUp:p.id===myId?(activePowerUp?activePowerUp.id:null):(p._remotePowerUp||null),dashCooldown:p.dashCooldown||0 }));
-    const zs = zombies.map(z => ({ zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false }));
+    // Pack per-zombie status flags into a small bitfield to keep the broadcast tight.
+    // bit 0 = invader (horde), 1 = burning, 2 = frozen/slow, 3 = shocked, 4 = spawning (trench)
+    const zs = zombies.map(z => {
+      let fl = 0;
+      if (z._invader) fl |= 1;
+      if (z._burning > 0) fl |= 2;
+      if (z._frozenTimer > 0 || z._slowTimer > 0) fl |= 4;
+      if (z._shocked > 0) fl |= 8;
+      if (z._spawnAnim > 0) fl |= 16;
+      return { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl };
+    });
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0 });
+    // Siege walls: only send HP arrays, positions are already known from map gen
+    const sLHp = (gameMode === 'siege' && siegeWallLeft.length) ? siegeWallLeft.map(s => s.hp | 0) : null;
+    const sRHp = (gameMode === 'siege' && siegeWallRight.length) ? siegeWallRight.map(s => s.hp | 0) : null;
+    const sWave = gameMode === 'siege' ? (siegeWave || 0) : 0;
+    const sWaveSt = gameMode === 'siege' ? (siegeWaveState || 'rest') : null;
+    const sWaveTimer = gameMode === 'siege' ? (siegeWaveTimer || 0) : 0;
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
   }
 
   updateHUD();
@@ -5679,6 +5761,24 @@ function applyHostState(msg) {
   if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
   if (msg.trenchSection !== undefined) { trenchSection = msg.trenchSection; }
   if (msg.elemZones) { elementZones = msg.elemZones; }
+  // Siege wall HP sync
+  if (msg.sLHp && siegeWallLeft.length) {
+    for (let i = 0; i < siegeWallLeft.length && i < msg.sLHp.length; i++) {
+      const _prev = siegeWallLeft[i].hp;
+      siegeWallLeft[i].hp = msg.sLHp[i];
+      if (msg.sLHp[i] < _prev) siegeWallLeft[i]._flashTimer = 6;
+    }
+  }
+  if (msg.sRHp && siegeWallRight.length) {
+    for (let i = 0; i < siegeWallRight.length && i < msg.sRHp.length; i++) {
+      const _prev = siegeWallRight[i].hp;
+      siegeWallRight[i].hp = msg.sRHp[i];
+      if (msg.sRHp[i] < _prev) siegeWallRight[i]._flashTimer = 6;
+    }
+  }
+  if (msg.sWave !== undefined) siegeWave = msg.sWave;
+  if (msg.sWaveSt) siegeWaveState = msg.sWaveSt;
+  if (msg.sWaveTimer !== undefined) siegeWaveTimer = msg.sWaveTimer;
   if (msg.gauntletRoom !== undefined) {
     // Detect room change for non-host: regenerate arena and show announcement
     if (msg.gauntletRoom !== gauntletRoom && msg.gauntletRoom > 0) {
@@ -5806,11 +5906,27 @@ function applyHostState(msg) {
       oz._targetX = nz.x; oz._targetY = nz.y; oz._targetAngle = nz.angle;
       oz.hp = nz.hp; oz.maxHp = nz.maxHp; oz.hitFlash = nz.hitFlash;
       oz.aware = nz.aware; oz.boss = nz.boss; oz.color = nz.color;
+      // Apply flag bitfield: 1=invader, 2=burning, 4=frozen/slow, 8=shocked, 16=spawning
+      const _fl = nz.fl || 0;
+      oz._invader = (_fl & 1) !== 0;
+      oz._burning = (_fl & 2) ? (oz._burning || 10) : 0;
+      if ((_fl & 2) && (oz._burnTimer || 0) <= 0) oz._burnTimer = 60; // trigger visual fire particles
+      else if (!(_fl & 2)) oz._burnTimer = 0;
+      if (_fl & 4) { oz._slowTimer = Math.max(oz._slowTimer || 0, 10); }
+      oz._shocked = (_fl & 8) ? Math.max(oz._shocked || 0, 10) : 0;
+      if (_fl & 16) { if (!oz._spawnAnim) { oz._spawnAnim = 30; oz._spawnAnimMax = 30; } }
+      else oz._spawnAnim = 0;
       updatedZombies.push(oz);
     } else {
       // New zombie: create fresh with position already set (no lerp needed first frame)
       const fresh = {...nz, vx:0,vy:0,staggerTimer:0,attackCooldown:0,wanderAngle:0,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,ranged:ZOMBIE_TYPES[nz.type]?.ranged||false,fireRate:ZOMBIE_TYPES[nz.type]?.fireRate||0,lastFired:0,explodeOnDeath:ZOMBIE_TYPES[nz.type]?.explodeOnDeath||false,explosionRadius:ZOMBIE_TYPES[nz.type]?.explosionRadius||0,damage:ZOMBIE_TYPES[nz.type]?.damage||10,score:ZOMBIE_TYPES[nz.type]?.score||100};
       fresh._targetX = nz.x; fresh._targetY = nz.y; fresh._targetAngle = nz.angle;
+      const _fl = nz.fl || 0;
+      fresh._invader = (_fl & 1) !== 0;
+      if (_fl & 2) { fresh._burning = 10; fresh._burnTimer = 60; }
+      if (_fl & 4) fresh._slowTimer = 10;
+      if (_fl & 8) fresh._shocked = 10;
+      if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
       updatedZombies.push(fresh);
     }
   }
@@ -5856,19 +5972,30 @@ function updateHUD() {
   if (activeElement) { const et = ELEMENT_TYPES.find(e=>e.id===activeElement.id); if(et) efx += effectTile(et.icon, et.color, Math.ceil(activeElement.timer/60), et.name); }
   for (const ap of activePowerUps) { const pd = POWERUP_TYPES.find(p=>p.id===ap.id); if(pd) efx += effectTile(pd.icon, pd.color, Math.ceil(ap.timer/60), pd.name); }
   if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) efx += effectTile(od.icon, od.color, Math.ceil(activeOrbital.timer/60), od.name); }
-  if (ebar) ebar.innerHTML = efx;
+  // Cache innerHTML strings — avoid DOM parser work when nothing changed this frame
+  if (ebar && ebar._lastHTML !== efx) { ebar.innerHTML = efx; ebar._lastHTML = efx; }
   // Top-left HUD chips
-  document.getElementById('score').textContent = score.toLocaleString();
+  const _scoreEl = document.getElementById('score');
+  const _scoreStr = score.toLocaleString();
+  if (_scoreEl._lastText !== _scoreStr) { _scoreEl.textContent = _scoreStr; _scoreEl._lastText = _scoreStr; }
   // Center HUD — mode-specific prominent display (no kills — they're gone from HUD)
   const _ch=document.getElementById('center-hud');
   if(_ch){
-    const _mk = (label) => `<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.5);letter-spacing:3px;padding:4px 14px">${label}</div>`;
-    if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_ch.innerHTML=_mk(`${_m}:${_ss<10?'0':''}${_ss}`);_ch.style.display='block';}
-    else if(gameMode==='descent'){_ch.innerHTML=_mk(`SECTION ${descentSection+1}`);_ch.style.display='block';}
-    else if(gameMode==='trench'){_ch.innerHTML=_mk(`SECTION ${trenchSection+1}`);_ch.style.display='block';}
-    else if(gameMode==='survival'){_ch.innerHTML=_mk(`WAVE ${survivalWave}`);_ch.style.display='block';}
-    else if(gameMode==='siege'){let mainLabel;if(siegeWaveState==='rest'&&siegeWave>0){const restLeft=Math.ceil((600-siegeWaveTimer)/60);mainLabel=`NEXT WAVE IN ${restLeft}s`;}else if(siegeWaveState==='rest'){mainLabel='GET READY';}else{mainLabel=`WAVE ${siegeWave}`;}_ch.innerHTML=_mk(mainLabel);_ch.style.display='block';}
-    else{_ch.style.display='none';}
+    let _label = null;
+    if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_label=`${_m}:${_ss<10?'0':''}${_ss}`;}
+    else if(gameMode==='descent'){_label=`SECTION ${descentSection+1}`;}
+    else if(gameMode==='trench'){_label=`SECTION ${trenchSection+1}`;}
+    else if(gameMode==='survival'){_label=`WAVE ${survivalWave}`;}
+    else if(gameMode==='siege'){if(siegeWaveState==='rest'&&siegeWave>0){const restLeft=Math.ceil((600-siegeWaveTimer)/60);_label=`NEXT WAVE IN ${restLeft}s`;}else if(siegeWaveState==='rest'){_label='GET READY';}else{_label=`WAVE ${siegeWave}`;}}
+    if (_label === null) {
+      if (_ch.style.display !== 'none') _ch.style.display = 'none';
+    } else {
+      if (_ch._lastLabel !== _label) {
+        _ch.innerHTML = `<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.5);letter-spacing:3px;padding:4px 14px">${_label}</div>`;
+        _ch._lastLabel = _label;
+      }
+      if (_ch.style.display !== 'block') _ch.style.display = 'block';
+    }
   }
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#0f0':hp>25?'#fa0':'#f44';
@@ -5985,6 +6112,10 @@ function render() {
   const _gridH=GRID_H;
   const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(_gridH-1,Math.floor(vB/CELL_SIZE));
   const _corridorTheme=ROOM_THEMES[0];
+  // Batch grid strokes: collect all visible floor cell rects into one Path2D and stroke once.
+  // Previously: ~600 per-cell strokeRect calls = lots of state-setup overhead per frame.
+  const _floorPath = new Path2D();
+  let _gridStrokeColor = _corridorTheme.grid;
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
       // Floor cell — dark with neon grid lines
@@ -5992,9 +6123,9 @@ function render() {
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       ctx.fillStyle=theme.floor;
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      // Neon grid lines
-      ctx.strokeStyle=theme.grid;ctx.lineWidth=0.5;
-      ctx.strokeRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
+      // Grid lines added to batched path (stroked once after the loop)
+      _floorPath.rect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
+      _gridStrokeColor=theme.grid;
       // Corridor neon strip — center line in corridors (not in rooms)
       if(ri<0){const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
         const hFloor=(cx>0&&dungeonGrid[cy][cx-1])&&(cx<GRID_W-1&&dungeonGrid[cy][cx+1]);
@@ -6032,6 +6163,8 @@ function render() {
       }
     }
   }
+  // Single batched grid stroke for all visible floor cells (massive win over per-cell strokeRect)
+  ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
   const _renderH=ARENA_H;
   ctx.shadowColor='#f0f';ctx.shadowBlur=8;ctx.strokeStyle='#f0f';ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
 
@@ -6118,9 +6251,18 @@ function render() {
     }
   }
 
-  // Decals — with faint neon edge glow
-  for(const d of decals){ctx.globalAlpha=d.alpha;ctx.fillStyle=d.color;ctx.beginPath();ctx.arc(d.x,d.y,d.size,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=d.alpha*0.3;ctx.shadowColor=d.color;ctx.shadowBlur=6;ctx.strokeStyle=d.color;ctx.lineWidth=1;ctx.stroke();ctx.shadowBlur=0;}ctx.globalAlpha=1;
+  // Decals — viewport-culled fill only (dropped the per-decal shadowBlur edge glow, it was ~10ms/frame with 180 decals)
+  {
+    const _dvL = camera.x - canvas.width/2 - 30, _dvR = camera.x + canvas.width/2 + 30;
+    const _dvT = camera.y - canvas.height/2 - 30, _dvB = camera.y + canvas.height/2 + 30;
+    for (const d of decals) {
+      if (d.x < _dvL || d.x > _dvR || d.y < _dvT || d.y > _dvB) continue;
+      ctx.globalAlpha = d.alpha;
+      ctx.fillStyle = d.color;
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.size, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // Ground haze wisps — brighter in flashlight beam
   {const _hlp=getLocalPlayer();
@@ -6434,19 +6576,33 @@ function render() {
     }else{ctx.shadowColor=b.color;ctx.shadowBlur=14;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size*0.6,0,Math.PI*2);ctx.fill();ctx.globalAlpha=0.5;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*1.5,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.shadowBlur=0;}}
 
   // Zombies (shape helper is defined at module scope above)
-  // Zombie shadows — separate pass so they render below all zombie bodies
+  // Viewport bounds for culling off-screen zombies (saves per-zombie work)
+  const _zvL = camera.x - canvas.width/2 - 80, _zvR = camera.x + canvas.width/2 + 80;
+  const _zvT = camera.y - canvas.height/2 - 80, _zvB = camera.y + canvas.height/2 + 80;
+  // Zombie shadows — separate pass so they render below all zombie bodies.
+  // Uses cached z._np/z._npD from the zombie update loop — no per-zombie getNearestAlivePlayer call.
   for(const z of zombies){
-    const{player:np}=getNearestAlivePlayer(z.x,z.y);
-    if(np){const sdx=z.x-np.x,sdy=z.y-np.y,sd=Math.sqrt(sdx*sdx+sdy*sdy);if(sd>0&&sd<400){const snx=sdx/sd,sny=sdy/sd;const sa=Math.max(0,0.65-sd/700);const scx=z.x+snx*z.radius,scy=z.y+sny*z.radius;const sr=z.radius*2.5;const sg=ctx.createRadialGradient(scx,scy,z.radius*0.3,scx,scy,sr);sg.addColorStop(0,`rgba(0,0,0,${sa})`);sg.addColorStop(0.5,`rgba(0,0,0,${sa*0.4})`);sg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=sg;ctx.fillRect(scx-sr,scy-sr,sr*2,sr*2);}}
-  }
-  // Zombie flashlight shadows — drawn under bodies
-  for (const z of zombies) {
-    let nearP = null, nearD = Infinity;
-    for (const p of players) {
-      if (!p.alive) continue;
-      const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2);
-      if (d < 700 && d < nearD) { nearD = d; nearP = p; }
+    if (z.x < _zvL || z.x > _zvR || z.y < _zvT || z.y > _zvB) continue; // off-screen cull
+    const np = z._np; if (!np) continue;
+    const sdx = z.x-np.x, sdy = z.y-np.y;
+    const sd = z._npD;
+    if (sd > 0 && sd < 400) {
+      const snx = sdx/sd, sny = sdy/sd;
+      const sa = Math.max(0, 0.65 - sd/700);
+      const scx = z.x + snx*z.radius, scy = z.y + sny*z.radius;
+      const sr = z.radius * 2.5;
+      const sg = ctx.createRadialGradient(scx, scy, z.radius*0.3, scx, scy, sr);
+      sg.addColorStop(0, `rgba(0,0,0,${sa})`);
+      sg.addColorStop(0.5, `rgba(0,0,0,${sa*0.4})`);
+      sg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(scx-sr, scy-sr, sr*2, sr*2);
     }
+  }
+  // Zombie flashlight shadows — drawn under bodies (reuses cached nearest player)
+  for (const z of zombies) {
+    if (z.x < _zvL || z.x > _zvR || z.y < _zvT || z.y > _zvB) continue; // off-screen cull
+    const nearP = z._np; const nearD = z._npD;
     if (nearP && nearD < 560 && hasLineOfSight(nearP.x, nearP.y, z.x, z.y)) {
       const dx = z.x - nearP.x, dy = z.y - nearP.y;
       const dist = Math.sqrt(dx*dx + dy*dy);
@@ -6472,6 +6628,7 @@ function render() {
   }
   // Zombie bodies
   for(const z of zombies){
+    if (z.x < _zvL || z.x > _zvR || z.y < _zvT || z.y > _zvB) continue; // off-screen cull
     // Trench spawn-in: render a pulsing portal ring at the spawn point + scale + alpha the body
     if(z._spawnAnim>0){
       const t=1-z._spawnAnim/(z._spawnAnimMax||30);
