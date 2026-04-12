@@ -5747,6 +5747,54 @@ function dash() {
   screenShake.intensity = Math.max(screenShake.intensity, 5);
   playSfx('dash', 0.3) || playSound(680, 0.08, 'sine', 0.2);
   playSound(420, 0.04, 'square', 0.12);
+  // ---- ELEMENT DASH ACTIVATION VFX + SOUND ----
+  // When trail mods are equipped, the dash burst takes on the element's character.
+  if (_mods.fireSmashLv > 0) {
+    // Fire: orange/red flame burst radiating outward + ignite sizzle
+    for (let fi = 0; fi < 16; fi++) {
+      const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 4;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 1,
+        life: 20, maxLife: 20, size: 3 + Math.random()*3,
+        color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
+    }
+    playIgniteSound();
+  }
+  if (_mods.iceSmashLv > 0) {
+    // Ice: pale blue crystal shards flying outward + sharp crackle
+    for (let fi = 0; fi < 14; fi++) {
+      const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 22, maxLife: 22, size: 2 + Math.random()*2, color: Math.random()<0.5?'#8ef':'#4ef', type: 'spark' });
+    }
+    playSound(1400, 0.06, 'square', 0.08);
+    playSound(1800, 0.04, 'sine', 0.06);
+  }
+  if (_mods.chainSmashLv > 0) {
+    // Lightning: electric arcs radiating from player + zap sound
+    for (let fi = 0; fi < 6; fi++) {
+      const a = (fi / 6) * Math.PI * 2;
+      const endR = 30 + Math.random() * 40;
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+        size: 1, color: '#4ff', type: 'lightning',
+        tx: lp.x + Math.cos(a) * endR, ty: lp.y + Math.sin(a) * endR });
+    }
+    for (let fi = 0; fi < 10; fi++) {
+      const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 5;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 14, maxLife: 14, size: 1.5, color: '#4ff', type: 'spark' });
+    }
+    playSfx('zap', 0.2) || playSound(220, 0.1, 'sawtooth', 0.1);
+  }
+  if (_mods.windSmashLv > 0) {
+    // Wind: pale streaks radiating outward + whoosh
+    for (let fi = 0; fi < 12; fi++) {
+      const a = Math.random() * Math.PI * 2, s = 4 + Math.random() * 5;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 16, maxLife: 16, size: 1.5 + Math.random(), color: '#cef', type: 'spark' });
+    }
+    playSound(300, 0.12, 'sine', 0.08);
+    playSound(180, 0.15, 'sawtooth', 0.05);
+  }
   // Seed tracking so element effects don't proc repeatedly on the same zombie during one dash
   lp._dashHitSet = new Set();
 }
@@ -7028,6 +7076,39 @@ function update() {
           type: 'spark',
         });
       }
+      // Per-frame element trail particles — visual trail left in the dash's wake
+      if (_mods.fireSmashLv > 0 && gameTime % 2 === 0) {
+        // Fire trail: rising flame puffs behind the player
+        for (let fi = 0; fi < 2; fi++) {
+          particles.push({ x: lp.x + (Math.random()-0.5)*12, y: lp.y + (Math.random()-0.5)*12,
+            vx: (Math.random()-0.5)*2, vy: -2 - Math.random()*2,
+            life: 16, maxLife: 16, size: 3 + Math.random()*3,
+            color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
+        }
+      }
+      if (_mods.iceSmashLv > 0 && gameTime % 3 === 0) {
+        // Ice trail: crystal shards spinning off the body
+        const _ia = Math.random() * Math.PI * 2;
+        particles.push({ x: lp.x + Math.cos(_ia)*8, y: lp.y + Math.sin(_ia)*8,
+          vx: Math.cos(_ia)*1.5, vy: Math.sin(_ia)*1.5,
+          life: 20, maxLife: 20, size: 2 + Math.random(), color: '#8ef', type: 'spark' });
+      }
+      if (_mods.chainSmashLv > 0 && gameTime % 3 === 0) {
+        // Lightning trail: short arc behind the player
+        const _la = Math.random() * Math.PI * 2;
+        const _lr = 15 + Math.random() * 20;
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 8, maxLife: 8,
+          size: 1, color: '#4ff', type: 'lightning',
+          tx: lp.x + Math.cos(_la)*_lr, ty: lp.y + Math.sin(_la)*_lr });
+      }
+      if (_mods.windSmashLv > 0 && gameTime % 2 === 0) {
+        // Wind trail: pale speed streaks behind the player
+        particles.push({
+          x: lp.x - (lp.dashDirX||0)*10 + (Math.random()-0.5)*14,
+          y: lp.y - (lp.dashDirY||0)*10 + (Math.random()-0.5)*14,
+          vx: -(lp.dashDirX||0)*3, vy: -(lp.dashDirY||0)*3,
+          life: 12, maxLife: 12, size: 1.5, color: '#cef', type: 'spark' });
+      }
       // Element trails: apply fire/ice/chain/wind effects to any zombie within the dash
       // radius this frame. Per-dash hit set prevents double-procs.
       applyDashTrailEffects(lp);
@@ -7879,8 +7960,37 @@ function update() {
 
       // Flashlight slow: zombies in any player's beam move 20% slower
       for(const fp of players){if(!fp.alive)continue;const fdx=z.x-fp.x,fdy=z.y-fp.y,fd=Math.sqrt(fdx*fdx+fdy*fdy);if(fd<400){const fa=Math.atan2(fdy,fdx),diff=Math.abs(((fa-fp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(diff<0.5){z.vx*=0.8;z.vy*=0.8;break;}}}
+      // ---- OBSTACLE AVOIDANCE (wall-sliding) ----
+      // Before applying movement, check if the desired direction is blocked.
+      // If so, slide along the wall by trying perpendicular directions. This
+      // prevents zombies from getting permanently stuck behind pillars.
       const _zaH=ARENA_H;
+      const _prevX = z.x, _prevY = z.y;
       z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
+      // Stuck check: if pushOutOfObstacles put us back near where we started,
+      // we're blocked. Try sliding perpendicular to the desired direction.
+      if (z.aware && (z.vx*z.vx + z.vy*z.vy) > 0.5) {
+        const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
+        const _wanted2 = z.vx * z.vx + z.vy * z.vy;
+        // If we moved less than 20% of what we wanted, we're stuck
+        if (_moved2 < _wanted2 * 0.04) {
+          z._wallStuck = (z._wallStuck || 0) + 1;
+          if (z._wallStuck > 3) {
+            // Try perpendicular slide: pick the direction (left or right of desired)
+            // that has more open space. Alternate based on frame parity.
+            const _slideDir = (z._wallStuck % 6 < 3) ? 1 : -1;
+            const _perpVx = -z.vy * _slideDir;
+            const _perpVy = z.vx * _slideDir;
+            z.x = _prevX + _perpVx;
+            z.y = _prevY + _perpVy;
+            z.x = clamp(z.x, z.radius, ARENA_W - z.radius);
+            z.y = clamp(z.y, z.radius, _zaH - z.radius);
+            pushOutOfObstacles(z, z.radius);
+          }
+        } else {
+          z._wallStuck = 0;
+        }
+      }
       // Separation: squared-distance compare first so we only sqrt when actually overlapping
       for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd2=sx*sx+sy*sy,md2=z.radius+o.radius,md22=md2*md2;if(sd2<md22&&sd2>0){const sd=Math.sqrt(sd2);const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
       // Push zombies out of players — prevent visual overlap.
