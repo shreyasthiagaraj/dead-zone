@@ -1707,19 +1707,19 @@ function maybeDropXPOrb(zombie) {
 // ---- ENEMY ITEM DROPS ----
 // Replaces chest-based power-up / element spawns. Every kill has a small chance
 // to drop a pickup; elite kills roll better odds; bosses always drop something
-// good. Drop distribution skews toward health/ammo for normal kills and toward
-// power-ups/elements for elites/bosses.
+// good. Element drops are emphasized so the player actually sees them a few
+// times per run regardless of whether they fight many elites.
 //
 // Expected totals per ~500-kill run (roughly):
-//   ~2-3 element drops, ~3-5 power-ups, ~7-10 health, ~6-8 ammo
-// That's "rare but felt" — a few notable drops per run, not a flood.
+//   ~6 element drops, ~4 power-ups, ~9 health, ~6 ammo
+// That's rare-but-felt — notable drops every ~20-30 kills, not a flood.
 function maybeDropPickup(zombie) {
   if (!zombie || !isHost) return;
   const t = zombie.type;
   const isBoss = !!zombie.boss;
   const isElite = !isBoss && (t === 'tank' || t === 'brute' || t === 'sniper' || t === 'shielder' || t === 'splitter' || t === 'stalker');
-  let dropChance = 0.03; // normal enemies: 3% total drop rate
-  if (isElite) dropChance = 0.20;
+  let dropChance = 0.05; // normal enemies: 5% total drop rate (was 3%)
+  if (isElite) dropChance = 0.25;
   if (isBoss)  dropChance = 1.0;
   if (Math.random() > dropChance) return;
 
@@ -1732,10 +1732,11 @@ function maybeDropPickup(zombie) {
     else if (r < 0.85) kind = 'powerup';
     else               kind = 'health';
   } else {
-    // Normal/elite kills: mostly health/ammo, some power-ups, rarely elements
-    if (r < 0.10)      kind = 'element';
-    else if (r < 0.25) kind = 'powerup';
-    else if (r < 0.65) kind = 'health';
+    // Normal/elite kills: elements bumped to 25% of the drop share (was 10%).
+    // So ~0.0125 element drop rate per normal kill = ~6 per 500-kill run.
+    if (r < 0.25)      kind = 'element';
+    else if (r < 0.40) kind = 'powerup';
+    else if (r < 0.75) kind = 'health';
     else               kind = 'ammo';
   }
 
@@ -3099,12 +3100,21 @@ function _drawZombieShape(ctx, type, r) {
 // DEAGGRO_FRAMES frames, and revert to wandering. Re-aggro happens instantly
 // when the player crosses back inside AGGRO range (hysteresis gap prevents
 // oscillation). Some types are relentless and never deaggro.
-const ZOMBIE_AGGRO_RANGE    = 520;  // re-aggro within this
-const ZOMBIE_DEAGGRO_RANGE  = 680;  // start losing interest beyond this
-const ZOMBIE_DEAGGRO_FRAMES = 90;   // 1.5s grace before wandering
-// Per-zombie chase heading jitter (radians). Broken out so every pursuer doesn't
-// converge on the exact same vector — prevents the conga line kiting exploit.
-const ZOMBIE_CHASE_JITTER_MAX = 0.18; // ±~10°
+const ZOMBIE_AGGRO_RANGE    = 440;  // re-aggro within this
+const ZOMBIE_DEAGGRO_RANGE  = 520;  // start losing interest beyond this
+const ZOMBIE_DEAGGRO_FRAMES = 45;   // 0.75s grace before wandering
+// Each zombie chases a point OFFSET from the player's position, not the player
+// directly. This breaks the conga line / circling exploits: every pursuer
+// converges on a slightly different point, so the swarm encircles instead of
+// collapsing onto a single vector. Offset is re-rolled periodically to prevent
+// any one zombie from getting permanently stuck pathing away from the player.
+const ZOMBIE_CHASE_OFFSET_RADIUS = 90; // ±90px in x and y
+const ZOMBIE_CHASE_OFFSET_REROLL = 180; // frames between offset re-rolls (3s)
+// Random mid-chase "lose-sight" pause: while aware, each zombie has a tiny
+// per-frame chance to briefly stop and look around. Creates natural breaks in
+// the swarm approach and rewards movement from the player.
+const ZOMBIE_PAUSE_CHANCE = 0.0035; // ~0.35% per frame → average one pause every ~5s per zombie
+const ZOMBIE_PAUSE_FRAMES = [20, 45]; // min/max pause duration
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
@@ -7530,7 +7540,8 @@ function update() {
           if (z._deaggroTimer > ZOMBIE_DEAGGRO_FRAMES) {
             z.aware = false;
             z._deaggroTimer = 0;
-            z._chaseJitter = undefined;
+            z._chaseOffX = undefined; z._chaseOffY = undefined;
+            z._pauseTimer = 0;
             // Fresh wander state so the transition reads cleanly
             z.wanderAngle = Math.random() * Math.PI * 2;
             z.wanderTimer = 40 + Math.floor(Math.random() * 80);
@@ -7543,23 +7554,40 @@ function update() {
       }
 
       if(z.aware){
-        // Persistent per-zombie heading jitter — assigned once when first aggroed.
-        // Every pursuer offsets its chase angle slightly so the swarm fans out
-        // instead of snaking into a single predictable line behind the player.
-        if (z._chaseJitter === undefined) {
-          z._chaseJitter = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_JITTER_MAX;
+        // ---- PER-ZOMBIE TARGET OFFSET ----
+        // Each zombie chases (player + offset), not the player directly. Assigned
+        // once on first aggro, re-rolled every ZOMBIE_CHASE_OFFSET_REROLL frames.
+        // Produces an encircling cloud of different targets so the swarm literally
+        // cannot converge on the player's position.
+        if (z._chaseOffX === undefined || z._chaseOffY === undefined) {
+          z._chaseOffX = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_OFFSET_RADIUS;
+          z._chaseOffY = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_OFFSET_RADIUS;
+          z._chaseOffTimer = ZOMBIE_CHASE_OFFSET_REROLL;
         }
-        // Occasionally re-roll the jitter so a stalled pursuer doesn't commit to
-        // a bad offset forever (every ~3 seconds).
-        if (gameTime % 180 === 0) {
-          z._chaseJitter = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_JITTER_MAX;
+        if (--z._chaseOffTimer <= 0) {
+          z._chaseOffX = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_OFFSET_RADIUS;
+          z._chaseOffY = (Math.random() - 0.5) * 2 * ZOMBIE_CHASE_OFFSET_RADIUS;
+          z._chaseOffTimer = ZOMBIE_CHASE_OFFSET_REROLL;
         }
-        const _baseAng = Math.atan2(zdy, zdx);
-        const _chaseAng = _baseAng + z._chaseJitter;
-        // Precomputed chase direction — used by the default chase + charger ramp
-        const _chaseDx = Math.cos(_chaseAng);
-        const _chaseDy = Math.sin(_chaseAng);
-        z.angle=_baseAng; // facing still points at the player (for shields etc.)
+        // ---- LOSE-SIGHT PAUSES ----
+        // Small per-frame chance to briefly stop and "look around." Adds organic
+        // breaks in the chase, rewards player movement, breaks up perfect lines.
+        if (z._pauseTimer > 0) {
+          z._pauseTimer--;
+        } else if (!_relentless && Math.random() < ZOMBIE_PAUSE_CHANCE) {
+          z._pauseTimer = ZOMBIE_PAUSE_FRAMES[0] + Math.floor(Math.random() * (ZOMBIE_PAUSE_FRAMES[1] - ZOMBIE_PAUSE_FRAMES[0]));
+        }
+        // Target point (player + offset). Recomputed every frame so moving players
+        // are still tracked, just to a different point than their center.
+        const _tx = np.x + z._chaseOffX;
+        const _ty = np.y + z._chaseOffY;
+        const _cdx = _tx - z.x;
+        const _cdy = _ty - z.y;
+        const _cdd = Math.sqrt(_cdx*_cdx + _cdy*_cdy) || 1;
+        const _chaseDx = _cdx / _cdd;
+        const _chaseDy = _cdy / _cdd;
+        // Facing still points at the real player (for shield orientation, aim)
+        z.angle = Math.atan2(zdy, zdx);
         const zt=ZOMBIE_TYPES[z.type];
         const _now=performance.now();
 
@@ -7644,9 +7672,15 @@ function update() {
             }
           }
         }
-        // ---- DEFAULT: walk toward player (with persistent chase-jitter offset) ----
+        // ---- DEFAULT: walk toward player (with persistent chase-offset target) ----
         else{
           z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;
+        }
+        // Paused "lose-sight" beat — decay velocity so the zombie stops moving
+        // this frame. Runs AFTER behavior writes so it overrides any chase vector.
+        // Ranged attacks still fired above; only locomotion is suppressed.
+        if (z._pauseTimer > 0) {
+          z.vx *= 0.15; z.vy *= 0.15;
         }
       } else {
         z.wanderTimer--;
