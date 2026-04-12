@@ -2151,7 +2151,7 @@ const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
-  { name: 'ENTRY CACHE',       sections: [0, 4],    wallColor: '#1a0a1a', wallStroke: '#f0f', floorTint: null,                       accentColor: '#f0f', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
+  { name: 'ENTRY CACHE',       sections: [0, 4],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
   { name: 'CORRUPTED SUBNET',  sections: [5, 9],    wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
   { name: 'DEEP STORAGE',      sections: [10, 14],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
   { name: 'KERNEL BOUNDARY',   sections: [15, 19],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
@@ -2483,8 +2483,13 @@ function spawnTrenchWave(idx, waveIdx) {
   for (let ei = 0; ei < enemyCount; ei++) {
     const tk = sec.types[Math.floor(Math.random() * sec.types.length)];
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
-    const ex = sec.x + (0.5 + Math.random() * 0.4) * TW;
-    const ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
+    // Pick a spawn position that's walkable (not inside an obstacle/pillar)
+    let ex, ey, _spawnAttempts = 0;
+    do {
+      ex = sec.x + (0.5 + Math.random() * 0.4) * TW;
+      ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
+      _spawnAttempts++;
+    } while (_spawnAttempts < 15 && !(dungeonGrid[Math.floor(ey/CELL_SIZE)] && dungeonGrid[Math.floor(ey/CELL_SIZE)][Math.floor(ex/CELL_SIZE)]));
     const _spIdle = ZOMBIE_SPAWN_IDLE_MIN + Math.floor(Math.random() * (ZOMBIE_SPAWN_IDLE_MAX - ZOMBIE_SPAWN_IDLE_MIN));
     zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale, maxHp: t.hp * hpScale, speed: t.speed + speedBoost, radius: t.radius, color: t.color, damage: Math.round(t.damage * dmgScale), score: t.score, type: tk, attackCooldown: 30, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: 30, _spawnAnimMax: 30, _spawnIdle: _spIdle });
     // Spawn-in burst: pink/cyan sparks + a brief vertical lightning crackle
@@ -9443,14 +9448,14 @@ function render() {
         let accent = _domainGridColor || '#2a1a3a';
         const adj=floorAbove?roomGrid[cy-1][cx]:floorBelow?roomGrid[cy+1][cx]:floorLeft?roomGrid[cy][cx-1]:roomGrid[cy][cx+1];
         if(!_domainGridColor && adj>=0&&rooms[adj]?.theme) accent=rooms[adj].theme.accent;
-        // Neon glow edge — wider dim glow
-        ctx.globalAlpha=0.25;ctx.fillStyle=accent;
+        // Neon glow edge — wider dim glow (reduced brightness)
+        ctx.globalAlpha=0.15;ctx.fillStyle=accent;
         if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,5);
         if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-5,CELL_SIZE,5);
         if(floorLeft) ctx.fillRect(px,py,5,CELL_SIZE);
         if(floorRight) ctx.fillRect(px+CELL_SIZE-5,py,5,CELL_SIZE);
-        // Bright neon line on top
-        ctx.globalAlpha=0.9;ctx.fillStyle=accent;
+        // Bright neon line on top (dimmed from 0.9 to 0.55)
+        ctx.globalAlpha=0.55;ctx.fillStyle=accent;
         if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,2);
         if(floorBelow) ctx.fillRect(px,py+CELL_SIZE-2,CELL_SIZE,2);
         if(floorLeft) ctx.fillRect(px,py,2,CELL_SIZE);
@@ -9459,10 +9464,13 @@ function render() {
       }
     }
   }
-  // Single batched grid stroke for all visible floor cells (massive win over per-cell strokeRect)
+  // Single batched grid stroke for all visible floor cells
+  ctx.globalAlpha = 0.4; // dim the grid lines
   ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
+  ctx.globalAlpha = 1;
   const _renderH=ARENA_H;
-  ctx.shadowColor='#f0f';ctx.shadowBlur=8;ctx.strokeStyle='#f0f';ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
+  const _borderColor = _domainGridColor || '#b06';
+  ctx.shadowColor=_borderColor;ctx.shadowBlur=6;ctx.strokeStyle=_borderColor;ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
 
   // Room neon accents — corner brackets + subtle pulse glow
   const _neonPulse=0.06+Math.sin(performance.now()*0.002)*0.03;
