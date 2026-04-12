@@ -3158,9 +3158,16 @@ function _drawZombieShape(ctx, type, r) {
     for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
     ctx.closePath();
   } else if (type === 'beam') {
-    // Beam array: flat hexagonal body with antenna prongs
-    ctx.moveTo(r, 0); ctx.lineTo(r*0.5, -r*0.85); ctx.lineTo(-r*0.5, -r*0.85);
-    ctx.lineTo(-r, 0); ctx.lineTo(-r*0.5, r*0.85); ctx.lineTo(r*0.5, r*0.85);
+    // Beam array: elongated gun/cannon shape — barrel pointing forward (right = 0°)
+    ctx.moveTo(r * 1.4, 0);                  // barrel tip
+    ctx.lineTo(r * 0.6, -r * 0.3);           // barrel top
+    ctx.lineTo(r * 0.2, -r * 0.6);           // body top
+    ctx.lineTo(-r * 0.7, -r * 0.65);         // rear top
+    ctx.lineTo(-r, -r * 0.35);               // back corner top
+    ctx.lineTo(-r, r * 0.35);                // back corner bottom
+    ctx.lineTo(-r * 0.7, r * 0.65);          // rear bottom
+    ctx.lineTo(r * 0.2, r * 0.6);            // body bottom
+    ctx.lineTo(r * 0.6, r * 0.3);            // barrel bottom
     ctx.closePath();
   } else {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -3199,7 +3206,7 @@ const ZOMBIE_TYPES = {
   splitter: { hp: 200, speed: 1.5, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
   mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // neon orange
   // Beam Array — perches at walls, sweeps a laser beam across the room
-  beam:     { hp: 250, speed: 3.5, radius: 12, color: '#f44', damage: 6, score: 300, beamArray: true },
+  beam:     { hp: 250, speed: 3.5, radius: 20, color: '#f44', damage: 6, score: 300, beamArray: true },
   // Legacy compat
   brute:    { hp: 350, speed: 2.0, radius: 16, color: '#f80', damage: 20, score: 250 }, // neon orange
   stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#08f', damage: 15, score: 200 }, // neon blue
@@ -8052,11 +8059,13 @@ function update() {
             const _tgtA=Math.atan2(zdy,zdx);
             let _da=_tgtA-z._beamSweepAngle;while(_da>Math.PI)_da-=Math.PI*2;while(_da<-Math.PI)_da+=Math.PI*2;
             z._beamSweepAngle+=_da*0.02;
+            z.angle=z._beamSweepAngle; // face the beam direction
             if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;z._beamSweepDir=Math.random()<0.5?1:-1;}
           } else if(z._beamState==='fire'){
             z.vx=0;z.vy=0;z._beamTimer++;
             // Sweep the beam across an arc
             z._beamSweepAngle+=z._beamSweepDir*0.025;
+            z.angle=z._beamSweepAngle; // face the beam direction
             // Damage players in the beam path
             if(isHost&&gameTime%4===0){
               const _bLen=500;
@@ -9886,10 +9895,28 @@ function render() {
       const _bcos=Math.cos(z._beamSweepAngle),_bsin=Math.sin(z._beamSweepAngle);
       const _bLen=500;
       if(z._beamState==='telegraph'){
-        const _telA=0.25+Math.sin(performance.now()*0.01)*0.15;
-        ctx.globalAlpha=_telA;ctx.strokeStyle='#f44';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);
-        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        const _telProg = Math.min(1, (z._beamTimer||0) / 90); // 0→1 over telegraph duration
+        const _telPulse = 0.4 + Math.sin(performance.now() * 0.012) * 0.25;
+        // Wide pulsing warning line — gets brighter as fire approaches
+        ctx.globalAlpha = (0.25 + _telProg * 0.45) * _telPulse;
+        ctx.strokeStyle = '#f44'; ctx.lineWidth = 2 + _telProg * 3;
+        ctx.shadowColor = '#f44'; ctx.shadowBlur = 10 + _telProg * 15;
+        ctx.setLineDash([10, 8]);
+        ctx.beginPath(); ctx.moveTo(_bcx, _bcy); ctx.lineTo(_bcx+_bcos*_bLen, _bcy+_bsin*_bLen); ctx.stroke();
         ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
+        // Sweep arc preview — shows the path the beam will cover (±30° fan)
+        ctx.globalAlpha = 0.08 + _telProg * 0.08;
+        ctx.fillStyle = '#f44';
+        ctx.beginPath();
+        ctx.moveTo(_bcx, _bcy);
+        ctx.arc(_bcx, _bcy, _bLen * 0.7, z._beamSweepAngle - 0.5, z._beamSweepAngle + 0.5);
+        ctx.closePath(); ctx.fill();
+        // ⚠ warning at the endpoint
+        ctx.globalAlpha = 0.6 * _telPulse;
+        ctx.fillStyle = '#f44'; ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('⚠', _bcx + _bcos * _bLen * 0.5, _bcy + _bsin * _bLen * 0.5);
       } else {
         ctx.globalAlpha=0.85;ctx.shadowColor='#f44';ctx.shadowBlur=25;
         ctx.strokeStyle='#f44';ctx.lineWidth=8;
