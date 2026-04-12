@@ -2130,8 +2130,125 @@ function spawnDescentSection(idx) {
 // ---- THE TRENCH (horizontal clone of descent) ----
 const TRENCH_SECTION_W = 22; // cells per section horizontally
 const TRENCH_HEIGHT = 18;    // cells tall
-const TRENCH_NUM_SECTIONS = 20;
+const TRENCH_NUM_SECTIONS = 25;
 const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
+
+// ---- VISUAL DOMAINS — the mesh changes as you descend ----
+const TRENCH_DOMAINS = [
+  { name: 'ENTRY CACHE',       sections: [0, 4],    wallColor: '#1a0a1a', wallStroke: '#f0f', floorTint: null,                       accentColor: '#f0f', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
+  { name: 'CORRUPTED SUBNET',  sections: [5, 9],    wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
+  { name: 'DEEP STORAGE',      sections: [10, 14],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
+  { name: 'KERNEL BOUNDARY',   sections: [15, 19],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
+  { name: 'THE CORE',          sections: [20, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
+];
+function getTrenchDomain(sectionIdx) {
+  for (const d of TRENCH_DOMAINS) { if (sectionIdx >= d.sections[0] && sectionIdx <= d.sections[1]) return d; }
+  return TRENCH_DOMAINS[0];
+}
+
+// ---- LAYOUT TEMPLATES — replace random pillar scatter ----
+// Each template returns an array of {x,y} cell offsets (section-local) to set as WALL.
+// Interior playable area: cols 2-19, rows 2-15 (with 5-col spawn clearance on left,
+// 3-col door clearance on right).
+const TRENCH_TEMPLATES = {
+  arena: () => [], // no obstacles — pure open space
+  crossroads: () => {
+    // One large 4×4 central block
+    const cells = [];
+    for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) cells.push({ x: 10 + dx, y: 7 + dy });
+    return cells;
+  },
+  corridor: () => {
+    // Two horizontal walls creating a wide central lane with open flanks
+    const cells = [];
+    for (let dx = 6; dx <= 16; dx++) { cells.push({ x: dx, y: 4 }); cells.push({ x: dx, y: 13 }); }
+    return cells;
+  },
+  pillars: () => {
+    // 3 small 2×2 pillars with 5+ cell gaps between each cluster.
+    // Layout: left pillar, center-low pillar, right pillar — well separated.
+    const positions = [{ x: 7, y: 4 }, { x: 12, y: 10 }, { x: 17, y: 4 }];
+    // Verify gaps: (7,4)→(12,10): dx=5,dy=6 ✓  (12,10)→(17,4): dx=5,dy=6 ✓  (7,4)→(17,4): dx=10 ✓
+    const cells = [];
+    for (const p of positions) {
+      cells.push({ x: p.x, y: p.y }, { x: p.x+1, y: p.y }, { x: p.x, y: p.y+1 }, { x: p.x+1, y: p.y+1 });
+    }
+    return cells;
+  },
+  lshape: () => {
+    const cells = [];
+    for (let dy = 4; dy <= 10; dy++) cells.push({ x: 10, y: dy }); // vertical
+    for (let dx = 10; dx <= 15; dx++) cells.push({ x: dx, y: 10 }); // horizontal
+    return cells;
+  },
+  split: () => {
+    // Vertical wall bisecting with a wide gap in the middle
+    const cells = [];
+    for (let dy = 2; dy <= 6; dy++) cells.push({ x: 11, y: dy });
+    for (let dy = 11; dy <= 15; dy++) cells.push({ x: 11, y: dy });
+    return cells;
+  },
+  islands: () => {
+    const cells = [];
+    for (let dx = 0; dx < 3; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: 7+dx, y: 4+dy });
+    for (let dx = 0; dx < 3; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: 14+dx, y: 11+dy });
+    return cells;
+  },
+  bunker: () => {
+    const cells = [];
+    for (let dx = 9; dx <= 13; dx++) { cells.push({ x: dx, y: 6 }); cells.push({ x: dx, y: 11 }); }
+    cells.push({ x: 9, y: 7 }, { x: 9, y: 8 }, { x: 9, y: 10 }); // left wall (gap at 9)
+    cells.push({ x: 13, y: 7 }, { x: 13, y: 9 }, { x: 13, y: 10 }); // right wall (gap at 8)
+    return cells;
+  },
+  gauntlet: () => {
+    // Staggered 3×2 blocks creating a winding wide path. 4+ cell gaps enforced.
+    // Block1 (7-9, 3-4), Block2 (14-16, 8-9), Block3 (7-9, 13-14)
+    // Gaps: B1→B2: dx=5, dy=4 ✓  B2→B3: dx=5, dy=4 ✓
+    const cells = [];
+    for (let dx = 7; dx <= 9; dx++) cells.push({ x: dx, y: 3 }, { x: dx, y: 4 });
+    for (let dx = 14; dx <= 16; dx++) cells.push({ x: dx, y: 8 }, { x: dx, y: 9 });
+    for (let dx = 7; dx <= 9; dx++) cells.push({ x: dx, y: 13 }, { x: dx, y: 14 });
+    return cells;
+  },
+};
+
+// Select a template based on enemy types and section depth
+function selectTrenchTemplate(types, sectionIdx, isBoss) {
+  if (sectionIdx < 2 || isBoss) return 'arena';
+  const hasBeam = types.includes('beam');
+  const hasCharger = types.includes('fast');
+  const hasSpitter = types.includes('spitter');
+  const hasTank = types.includes('tank');
+  const pool = [];
+  // Enemy-aware selection (principle #4)
+  if (hasBeam)    pool.push('arena', 'corridor'); // beams need sightlines
+  if (hasCharger) pool.push('pillars', 'crossroads'); // dodge space
+  if (hasSpitter) pool.push('corridor', 'lshape', 'islands'); // cover from ranged
+  if (hasTank)    pool.push('arena', 'crossroads'); // big guys need space
+  // Depth-based complexity (principle #6)
+  if (pool.length === 0) {
+    if (sectionIdx < 5)       pool.push('arena', 'crossroads');
+    else if (sectionIdx < 10) pool.push('crossroads', 'pillars', 'corridor');
+    else                      pool.push('pillars', 'islands', 'split', 'gauntlet', 'lshape');
+  }
+  if (sectionIdx >= 12 && Math.random() < 0.3) pool.push('bunker');
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// ---- SECTION MODIFIERS ----
+const SECTION_MODIFIERS = [
+  { id: 'lockdown',  name: 'LOCKDOWN',         desc: 'All enemies must die to proceed', color: '#f44', icon: '🔒' },
+  { id: 'doubletime', name: 'DOUBLE TIME',     desc: '2× enemies, 60% HP each',        color: '#ff0', icon: '⚡' },
+  { id: 'blackout',  name: 'BLACKOUT',         desc: 'Flashlight range halved',         color: '#a4f', icon: '◐' },
+  { id: 'archive',   name: 'ARCHIVE BREACH',   desc: 'Cache Node this section',         color: '#0f0', icon: '◆' },
+  { id: 'warden',    name: "WARDEN'S GAZE",    desc: 'Enemies 20% faster',              color: '#f80', icon: '⎔' },
+];
+function rollSectionModifier(sectionIdx) {
+  if (sectionIdx < 3) return null; // no modifiers in early sections
+  if (Math.random() > 0.30) return null; // 30% chance of a modifier
+  return SECTION_MODIFIERS[Math.floor(Math.random() * SECTION_MODIFIERS.length)];
+}
 let trenchSection = 0;
 let trenchSections = []; // { x (px), width, enemyCount, types, spawned, cleared, isBoss, isDark }
 let trenchFadeAlpha = 0;
@@ -2146,38 +2263,49 @@ function generateTrenchMap(seed) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Each section is a fully walled box. The right wall has a closed door (still a wall in the grid)
-  // — the door is purely a logical trigger zone the player walks against.
+  // Pre-compute section types so templates can be selected with enemy awareness
+  const _sectionTypes = [];
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    const t = ['normal'];
+    if (si >= 2) t.push('fast');
+    if (si >= 3) t.push('spitter');
+    if (si >= 4) t.push('tank', 'beam');
+    if (si >= 5) t.push('splitter');
+    if (si >= 7) t.push('mini');
+    if (si >= 8) t.push('exploder');
+    _sectionTypes.push(t);
+  }
+  // Each section: carve the open interior, then apply the selected template
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
     const baseX = si * TRENCH_SECTION_W;
+    // Carve interior (all walkable by default)
     for (let y = 1; y < TRENCH_HEIGHT - 1; y++) {
       for (let dx = 1; dx < TRENCH_SECTION_W - 1; dx++) {
         if (baseX + dx < GRID_W) dungeonGrid[y][baseX + dx] = true;
       }
     }
-    // ---- INTERIOR PILLARS ----
-    // Starting from section 2, add 1-4 random pillar blocks (2×2 wall clusters)
-    // to break up the open rectangle. Avoid the spawn zone (left third) and the
-    // door zone (rightmost 3 columns). Creates cover and forces varied pathing.
-    if (si >= 2) {
-      const numPillars = 1 + Math.floor(Math.random() * 3); // 1-3 pillars
-      for (let pi = 0; pi < numPillars; pi++) {
-        // Pillar position in section-local cell coords, avoiding margins
-        const px = 5 + Math.floor(Math.random() * (TRENCH_SECTION_W - 10));
-        const py = 4 + Math.floor(Math.random() * (TRENCH_HEIGHT - 8));
-        // Random shape: 2×2 block, 1×3 horizontal, or 3×1 vertical
-        const shapes = [[0,0,1,0,0,1,1,1], [0,0,1,0,2,0], [0,0,0,1,0,2]];
-        const shape = shapes[Math.floor(Math.random() * shapes.length)];
-        for (let si2 = 0; si2 < shape.length; si2 += 2) {
-          const cx = baseX + px + shape[si2];
-          const cy = py + shape[si2 + 1];
-          if (cy >= 1 && cy < TRENCH_HEIGHT - 1 && cx >= baseX + 1 && cx < baseX + TRENCH_SECTION_W - 1) {
-            if (cx < GRID_W && dungeonGrid[cy]) dungeonGrid[cy][cx] = false; // wall = false in this grid
-          }
-        }
+    // ---- TEMPLATE-BASED OBSTACLES (replaces random pillar scatter) ----
+    // Select template based on enemy types + section depth (design principles #4, #6)
+    const isBoss = si > 0 && si % 5 === 0;
+    const tmplName = selectTrenchTemplate(_sectionTypes[si], si, isBoss);
+    const tmplCells = TRENCH_TEMPLATES[tmplName] ? TRENCH_TEMPLATES[tmplName]() : [];
+    // Apply template cells as walls, with safety checks
+    for (const c of tmplCells) {
+      const gx = baseX + c.x, gy = c.y;
+      // Enforce principle #3: spawn zone (cols 1-5) must stay clear
+      if (c.x < 6) continue;
+      // Enforce: door zone (last 3 cols) must stay clear
+      if (c.x >= TRENCH_SECTION_W - 3) continue;
+      // Bounds check
+      if (gy >= 1 && gy < TRENCH_HEIGHT - 1 && gx >= baseX + 1 && gx < baseX + TRENCH_SECTION_W - 1) {
+        if (gx < GRID_W && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
-    rooms.push({ x: baseX, y: 0, w: TRENCH_SECTION_W, h: TRENCH_HEIGHT, theme: ROOM_THEMES[4], brightness: 1.0, flicker: false });
+    // Store the template name on the section for later reference
+    const domain = getTrenchDomain(si);
+    rooms.push({ x: baseX, y: 0, w: TRENCH_SECTION_W, h: TRENCH_HEIGHT,
+      theme: ROOM_THEMES[4], brightness: domain.noFog ? 1.5 : 1.0, flicker: false,
+      _template: tmplName, _domain: domain });
   }
   // Build wall obstacles from grid
   obstacles = [];
@@ -2217,7 +2345,10 @@ function initTrenchSections() {
     const sectionX = i * TRENCH_SECTION_W * CELL_SIZE;
     const isBoss = i > 0 && i % 5 === 0;
     const isDark = i > 3 && i % 4 === 3;
-    // Decide wave count: intro and boss sections stay single-wave so they read clearly
+    const domain = getTrenchDomain(i);
+    // Section modifier (principle: progressive variety)
+    const modifier = rollSectionModifier(i);
+    // Decide wave count
     let waveCount = 1;
     if (!isBoss && i >= 2) {
       const r = Math.random();
@@ -2225,8 +2356,9 @@ function initTrenchSections() {
       else if (i < 10)  waveCount = r < 0.25 ? 3 : r < 0.65 ? 2 : 1;
       else              waveCount = r < 0.40 ? 3 : r < 0.80 ? 2 : 1;
     }
-    // Per-wave enemy count — first wave is "full strength", later waves slightly smaller
-    const baseEnemies = Math.min(9, 3 + Math.floor(i * 0.7));
+    let baseEnemies = Math.min(9, 3 + Math.floor(i * 0.7));
+    // DOUBLE TIME modifier: 2× enemies, 60% HP (applied at spawn time)
+    if (modifier && modifier.id === 'doubletime') baseEnemies = Math.floor(baseEnemies * 2);
     const waves = [];
     for (let w = 0; w < waveCount; w++) {
       let count = baseEnemies;
@@ -2241,40 +2373,46 @@ function initTrenchSections() {
     if (i >= 5) types.push('splitter');
     if (i >= 7) types.push('mini');
     if (i >= 8) types.push('exploder');
-    // ---- STAGE HAZARDS ----
-    // Each non-boss section from section 3+ gets 1-3 randomly-chosen hazards.
-    // Hazard types unlock at different section depths for a difficulty ramp.
+    // ---- DOMAIN-AWARE HAZARDS ----
     const hazards = [];
-    if (i >= 3 && !isBoss) {
-      const numHaz = 1 + Math.floor(Math.random() * (i >= 8 ? 3 : 2));
-      const _hxMin = sectionX + 3 * CELL_SIZE, _hxMax = sectionX + (TRENCH_SECTION_W - 4) * CELL_SIZE;
+    if (i >= 4 && !isBoss) {
+      const numHaz = 1 + Math.floor(Math.random() * (i >= 10 ? 2 : 1));
+      const _hxMin = sectionX + 6 * CELL_SIZE, _hxMax = sectionX + (TRENCH_SECTION_W - 5) * CELL_SIZE;
       const _hyMin = 3 * CELL_SIZE, _hyMax = (TRENCH_HEIGHT - 4) * CELL_SIZE;
       for (let hi = 0; hi < numHaz; hi++) {
         const hx = _hxMin + Math.random() * (_hxMax - _hxMin);
         const hy = _hyMin + Math.random() * (_hyMax - _hyMin);
-        // Build pool of eligible hazard types for this section depth.
-        // Corruption pools, laser grids, and turret pillars removed — lasers are
-        // now handled by the beam array zombie type, which is a proper shootable enemy.
+        // Domain-specific hazard pools
         const pool = [];
-        if (i >= 4) pool.push('collapse');
-        if (i >= 5) pool.push('spawner', 'emp');
-        if (pool.length === 0) continue; // section 3 has no eligible hazards anymore
+        if (domain.sections[0] <= 4) pool.push('collapse'); // D1: collapse only
+        if (domain.sections[0] >= 5 && domain.sections[0] <= 9) pool.push('spawner', 'emp', 'collapse'); // D2
+        if (domain.sections[0] >= 10 && domain.sections[0] <= 14) pool.push('icepatch', 'collapse', 'emp'); // D3: ice
+        if (domain.sections[0] >= 15 && domain.sections[0] <= 19) pool.push('flamvent', 'collapse', 'spawner'); // D4: fire
+        if (domain.sections[0] >= 20) pool.push('datastorm', 'phasewall', 'emp'); // D5: abstract
+        if (pool.length === 0) continue;
         const htype = pool[Math.floor(Math.random() * pool.length)];
         if (htype === 'collapse') {
-          // 3×3 cell area that cracks when stepped on, becomes wall after 2s
-          const cx = Math.floor(4 + Math.random() * (TRENCH_SECTION_W - 8));
+          const cx = Math.floor(6 + Math.random() * (TRENCH_SECTION_W - 12));
           const cy = Math.floor(3 + Math.random() * (TRENCH_HEIGHT - 6));
           hazards.push({ type: 'collapse', gx: i * TRENCH_SECTION_W + cx, gy: cy,
             x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
             w: 3, h: 2, triggered: false, timer: 0, collapsed: false });
         } else if (htype === 'spawner') {
-          hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120,
-            spawnTimer: 0, spawnRate: 180, alive: true }); // spawn every 3s
+          hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120, spawnTimer: 0, spawnRate: 180, alive: true });
         } else if (htype === 'emp') {
           hazards.push({ type: 'emp', x: hx, y: hy, radius: 55 + Math.random() * 25 });
-        } else if (htype === 'turret') {
-          hazards.push({ type: 'turret', x: hx, y: hy, angle: Math.random() * Math.PI * 2,
-            rotSpeed: 0.012 + Math.random() * 0.008, fireTimer: 0, fireRate: 150 });
+        } else if (htype === 'icepatch') {
+          hazards.push({ type: 'icepatch', x: hx, y: hy, radius: 50 + Math.random() * 30 });
+        } else if (htype === 'flamvent') {
+          hazards.push({ type: 'flamvent', x: hx, y: hy, timer: 0, state: 'idle' }); // idle → warn → fire → cooldown
+        } else if (htype === 'datastorm') {
+          hazards.push({ type: 'datastorm', timer: 0, active: false, cooldown: 300 + Math.floor(Math.random() * 180) });
+        } else if (htype === 'phasewall') {
+          const cx = Math.floor(7 + Math.random() * (TRENCH_SECTION_W - 14));
+          const cy = Math.floor(4 + Math.random() * (TRENCH_HEIGHT - 8));
+          hazards.push({ type: 'phasewall', gx: i * TRENCH_SECTION_W + cx, gy: cy,
+            x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
+            w: 3, h: 1, timer: 0, solid: true, period: 180 + Math.floor(Math.random() * 120) });
         }
       }
     }
@@ -2290,6 +2428,8 @@ function initTrenchSections() {
       isBoss,
       isDark,
       hazards,
+      modifier,
+      domain,
     });
   }
 }
@@ -2316,10 +2456,14 @@ function spawnTrenchWave(idx, waveIdx) {
   if (!sec) return;
   const TW = TRENCH_SECTION_W * CELL_SIZE;
   const enemyCount = sec.waves[waveIdx];
-  // Per-section difficulty scaling
-  const hpScale = 1 + idx * 0.10;
-  const speedBoost = idx * 0.015;
+  // Per-section difficulty scaling + modifier adjustments
+  let hpScale = 1 + idx * 0.10;
+  let speedBoost = idx * 0.015;
   const dmgScale = 1 + idx * 0.04;
+  // DOUBLE TIME modifier: enemies have 60% HP
+  if (sec.modifier && sec.modifier.id === 'doubletime') hpScale *= 0.6;
+  // WARDEN'S GAZE modifier: enemies 20% faster
+  if (sec.modifier && sec.modifier.id === 'warden') speedBoost += 0.4;
   for (let ei = 0; ei < enemyCount; ei++) {
     const tk = sec.types[Math.floor(Math.random() * sec.types.length)];
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
@@ -2358,28 +2502,49 @@ function spawnTrenchSection(idx) {
     zombies.push({ zid: _nextZombieId++, x: sec.x + TW * 0.7, y: cy, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true });
     showGlitchCallout('boss');
   }
-  // Element chest — break it to release a temporary element zone
-  const ezx = sec.x + (0.4 + Math.random() * 0.3) * TW;
-  const ezy = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
-  spawnElementZone(ezx, ezy);
-  // A couple of barrels for fun
-  for (let bi = 0; bi < 2; bi++) {
+  // ---- DESTRUCTIBLE OBJECTS ----
+  // Explosive barrels + data crates (break for possible drops)
+  const _numBarrels = 1 + Math.floor(Math.random() * 2);
+  for (let bi = 0; bi < _numBarrels; bi++) {
     const bx = sec.x + (0.35 + Math.random() * 0.45) * TW;
-    const by = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
-    barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
+    const by = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
+    // Check the spawn position is walkable (not inside an obstacle)
+    const _bgx = Math.floor(bx / CELL_SIZE), _bgy = Math.floor(by / CELL_SIZE);
+    if (dungeonGrid[_bgy] && dungeonGrid[_bgy][_bgx]) {
+      barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
+    }
   }
-  // Corrupted memory fragments — ghostly floor text scattered through the section
+  // Corrupted memory fragments — ghostly floor text
   const _fragCount = 1 + Math.floor(Math.random() * 2);
   for (let fi = 0; fi < _fragCount; fi++) {
     const fx = sec.x + (0.15 + Math.random() * 0.7) * TW;
     const fy = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
     spawnMemoryFragment(fx, fy);
   }
-  // Narrative title card — section name + flavor
+  // ---- NARRATIVE: domain title + section lore + modifier announcement ----
+  const _domain = sec.domain || getTrenchDomain(idx);
   const _lore = TRENCH_SECTION_LORE[idx] || { name: `SECTOR ${idx + 1}`, sub: 'unknown territory' };
-  showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
+  // If crossing into a new domain, announce it prominently
+  const _prevDomain = idx > 0 ? getTrenchDomain(idx - 1) : null;
+  if (_domain && (!_prevDomain || _domain.name !== _prevDomain.name)) {
+    // Domain transition: big glitch + domain name
+    triggerGlitchSurge(0.6, 50);
+    showSectionTitleCard(_domain.name, 'new domain', false);
+    setTimeout(() => {
+      showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
+    }, 2000);
+  } else {
+    showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
+  }
   if (sec.isDark) addFloatingText(cx, cy - 36, 'DARKNESS', '#888');
   if (sec.waves.length > 1) addFloatingText(cx, cy - 12, `${sec.waves.length} WAVES`, '#ff8040');
+  // Modifier announcement
+  if (sec.modifier) {
+    setTimeout(() => {
+      addFloatingText(cx, cy + 20, `${sec.modifier.icon} ${sec.modifier.name}`, sec.modifier.color);
+      addFloatingText(cx, cy + 40, sec.modifier.desc, '#aaa');
+    }, 800);
+  }
 }
 
 function updateTrench() {
@@ -2402,10 +2567,9 @@ function updateTrench() {
     }
     return;
   }
-  // Early wave overlap: once you've killed half the current wave and more waves are
-  // queued, start spawning the next one immediately. Creates real chaos where new
-  // enemies materialize while you're still fighting the current batch.
-  if (sec.spawned && !sec.cleared && sec.waveSpawnTimer <= 0 && sec.currentWave < sec.waves.length - 1) {
+  // Early wave overlap (disabled by LOCKDOWN modifier — must kill ALL enemies).
+  const _lockdown = sec.modifier && sec.modifier.id === 'lockdown';
+  if (!_lockdown && sec.spawned && !sec.cleared && sec.waveSpawnTimer <= 0 && sec.currentWave < sec.waves.length - 1) {
     const waveSize = sec.waves[sec.currentWave] || 1;
     const threshold = Math.max(2, Math.ceil(waveSize * 0.35)); // ~35% remaining
     if (sectionZombies.length <= threshold && sectionZombies.length > 0) {
@@ -2439,9 +2603,9 @@ function updateTrench() {
     const lp2 = getLocalPlayer();
     if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
     playExitFoundSound();
-    // (Boss power-up chest removed — power-ups now drop directly from enemies.)
-    // Cache Node (shop chest) — spawn every SHOP_SECTION_INTERVAL cleared sections
-    if (!_anyShopChestActive() && shouldSpawnShopChest()) {
+    // Cache Node — spawn on cadence OR if ARCHIVE BREACH modifier is active
+    const _archiveMod = sec.modifier && sec.modifier.id === 'archive';
+    if (!_anyShopChestActive() && (_archiveMod || shouldSpawnShopChest())) {
       const lpc = getLocalPlayer();
       if (lpc) { const _sp = _pickStrideChestSpawn(lpc); spawnShopChest(_sp.x, _sp.y); }
     }
@@ -7450,10 +7614,66 @@ function update() {
                 lp._empDisabled = 5; // 5-frame firing disable, refreshed each frame in zone
               }
             }
-            // (turret pillar removed — beam array zombie replaces it)
+            // -- ICE PATCH (D3): slow player while standing on it --
+            if (hz.type === 'icepatch') {
+              if (_hd2 < (hz.radius + PLAYER_RADIUS) ** 2) {
+                lp._iceSlowed = 8; // 8-frame slow, refreshed each frame
+              }
+            }
+            // -- FLAME VENT (D4): periodic floor fire jets --
+            if (hz.type === 'flamvent') {
+              hz.timer++;
+              if (hz.state === 'idle' && hz.timer > 150) { hz.state = 'warn'; hz.timer = 0; }
+              else if (hz.state === 'warn' && hz.timer > 40) { hz.state = 'fire'; hz.timer = 0; }
+              else if (hz.state === 'fire') {
+                if (hz.timer < 30 && gameTime % 6 === 0 && _hd2 < (40 + PLAYER_RADIUS) ** 2) {
+                  damagePlayerObj(lp, 4);
+                  for (let _fpi = 0; _fpi < 3; _fpi++) particles.push({ x: hz.x+(Math.random()-0.5)*20, y: hz.y-(Math.random()*30), vx: (Math.random()-0.5)*3, vy: -3-Math.random()*3, life: 16, maxLife: 16, size: 3+Math.random()*3, color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
+                }
+                if (hz.timer > 30) { hz.state = 'cooldown'; hz.timer = 0; }
+              }
+              else if (hz.state === 'cooldown' && hz.timer > 90) { hz.state = 'idle'; hz.timer = 0; }
+            }
+            // -- DATA STORM (D5): periodic screen-wide damage to everything --
+            if (hz.type === 'datastorm' && isHost) {
+              hz.timer++;
+              if (!hz.active && hz.timer > hz.cooldown) {
+                hz.active = true; hz.timer = 0;
+                addFloatingText(lp.x, lp.y - 40, '⚠ DATA STORM', '#fff');
+                triggerGlitchSurge(0.4, 30);
+              }
+              if (hz.active) {
+                if (gameTime % 8 === 0) {
+                  damagePlayerObj(lp, 2);
+                  for (const _dz of zombies) { if (_dz.hp > 0) damageZombie(_dz, 5, 0, 0, true); }
+                }
+                if (hz.timer > 60) { hz.active = false; hz.timer = 0; }
+              }
+            }
+            // -- PHASE WALL (D5): blinks in/out on timer --
+            if (hz.type === 'phasewall') {
+              hz.timer++;
+              const shouldBeSolid = (hz.timer % hz.period) < hz.period * 0.6;
+              if (shouldBeSolid !== hz.solid) {
+                hz.solid = shouldBeSolid;
+                // Toggle grid cells
+                for (let _cy = 0; _cy < hz.h; _cy++) {
+                  for (let _cx = 0; _cx < hz.w; _cx++) {
+                    const gx = hz.gx + _cx, gy = hz.gy + _cy;
+                    if (dungeonGrid[gy]) dungeonGrid[gy][gx] = !shouldBeSolid; // solid=wall=false in grid
+                  }
+                }
+                // Rebuild obstacles
+                obstacles = [];
+                for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+                uploadDungeonGrid();
+              }
+            }
           }
           // EMP disable countdown
           if (lp._empDisabled > 0) lp._empDisabled--;
+          // Ice slow effect
+          if (lp._iceSlowed > 0) { lp._iceSlowed--; lp.vx *= 0.5; lp.vy *= 0.5; }
         }
       }
       // Freeze movement while fading (visual safety)
@@ -7525,6 +7745,29 @@ function update() {
     updateXPOrbs();
     updateRunOrbitals();
     updateNarrativeBeats();
+    // ---- DOMAIN AMBIENT PARTICLES ----
+    if (gameMode === 'trench' && trenchSections[trenchSection] && gameTime % 4 === 0) {
+      const _dSec = trenchSections[trenchSection];
+      const _dDom = _dSec.domain;
+      if (_dDom && _dDom.ambientType) {
+        const _ax = lp.x + (Math.random() - 0.5) * 500;
+        const _ay = lp.y + (Math.random() - 0.5) * 300;
+        if (_dDom.ambientType === 'ember') {
+          if (Math.random() < 0.3) particles.push({ x: _ax, y: _ay, vx: (Math.random()-0.5)*0.5, vy: -0.8 - Math.random(), life: 40, maxLife: 40, size: 1.5 + Math.random(), color: '#f80', type: 'spark' });
+        } else if (_dDom.ambientType === 'ember_heavy') {
+          particles.push({ x: _ax, y: _ay, vx: (Math.random()-0.5)*1, vy: -1.2 - Math.random()*1.5, life: 50, maxLife: 50, size: 2 + Math.random()*2, color: Math.random()<0.5?'#f80':'#f44', type: 'spark' });
+        } else if (_dDom.ambientType === 'ice') {
+          if (Math.random() < 0.25) particles.push({ x: _ax, y: _ay, vx: (Math.random()-0.5)*0.8, vy: Math.random()*0.5, life: 50, maxLife: 50, size: 1 + Math.random(), color: '#8ef', type: 'spark' });
+        } else if (_dDom.ambientType === 'gold') {
+          if (Math.random() < 0.2) particles.push({ x: _ax, y: _ay, vx: 0, vy: -0.3 - Math.random()*0.5, life: 60, maxLife: 60, size: 1.5, color: '#ff0', type: 'spark' });
+        }
+      }
+      // Domain glitch rate multiplier
+      if (_dDom && _dDom.glitchMult > 0 && Math.random() < 0.002 * _dDom.glitchMult) {
+        window._crtGlitch = Math.max(window._crtGlitch || 0, 0.1 + Math.random() * 0.15);
+        window._crtGlitchTimer = Math.max(window._crtGlitchTimer || 0, 6 + Math.floor(Math.random() * 12));
+      }
+    }
     // Legacy level-up picker path — disabled since the shop replaces level-up cards.
     // Kept as a dead branch so old call sites can't accidentally pop the picker mid-combat.
     // if (pendingLevelUps > 0 && !levelUpChoices && gameState === 'playing') { ... }
@@ -9053,10 +9296,19 @@ function render() {
   const _gridH=GRID_H;
   const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(_gridH-1,Math.floor(vB/CELL_SIZE));
   const _corridorTheme=ROOM_THEMES[0];
+  // Domain visual: override wall/grid colors based on the current trench domain
+  let _domainFloorTint = null, _domainWallColor = null, _domainGridColor = null;
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    const _dom = trenchSections[trenchSection].domain;
+    if (_dom) {
+      _domainFloorTint = _dom.floorTint;
+      _domainWallColor = _dom.wallColor;
+      _domainGridColor = _dom.wallStroke;
+    }
+  }
   // Batch grid strokes: collect all visible floor cell rects into one Path2D and stroke once.
-  // Previously: ~600 per-cell strokeRect calls = lots of state-setup overhead per frame.
   const _floorPath = new Path2D();
-  let _gridStrokeColor = _corridorTheme.grid;
+  let _gridStrokeColor = _domainGridColor || _corridorTheme.grid;
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
       // Floor cell — dark with neon grid lines
@@ -9064,9 +9316,11 @@ function render() {
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       ctx.fillStyle=theme.floor;
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
+      // Domain floor tint overlay
+      if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE); }
       // Grid lines added to batched path (stroked once after the loop)
       _floorPath.rect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      _gridStrokeColor=theme.grid;
+      _gridStrokeColor = _domainGridColor || theme.grid;
       // Corridor neon strip — center line in corridors (not in rooms)
       if(ri<0){const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
         const hFloor=(cx>0&&dungeonGrid[cy][cx-1])&&(cx<GRID_W-1&&dungeonGrid[cy][cx+1]);
@@ -9076,7 +9330,7 @@ function render() {
         if(vFloor)ctx.fillRect(px+CELL_SIZE/2-1,py,2,CELL_SIZE);
         ctx.globalAlpha=1;}
     } else {
-      ctx.fillStyle='#050508';
+      ctx.fillStyle = _domainWallColor || '#050508';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
       // Neon wall edges — glowing outlines where walls meet floor
       const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
@@ -9085,9 +9339,9 @@ function render() {
       const floorLeft=cx>0&&dungeonGrid[cy][cx-1];
       const floorRight=cx<GRID_W-1&&dungeonGrid[cy][cx+1];
       if(floorAbove||floorBelow||floorLeft||floorRight){
-        let accent='#2a1a3a';
+        let accent = _domainGridColor || '#2a1a3a';
         const adj=floorAbove?roomGrid[cy-1][cx]:floorBelow?roomGrid[cy+1][cx]:floorLeft?roomGrid[cy][cx-1]:roomGrid[cy][cx+1];
-        if(adj>=0&&rooms[adj]?.theme) accent=rooms[adj].theme.accent;
+        if(!_domainGridColor && adj>=0&&rooms[adj]?.theme) accent=rooms[adj].theme.accent;
         // Neon glow edge — wider dim glow
         ctx.globalAlpha=0.25;ctx.fillStyle=accent;
         if(floorAbove) ctx.fillRect(px,py,CELL_SIZE,5);
@@ -9723,7 +9977,84 @@ function render() {
           ctx.globalAlpha = 0.6; ctx.font = '8px monospace'; ctx.fillText('EMP', hz.x, hz.y + 18);
         }
 
-        // (turret pillar render removed — beam array zombie replaces it)
+        // ======== ICE PATCH (D3) ========
+        else if (hz.type === 'icepatch') {
+          ctx.globalAlpha = 0.5;
+          ctx.strokeStyle = '#4ef'; ctx.lineWidth = 2;
+          ctx.shadowColor = '#4ef'; ctx.shadowBlur = 12;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 0.12;
+          ctx.fillStyle = '#4ef';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.fill();
+          // Ice crystal sparkles
+          ctx.globalAlpha = 0.6;
+          for (let _ii = 0; _ii < 5; _ii++) {
+            const _ia = _hzt * 0.001 + _ii * 1.26;
+            const _ir = hz.radius * (0.3 + 0.5 * Math.abs(Math.sin(_ia)));
+            ctx.fillStyle = '#8ff'; ctx.beginPath();
+            ctx.arc(hz.x + Math.cos(_ia)*_ir, hz.y + Math.sin(_ia)*_ir, 1.5, 0, Math.PI*2); ctx.fill();
+          }
+          ctx.globalAlpha = 0.6; ctx.fillStyle = '#4ef'; ctx.font = '10px monospace';
+          ctx.textAlign = 'center'; ctx.fillText('ICE', hz.x, hz.y + 3);
+        }
+        // ======== FLAME VENT (D4) ========
+        else if (hz.type === 'flamvent') {
+          const isFiring = hz.state === 'fire';
+          const isWarn = hz.state === 'warn';
+          // Base vent
+          ctx.globalAlpha = 0.8; ctx.fillStyle = '#1a1008';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, 10, 0, Math.PI*2); ctx.fill();
+          ctx.strokeStyle = isFiring ? '#f44' : isWarn ? '#fa0' : '#640';
+          ctx.lineWidth = 2; ctx.stroke();
+          if (isWarn) {
+            // Pulsing orange warning glow
+            const _wp = 0.3 + Math.sin(_hzt * 0.015) * 0.3;
+            ctx.globalAlpha = _wp; ctx.shadowColor = '#fa0'; ctx.shadowBlur = 20;
+            ctx.fillStyle = '#fa0'; ctx.beginPath(); ctx.arc(hz.x, hz.y, 20, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+          if (isFiring) {
+            // Fire column
+            ctx.globalAlpha = 0.7; ctx.shadowColor = '#f80'; ctx.shadowBlur = 25;
+            ctx.fillStyle = '#f80';
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 30, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ff0'; ctx.globalAlpha = 0.4;
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 18, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+          ctx.globalAlpha = 0.5; ctx.fillStyle = '#f80'; ctx.font = '8px monospace';
+          ctx.textAlign = 'center'; ctx.fillText('VENT', hz.x, hz.y + 20);
+        }
+        // ======== DATA STORM (D5) — no positional render, it's screen-wide ========
+        else if (hz.type === 'datastorm' && hz.active) {
+          // Render: full-screen white flash + glitch characters
+          ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+          ctx.globalAlpha = 0.06 + Math.random() * 0.04;
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+          // Random glitch blocks
+          for (let _di = 0; _di < 5; _di++) {
+            ctx.globalAlpha = 0.15;
+            ctx.fillStyle = Math.random() < 0.5 ? '#0ff' : '#f0f';
+            ctx.fillRect(Math.random()*canvas.width, Math.random()*canvas.height, 20+Math.random()*40, 3+Math.random()*6);
+          }
+          ctx.restore();
+        }
+        // ======== PHASE WALL (D5) ========
+        else if (hz.type === 'phasewall') {
+          const _pa = hz.solid ? 0.6 : 0.15;
+          ctx.globalAlpha = _pa;
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = hz.solid ? 2 : 1;
+          ctx.setLineDash(hz.solid ? [] : [4,4]);
+          ctx.strokeRect(hz.x + 1, hz.y + 1, hz.w * CELL_SIZE - 2, hz.h * CELL_SIZE - 2);
+          ctx.setLineDash([]);
+          if (hz.solid) {
+            ctx.fillStyle = 'rgba(255,255,255,0.06)';
+            ctx.fillRect(hz.x, hz.y, hz.w * CELL_SIZE, hz.h * CELL_SIZE);
+          }
+          ctx.globalAlpha = 0.4; ctx.fillStyle = '#fff'; ctx.font = '8px monospace';
+          ctx.textAlign = 'center'; ctx.fillText(hz.solid ? 'SOLID' : 'PHASE', hz.x + hz.w*CELL_SIZE/2, hz.y + hz.h*CELL_SIZE/2 + 3);
+        }
         ctx.globalAlpha = 1;
       }
     }
@@ -10418,6 +10749,10 @@ function render() {
   // ---- Lighting (WebGL with canvas 2D fallback) ----
   {
     var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
+    // BLACKOUT modifier: halve flashlight range
+    if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].modifier && trenchSections[trenchSection].modifier.id === 'blackout') spotRadius = Math.floor(spotRadius * 0.5);
+    // THE CORE domain: self-lit, no fog (expand radius massively)
+    if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].domain && trenchSections[trenchSection].domain.noFog) spotRadius = 3000;
     const lp3 = getLocalPlayer();
     // Gather all alive players as light sources
     const lights = [];

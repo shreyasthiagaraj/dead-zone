@@ -55,6 +55,32 @@ Every feature and bug fix MUST be verified against multiplayer before finalizing
 - **New synced state**: If adding new state that affects gameplay or visuals across clients, add it to either `player_input` (client→host) or `game_state` (host→clients) as appropriate.
 - **`if(isHost)` blocks**: Any visual effect created inside these blocks will ONLY appear on the host. If non-host players should see it too, either move it to a shared path or add equivalent logic in `applyHostState`.
 
+## Stage Design Principles
+
+These principles govern ALL stage generation, layout, hazard placement, and visual design. Apply them to every stage-related change.
+
+1. **Every obstacle creates a decision, never a dead end.** A pillar forces "left or right?" Two pillars too close forces "I'm stuck." One is gameplay, the other is frustration. MINIMUM 4-cell gap between any two obstacle clusters.
+
+2. **Always 2+ viable paths.** The player should never be funneled into a single chokepoint. After placing obstacles, flood-fill from spawn to door must succeed with at least 2 independent routes.
+
+3. **Spawn zone is sacred.** 5-cell radius from the player entrance must be obstacle-free. The player needs a beat to read the room before combat starts.
+
+4. **Enemy-aware layout.** Beam arrays need sightlines. Chargers need dodge space. Shambler swarms need open ground. The template must serve the encounter, not fight it. Select layout templates based on the section's enemy roster.
+
+5. **Readable at a glance.** The player should understand the full layout within 1 second. No hidden dead-ends. No ambiguous geometry. Obstacles must be large enough to see but not so numerous they clutter.
+
+6. **Progressive complexity.** Sections 1-3: open arenas. Sections 4-8: one strategic structure. Sections 9+: multi-element layouts with paths and cover. Complexity ramps with skill, never front-loads.
+
+### Visual Domains (sections → themes)
+- **Domain 1 (1-5):** Entry Cache — purple/magenta/cyan, clean, sterile
+- **Domain 2 (6-10):** Corrupted Subnet — red/orange, cracked, sparking
+- **Domain 3 (11-15):** Deep Storage — blue/teal, ice/frost, eerie calm
+- **Domain 4 (16-20):** Kernel Boundary — hot magenta/red, burning, hostile
+- **Domain 5 (21+):** The Core — white/gold on black, wireframe, self-lit, no fog
+
+### Layout Templates
+Arena, Crossroads, Corridor, Pillars, L-Shape, Split, Islands, Bunker, Gauntlet — each designed for specific enemy compositions. Template is selected based on the section's enemy types, not randomly.
+
 ## Development Notes
 
 - No test suite or linter configured.
