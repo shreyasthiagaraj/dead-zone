@@ -1718,8 +1718,7 @@ function maybeDropPickup(zombie) {
   const t = zombie.type;
   const isBoss = !!zombie.boss;
   const isElite = !isBoss && (t === 'tank' || t === 'brute' || t === 'sniper' || t === 'shielder' || t === 'splitter' || t === 'stalker');
-  let dropChance = 0.05; // normal enemies: 5% total drop rate (was 3%)
-  if (isElite) dropChance = 0.25;
+  let dropChance = 0.05; // normal + elite: same 5% drop rate
   if (isBoss)  dropChance = 1.0;
   if (Math.random() > dropChance) return;
 
@@ -2178,7 +2177,8 @@ function spawnTrenchWave(idx, waveIdx) {
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     const ex = sec.x + (0.5 + Math.random() * 0.4) * TW;
     const ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
-    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale, maxHp: t.hp * hpScale, speed: t.speed + speedBoost, radius: t.radius, color: t.color, damage: Math.round(t.damage * dmgScale), score: t.score, type: tk, attackCooldown: 30, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: 30, _spawnAnimMax: 30 });
+    const _spIdle = ZOMBIE_SPAWN_IDLE_MIN + Math.floor(Math.random() * (ZOMBIE_SPAWN_IDLE_MAX - ZOMBIE_SPAWN_IDLE_MIN));
+    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale, maxHp: t.hp * hpScale, speed: t.speed + speedBoost, radius: t.radius, color: t.color, damage: Math.round(t.damage * dmgScale), score: t.score, type: tk, attackCooldown: 30, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: 30, _spawnAnimMax: 30, _spawnIdle: _spIdle });
     // Spawn-in burst: pink/cyan sparks + a brief vertical lightning crackle
     for (let pi = 0; pi < 18; pi++) {
       const ang = Math.random() * Math.PI * 2;
@@ -2311,8 +2311,8 @@ function startTrenchFade() {
   for (const p of players) {
     if (p.alive) p.invincible = Math.max(p.invincible || 0, 90);
   }
-  // Discard active power-ups + orbital + element on section change — fresh start each section
-  activePowerUps = [];
+  // Keep active power-ups between sections — they persist until their timer runs out.
+  // Only orbital and element zone effects reset (zone-based, don't carry over).
   activeOrbital = null;
   activeElement = null;
   // Glitch surge on transition — the simulation briefly reveals its substrate
@@ -2327,8 +2327,8 @@ function updateTrenchFade() {
       _trenchPrevSection = trenchSection;
       trenchFadeAlpha = 1;
       trenchFadeDir = -1;
-      // Discard local power-ups so non-host matches host on section transition
-      activePowerUps = [];
+      // Keep power-ups between sections (persist until timer expires).
+      // Only orbital and element zone effects reset.
       activeOrbital = null;
       activeElement = null;
     }
@@ -3103,18 +3103,18 @@ function _drawZombieShape(ctx, type, r) {
 const ZOMBIE_AGGRO_RANGE    = 440;  // re-aggro within this
 const ZOMBIE_DEAGGRO_RANGE  = 520;  // start losing interest beyond this
 const ZOMBIE_DEAGGRO_FRAMES = 45;   // 0.75s grace before wandering
-// Each zombie chases a point OFFSET from the player's position, not the player
-// directly. This breaks the conga line / circling exploits: every pursuer
-// converges on a slightly different point, so the swarm encircles instead of
-// collapsing onto a single vector. Offset is re-rolled periodically to prevent
-// any one zombie from getting permanently stuck pathing away from the player.
-const ZOMBIE_CHASE_OFFSET_RADIUS = 90; // ±90px in x and y
-const ZOMBIE_CHASE_OFFSET_REROLL = 180; // frames between offset re-rolls (3s)
-// Random mid-chase "lose-sight" pause: while aware, each zombie has a tiny
-// per-frame chance to briefly stop and look around. Creates natural breaks in
-// the swarm approach and rewards movement from the player.
-const ZOMBIE_PAUSE_CHANCE = 0.0035; // ~0.35% per frame → average one pause every ~5s per zombie
-const ZOMBIE_PAUSE_FRAMES = [20, 45]; // min/max pause duration
+// Each zombie chases a point OFFSET from the player's position. ±200px is wide
+// enough to produce dramatic scatter even in tight trench sections (880px).
+const ZOMBIE_CHASE_OFFSET_RADIUS = 200;
+const ZOMBIE_CHASE_OFFSET_REROLL = 150; // frames between re-rolls (2.5s)
+// Random mid-chase pauses. 1.5% per frame → a zombie pauses roughly every
+// 1 second on average. Very visible — creates constant stutter in the swarm.
+const ZOMBIE_PAUSE_CHANCE = 0.015;
+const ZOMBIE_PAUSE_FRAMES = [25, 55]; // min/max pause duration
+// Trench spawn delay: freshly spawned zombies idle for N frames before chasing.
+// Prevents the "wall of meat instantly charges" feel.
+const ZOMBIE_SPAWN_IDLE_MIN = 20;
+const ZOMBIE_SPAWN_IDLE_MAX = 50;
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
@@ -7465,6 +7465,13 @@ function update() {
           particles.push({x:z.x,y:z.y,vx:Math.cos(ang)*sp,vy:Math.sin(ang)*sp,life:14,maxLife:14,size:1.5+Math.random(),color:Math.random()<0.5?'#f0f':'#0ff',type:'spark'});
         }
         if(z._spawnAnim<=0){delete z._spawnAnim;}
+        continue;
+      }
+      // Post-spawn idle: zombie stands still briefly before chasing.
+      // Creates a staggered wave approach instead of an instant rush.
+      if (z._spawnIdle > 0) {
+        z._spawnIdle--;
+        z.vx = 0; z.vy = 0;
         continue;
       }
       // Shocked: brief full stun (can't move OR attack) + zap damage, then wears off
