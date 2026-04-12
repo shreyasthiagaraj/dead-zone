@@ -2152,18 +2152,48 @@ function initTrenchSections() {
     if (i >= 5) types.push('splitter');
     if (i >= 7) types.push('mini');
     if (i >= 8) types.push('exploder');
-    // ---- HAZARD ZONES ----
-    // From section 3+, some sections get 1-3 corruption pools on the floor that deal
-    // damage-over-time when the player stands in them. Forces the player to watch their
-    // positioning instead of just standing in one spot and shooting.
+    // ---- STAGE HAZARDS ----
+    // Each non-boss section from section 3+ gets 1-3 randomly-chosen hazards.
+    // Hazard types unlock at different section depths for a difficulty ramp.
     const hazards = [];
-    if (i >= 3 && !isBoss && Math.random() < 0.55) {
-      const numHaz = 1 + Math.floor(Math.random() * 2); // 1-2 hazards
+    if (i >= 3 && !isBoss) {
+      const numHaz = 1 + Math.floor(Math.random() * (i >= 8 ? 3 : 2));
+      const _hxMin = sectionX + 3 * CELL_SIZE, _hxMax = sectionX + (TRENCH_SECTION_W - 4) * CELL_SIZE;
+      const _hyMin = 3 * CELL_SIZE, _hyMax = (TRENCH_HEIGHT - 4) * CELL_SIZE;
       for (let hi = 0; hi < numHaz; hi++) {
-        const hx = sectionX + (3 + Math.random() * (TRENCH_SECTION_W - 6)) * CELL_SIZE;
-        const hy = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
-        const hr = 40 + Math.random() * 35; // radius 40-75px
-        hazards.push({ x: hx, y: hy, radius: hr });
+        const hx = _hxMin + Math.random() * (_hxMax - _hxMin);
+        const hy = _hyMin + Math.random() * (_hyMax - _hyMin);
+        // Build pool of eligible hazard types for this section depth
+        const pool = ['corruption']; // always available from section 3+
+        if (i >= 4) pool.push('laser', 'collapse');
+        if (i >= 5) pool.push('spawner', 'emp');
+        if (i >= 6) pool.push('turret');
+        const htype = pool[Math.floor(Math.random() * pool.length)];
+        if (htype === 'corruption') {
+          hazards.push({ type: 'corruption', x: hx, y: hy, radius: 45 + Math.random() * 30 });
+        } else if (htype === 'laser') {
+          // Horizontal beam that sweeps vertically across the section on a timer
+          const laserY = _hyMin + Math.random() * (_hyMax - _hyMin);
+          hazards.push({ type: 'laser', x: sectionX + 2 * CELL_SIZE, y: laserY,
+            width: (TRENCH_SECTION_W - 4) * CELL_SIZE,
+            dir: Math.random() < 0.5 ? 1 : -1, speed: 0.8 + Math.random() * 0.6,
+            timer: 0, fireTimer: 0, state: 'telegraph' }); // telegraph → fire → cooldown
+        } else if (htype === 'collapse') {
+          // 3×3 cell area that cracks when stepped on, becomes wall after 2s
+          const cx = Math.floor(4 + Math.random() * (TRENCH_SECTION_W - 8));
+          const cy = Math.floor(3 + Math.random() * (TRENCH_HEIGHT - 6));
+          hazards.push({ type: 'collapse', gx: i * TRENCH_SECTION_W + cx, gy: cy,
+            x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
+            w: 3, h: 2, triggered: false, timer: 0, collapsed: false });
+        } else if (htype === 'spawner') {
+          hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120,
+            spawnTimer: 0, spawnRate: 180, alive: true }); // spawn every 3s
+        } else if (htype === 'emp') {
+          hazards.push({ type: 'emp', x: hx, y: hy, radius: 55 + Math.random() * 25 });
+        } else if (htype === 'turret') {
+          hazards.push({ type: 'turret', x: hx, y: hy, angle: Math.random() * Math.PI * 2,
+            rotSpeed: 0.012 + Math.random() * 0.008, fireTimer: 0, fireRate: 150 });
+        }
       }
     }
     trenchSections.push({
@@ -7150,18 +7180,131 @@ function update() {
         const _tRight = _tsec.x + _tTW - CELL_SIZE - PLAYER_RADIUS - 1;
         if (lp.x < _tLeft) lp.x = _tLeft;
         if (lp.x > _tRight) lp.x = _tRight;
-        // Hazard zone damage — corruption pools on the floor deal 3 damage per tick (~5/s)
-        if (_tsec.hazards && gameTime % 10 === 0) {
+        // ---- STAGE HAZARD UPDATE + PLAYER INTERACTION ----
+        if (_tsec.hazards) {
           for (const hz of _tsec.hazards) {
             const _hdx = lp.x - hz.x, _hdy = lp.y - hz.y;
-            if (_hdx*_hdx + _hdy*_hdy < (hz.radius + PLAYER_RADIUS) * (hz.radius + PLAYER_RADIUS)) {
-              damagePlayerObj(lp, 3);
-              // Corruption particles rising from player
-              for (let _hpi = 0; _hpi < 2; _hpi++) {
-                particles.push({ x: lp.x + (Math.random()-0.5)*10, y: lp.y, vx: (Math.random()-0.5)*1.5, vy: -2 - Math.random(), life: 14, maxLife: 14, size: 2 + Math.random()*2, color: '#f44', type: 'spark' });
+            const _hd2 = _hdx*_hdx + _hdy*_hdy;
+            // -- CORRUPTION POOL: DoT when standing in it --
+            if (hz.type === 'corruption' && gameTime % 10 === 0) {
+              if (_hd2 < (hz.radius + PLAYER_RADIUS) ** 2) {
+                damagePlayerObj(lp, 3);
+                for (let _hpi = 0; _hpi < 2; _hpi++) {
+                  particles.push({ x: lp.x + (Math.random()-0.5)*10, y: lp.y, vx: (Math.random()-0.5)*1.5, vy: -2 - Math.random(), life: 14, maxLife: 14, size: 2 + Math.random()*2, color: '#f44', type: 'spark' });
+                }
+              }
+            }
+            // -- LASER GRID: sweeps vertically, telegraphs then fires --
+            if (hz.type === 'laser') {
+              hz.timer++;
+              if (hz.state === 'telegraph') {
+                // Telegraph for 90 frames (1.5s), then fire
+                if (hz.timer > 90) { hz.state = 'fire'; hz.timer = 0; }
+              } else if (hz.state === 'fire') {
+                // Fire for 30 frames (0.5s) — laser is active, damages on contact
+                hz.y += hz.dir * hz.speed * 2;
+                // Bounce at section vertical bounds
+                if (hz.y < 2 * CELL_SIZE || hz.y > (TRENCH_HEIGHT - 2) * CELL_SIZE) { hz.dir *= -1; }
+                // Damage check: player within 12px vertically of the beam and within its horizontal span
+                if (Math.abs(lp.y - hz.y) < 12 && lp.x > hz.x && lp.x < hz.x + hz.width && gameTime % 6 === 0) {
+                  damagePlayerObj(lp, 5);
+                  screenShake.intensity = Math.max(screenShake.intensity, 3);
+                }
+                if (hz.timer > 30) { hz.state = 'cooldown'; hz.timer = 0; }
+              } else {
+                // Cooldown 120 frames (2s), then telegraph again
+                hz.y += hz.dir * hz.speed;
+                if (hz.y < 2 * CELL_SIZE || hz.y > (TRENCH_HEIGHT - 2) * CELL_SIZE) { hz.dir *= -1; }
+                if (hz.timer > 120) { hz.state = 'telegraph'; hz.timer = 0; }
+              }
+            }
+            // -- COLLAPSE TILES: crack on step, become wall after 2s --
+            if (hz.type === 'collapse' && !hz.collapsed) {
+              const inTile = lp.x > hz.x && lp.x < hz.x + hz.w * CELL_SIZE && lp.y > hz.y && lp.y < hz.y + hz.h * CELL_SIZE;
+              if (inTile && !hz.triggered) {
+                hz.triggered = true; hz.timer = 0;
+              }
+              if (hz.triggered) {
+                hz.timer++;
+                if (hz.timer >= 120) {
+                  // Collapse — set grid cells to wall
+                  hz.collapsed = true;
+                  for (let _cy = 0; _cy < hz.h; _cy++) {
+                    for (let _cx = 0; _cx < hz.w; _cx++) {
+                      const gx = hz.gx + _cx, gy = hz.gy + _cy;
+                      if (dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
+                    }
+                  }
+                  // Rebuild obstacles from grid for collision
+                  obstacles = [];
+                  for (let y = 0; y < GRID_H; y++) {
+                    let rs = -1;
+                    for (let x = 0; x <= GRID_W; x++) {
+                      const isW = x < GRID_W ? !dungeonGrid[y][x] : true;
+                      if (isW && rs === -1) rs = x;
+                      else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; }
+                    }
+                  }
+                  uploadDungeonGrid();
+                  screenShake.intensity = Math.max(screenShake.intensity, 6);
+                  for (let _pi = 0; _pi < 12; _pi++) { const _pa = Math.random()*Math.PI*2; particles.push({ x: hz.x + hz.w*CELL_SIZE/2, y: hz.y + hz.h*CELL_SIZE/2, vx: Math.cos(_pa)*3, vy: Math.sin(_pa)*3, life: 20, maxLife: 20, size: 3, color: '#888', type: 'smoke' }); }
+                  playSound(80, 0.25, 'sawtooth', 0.12);
+                }
+              }
+            }
+            // -- SPAWNER NODE: produces weak enemies until destroyed --
+            // Shootable: check player bullets against the spawner's position
+            if (hz.type === 'spawner' && hz.alive) {
+              for (let _bi = bullets.length - 1; _bi >= 0; _bi--) {
+                const _sb = bullets[_bi];
+                if (_sb.owner !== 'player') continue;
+                const _sdx = _sb.x - hz.x, _sdy = _sb.y - hz.y;
+                if (_sdx*_sdx + _sdy*_sdy < 18*18) {
+                  hz.hp -= _sb.damage;
+                  hz.hitFlash = 6;
+                  bullets.splice(_bi, 1);
+                  particles.push({ x: hz.x, y: hz.y, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4, life: 10, maxLife: 10, size: 3, color: '#fa0', type: 'spark' });
+                  if (hz.hp <= 0) {
+                    hz.alive = false;
+                    for (let _dpi = 0; _dpi < 20; _dpi++) { const _da = Math.random()*Math.PI*2; particles.push({ x: hz.x, y: hz.y, vx: Math.cos(_da)*4, vy: Math.sin(_da)*4, life: 22, maxLife: 22, size: 3+Math.random()*3, color: Math.random()<0.5?'#fa0':'#f80', type: 'spark' }); }
+                    screenShake.intensity = Math.max(screenShake.intensity, 5);
+                    playExplosionSound();
+                    addFloatingText(hz.x, hz.y - 20, 'SPAWNER DESTROYED', '#fa0');
+                    score += 150;
+                  }
+                  break;
+                }
+              }
+            }
+            if (hz.type === 'spawner' && hz.alive && isHost) {
+              hz.spawnTimer++;
+              if (hz.spawnTimer >= hz.spawnRate && zombies.length < 18) {
+                hz.spawnTimer = 0;
+                const sa = Math.random() * Math.PI * 2, sd = 25;
+                const st = ZOMBIE_TYPES.normal;
+                const sc = 1 + (trenchSection||0) * 0.08;
+                zombies.push({ zid: _nextZombieId++, x: hz.x + Math.cos(sa)*sd, y: hz.y + Math.sin(sa)*sd, vx: 0, vy: 0, hp: st.hp*0.4*sc, maxHp: st.hp*0.4*sc, speed: st.speed*1.1, radius: st.radius-1, color: '#5a5', damage: st.damage, score: 30, type: 'normal', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: false, explosionRadius: 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: sa, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, _spawnAnim: 20, _spawnAnimMax: 20 });
+                particles.push({ x: hz.x, y: hz.y, vx: 0, vy: -1, life: 18, maxLife: 18, size: 4, color: '#f80', type: 'spark' });
+              }
+            }
+            // -- EMP ZONE: disables firing while player is inside --
+            if (hz.type === 'emp') {
+              if (_hd2 < (hz.radius + PLAYER_RADIUS) ** 2) {
+                lp._empDisabled = 5; // 5-frame firing disable, refreshed each frame in zone
+              }
+            }
+            // -- TURRET PILLAR: rotates and fires periodically --
+            if (hz.type === 'turret' && isHost) {
+              hz.angle += hz.rotSpeed;
+              hz.fireTimer++;
+              if (hz.fireTimer >= hz.fireRate) {
+                hz.fireTimer = 0;
+                bullets.push({ x: hz.x, y: hz.y, vx: Math.cos(hz.angle)*5, vy: Math.sin(hz.angle)*5, damage: 8, color: '#fa0', size: 4, knockback: 1, pierce: 0, pierced: 0, life: 50, owner: 'zombie', trail: [] });
               }
             }
           }
+          // EMP disable countdown
+          if (lp._empDisabled > 0) lp._empDisabled--;
         }
       }
       // Freeze movement while fading (visual safety)
@@ -7241,7 +7384,7 @@ function update() {
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
     const shouldFire=isMobile?rightJoystick.firing:(mouse.down||gamepad.fire);
     lp._firing=shouldFire;
-    if(shouldFire)fireWeaponForPlayer(lp);
+    if(shouldFire && !(lp._empDisabled > 0))fireWeaponForPlayer(lp);
     else stopWeaponLoop(); // stop loop sound when not firing
     // Stop loop if reloading or out of ammo
     if(w.ammo<=0 && !shouldFire) stopWeaponLoop();
@@ -9249,42 +9392,185 @@ function render() {
   ctx.restore();}
 
   // Element zones — neon rings with pulsing glow
-  // ---- HAZARD ZONES (corruption pools) ----
+  // ---- STAGE HAZARDS RENDER ----
   if (gameMode === 'trench' && trenchSections[trenchSection]) {
     const _hzSec = trenchSections[trenchSection];
     if (_hzSec.hazards) {
+      const _hzt = performance.now();
       for (const hz of _hzSec.hazards) {
-        const _hzt = performance.now();
-        const _hzPulse = 0.5 + Math.sin(_hzt * 0.004) * 0.2;
-        // Outer corrupt glow
-        ctx.globalAlpha = 0.12 * _hzPulse;
-        ctx.fillStyle = '#f44';
-        ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius + 6, 0, Math.PI * 2); ctx.fill();
-        // Inner pool — darker, with shifting pattern
-        const _hzGrd = ctx.createRadialGradient(hz.x, hz.y, 0, hz.x, hz.y, hz.radius);
-        _hzGrd.addColorStop(0, `rgba(180,20,40,${0.25 * _hzPulse})`);
-        _hzGrd.addColorStop(0.7, `rgba(120,10,30,${0.15 * _hzPulse})`);
-        _hzGrd.addColorStop(1, 'rgba(60,5,15,0)');
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = _hzGrd;
-        ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.fill();
-        // Corruption glitch lines inside
-        ctx.globalAlpha = 0.35 * _hzPulse;
-        ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
-        for (let _hi = 0; _hi < 3; _hi++) {
-          const _ha = _hzt * 0.002 + _hi * 2.1;
-          const _hr = hz.radius * (0.3 + Math.random() * 0.4);
-          ctx.beginPath();
-          ctx.moveTo(hz.x + Math.cos(_ha) * _hr, hz.y + Math.sin(_ha) * _hr);
-          ctx.lineTo(hz.x + Math.cos(_ha + 0.5) * _hr * 1.2, hz.y + Math.sin(_ha + 0.5) * _hr * 1.2);
-          ctx.stroke();
+        const _hzPulse = 0.6 + Math.sin(_hzt * 0.004 + (hz.x||0)*0.01) * 0.3;
+
+        // ======== CORRUPTION POOL — highly visible ========
+        if (hz.type === 'corruption') {
+          // Bright solid boundary ring — always visible, even in darkness
+          ctx.globalAlpha = 0.85;
+          ctx.strokeStyle = '#f44'; ctx.lineWidth = 3;
+          ctx.shadowColor = '#f44'; ctx.shadowBlur = 20;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.stroke();
+          ctx.shadowBlur = 0;
+          // Pulsing inner fill — bright red pool
+          ctx.globalAlpha = 0.25 + 0.1 * _hzPulse;
+          const _hzGrd = ctx.createRadialGradient(hz.x, hz.y, 0, hz.x, hz.y, hz.radius);
+          _hzGrd.addColorStop(0, 'rgba(220,30,50,0.45)');
+          _hzGrd.addColorStop(0.6, 'rgba(160,15,35,0.3)');
+          _hzGrd.addColorStop(1, 'rgba(80,5,20,0.05)');
+          ctx.fillStyle = _hzGrd;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.fill();
+          // Animated corruption veins inside
+          ctx.globalAlpha = 0.55 * _hzPulse;
+          ctx.strokeStyle = '#f66'; ctx.lineWidth = 1.5;
+          for (let _hi = 0; _hi < 5; _hi++) {
+            const _ha = _hzt * 0.0015 + _hi * 1.26;
+            const _hr = hz.radius * (0.2 + Math.random() * 0.5);
+            ctx.beginPath();
+            ctx.moveTo(hz.x + Math.cos(_ha) * 5, hz.y + Math.sin(_ha) * 5);
+            ctx.lineTo(hz.x + Math.cos(_ha + 0.4) * _hr, hz.y + Math.sin(_ha + 0.4) * _hr);
+            ctx.stroke();
+          }
+          // Big ☣ icon — bright and bold
+          ctx.globalAlpha = 0.9;
+          ctx.fillStyle = '#f44';
+          ctx.shadowColor = '#f44'; ctx.shadowBlur = 12;
+          ctx.font = 'bold 20px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('☣', hz.x, hz.y);
+          ctx.shadowBlur = 0;
         }
-        // Warning icon
-        ctx.globalAlpha = 0.7 * _hzPulse;
-        ctx.fillStyle = '#f44';
-        ctx.font = 'bold 14px monospace';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('☣', hz.x, hz.y);
+
+        // ======== LASER GRID ========
+        else if (hz.type === 'laser') {
+          const isFiring = hz.state === 'fire';
+          const isTelegraph = hz.state === 'telegraph';
+          if (isTelegraph) {
+            // Thin warning line — pulsing dashed red
+            ctx.globalAlpha = 0.3 + 0.2 * Math.sin(_hzt * 0.01);
+            ctx.strokeStyle = '#f44'; ctx.lineWidth = 1.5; ctx.setLineDash([6,6]);
+            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
+            ctx.setLineDash([]);
+            // Warning text
+            ctx.globalAlpha = 0.5; ctx.font = '10px monospace'; ctx.textAlign = 'center';
+            ctx.fillStyle = '#f44'; ctx.fillText('⚠ LASER', hz.x + hz.width/2, hz.y - 10);
+          } else if (isFiring) {
+            // Active beam — thick bright red with glow
+            ctx.globalAlpha = 0.9;
+            ctx.shadowColor = '#f44'; ctx.shadowBlur = 30;
+            ctx.strokeStyle = '#f44'; ctx.lineWidth = 6;
+            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
+            ctx.shadowBlur = 0;
+          } else {
+            // Cooldown — dim line showing position
+            ctx.globalAlpha = 0.12;
+            ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
+          }
+        }
+
+        // ======== COLLAPSE TILES ========
+        else if (hz.type === 'collapse') {
+          if (!hz.collapsed) {
+            const _ct = hz.triggered ? Math.min(1, hz.timer / 120) : 0;
+            // Tile outline — yellow/orange, cracks intensify as timer advances
+            ctx.globalAlpha = 0.5 + _ct * 0.4;
+            ctx.strokeStyle = _ct > 0.7 ? '#f44' : _ct > 0.3 ? '#fa0' : '#ff0';
+            ctx.lineWidth = 2; ctx.setLineDash(_ct > 0 ? [4,4] : []);
+            ctx.strokeRect(hz.x + 2, hz.y + 2, hz.w * CELL_SIZE - 4, hz.h * CELL_SIZE - 4);
+            ctx.setLineDash([]);
+            // Interior cracks when triggered
+            if (hz.triggered) {
+              ctx.globalAlpha = 0.4 * _ct;
+              ctx.strokeStyle = '#fa0'; ctx.lineWidth = 1;
+              for (let ci = 0; ci < 4; ci++) {
+                const cx = hz.x + Math.random() * hz.w * CELL_SIZE;
+                const cy = hz.y + Math.random() * hz.h * CELL_SIZE;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + (Math.random()-0.5)*20, cy + (Math.random()-0.5)*20); ctx.stroke();
+              }
+            }
+            // Warning label
+            ctx.globalAlpha = 0.6; ctx.fillStyle = '#ff0'; ctx.font = '9px monospace';
+            ctx.textAlign = 'center'; ctx.fillText(hz.triggered ? 'CRACKING' : 'FRAGILE', hz.x + hz.w*CELL_SIZE/2, hz.y + hz.h*CELL_SIZE/2);
+          }
+        }
+
+        // ======== SPAWNER NODE ========
+        else if (hz.type === 'spawner') {
+          if (hz.alive) {
+            const _sp = 0.6 + Math.sin(_hzt * 0.006) * 0.3;
+            // Pulsing orange core
+            ctx.globalAlpha = _sp;
+            ctx.shadowColor = '#f80'; ctx.shadowBlur = 22;
+            ctx.fillStyle = '#f80';
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 14, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
+            // Dark inner ring
+            ctx.globalAlpha = 1; ctx.fillStyle = '#0a0806';
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 10, 0, Math.PI * 2); ctx.fill();
+            // HP-based fill
+            const _shp = Math.max(0, hz.hp / hz.maxHp);
+            ctx.fillStyle = '#f80'; ctx.globalAlpha = 0.8;
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 8 * _shp, 0, Math.PI * 2); ctx.fill();
+            // Rotating ring
+            ctx.globalAlpha = 0.6; ctx.strokeStyle = '#fa0'; ctx.lineWidth = 1.5;
+            const _sra = _hzt * 0.003;
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 17, _sra, _sra + Math.PI * 1.2); ctx.stroke();
+            // Label
+            ctx.globalAlpha = 0.7; ctx.fillStyle = '#fa0'; ctx.font = '8px monospace';
+            ctx.textAlign = 'center'; ctx.fillText('SPAWNER', hz.x, hz.y + 24);
+            if (hz.hitFlash > 0) { hz.hitFlash--; ctx.globalAlpha = 0.4; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hz.x, hz.y, 16, 0, Math.PI*2); ctx.fill(); }
+          } else {
+            // Destroyed husk
+            ctx.globalAlpha = 0.2; ctx.fillStyle = '#444';
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 10, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+
+        // ======== EMP ZONE ========
+        else if (hz.type === 'emp') {
+          // Purple pulsing zone with clear boundary
+          ctx.globalAlpha = 0.7;
+          ctx.strokeStyle = '#a4f'; ctx.lineWidth = 2.5;
+          ctx.shadowColor = '#a4f'; ctx.shadowBlur = 16;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 0.08 + 0.04 * _hzPulse;
+          ctx.fillStyle = '#a4f';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.fill();
+          // Zappy static lines inside
+          ctx.globalAlpha = 0.3 * _hzPulse;
+          ctx.strokeStyle = '#c8f'; ctx.lineWidth = 1;
+          for (let _ei = 0; _ei < 3; _ei++) {
+            const _ea = Math.random() * Math.PI * 2, _er = hz.radius * Math.random();
+            ctx.beginPath(); ctx.moveTo(hz.x + Math.cos(_ea)*_er, hz.y + Math.sin(_ea)*_er);
+            ctx.lineTo(hz.x + Math.cos(_ea+0.5)*(_er+10), hz.y + Math.sin(_ea+0.5)*(_er+10)); ctx.stroke();
+          }
+          ctx.globalAlpha = 0.8; ctx.fillStyle = '#a4f'; ctx.font = 'bold 16px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⚡', hz.x, hz.y);
+          ctx.globalAlpha = 0.6; ctx.font = '8px monospace'; ctx.fillText('EMP', hz.x, hz.y + 18);
+        }
+
+        // ======== TURRET PILLAR ========
+        else if (hz.type === 'turret') {
+          // Base pillar
+          ctx.globalAlpha = 0.9; ctx.fillStyle = '#1a1a1a';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, 12, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#fa0'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, 12, 0, Math.PI * 2); ctx.stroke();
+          // Gun barrel — rotates
+          ctx.save(); ctx.translate(hz.x, hz.y); ctx.rotate(hz.angle);
+          ctx.fillStyle = '#fa0'; ctx.fillRect(10, -2, 12, 4);
+          // Muzzle glow when about to fire
+          if (hz.fireTimer > hz.fireRate - 20) {
+            ctx.globalAlpha = (hz.fireTimer - (hz.fireRate - 20)) / 20;
+            ctx.shadowColor = '#f44'; ctx.shadowBlur = 10;
+            ctx.fillStyle = '#f44';
+            ctx.beginPath(); ctx.arc(22, 0, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+          ctx.restore();
+          ctx.globalAlpha = 0.5; ctx.fillStyle = '#fa0'; ctx.font = '7px monospace';
+          ctx.textAlign = 'center'; ctx.fillText('TURRET', hz.x, hz.y + 20);
+        }
         ctx.globalAlpha = 1;
       }
     }
