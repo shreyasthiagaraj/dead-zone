@@ -81,6 +81,47 @@ These principles govern ALL stage generation, layout, hazard placement, and visu
 ### Layout Templates
 Arena, Crossroads, Corridor, Pillars, L-Shape, Split, Islands, Bunker, Gauntlet — each designed for specific enemy compositions. Template is selected based on the section's enemy types, not randomly.
 
+## Combat & Difficulty Principles
+
+These principles govern ALL balance, combat feel, power scaling, and difficulty tuning. This is a **mobile-first arcade roguelike** — controls are thumbs, sessions are 10-20 minutes, and every interaction must be immediately satisfying.
+
+### What makes this game fun (protect these at all costs)
+- **The gun feel.** Screen shake, neon particles, hit feedback, gore. The shooting FEELS good.
+- **The dash.** Glitch burst, invincibility, elemental trails, phasing through enemies. A moment of power.
+- **Room clears.** The relief + accomplishment when the last zombie falls and the door opens.
+- **Power-up spikes.** RAGE, TRIPLE SHOT, SHIELD — brief moments of godhood that the player craves.
+- **The narrative.** Memory fragments, domain shifts, whispers. Uniquely ours.
+
+### The 10 Principles
+
+1. **Every upgrade must be FELT immediately.** If buying a damage card doesn't change the number of shots to kill the most common enemy within ONE purchase, the card is too weak. Reference: Brotato — every stat change visibly alters gameplay within one wave. Minimum per-card impact: changes time-to-kill by at least 1 bullet on the current section's standard enemy.
+
+2. **The difficulty curve is a ramp, not a wall.** The player should feel "I need to dash more" around section 8, "I need element builds" around section 12, and "I need a full build to survive" at section 18. Difficulty should NEVER spike — it should tighten gradually. Enemy HP scaling alone is not difficulty — behavioral changes, new enemy combos, and environmental pressure are.
+
+3. **Stacking unlocks qualitative changes, not just quantitative.** At 3+ stacks of any element, something NEW should happen (fire enemies explode on death, ice enemies shatter for AoE, lightning chains further, wind creates persistent vortexes). Pure "+X% more" is invisible to the player. Reference: Vampire Survivors — weapon evolutions at max level.
+
+4. **Power-ups are the dopamine — loud, frequent, short.** A 15-second RAGE should feel like GOD MODE: screen tint, sound change, massive damage, enemies flinching. Frequency: 4-8 per run. Duration: short enough that you MISS it when it ends. The gap between power-ups is what creates desire.
+
+5. **The player should be 3× stronger at section 15 than section 1.** This is the roguelike promise: investment = power. By mid-run, the player should be clearing rooms that would have killed them at section 3. If cards don't compound into noticeable power growth, the system has failed. The power fantasy IS the product.
+
+6. **Mobile-first: every interaction works with thumbs.** Auto-fire at full joystick extension. One-button dash. Big tap targets in menus. No precision aim requirements. Session length: 10-20 minutes. No punishment for pausing or closing the app.
+
+7. **Rest beats matter.** Between combat bursts, the player needs 2-3 seconds of breathing room. Transition between waves, shop visits, domain announcements, dash cooldown downtime. Don't eliminate rest — pace it. Combat→rest→combat rhythm is what makes both halves feel good.
+
+8. **Enemy variety > enemy volume.** 6 enemies with distinct behaviors beat 15 with different HP pools. Each enemy type should force a DIFFERENT player response: "dodge the charge," "flank the shield," "prioritize the beam array," "don't stand in the spitter's line." If two enemy types demand the same response, one is redundant.
+
+9. **Clear feedback on damage dealt and received.** Damage numbers, health bar changes, screen flash on hit, distinct sounds per weapon. The player should always know "am I winning?" at a glance. When a card makes them stronger, the damage numbers should visibly change.
+
+10. **The run tells a mechanical story.** Early game: survive with the base pistol. Mid game: build power through the shop. Late game: test the build against harder combinations. Endgame: "can my build reach The Core?" Every run should have a beginning, middle, and climax — even failed ones.
+
+### Balance Reference Points (target values)
+- Section 1 shambler should die in 5-6 pistol shots at close range
+- Section 10 shambler should die in 3-4 shots with a reasonable build
+- Section 15 shambler should die in 2-3 shots with a strong build
+- RAGE power-up should feel like clearing the room in half the time
+- A fully built fire+shockwave dash should clear 60%+ of a normal wave
+- The player should see 4-8 power-ups per run and visit the shop 5-8 times
+
 ## Development Notes
 
 - No test suite or linter configured.
