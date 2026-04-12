@@ -1317,7 +1317,7 @@ const META_NODES = [
   { id:'crit',      name:'EXECUTIONER', desc:'+2% crit chance',          max:5, costs:[30,60,120,240,480],  icon:'✹', color:'#f0f' },
   { id:'harvest',   name:'HARVEST',     desc:'+10% bits earned',         max:5, costs:[40,80,160,320,640],  icon:'⚚', color:'#ff0' },
   { id:'regen',     name:'REGEN',       desc:'Heal 1 HP / 10s',          max:3, costs:[50,120,300],         icon:'⊕', color:'#4fa' },
-  { id:'arsenal',   name:'ARSENAL',     desc:'Start +1 random upgrade',  max:3, costs:[80,200,500],         icon:'⚙', color:'#fa4' },
+  { id:'arsenal',   name:'ARSENAL',     desc:'Start +1 random upgrade',  max:3, costs:[30,150,400],         icon:'⚙', color:'#fa4' },
 ];
 const _META_BY_ID = Object.fromEntries(META_NODES.map(n => [n.id, n]));
 function getMetaLevel(id) { return metaNodes[id] || 0; }
@@ -1393,13 +1393,29 @@ function _rarityAllowed(r, cap) {
 }
 
 // Draft N unique shop cards. Weighted by rarity, filtered by unlock tier and by max stack.
+let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare guarantee
 function draftShopCards(n) {
   n = n || 4;
+  _shopVisitCount++;
   const cap = getShopTierCap();
   const weights = { common: 60, rare: 30, epic: 15, legendary: 4 };
   const picks = [];
   const attempted = new Set();
   let safety = 80;
+  // First shop visit of the run: guarantee at least 1 rare+ card (principle: teach the power curve)
+  const guaranteeRare = _shopVisitCount === 1 && _RARITY_ORDER.indexOf(cap) >= 1;
+  if (guaranteeRare) {
+    const rarePool = UPGRADE_POOL.filter(u =>
+      (u.rarity === 'rare' || u.rarity === 'epic') &&
+      (runUpgrades[u.id] || 0) < u.max &&
+      _rarityAllowed(u.rarity, cap)
+    );
+    if (rarePool.length > 0) {
+      const r = rarePool[Math.floor(Math.random() * rarePool.length)];
+      picks.push(r);
+      attempted.add(r.id);
+    }
+  }
   while (picks.length < n && safety-- > 0) {
     const pool = UPGRADE_POOL.filter(u =>
       !attempted.has(u.id) &&
@@ -4779,6 +4795,25 @@ function _realShowDeathScreen() {
       </div>
       ${bestMsg}
       ${shardsLine}
+      ${(() => {
+        // Crypt recommendation based on run performance
+        const lp = getLocalPlayer();
+        const recNode = (lp && lp.maxHp <= 110 && getMetaLevel('vitality') < 5) ? _META_BY_ID['vitality']
+          : (runLevel <= 3 && getMetaLevel('power') < 5) ? _META_BY_ID['power']
+          : (getMetaLevel('arsenal') < 3 && getMetaLevel('arsenal') < 2) ? _META_BY_ID['arsenal']
+          : (getMetaLevel('fortune') < 3) ? _META_BY_ID['fortune']
+          : null;
+        if (recNode) {
+          const lvl = getMetaLevel(recNode.id);
+          const cost = recNode.costs[lvl];
+          const canBuy = metaShards >= cost;
+          return `<div style="margin:4px 0;padding:6px 10px;border:1px solid rgba(0,255,255,0.25);border-radius:6px;background:rgba(0,255,255,0.04);font-size:10px;letter-spacing:1px;text-align:center">
+            <span style="color:#0ff">CRYPT TIP:</span> <span style="color:#fff">${recNode.icon} ${recNode.name} ${recNode.desc}</span>
+            <span style="color:${canBuy?'#ff0':'#666'}"> · ${cost}◆${canBuy?' (affordable!)':''}</span>
+          </div>`;
+        }
+        return '';
+      })()}
       ${upgradesBlock}
       ${fleshBlock}
       <div class="death-actions">
@@ -5661,7 +5696,7 @@ function startSoloGame() {
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
-  resetShopCadence(); shopCards = null; _shopActiveChest = null;
+  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600; // first whisper after ~10s
   memoryFragments = [];
@@ -5745,7 +5780,7 @@ function startMultiplayerGame() {
   // Reset run-scoped progression (each client tracks their own XP/upgrades)
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
-  resetShopCadence(); shopCards = null; _shopActiveChest = null;
+  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600;
   memoryFragments = [];
@@ -5920,10 +5955,24 @@ function fireWeaponForPlayer(p) {
     if (Math.random() < 0.05) { dmg *= 3; isCrit = true; }
     if (_overchargeShot) { dmg *= 3; isCrit = true; }
     const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
-    const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize; // triple: smaller bullets
+    const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize;
+    // ---- VISUAL SCALING from card stacks ----
+    // Bullets visually reflect the player's build: bigger, brighter, tinted by dominant element.
+    const _rm = runMods || {};
+    const _savageGlow = Math.min(0.6, (_rm.damageMult || 0) * 0.5); // brighter with damage stacks
+    const _sizeBoost = 1 + Math.min(0.8, (_rm.bulletSizeMult || 0) + (_rm.damageMult || 0) * 0.15);
+    // Tint toward dominant bullet element even when not proccing
+    let _buildColor = gun.bulletColor;
+    if (_rm.dominantBullet === 'fire')  _buildColor = '#f80';
+    else if (_rm.dominantBullet === 'ice')   _buildColor = '#8ef';
+    else if (_rm.dominantBullet === 'chain') _buildColor = '#4ff';
+    else if (_rm.dominantBullet === 'wind')  _buildColor = '#cef';
+    const _finalColor = isCrit ? '#f0f' : (elColor || _buildColor);
+    const _finalSize = (isCrit ? bSize + 2 : bSize) * _sizeBoost;
     bullets.push({
       x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed*_windSpeedMult, vy: s*gun.bulletSpeed*_windSpeedMult,
-      damage: dmg, color: isCrit?'#f0f':(elColor||gun.bulletColor), size: isCrit?bSize+2:bSize,
+      damage: dmg, color: _finalColor, size: _finalSize,
+      _glowBoost: _savageGlow, // used by renderer for brighter shadowBlur
       knockback: 0, pierce: gun.pierce + _windPierceBonus, pierced: 0,
       // Extended bullet life with drift — bullets travel further (~352px base) but
       // become unreliable as they age. See _angVel below: each bullet has a random
@@ -7222,6 +7271,52 @@ function dropZombieLoot(z) {
     z._exploded = true;
     createExplosion(z.x, z.y, 60, mods.deathExplosion, 'player');
   }
+  // ---- QUALITATIVE STACK THRESHOLDS ----
+  // At 3+ stacks of an element bullet card, zombie deaths gain a NEW behavior.
+  // These are the build payoffs that make deep investment feel transformative.
+  if (isHost) {
+    // FIRE 3+: burning enemies EXPLODE on death (30 dmg, 40px radius)
+    if (mods.fireBulletsLv >= 3 && z._burning > 0 && !z._exploded) {
+      z._exploded = true;
+      createExplosion(z.x, z.y, 40, 30, 'player');
+      for (let _fi = 0; _fi < 8; _fi++) {
+        const _fa = Math.random()*Math.PI*2, _fs = 2+Math.random()*4;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs, life: 18, maxLife: 18, size: 3+Math.random()*2, color: '#f80', type: 'explosion' });
+      }
+    }
+    // ICE 3+: frozen enemies SHATTER for 50 AoE damage on death
+    if (mods.iceBulletsLv >= 3 && (z._frozenTimer > 0 || z._slowTimer > 0)) {
+      const _shatterR = 50;
+      for (const oz of zombies) {
+        if (oz === z || oz.hp <= 0) continue;
+        const _sdx = oz.x - z.x, _sdy = oz.y - z.y;
+        if (_sdx*_sdx + _sdy*_sdy < _shatterR*_shatterR) {
+          damageZombie(oz, 50, _sdx*0.1, _sdy*0.1);
+        }
+      }
+      for (let _ii = 0; _ii < 10; _ii++) {
+        const _ia = Math.random()*Math.PI*2, _is = 3+Math.random()*4;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is, vy: Math.sin(_ia)*_is, life: 18, maxLife: 18, size: 2+Math.random()*2, color: '#8ef', type: 'spark' });
+      }
+      playSound(1400, 0.06, 'square', 0.08);
+    }
+    // CHAIN 3+: lightning jumps to 4 targets instead of normal chain count
+    // (This is handled in the bullet collision code — we set a flag here for the render)
+    // WIND 3+: death creates a brief slow field at the zombie's position
+    if (mods.windBulletsLv >= 3) {
+      for (const oz of zombies) {
+        if (oz === z || oz.hp <= 0) continue;
+        const _wdx = oz.x - z.x, _wdy = oz.y - z.y;
+        if (_wdx*_wdx + _wdy*_wdy < 60*60) {
+          oz._slowTimer = Math.max(oz._slowTimer || 0, 40);
+        }
+      }
+      for (let _wi = 0; _wi < 6; _wi++) {
+        const _wa = Math.random()*Math.PI*2, _ws = 1+Math.random()*2;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws, life: 24, maxLife: 24, size: 2, color: '#cef', type: 'spark' });
+      }
+    }
+  }
   // Siege mode: no enemy health drops — all items come from scheduled spawns
   if (gameMode === 'siege') return;
   if (z.boss) {
@@ -7283,6 +7378,11 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.hp-=damage;z.hitFlash=6;z.vx+=kbx*kbScale;z.vy+=kby*kbScale;
   // Bosses resist stagger almost entirely — prevents stunlocking them with rapid fire
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
+  // RAGE flinch: every hit staggers enemies harder during rage (not bosses)
+  if (!z.boss && hasPowerUp('rage')) {
+    z.staggerTimer = Math.max(z.staggerTimer, 8);
+    z.attackCooldown = Math.max(z.attackCooldown || 0, 15);
+  }
   z.aware=true;
   // Scale blood splatter with damage intensity
   const intensity=Math.min(3,damage/30);
@@ -7984,7 +8084,8 @@ function update() {
                       const isAsc = _mods.ascendant === 'chain';
                       const ch = isAsc ? 1 : 0.10 * _mods.chainBulletsLv;
                       if (Math.random() < ch) {
-                        const maxJumps = 1 + Math.floor(_mods.chainBulletsLv * 0.75) + (isAsc ? 1 : 0);
+                        // At 3+ stacks: jumps to 4 targets (qualitative threshold)
+                        const maxJumps = _mods.chainBulletsLv >= 3 ? 4 : (1 + Math.floor(_mods.chainBulletsLv * 0.75) + (isAsc ? 1 : 0));
                         let lastZ = z;
                         const hitSet = new Set([z.zid]);
                         for (let ci = 0; ci < maxJumps; ci++) {
@@ -10254,14 +10355,15 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // Default bullet render — scales with travel distance so they visibly decay at range
+      // Default bullet render — scales with travel distance + build glow from card stacks
       const _bRenderSize = b.size * _bSizeMult;
+      const _glow = b._glowBoost || 0;
       ctx.shadowColor = b.color;
-      ctx.shadowBlur = 14 * _bAlphaMult;
+      ctx.shadowBlur = (14 + _glow * 20) * _bAlphaMult; // bigger glow with more damage stacks
       ctx.globalAlpha = _bAlphaMult;
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 0.6, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 0.5 * _bAlphaMult;
+      ctx.globalAlpha = (0.5 + _glow * 0.3) * _bAlphaMult; // more opaque outer ring with stacks
       ctx.fillStyle = b.color;
       ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 1.5, 0, Math.PI*2); ctx.fill();
       ctx.globalAlpha = 1;
@@ -10967,7 +11069,16 @@ function render() {
       }
     }
     // Power-up screen tints
-    if(hasPowerUp('rage')){ctx.fillStyle='rgba(255,40,0,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('rage')){
+      // RAGE: prominent red tint + pulsing vignette — should feel like GOD MODE
+      const _ragePulse = 0.12 + Math.sin(performance.now() * 0.008) * 0.04;
+      ctx.fillStyle=`rgba(255,30,0,${_ragePulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);
+      // Red edge vignette
+      const _rg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.3, canvas.width/2, canvas.height/2, canvas.width*0.7);
+      _rg.addColorStop(0, 'rgba(0,0,0,0)');
+      _rg.addColorStop(1, `rgba(255,0,0,${_ragePulse * 1.5})`);
+      ctx.fillStyle = _rg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     if(hasPowerUp('triple')){ctx.fillStyle='rgba(255,160,0,0.03)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('overcharge')){ctx.fillStyle='rgba(255,255,0,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('shield')){ctx.fillStyle='rgba(0,200,255,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
