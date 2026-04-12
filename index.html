@@ -673,7 +673,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 12;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 9;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -1164,7 +1164,7 @@ const UPGRADE_POOL = [
   { id:'chainsmash', name:'STORM TRAIL',    desc:'Dash shocks enemies in its wake',  flavor:'discharge arcs off your hull — nothing grounded survives', rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
   { id:'windsmash',  name:'GALE TRAIL',     desc:'Dash staggers enemies in its wake',flavor:'pressure wake flings them — their packets go nowhere',     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
   // Dash shockwave — triggers a blast at dash end position. Combines with trail elements above.
-  { id:'shockdash',  name:'SHOCKWAVE DASH', desc:'Dash ends in a shockwave blast',   flavor:'deceleration releases stored kinetic as an outward pulse',  rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
+  { id:'shockdash',  name:'SHOCKWAVE DASH', desc:'Dash ends in a radial knockback wave', flavor:'deceleration releases stored kinetic as an outward pulse', rarity:'epic', max:3, icon:'◈',  color:'#4af' },
   // Area / orbital — epic
   { id:'orbital',    name:'ORBITAL RING',   desc:'A bullet orbits you (stacks: +1)',flavor:'uncorrupted satellite still running its old routine',       rarity:'epic',      max:4, icon:'◉',  color:'#a8f' },
   { id:'blastcd',    name:'BLAST MASTERY',  desc:'-25% shockwave cooldown',         flavor:'capacitor tuning. recharge faster.',                        rarity:'epic',      max:3, icon:'◈',  color:'#4af' },
@@ -5780,53 +5780,83 @@ function applyDashTrailEffects(lp) {
 // Called once when the dash's motion frames end. Creates an explosion at the dash's
 // exit position. Damage and radius scale with level, and combine flavors when paired
 // with trail elements.
+// Shockwave Dash — radial knockback pulse centered on the player at dash end.
+// Pushes all nearby enemies outward with force + modest damage, similar to the
+// old blast ability. Stacks increase radius, damage, and knockback force.
+// Element trail procs are applied to everything the shockwave touches.
 function triggerShockwaveDash(lp) {
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
   const lv = _mods.shockDashLv || 0;
   if (lv <= 0) return;
-  const baseRadius = 90 + 18 * lv;
+  const baseRadius = 110 + 20 * lv;
   const radius = baseRadius * (_mods.blastRadiusMult || 1);
-  const damage = 35 + 20 * lv;
-  // Color tint — shifts toward the strongest trail element if any
+  const damage = 25 + 15 * lv;
+  const knockForce = 10 + 4 * lv; // outward push velocity
+  // Tint toward dominant trail element
   let tint = '#4af';
-  if (_mods.fireSmashLv  >= _mods.iceSmashLv && _mods.fireSmashLv  >= _mods.chainSmashLv && _mods.fireSmashLv  >= _mods.windSmashLv && _mods.fireSmashLv  > 0) tint = '#f80';
-  else if (_mods.iceSmashLv   >= _mods.chainSmashLv && _mods.iceSmashLv   >= _mods.windSmashLv && _mods.iceSmashLv   > 0) tint = '#8ef';
-  else if (_mods.chainSmashLv >= _mods.windSmashLv && _mods.chainSmashLv > 0) tint = '#4ff';
-  else if (_mods.windSmashLv > 0) tint = '#cef';
-  createExplosion(lp.x, lp.y, radius, damage, 'player');
-  // Element-flavored ring burst so the shockwave visually fuses with the trail element
-  for (let i = 0; i < 32; i++) {
-    const a = (Math.PI * 2 * i) / 32;
-    const s = 4 + Math.random() * 3;
+  if (_mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0) && _mods.fireSmashLv  > 0) tint = '#f80';
+  else if ((_mods.iceSmashLv||0)   >= (_mods.chainSmashLv||0) && (_mods.iceSmashLv||0)   >= (_mods.windSmashLv||0) && (_mods.iceSmashLv||0)   > 0) tint = '#8ef';
+  else if ((_mods.chainSmashLv||0) >= (_mods.windSmashLv||0) && (_mods.chainSmashLv||0) > 0) tint = '#4ff';
+  else if ((_mods.windSmashLv||0) > 0) tint = '#cef';
+  // ---- RADIAL SHOCKWAVE VFX (same as old blast ability) ----
+  // Expanding ring
+  explosions.push({ x: lp.x, y: lp.y, radius, life: 18, maxLife: 18 });
+  // Radial spark burst — two rings (dense inner, scattered outer)
+  for (let i = 0; i < 40; i++) {
+    const a = (Math.PI * 2 * i) / 40;
+    const s = 5 + Math.random() * 4;
     particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 26, maxLife: 26, size: 2 + Math.random()*2, color: tint, type: 'spark' });
+      life: 28, maxLife: 28, size: 3 + Math.random()*2, color: tint, type: 'spark' });
   }
-  screenShake.intensity = Math.max(screenShake.intensity, 10);
-  // Also apply trail element procs to every zombie the shockwave touches — makes the
-  // combined "shockwave + element" read as a single cohesive burst.
+  for (let i = 0; i < 20; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 2 + Math.random() * 7;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 22, maxLife: 22, size: 2 + Math.random()*3, color: '#fff', type: 'spark' });
+  }
+  // Smoke puffs at the epicenter
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 1 + Math.random() * 3;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 30 + Math.random()*20, maxLife: 50, size: 5 + Math.random()*5, color: '#555', type: 'smoke' });
+  }
+  screenShake.intensity = Math.max(screenShake.intensity, 12);
+  playSfx('explosion', 0.35) || playExplosionSound();
+  // ---- KNOCKBACK + DAMAGE + ELEMENT PROCS ----
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = radius * radius;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
     const dx = z.x - lp.x, dy = z.y - lp.y;
-    if (dx*dx + dy*dy > r2) continue;
+    const d2 = dx*dx + dy*dy;
+    if (d2 > r2) continue;
+    const d = Math.sqrt(d2) || 1;
+    // Damage falloff: full at center, 30% at edge
+    const falloff = 1 - (d / radius) * 0.7;
+    damageZombie(z, Math.floor(damage * falloff), 0, 0);
+    // Outward knockback — proportional to proximity
+    const pushMult = 1 - d / radius;
+    z.vx += (dx / d) * knockForce * pushMult;
+    z.vy += (dy / d) * knockForce * pushMult;
+    z.staggerTimer = Math.max(z.staggerTimer || 0, 20 + lv * 5);
+    // Element trail procs on everything the shockwave touches
     if (hitSet.has(z.zid)) continue;
     hitSet.add(z.zid);
-    if (_mods.fireSmashLv > 0) {
-      // Shockwave dash + fire trail: modest burn, nerfed from the old value.
+    if ((_mods.fireSmashLv||0) > 0) {
       z._burning = (z._burning || 0) + Math.floor(4 + 3 * _mods.fireSmashLv);
       z._burnTimer = Math.max(z._burnTimer || 0, 160 + 30 * _mods.fireSmashLv);
     }
-    if (_mods.iceSmashLv > 0) {
+    if ((_mods.iceSmashLv||0) > 0) {
       z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.iceSmashLv);
       z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * _mods.iceSmashLv);
     }
-    if (_mods.chainSmashLv > 0) {
+    if ((_mods.chainSmashLv||0) > 0) {
       z._shocked = Math.max(z._shocked || 0, 60 + 10 * _mods.chainSmashLv);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
     }
-    if (_mods.windSmashLv > 0) {
+    if ((_mods.windSmashLv||0) > 0) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 40 + 10 * _mods.windSmashLv);
     }
   }
@@ -7702,8 +7732,9 @@ function update() {
       z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
       // Separation: squared-distance compare first so we only sqrt when actually overlapping
       for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd2=sx*sx+sy*sy,md2=z.radius+o.radius,md22=md2*md2;if(sd2<md22&&sd2>0){const sd=Math.sqrt(sd2);const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
-      // Push zombies out of players — prevent visual overlap
-      for(const p of players){if(!p.alive)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd*0.5;z.x+=sx*push;z.y+=sy*push;}}
+      // Push zombies out of players — prevent visual overlap.
+      // Skip for any player who is mid-dash (they ghost through enemies).
+      for(const p of players){if(!p.alive)continue;if(p._dashFrames>0||p.dashTimer>100)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd*0.5;z.x+=sx*push;z.y+=sy*push;}}
       // Melee all players — velocity-compensated for remote players
       for(const p of players){if(!p.alive)continue;
         const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
