@@ -5919,47 +5919,58 @@ function triggerShockwaveDash(lp) {
   const _mods = runMods || {};
   const lv = _mods.shockDashLv || 0;
   if (lv <= 0) return;
-  const baseRadius = 110 + 20 * lv;
+  const baseRadius = 140 + 25 * lv;
   const radius = baseRadius * (_mods.blastRadiusMult || 1);
-  const damage = 25 + 15 * lv;
-  const knockForce = 10 + 4 * lv; // outward push velocity
+  const damage = 50 + 25 * lv;
+  const knockForce = 16 + 6 * lv; // outward push velocity
   // Tint toward dominant trail element
   let tint = '#4af';
   if (_mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0) && _mods.fireSmashLv  > 0) tint = '#f80';
   else if ((_mods.iceSmashLv||0)   >= (_mods.chainSmashLv||0) && (_mods.iceSmashLv||0)   >= (_mods.windSmashLv||0) && (_mods.iceSmashLv||0)   > 0) tint = '#8ef';
   else if ((_mods.chainSmashLv||0) >= (_mods.windSmashLv||0) && (_mods.chainSmashLv||0) > 0) tint = '#4ff';
   else if ((_mods.windSmashLv||0) > 0) tint = '#cef';
-  // ---- RADIAL PULSE VFX — particles emanate outward from the player ----
-  // No explosion object, no fire, no smoke. Clean expanding wave of sparks
-  // radiating from the player's body — looks like a force push, not a bomb.
-  // Dense inner ring: evenly spaced, fast, element-tinted
-  for (let i = 0; i < 32; i++) {
-    const a = (Math.PI * 2 * i) / 32;
-    const s = 6 + Math.random() * 3;
+  // ---- RADIAL PULSE VFX — big, dramatic force push ----
+  // Dense primary ring: 48 evenly-spaced, fast, element-tinted sparks
+  for (let i = 0; i < 48; i++) {
+    const a = (Math.PI * 2 * i) / 48;
+    const s = 7 + Math.random() * 5;
     particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 24, maxLife: 24, size: 2.5 + Math.random()*1.5, color: tint, type: 'spark' });
+      life: 30, maxLife: 30, size: 3 + Math.random()*2, color: tint, type: 'spark' });
   }
-  // Scattered secondary ring: random angles, slightly slower, white
-  for (let i = 0; i < 16; i++) {
+  // Scattered secondary ring: random angles, white, adds density
+  for (let i = 0; i < 28; i++) {
     const a = Math.random() * Math.PI * 2;
-    const s = 3 + Math.random() * 5;
+    const s = 4 + Math.random() * 6;
     particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 18, maxLife: 18, size: 1.5 + Math.random()*2, color: '#fff', type: 'spark' });
+      life: 22, maxLife: 22, size: 2 + Math.random()*2.5, color: '#fff', type: 'spark' });
   }
-  // Expanding ring outline — a single thin circle that grows outward.
-  // Rendered as a ring of tiny dots at the wavefront radius.
-  for (let i = 0; i < 24; i++) {
-    const a = (Math.PI * 2 * i) / 24;
-    const startR = 20;
-    particles.push({
-      x: lp.x + Math.cos(a) * startR, y: lp.y + Math.sin(a) * startR,
-      vx: Math.cos(a) * 8, vy: Math.sin(a) * 8,
-      life: 14, maxLife: 14, size: 2, color: tint, type: 'spark' });
+  // Third ring: large slow-moving glow particles for a lingering wave feel
+  for (let i = 0; i < 16; i++) {
+    const a = (Math.PI * 2 * i) / 16;
+    const s = 3 + Math.random() * 2;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 36, maxLife: 36, size: 5 + Math.random()*4, color: tint, type: 'spark' });
   }
-  screenShake.intensity = Math.max(screenShake.intensity, 7);
-  // Light bump sound — not an explosion. Short low thud + high click.
-  playSfx('dash', 0.25) || playSound(140, 0.12, 'sine', 0.15);
-  playSound(600, 0.04, 'sine', 0.08);
+  // Expanding wavefront ring — two concentric rings of dots racing outward
+  for (let ring = 0; ring < 2; ring++) {
+    const count = ring === 0 ? 32 : 20;
+    const startR = ring === 0 ? 16 : 28;
+    const speed = ring === 0 ? 10 : 7;
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count + ring * 0.1;
+      particles.push({
+        x: lp.x + Math.cos(a) * startR, y: lp.y + Math.sin(a) * startR,
+        vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        life: 16, maxLife: 16, size: 2.5, color: ring === 0 ? tint : '#fff', type: 'spark' });
+    }
+  }
+  // Glitch surge — the push destabilizes the simulation locally
+  triggerGlitchSurge(0.3, 14);
+  screenShake.intensity = Math.max(screenShake.intensity, 10);
+  // Punchy thud + resonance — bigger than a bump, not an explosion
+  playSfx('dash', 0.35) || playSound(100, 0.18, 'sine', 0.18);
+  playSound(60, 0.25, 'square', 0.1);
+  playSound(500, 0.05, 'sine', 0.1);
   // ---- KNOCKBACK + DAMAGE + ELEMENT PROCS ----
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = radius * radius;
