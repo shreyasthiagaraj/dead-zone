@@ -3865,6 +3865,19 @@ function pushOutOfObstacles(e, r) {
   for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
 }
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy),steps=Math.ceil(dist/(CELL_SIZE*0.5)); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) return false; } return true; }
+// Raycast from (ax,ay) in direction angle until hitting a wall or reaching maxDist.
+// Returns the distance to the wall hit (or maxDist if no wall).
+function raycastToWall(ax, ay, angle, maxDist) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  const step = CELL_SIZE * 0.4;
+  for (let d = step; d < maxDist; d += step) {
+    const cx = ax + dx * d, cy = ay + dy * d;
+    const gx = Math.floor(cx / CELL_SIZE), gy = Math.floor(cy / CELL_SIZE);
+    if (gx < 0 || gx >= GRID_W || gy < 0 || gy >= GRID_H) return d;
+    if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) return d;
+  }
+  return maxDist;
+}
 
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
@@ -5912,81 +5925,118 @@ function applyDashTrailEffects(lp) {
 // Called once when the dash's motion frames end. Creates an explosion at the dash's
 // exit position. Damage and radius scale with level, and combine flavors when paired
 // with trail elements.
-// Shockwave Dash — radial knockback pulse centered on the player at dash end.
-// Pushes all nearby enemies outward with force + modest damage, similar to the
-// old blast ability. Stacks increase radius, damage, and knockback force.
-// Element trail procs are applied to everything the shockwave touches.
+// Shockwave Dash — faithful recreation of the old Blast ability from experimental.
+// Two expanding particle rings, ground decals, element-specific VFX (lightning bolts,
+// wind swirl), element-specific sounds. No explosions.push — pure particles.
 function triggerShockwaveDash(lp) {
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
   const lv = _mods.shockDashLv || 0;
   if (lv <= 0) return;
-  const baseRadius = 140 + 25 * lv;
-  const radius = baseRadius * (_mods.blastRadiusMult || 1);
-  const damage = 50 + 25 * lv;
-  const knockForce = 16 + 6 * lv; // outward push velocity
-  // Tint toward dominant trail element
-  let tint = '#4af';
-  if (_mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0) && _mods.fireSmashLv  > 0) tint = '#f80';
-  else if ((_mods.iceSmashLv||0)   >= (_mods.chainSmashLv||0) && (_mods.iceSmashLv||0)   >= (_mods.windSmashLv||0) && (_mods.iceSmashLv||0)   > 0) tint = '#8ef';
-  else if ((_mods.chainSmashLv||0) >= (_mods.windSmashLv||0) && (_mods.chainSmashLv||0) > 0) tint = '#4ff';
-  else if ((_mods.windSmashLv||0) > 0) tint = '#cef';
-  // ---- SHOCKWAVE VFX — expanding ring (the old blast look) + supporting sparks ----
-  // PRIMARY: the expanding semi-transparent ring that reads as a pressure wave.
-  // This is the core visual from the original blast ability.
-  explosions.push({ x: lp.x, y: lp.y, radius, life: 20, maxLife: 20,
-    color: tint, color2: '#fff', _shockwave: true });
-  // SUPPORTING: radial spark burst behind the ring — adds energy but the ring leads.
-  for (let i = 0; i < 28; i++) {
-    const a = (Math.PI * 2 * i) / 28;
-    const s = 5 + Math.random() * 3;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 22, maxLife: 22, size: 2.5 + Math.random()*1.5, color: tint, type: 'spark' });
+  const SHOCKWAVE_RADIUS = 150;
+  const radius = SHOCKWAVE_RADIUS * (_mods.blastRadiusMult || 1);
+  // Determine dominant element for VFX
+  let blastElem = null;
+  if (_mods.fireSmashLv > 0)  blastElem = 'fire';
+  if ((_mods.iceSmashLv||0) > (blastElem?_mods.fireSmashLv:0)) blastElem = 'ice';
+  if ((_mods.chainSmashLv||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':'_']||0)) blastElem = 'chain';
+  if ((_mods.windSmashLv||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':blastElem==='chain'?'chainSmashLv':'_']||0)) blastElem = 'wind';
+  // Element colors (matches experimental branch exactly)
+  let c1, c2, decalCol;
+  if (blastElem === 'fire')      { c1='#f80'; c2='#fa0'; decalCol='#420'; }
+  else if (blastElem === 'ice')  { c1='#aef'; c2='#cef'; decalCol='#245'; }
+  else if (blastElem === 'chain'){ c1='#4ff'; c2='#8ff'; decalCol='#234'; }
+  else if (blastElem === 'wind') { c1='#cef'; c2='#fff'; decalCol='#345'; }
+  else                           { c1='#4af'; c2='#fff'; decalCol='#223'; }
+  // ---- RING 1: 32 fast particles expanding from 15px out ----
+  for (let i = 0; i < 32; i++) {
+    const a = (Math.PI * 2 * i) / 32;
+    particles.push({ x: lp.x + Math.cos(a)*15, y: lp.y + Math.sin(a)*15,
+      vx: Math.cos(a)*10, vy: Math.sin(a)*10,
+      life: 22, maxLife: 22, size: 5, color: c1, type: 'spark' });
   }
-  for (let i = 0; i < 14; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const s = 2 + Math.random() * 5;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 18, maxLife: 18, size: 1.5 + Math.random()*2, color: '#fff', type: 'spark' });
+  // ---- RING 2: 16 slower particles from 10px out ----
+  for (let i = 0; i < 16; i++) {
+    const a = (Math.PI * 2 * i) / 16;
+    particles.push({ x: lp.x + Math.cos(a)*10, y: lp.y + Math.sin(a)*10,
+      vx: Math.cos(a)*6, vy: Math.sin(a)*6,
+      life: 18, maxLife: 18, size: 4, color: c2, type: 'spark' });
   }
-  triggerGlitchSurge(0.25, 12);
-  screenShake.intensity = Math.max(screenShake.intensity, 12);
-  // Blast thud — the old blast sound profile
-  playSfx('dash', 0.35) || playSound(100, 0.18, 'sine', 0.2);
-  playSound(55, 0.3, 'square', 0.12);
-  // Lightning shockwave: radial arcs + cyan sparks emanating in all directions + zap
-  if ((_mods.chainSmashLv||0) > 0) {
-    for (let _li = 0; _li < 10; _li++) {
-      const _la = (_li / 10) * Math.PI * 2;
-      const _lr = radius * (0.5 + Math.random() * 0.5);
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
-        size: 1, color: '#4ff', type: 'lightning',
-        tx: lp.x + Math.cos(_la) * _lr, ty: lp.y + Math.sin(_la) * _lr });
-    }
-    for (let _si = 0; _si < 20; _si++) {
-      const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random() * 6;
-      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
-        life: 18, maxLife: 18, size: 2 + Math.random()*2, color: '#4ff', type: 'spark' });
+  // ---- GROUND DECALS: 8 around + 1 large center ----
+  for (let i = 0; i < 8; i++) {
+    const da = (Math.PI * 2 * i) / 8;
+    const dd = 30 + Math.random() * 40;
+    decals.push({ x: lp.x + Math.cos(da)*dd, y: lp.y + Math.sin(da)*dd,
+      size: 10 + Math.random()*15, alpha: 0.4, color: decalCol });
+  }
+  decals.push({ x: lp.x, y: lp.y, size: 60 + Math.random()*20, alpha: 0.3, color: decalCol });
+  // ---- ELEMENT-SPECIFIC VFX ----
+  if (blastElem === 'chain') {
+    // LIGHTNING: 8-12 radiating bolts from player in random directions
+    const boltCount = 8 + Math.floor(Math.random() * 5);
+    for (let bi = 0; bi < boltCount; bi++) {
+      const ba = Math.random() * Math.PI * 2;
+      const br = 80 + Math.random() * 70;
+      const tx = lp.x + Math.cos(ba) * br, ty = lp.y + Math.sin(ba) * br;
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18 + Math.floor(Math.random()*8), maxLife: 26,
+        size: 1, color: '#4ff', type: 'lightning', tx, ty });
+      // Branch sparks at bolt endpoints
+      for (let si = 0; si < 2; si++) {
+        const sa = Math.random() * Math.PI * 2, ss = 1 + Math.random() * 3;
+        particles.push({ x: tx, y: ty, vx: Math.cos(sa)*ss, vy: Math.sin(sa)*ss,
+          life: 12, maxLife: 12, size: 2, color: '#4ff', type: 'spark' });
+      }
     }
     playSfx('zap', 0.3) || playSound(220, 0.12, 'sawtooth', 0.12);
   }
-  // ---- KNOCKBACK + DAMAGE + ELEMENT PROCS ----
+  if (blastElem === 'wind') {
+    // WIND: 60 swirl particles with tangential bias
+    for (let wi = 0; wi < 60; wi++) {
+      const wa = Math.random() * Math.PI * 2;
+      const radialV = 5;
+      const tangDir = (Math.random() < 0.5 ? 1 : -1);
+      const tangV = (0.6 + Math.random() * 0.5) * 4 * tangDir;
+      const vx = Math.cos(wa)*radialV + Math.cos(wa + Math.PI/2)*tangV;
+      const vy = Math.sin(wa)*radialV + Math.sin(wa + Math.PI/2)*tangV;
+      particles.push({ x: lp.x, y: lp.y, vx, vy,
+        life: 22 + Math.floor(Math.random()*10), maxLife: 32,
+        size: 2 + Math.random()*2, color: Math.random()<0.5?'#fff':'#cef', type: 'spark' });
+    }
+    // Expanding mist ring at 50px
+    for (let mi = 0; mi < 24; mi++) {
+      const ma = (Math.PI * 2 * mi) / 24;
+      particles.push({ x: lp.x + Math.cos(ma)*50, y: lp.y + Math.sin(ma)*50,
+        vx: Math.cos(ma)*9, vy: Math.sin(ma)*9,
+        life: 18, maxLife: 18, size: 5, color: '#cef', type: 'spark' });
+    }
+    playSound(180, 0.25, 'sawtooth', 0.18);
+    playSound(420, 0.18, 'sine', 0.12);
+  }
+  if (blastElem === 'fire')  { playSfx('ignite', 0.5) || playIgniteSound(); }
+  if (blastElem === 'ice')   { playSound(1200, 0.08, 'square', 0.1); }
+  screenShake.intensity = Math.max(screenShake.intensity, 10);
+  playSfx('blast_default', 0.4) || playSound(100, 0.2, 'sine', 0.2);
+  playSound(55, 0.3, 'square', 0.1);
+  // ---- KNOCKBACK + DAMAGE (matches experimental blast values) ----
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = radius * radius;
+  const _hitZombies = []; // track for lightning chain arcs
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
     const dx = z.x - lp.x, dy = z.y - lp.y;
     const d2 = dx*dx + dy*dy;
     if (d2 > r2) continue;
     const d = Math.sqrt(d2) || 1;
-    // Damage falloff: full at center, 30% at edge
-    const falloff = 1 - (d / radius) * 0.7;
-    damageZombie(z, Math.floor(damage * falloff), 0, 0);
-    // Outward knockback — proportional to proximity
-    const pushMult = 1 - d / radius;
-    z.vx += (dx / d) * knockForce * pushMult;
-    z.vy += (dy / d) * knockForce * pushMult;
-    z.staggerTimer = Math.max(z.staggerTimer || 0, 20 + lv * 5);
+    // closeness: 1 at center, 0 at edge (matches experimental)
+    const closeness = 1 - d / radius;
+    // Damage: 100 × closeness (old blast value)
+    damageZombie(z, Math.floor(100 * closeness), 0, 0);
+    // Knockback: 10 + 30 × closeness (old blast value)
+    const kb = 10 + 30 * closeness;
+    z.vx += (dx / d) * kb;
+    z.vy += (dy / d) * kb;
+    z.staggerTimer = Math.max(z.staggerTimer || 0, 25);
+    _hitZombies.push(z);
     // Element trail procs on everything the shockwave touches
     if (hitSet.has(z.zid)) continue;
     hitSet.add(z.zid);
@@ -6014,6 +6064,32 @@ function triggerShockwaveDash(lp) {
     }
     if ((_mods.windSmashLv||0) > 0) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 40 + 10 * _mods.windSmashLv);
+    }
+  }
+  // Lightning blast: chain arcs between hit zombies (nearest-neighbor chain)
+  if (blastElem === 'chain' && _hitZombies.length > 1) {
+    let lastZ = _hitZombies[0];
+    const chained = new Set([lastZ.zid]);
+    for (let ci = 1; ci < Math.min(_hitZombies.length, 8); ci++) {
+      let bestD2 = Infinity, bestZ = null;
+      for (const oz of _hitZombies) {
+        if (chained.has(oz.zid)) continue;
+        const cdx = oz.x - lastZ.x, cdy = oz.y - lastZ.y;
+        const cd2 = cdx*cdx + cdy*cdy;
+        if (cd2 < bestD2) { bestD2 = cd2; bestZ = oz; }
+      }
+      if (!bestZ) break;
+      chained.add(bestZ.zid);
+      particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 16, maxLife: 16,
+        size: 1, color: '#4ff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
+      particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 16, maxLife: 16,
+        size: 1, color: '#fff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
+      for (let si = 0; si < 3; si++) {
+        const sa = Math.random() * Math.PI * 2, ss = 1 + Math.random() * 3;
+        particles.push({ x: bestZ.x, y: bestZ.y, vx: Math.cos(sa)*ss, vy: Math.sin(sa)*ss,
+          life: 12, maxLife: 12, size: 2, color: '#4ff', type: 'spark' });
+      }
+      lastZ = bestZ;
     }
   }
 }
@@ -8062,41 +8138,66 @@ function update() {
             }
           }
         }
-        // ---- BEAM ARRAY: perches at walls, sweeps a laser beam ----
+        // ---- BEAM ARRAY: perches at walls, sweeps a wall-blocked laser ----
         else if(zt?.beamArray){
-          if(!z._beamState) z._beamState = 'seek'; // seek → perch → telegraph → fire → cooldown
+          if(!z._beamState) z._beamState = 'seek';
           if(!z._beamPerchX) {
-            // Pick a wall perch position: top or bottom edge of the section
             const _tsecBA = gameMode==='trench' ? trenchSections[trenchSection] : null;
             const _bsx = _tsecBA ? _tsecBA.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE : z.x;
             const _bsy = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
             z._beamPerchX = _bsx; z._beamPerchY = _bsy;
+            z._beamSweepDir = 1; // always sweep clockwise (consistent direction)
+          }
+          // Cache beam length (raycast to wall) — updated every frame during telegraph/fire
+          if (z._beamSweepAngle !== undefined) {
+            z._beamLen = raycastToWall(z.x, z.y, z._beamSweepAngle, 2000);
           }
           if(z._beamState==='seek'){
-            // Rush to the perch position
             const _bpdx=z._beamPerchX-z.x, _bpdy=z._beamPerchY-z.y;
             const _bpd=Math.sqrt(_bpdx*_bpdx+_bpdy*_bpdy)||1;
-            if(_bpd<20){z._beamState='telegraph';z._beamTimer=0;z.vx=0;z.vy=0;z._beamSweepAngle=Math.atan2(zdy,zdx);}
+            if(_bpd<20){
+              z._beamState='telegraph';z._beamTimer=0;z.vx=0;z.vy=0;
+              // Start sweep angle pointed at the player, will sweep clockwise from there
+              z._beamSweepAngle=Math.atan2(zdy,zdx) - 0.5; // start 0.5 rad before player
+            }
             else{z.vx=(_bpdx/_bpd)*z.speed*1.5;z.vy=(_bpdy/_bpd)*z.speed*1.5;}
           } else if(z._beamState==='telegraph'){
             z.vx=0;z.vy=0;z._beamTimer++;
-            // Slowly rotate the sweep angle toward the player during telegraph
-            const _tgtA=Math.atan2(zdy,zdx);
+            // Slowly rotate toward the player during telegraph
+            const _tgtA=Math.atan2(zdy,zdx) - 0.4;
             let _da=_tgtA-z._beamSweepAngle;while(_da>Math.PI)_da-=Math.PI*2;while(_da<-Math.PI)_da+=Math.PI*2;
-            z._beamSweepAngle+=_da*0.02;
-            z.angle=z._beamSweepAngle; // face the beam direction
-            if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;z._beamSweepDir=Math.random()<0.5?1:-1;}
+            z._beamSweepAngle+=_da*0.015;
+            z.angle=z._beamSweepAngle;
+            // Store start/end angles for the sweep preview
+            z._beamStartAngle = z._beamSweepAngle;
+            z._beamEndAngle = z._beamSweepAngle + z._beamSweepDir * 1.0; // ~57° sweep
+            if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;}
           } else if(z._beamState==='fire'){
             z.vx=0;z.vy=0;z._beamTimer++;
-            // Sweep the beam across an arc
-            z._beamSweepAngle+=z._beamSweepDir*0.025;
-            z.angle=z._beamSweepAngle; // face the beam direction
-            // Damage players in the beam path
+            z._beamSweepAngle += z._beamSweepDir * 0.02;
+            z.angle=z._beamSweepAngle;
+            // Beam particles: sparks at the wall hit point + along the beam
+            if (gameTime % 2 === 0) {
+              const _bLen = z._beamLen || 200;
+              const _bcos = Math.cos(z._beamSweepAngle), _bsin = Math.sin(z._beamSweepAngle);
+              // Impact sparks at the wall
+              const _hx = z.x + _bcos * _bLen, _hy = z.y + _bsin * _bLen;
+              for (let _sp = 0; _sp < 3; _sp++) {
+                const _sa = Math.random() * Math.PI * 2, _ss = 1 + Math.random() * 3;
+                particles.push({ x: _hx, y: _hy, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
+                  life: 10, maxLife: 10, size: 2, color: '#f44', type: 'spark' });
+              }
+              // Scattered sparks along the beam
+              const _bd = 40 + Math.random() * (_bLen - 60);
+              particles.push({ x: z.x + _bcos*_bd, y: z.y + _bsin*_bd,
+                vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2,
+                life: 8, maxLife: 8, size: 1.5, color: '#faa', type: 'spark' });
+            }
+            // Damage: raycast-limited range
             if(isHost&&gameTime%4===0){
-              const _bLen=500;
+              const _bLen = z._beamLen || 200;
               for(const p of players){
                 if(!p.alive)continue;
-                // Point-to-line distance from player to the beam ray
                 const _bdx=Math.cos(z._beamSweepAngle),_bdy=Math.sin(z._beamSweepAngle);
                 const _bpx=p.x-z.x,_bpy=p.y-z.y;
                 const _proj=_bpx*_bdx+_bpy*_bdy;
@@ -8109,14 +8210,14 @@ function update() {
           } else if(z._beamState==='cooldown'){
             z.vx=0;z.vy=0;z._beamTimer++;
             if(z._beamTimer>120){
-              // 35% chance to reposition, otherwise telegraph again
               if(Math.random()<0.35){
                 z._beamState='seek';
                 const _tsecBA2 = gameMode==='trench' ? trenchSections[trenchSection] : null;
                 z._beamPerchX = _tsecBA2 ? _tsecBA2.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE : z.x+(Math.random()-0.5)*200;
                 z._beamPerchY = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
               } else {
-                z._beamState='telegraph';z._beamTimer=0;z._beamSweepAngle=Math.atan2(zdy,zdx);
+                z._beamState='telegraph';z._beamTimer=0;
+                z._beamSweepAngle=Math.atan2(zdy,zdx) - 0.5;
               }
             }
           }
@@ -8141,30 +8242,38 @@ function update() {
       // Flashlight slow: zombies in any player's beam move 20% slower
       for(const fp of players){if(!fp.alive)continue;const fdx=z.x-fp.x,fdy=z.y-fp.y,fd=Math.sqrt(fdx*fdx+fdy*fdy);if(fd<400){const fa=Math.atan2(fdy,fdx),diff=Math.abs(((fa-fp.angle+Math.PI*3)%(Math.PI*2))-Math.PI);if(diff<0.5){z.vx*=0.8;z.vy*=0.8;break;}}}
       // ---- OBSTACLE AVOIDANCE (wall-sliding) ----
-      // Before applying movement, check if the desired direction is blocked.
-      // If so, slide along the wall by trying perpendicular directions. This
-      // prevents zombies from getting permanently stuck behind pillars.
+      // Try to move normally. If blocked, try BOTH perpendicular directions and
+      // pick whichever gives more movement. Triggers after just 2 stuck frames.
       const _zaH=ARENA_H;
       const _prevX = z.x, _prevY = z.y;
       z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
-      // Stuck check: if pushOutOfObstacles put us back near where we started,
-      // we're blocked. Try sliding perpendicular to the desired direction.
       if (z.aware && (z.vx*z.vx + z.vy*z.vy) > 0.5) {
         const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
         const _wanted2 = z.vx * z.vx + z.vy * z.vy;
-        // If we moved less than 20% of what we wanted, we're stuck
         if (_moved2 < _wanted2 * 0.04) {
           z._wallStuck = (z._wallStuck || 0) + 1;
-          if (z._wallStuck > 3) {
-            // Try perpendicular slide: pick the direction (left or right of desired)
-            // that has more open space. Alternate based on frame parity.
-            const _slideDir = (z._wallStuck % 6 < 3) ? 1 : -1;
-            const _perpVx = -z.vy * _slideDir;
-            const _perpVy = z.vx * _slideDir;
-            z.x = _prevX + _perpVx;
-            z.y = _prevY + _perpVy;
-            z.x = clamp(z.x, z.radius, ARENA_W - z.radius);
-            z.y = clamp(z.y, z.radius, _zaH - z.radius);
+          if (z._wallStuck > 2) {
+            // Try both perpendicular directions at amplified speed
+            const _slideSpeed = Math.sqrt(_wanted2) * 1.5;
+            const _normVx = z.vx / (Math.sqrt(_wanted2) || 1);
+            const _normVy = z.vy / (Math.sqrt(_wanted2) || 1);
+            let _bestX = z.x, _bestY = z.y, _bestD2 = _moved2;
+            for (const _dir of [1, -1]) {
+              const _testX = _prevX + (-_normVy * _dir) * _slideSpeed;
+              const _testY = _prevY + (_normVx * _dir) * _slideSpeed;
+              // Also add a small forward component so they don't just slide in place
+              const _fwdX = _testX + _normVx * _slideSpeed * 0.3;
+              const _fwdY = _testY + _normVy * _slideSpeed * 0.3;
+              const _tx = clamp(_fwdX, z.radius, ARENA_W - z.radius);
+              const _ty = clamp(_fwdY, z.radius, _zaH - z.radius);
+              // Check if this position is walkable
+              const gx = Math.floor(_tx / CELL_SIZE), gy = Math.floor(_ty / CELL_SIZE);
+              if (gx >= 0 && gx < GRID_W && gy >= 0 && gy < GRID_H && dungeonGrid[gy] && dungeonGrid[gy][gx]) {
+                const _d2 = (_tx - _prevX) * (_tx - _prevX) + (_ty - _prevY) * (_ty - _prevY);
+                if (_d2 > _bestD2) { _bestD2 = _d2; _bestX = _tx; _bestY = _ty; }
+              }
+            }
+            z.x = _bestX; z.y = _bestY;
             pushOutOfObstacles(z, z.radius);
           }
         } else {
@@ -9908,52 +10017,66 @@ function render() {
     if(ZOMBIE_TYPES[z.type]?.shielded){ctx.globalAlpha=0.5;ctx.strokeStyle='#4af';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,z.radius+4,-0.8,0.8);ctx.stroke();ctx.globalAlpha=1;}
     // Sniper: laser sight — extends to full bullet range (~960px = 16 speed × 60 life)
     if(z._sniperState==='aim'&&z._sniperCharge>20){ctx.globalAlpha=Math.min(0.6,z._sniperCharge/90);ctx.strokeStyle='#f44';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);ctx.beginPath();ctx.moveTo(z.radius,0);ctx.lineTo(z.radius+800,0);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
-    // Beam Array: laser beam render (uses world-space angle, not z.angle rotation).
-    // We're already inside a ctx.save()/translate(z.x,z.y)/rotate(z.angle) from the
-    // zombie body render setup. To draw in world-space, we reset the transform, draw
-    // the beam, then restore back to the zombie-local transform. No extra save needed.
+    // Beam Array: laser render — wall-blocked, with sweep direction gradient + particles.
     if(z._beamSweepAngle!==undefined&&(z._beamState==='telegraph'||z._beamState==='fire')){
-      // Temporarily reset to identity to draw in screen space
       ctx.save();ctx.setTransform(1,0,0,1,0,0);
       const _bcx=z.x-camera.x+canvas.width/2+screenShake.x;
       const _bcy=z.y-camera.y+canvas.height/2+screenShake.y;
       const _bcos=Math.cos(z._beamSweepAngle),_bsin=Math.sin(z._beamSweepAngle);
-      const _bLen=500;
+      // Wall-blocked beam length
+      const _bLen = z._beamLen || 200;
+      const _bex = _bcx + _bcos * _bLen, _bey = _bcy + _bsin * _bLen;
       if(z._beamState==='telegraph'){
-        const _telProg = Math.min(1, (z._beamTimer||0) / 90); // 0→1 over telegraph duration
+        const _telProg = Math.min(1, (z._beamTimer||0) / 90);
         const _telPulse = 0.4 + Math.sin(performance.now() * 0.012) * 0.25;
-        // Wide pulsing warning line — gets brighter as fire approaches
-        ctx.globalAlpha = (0.25 + _telProg * 0.45) * _telPulse;
+        // Main warning line — stops at wall
+        ctx.globalAlpha = (0.3 + _telProg * 0.4) * _telPulse;
         ctx.strokeStyle = '#f44'; ctx.lineWidth = 2 + _telProg * 3;
         ctx.shadowColor = '#f44'; ctx.shadowBlur = 10 + _telProg * 15;
         ctx.setLineDash([10, 8]);
-        ctx.beginPath(); ctx.moveTo(_bcx, _bcy); ctx.lineTo(_bcx+_bcos*_bLen, _bcy+_bsin*_bLen); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.shadowBlur = 0;
-        // Sweep arc preview — shows the path the beam will cover (±30° fan)
-        ctx.globalAlpha = 0.08 + _telProg * 0.08;
-        ctx.fillStyle = '#f44';
-        ctx.beginPath();
-        ctx.moveTo(_bcx, _bcy);
-        ctx.arc(_bcx, _bcy, _bLen * 0.7, z._beamSweepAngle - 0.5, z._beamSweepAngle + 0.5);
-        ctx.closePath(); ctx.fill();
-        // ⚠ warning at the endpoint
+        ctx.beginPath(); ctx.moveTo(_bcx, _bcy); ctx.lineTo(_bex, _bey); ctx.stroke();
+        ctx.setLineDash([]); ctx.shadowBlur = 0;
+        // Sweep direction gradient — fan from start angle to end angle, stops at wall
+        if (z._beamStartAngle !== undefined && z._beamEndAngle !== undefined) {
+          const _startA = z._beamStartAngle, _endA = z._beamEndAngle;
+          const _fanLen = Math.min(_bLen, 400);
+          // Draw the sweep arc with a gradient: bright at start, fading toward end
+          for (let _gi = 0; _gi < 12; _gi++) {
+            const _t = _gi / 12;
+            const _ga = _startA + (_endA - _startA) * _t;
+            const _gLen = raycastToWall(z.x, z.y, _ga, _fanLen);
+            const _gex = _bcx + Math.cos(_ga) * (_gLen - camera.x + z.x - _bcx + Math.cos(_ga)*_gLen);
+            // Simpler: just draw as lines from center
+            const _gcx = _bcx + Math.cos(_ga) * _gLen * (1 - _t * 0.3); // shorten toward end
+            const _gcy = _bcy + Math.sin(_ga) * _gLen * (1 - _t * 0.3);
+            ctx.globalAlpha = (0.12 - _t * 0.10) * _telPulse;
+            ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(_bcx, _bcy); ctx.lineTo(_bcx + Math.cos(_ga)*_gLen, _bcy + Math.sin(_ga)*_gLen); ctx.stroke();
+          }
+        }
+        // Impact point marker
         ctx.globalAlpha = 0.6 * _telPulse;
-        ctx.fillStyle = '#f44'; ctx.font = 'bold 16px monospace';
+        ctx.fillStyle = '#f44'; ctx.font = 'bold 14px monospace';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('⚠', _bcx + _bcos * _bLen * 0.5, _bcy + _bsin * _bLen * 0.5);
+        ctx.fillText('⚠', _bex, _bey);
       } else {
+        // ACTIVE BEAM — thick, glowing, stops at wall
         ctx.globalAlpha=0.85;ctx.shadowColor='#f44';ctx.shadowBlur=25;
         ctx.strokeStyle='#f44';ctx.lineWidth=8;
-        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bex,_bey);ctx.stroke();
         ctx.strokeStyle='#faa';ctx.lineWidth=3;
-        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bex,_bey);ctx.stroke();
         ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
-        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bex,_bey);ctx.stroke();
         ctx.shadowBlur=0;
+        // Impact glow at the wall hit point
+        ctx.globalAlpha = 0.6;
+        ctx.shadowColor = '#f44'; ctx.shadowBlur = 18;
+        ctx.fillStyle = '#faa';
+        ctx.beginPath(); ctx.arc(_bex, _bey, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
       }
       ctx.globalAlpha=1;
-      // Restore back to the zombie-local transform (the save() from the zombie body setup)
       ctx.restore();
     }
     const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
