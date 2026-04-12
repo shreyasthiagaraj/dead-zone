@@ -795,6 +795,7 @@ const GLITCH_LORE = {
   splitter: { title: 'GLITCH: SHIELDER',  sub: 'uploaded mind · ran a firewall once. still does.', whisper: '"no trespassers"' },
   mini:     { title: 'GLITCH: SNIPER',    sub: 'uploaded mind · former marksman, targeting intact',whisper: '"i saw you"' },
   stalker:  { title: 'GLITCH: STALKER',   sub: 'uploaded mind · pursuit instinct, nothing else',   whisper: '"keep running"' },
+  beam:     { title: 'GLITCH: BEAM ARRAY', sub: 'uploaded mind · security scanner obsession intact', whisper: '"scanning. always scanning."' },
   boss:     { title: 'ADMIN: THE WARDEN', sub: 'original architect · still running containment. still failing.', whisper: '"i locked the doors"' },
 };
 
@@ -2148,7 +2149,7 @@ function initTrenchSections() {
     const types = ['normal'];
     if (i >= 2) types.push('fast');
     if (i >= 3) types.push('spitter');
-    if (i >= 4) types.push('tank');
+    if (i >= 4) types.push('tank', 'beam');
     if (i >= 5) types.push('splitter');
     if (i >= 7) types.push('mini');
     if (i >= 8) types.push('exploder');
@@ -2163,22 +2164,15 @@ function initTrenchSections() {
       for (let hi = 0; hi < numHaz; hi++) {
         const hx = _hxMin + Math.random() * (_hxMax - _hxMin);
         const hy = _hyMin + Math.random() * (_hyMax - _hyMin);
-        // Build pool of eligible hazard types for this section depth
-        const pool = ['corruption']; // always available from section 3+
-        if (i >= 4) pool.push('laser', 'collapse');
+        // Build pool of eligible hazard types for this section depth.
+        // Corruption pools, laser grids, and turret pillars removed — lasers are
+        // now handled by the beam array zombie type, which is a proper shootable enemy.
+        const pool = [];
+        if (i >= 4) pool.push('collapse');
         if (i >= 5) pool.push('spawner', 'emp');
-        if (i >= 6) pool.push('turret');
+        if (pool.length === 0) continue; // section 3 has no eligible hazards anymore
         const htype = pool[Math.floor(Math.random() * pool.length)];
-        if (htype === 'corruption') {
-          hazards.push({ type: 'corruption', x: hx, y: hy, radius: 45 + Math.random() * 30 });
-        } else if (htype === 'laser') {
-          // Horizontal beam that sweeps vertically across the section on a timer
-          const laserY = _hyMin + Math.random() * (_hyMax - _hyMin);
-          hazards.push({ type: 'laser', x: sectionX + 2 * CELL_SIZE, y: laserY,
-            width: (TRENCH_SECTION_W - 4) * CELL_SIZE,
-            dir: Math.random() < 0.5 ? 1 : -1, speed: 0.8 + Math.random() * 0.6,
-            timer: 0, fireTimer: 0, state: 'telegraph' }); // telegraph → fire → cooldown
-        } else if (htype === 'collapse') {
+        if (htype === 'collapse') {
           // 3×3 cell area that cracks when stepped on, becomes wall after 2s
           const cx = Math.floor(4 + Math.random() * (TRENCH_SECTION_W - 8));
           const cy = Math.floor(3 + Math.random() * (TRENCH_HEIGHT - 6));
@@ -3170,6 +3164,11 @@ function _drawZombieShape(ctx, type, r) {
   } else if (type === 'splitter') {
     for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2 - Math.PI / 2; ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * r, Math.sin(a) * r); }
     ctx.closePath();
+  } else if (type === 'beam') {
+    // Beam array: flat hexagonal body with antenna prongs
+    ctx.moveTo(r, 0); ctx.lineTo(r*0.5, -r*0.85); ctx.lineTo(-r*0.5, -r*0.85);
+    ctx.lineTo(-r, 0); ctx.lineTo(-r*0.5, r*0.85); ctx.lineTo(r*0.5, r*0.85);
+    ctx.closePath();
   } else {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
   }
@@ -3206,6 +3205,8 @@ const ZOMBIE_TYPES = {
   boss:     { hp: 2200, speed: 1.8, radius: 32, color: '#f0f', damage: 40, score: 500, summoner: true, fireRate: 200 }, // hot magenta — admin process
   splitter: { hp: 200, speed: 1.5, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
   mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // neon orange
+  // Beam Array — perches at walls, sweeps a laser beam across the room
+  beam:     { hp: 250, speed: 3.5, radius: 12, color: '#f44', damage: 6, score: 300, beamArray: true },
   // Legacy compat
   brute:    { hp: 350, speed: 2.0, radius: 16, color: '#f80', damage: 20, score: 250 }, // neon orange
   stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#08f', damage: 15, score: 200 }, // neon blue
@@ -4962,6 +4963,7 @@ const ZOMBIE_CODEX = {
   mini:     { name: 'SNIPER',    desc: 'Stays far, charges a laser sight, fires a fast precision shot.' },
   brute:    { name: 'BRUTE',     desc: 'Heavy mid-tier melee. More HP than normal, hits harder.' },
   stalker:  { name: 'STALKER',   desc: 'Lightweight and agile. Flanks the player.' },
+  beam:     { name: 'BEAM ARRAY', desc: 'Perches at walls and sweeps a damaging laser across the room. Shoot it to stop the scan.' },
 };
 
 const CODEX_CATEGORIES = [
@@ -5929,48 +5931,29 @@ function triggerShockwaveDash(lp) {
   else if ((_mods.iceSmashLv||0)   >= (_mods.chainSmashLv||0) && (_mods.iceSmashLv||0)   >= (_mods.windSmashLv||0) && (_mods.iceSmashLv||0)   > 0) tint = '#8ef';
   else if ((_mods.chainSmashLv||0) >= (_mods.windSmashLv||0) && (_mods.chainSmashLv||0) > 0) tint = '#4ff';
   else if ((_mods.windSmashLv||0) > 0) tint = '#cef';
-  // ---- RADIAL PULSE VFX — big, dramatic force push ----
-  // Dense primary ring: 48 evenly-spaced, fast, element-tinted sparks
-  for (let i = 0; i < 48; i++) {
-    const a = (Math.PI * 2 * i) / 48;
-    const s = 7 + Math.random() * 5;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 30, maxLife: 30, size: 3 + Math.random()*2, color: tint, type: 'spark' });
-  }
-  // Scattered secondary ring: random angles, white, adds density
+  // ---- SHOCKWAVE VFX — expanding ring (the old blast look) + supporting sparks ----
+  // PRIMARY: the expanding semi-transparent ring that reads as a pressure wave.
+  // This is the core visual from the original blast ability.
+  explosions.push({ x: lp.x, y: lp.y, radius, life: 20, maxLife: 20,
+    color: tint, color2: '#fff', _shockwave: true });
+  // SUPPORTING: radial spark burst behind the ring — adds energy but the ring leads.
   for (let i = 0; i < 28; i++) {
+    const a = (Math.PI * 2 * i) / 28;
+    const s = 5 + Math.random() * 3;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 22, maxLife: 22, size: 2.5 + Math.random()*1.5, color: tint, type: 'spark' });
+  }
+  for (let i = 0; i < 14; i++) {
     const a = Math.random() * Math.PI * 2;
-    const s = 4 + Math.random() * 6;
+    const s = 2 + Math.random() * 5;
     particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 22, maxLife: 22, size: 2 + Math.random()*2.5, color: '#fff', type: 'spark' });
+      life: 18, maxLife: 18, size: 1.5 + Math.random()*2, color: '#fff', type: 'spark' });
   }
-  // Third ring: large slow-moving glow particles for a lingering wave feel
-  for (let i = 0; i < 16; i++) {
-    const a = (Math.PI * 2 * i) / 16;
-    const s = 3 + Math.random() * 2;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 36, maxLife: 36, size: 5 + Math.random()*4, color: tint, type: 'spark' });
-  }
-  // Expanding wavefront ring — two concentric rings of dots racing outward
-  for (let ring = 0; ring < 2; ring++) {
-    const count = ring === 0 ? 32 : 20;
-    const startR = ring === 0 ? 16 : 28;
-    const speed = ring === 0 ? 10 : 7;
-    for (let i = 0; i < count; i++) {
-      const a = (Math.PI * 2 * i) / count + ring * 0.1;
-      particles.push({
-        x: lp.x + Math.cos(a) * startR, y: lp.y + Math.sin(a) * startR,
-        vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-        life: 16, maxLife: 16, size: 2.5, color: ring === 0 ? tint : '#fff', type: 'spark' });
-    }
-  }
-  // Glitch surge — the push destabilizes the simulation locally
-  triggerGlitchSurge(0.3, 14);
-  screenShake.intensity = Math.max(screenShake.intensity, 10);
-  // Punchy thud + resonance — bigger than a bump, not an explosion
-  playSfx('dash', 0.35) || playSound(100, 0.18, 'sine', 0.18);
-  playSound(60, 0.25, 'square', 0.1);
-  playSound(500, 0.05, 'sine', 0.1);
+  triggerGlitchSurge(0.25, 12);
+  screenShake.intensity = Math.max(screenShake.intensity, 12);
+  // Blast thud — the old blast sound profile
+  playSfx('dash', 0.35) || playSound(100, 0.18, 'sine', 0.2);
+  playSound(55, 0.3, 'square', 0.12);
   // ---- KNOCKBACK + DAMAGE + ELEMENT PROCS ----
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = radius * radius;
@@ -7196,39 +7179,6 @@ function update() {
           for (const hz of _tsec.hazards) {
             const _hdx = lp.x - hz.x, _hdy = lp.y - hz.y;
             const _hd2 = _hdx*_hdx + _hdy*_hdy;
-            // -- CORRUPTION POOL: DoT when standing in it --
-            if (hz.type === 'corruption' && gameTime % 10 === 0) {
-              if (_hd2 < (hz.radius + PLAYER_RADIUS) ** 2) {
-                damagePlayerObj(lp, 3);
-                for (let _hpi = 0; _hpi < 2; _hpi++) {
-                  particles.push({ x: lp.x + (Math.random()-0.5)*10, y: lp.y, vx: (Math.random()-0.5)*1.5, vy: -2 - Math.random(), life: 14, maxLife: 14, size: 2 + Math.random()*2, color: '#f44', type: 'spark' });
-                }
-              }
-            }
-            // -- LASER GRID: sweeps vertically, telegraphs then fires --
-            if (hz.type === 'laser') {
-              hz.timer++;
-              if (hz.state === 'telegraph') {
-                // Telegraph for 90 frames (1.5s), then fire
-                if (hz.timer > 90) { hz.state = 'fire'; hz.timer = 0; }
-              } else if (hz.state === 'fire') {
-                // Fire for 30 frames (0.5s) — laser is active, damages on contact
-                hz.y += hz.dir * hz.speed * 2;
-                // Bounce at section vertical bounds
-                if (hz.y < 2 * CELL_SIZE || hz.y > (TRENCH_HEIGHT - 2) * CELL_SIZE) { hz.dir *= -1; }
-                // Damage check: player within 12px vertically of the beam and within its horizontal span
-                if (Math.abs(lp.y - hz.y) < 12 && lp.x > hz.x && lp.x < hz.x + hz.width && gameTime % 6 === 0) {
-                  damagePlayerObj(lp, 5);
-                  screenShake.intensity = Math.max(screenShake.intensity, 3);
-                }
-                if (hz.timer > 30) { hz.state = 'cooldown'; hz.timer = 0; }
-              } else {
-                // Cooldown 120 frames (2s), then telegraph again
-                hz.y += hz.dir * hz.speed;
-                if (hz.y < 2 * CELL_SIZE || hz.y > (TRENCH_HEIGHT - 2) * CELL_SIZE) { hz.dir *= -1; }
-                if (hz.timer > 120) { hz.state = 'telegraph'; hz.timer = 0; }
-              }
-            }
             // -- COLLAPSE TILES: crack on step, become wall after 2s --
             if (hz.type === 'collapse' && !hz.collapsed) {
               const inTile = lp.x > hz.x && lp.x < hz.x + hz.w * CELL_SIZE && lp.y > hz.y && lp.y < hz.y + hz.h * CELL_SIZE;
@@ -7304,15 +7254,7 @@ function update() {
                 lp._empDisabled = 5; // 5-frame firing disable, refreshed each frame in zone
               }
             }
-            // -- TURRET PILLAR: rotates and fires periodically --
-            if (hz.type === 'turret' && isHost) {
-              hz.angle += hz.rotSpeed;
-              hz.fireTimer++;
-              if (hz.fireTimer >= hz.fireRate) {
-                hz.fireTimer = 0;
-                bullets.push({ x: hz.x, y: hz.y, vx: Math.cos(hz.angle)*5, vy: Math.sin(hz.angle)*5, damage: 8, color: '#fa0', size: 4, knockback: 1, pierce: 0, pierced: 0, life: 50, owner: 'zombie', trail: [] });
-              }
-            }
+            // (turret pillar removed — beam array zombie replaces it)
           }
           // EMP disable countdown
           if (lp._empDisabled > 0) lp._empDisabled--;
@@ -8092,6 +8034,63 @@ function update() {
               screenShake.intensity=Math.max(screenShake.intensity,10);
               for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*50,y:z.y+Math.sin(sa)*50,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:20,maxLife:20,size:5,color:'#a85',type:'spark'});}
               playExplosionSound();
+            }
+          }
+        }
+        // ---- BEAM ARRAY: perches at walls, sweeps a laser beam ----
+        else if(zt?.beamArray){
+          if(!z._beamState) z._beamState = 'seek'; // seek → perch → telegraph → fire → cooldown
+          if(!z._beamPerchX) {
+            // Pick a wall perch position: top or bottom edge of the section
+            const _tsecBA = gameMode==='trench' ? trenchSections[trenchSection] : null;
+            const _bsx = _tsecBA ? _tsecBA.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE : z.x;
+            const _bsy = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
+            z._beamPerchX = _bsx; z._beamPerchY = _bsy;
+          }
+          if(z._beamState==='seek'){
+            // Rush to the perch position
+            const _bpdx=z._beamPerchX-z.x, _bpdy=z._beamPerchY-z.y;
+            const _bpd=Math.sqrt(_bpdx*_bpdx+_bpdy*_bpdy)||1;
+            if(_bpd<20){z._beamState='telegraph';z._beamTimer=0;z.vx=0;z.vy=0;z._beamSweepAngle=Math.atan2(zdy,zdx);}
+            else{z.vx=(_bpdx/_bpd)*z.speed*1.5;z.vy=(_bpdy/_bpd)*z.speed*1.5;}
+          } else if(z._beamState==='telegraph'){
+            z.vx=0;z.vy=0;z._beamTimer++;
+            // Slowly rotate the sweep angle toward the player during telegraph
+            const _tgtA=Math.atan2(zdy,zdx);
+            let _da=_tgtA-z._beamSweepAngle;while(_da>Math.PI)_da-=Math.PI*2;while(_da<-Math.PI)_da+=Math.PI*2;
+            z._beamSweepAngle+=_da*0.02;
+            if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;z._beamSweepDir=Math.random()<0.5?1:-1;}
+          } else if(z._beamState==='fire'){
+            z.vx=0;z.vy=0;z._beamTimer++;
+            // Sweep the beam across an arc
+            z._beamSweepAngle+=z._beamSweepDir*0.025;
+            // Damage players in the beam path
+            if(isHost&&gameTime%4===0){
+              const _bLen=500;
+              for(const p of players){
+                if(!p.alive)continue;
+                // Point-to-line distance from player to the beam ray
+                const _bdx=Math.cos(z._beamSweepAngle),_bdy=Math.sin(z._beamSweepAngle);
+                const _bpx=p.x-z.x,_bpy=p.y-z.y;
+                const _proj=_bpx*_bdx+_bpy*_bdy;
+                if(_proj<0||_proj>_bLen)continue;
+                const _perp=Math.abs(_bpx*_bdy-_bpy*_bdx);
+                if(_perp<PLAYER_RADIUS+6){damagePlayerObj(p,z.damage);screenShake.intensity=Math.max(screenShake.intensity,3);}
+              }
+            }
+            if(z._beamTimer>60){z._beamState='cooldown';z._beamTimer=0;}
+          } else if(z._beamState==='cooldown'){
+            z.vx=0;z.vy=0;z._beamTimer++;
+            if(z._beamTimer>120){
+              // 35% chance to reposition, otherwise telegraph again
+              if(Math.random()<0.35){
+                z._beamState='seek';
+                const _tsecBA2 = gameMode==='trench' ? trenchSections[trenchSection] : null;
+                z._beamPerchX = _tsecBA2 ? _tsecBA2.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE : z.x+(Math.random()-0.5)*200;
+                z._beamPerchY = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
+              } else {
+                z._beamState='telegraph';z._beamTimer=0;z._beamSweepAngle=Math.atan2(zdy,zdx);
+              }
             }
           }
         }
@@ -9411,75 +9410,8 @@ function render() {
       for (const hz of _hzSec.hazards) {
         const _hzPulse = 0.6 + Math.sin(_hzt * 0.004 + (hz.x||0)*0.01) * 0.3;
 
-        // ======== CORRUPTION POOL — highly visible ========
-        if (hz.type === 'corruption') {
-          // Bright solid boundary ring — always visible, even in darkness
-          ctx.globalAlpha = 0.85;
-          ctx.strokeStyle = '#f44'; ctx.lineWidth = 3;
-          ctx.shadowColor = '#f44'; ctx.shadowBlur = 20;
-          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.stroke();
-          ctx.shadowBlur = 0;
-          // Pulsing inner fill — bright red pool
-          ctx.globalAlpha = 0.25 + 0.1 * _hzPulse;
-          const _hzGrd = ctx.createRadialGradient(hz.x, hz.y, 0, hz.x, hz.y, hz.radius);
-          _hzGrd.addColorStop(0, 'rgba(220,30,50,0.45)');
-          _hzGrd.addColorStop(0.6, 'rgba(160,15,35,0.3)');
-          _hzGrd.addColorStop(1, 'rgba(80,5,20,0.05)');
-          ctx.fillStyle = _hzGrd;
-          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); ctx.fill();
-          // Animated corruption veins inside
-          ctx.globalAlpha = 0.55 * _hzPulse;
-          ctx.strokeStyle = '#f66'; ctx.lineWidth = 1.5;
-          for (let _hi = 0; _hi < 5; _hi++) {
-            const _ha = _hzt * 0.0015 + _hi * 1.26;
-            const _hr = hz.radius * (0.2 + Math.random() * 0.5);
-            ctx.beginPath();
-            ctx.moveTo(hz.x + Math.cos(_ha) * 5, hz.y + Math.sin(_ha) * 5);
-            ctx.lineTo(hz.x + Math.cos(_ha + 0.4) * _hr, hz.y + Math.sin(_ha + 0.4) * _hr);
-            ctx.stroke();
-          }
-          // Big ☣ icon — bright and bold
-          ctx.globalAlpha = 0.9;
-          ctx.fillStyle = '#f44';
-          ctx.shadowColor = '#f44'; ctx.shadowBlur = 12;
-          ctx.font = 'bold 20px monospace';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText('☣', hz.x, hz.y);
-          ctx.shadowBlur = 0;
-        }
-
-        // ======== LASER GRID ========
-        else if (hz.type === 'laser') {
-          const isFiring = hz.state === 'fire';
-          const isTelegraph = hz.state === 'telegraph';
-          if (isTelegraph) {
-            // Thin warning line — pulsing dashed red
-            ctx.globalAlpha = 0.3 + 0.2 * Math.sin(_hzt * 0.01);
-            ctx.strokeStyle = '#f44'; ctx.lineWidth = 1.5; ctx.setLineDash([6,6]);
-            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
-            ctx.setLineDash([]);
-            // Warning text
-            ctx.globalAlpha = 0.5; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-            ctx.fillStyle = '#f44'; ctx.fillText('⚠ LASER', hz.x + hz.width/2, hz.y - 10);
-          } else if (isFiring) {
-            // Active beam — thick bright red with glow
-            ctx.globalAlpha = 0.9;
-            ctx.shadowColor = '#f44'; ctx.shadowBlur = 30;
-            ctx.strokeStyle = '#f44'; ctx.lineWidth = 6;
-            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
-            ctx.shadowBlur = 0;
-          } else {
-            // Cooldown — dim line showing position
-            ctx.globalAlpha = 0.12;
-            ctx.strokeStyle = '#f44'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(hz.x, hz.y); ctx.lineTo(hz.x + hz.width, hz.y); ctx.stroke();
-          }
-        }
-
         // ======== COLLAPSE TILES ========
-        else if (hz.type === 'collapse') {
+        if (hz.type === 'collapse') {
           if (!hz.collapsed) {
             const _ct = hz.triggered ? Math.min(1, hz.timer / 120) : 0;
             // Tile outline — yellow/orange, cracks intensify as timer advances
@@ -9560,28 +9492,7 @@ function render() {
           ctx.globalAlpha = 0.6; ctx.font = '8px monospace'; ctx.fillText('EMP', hz.x, hz.y + 18);
         }
 
-        // ======== TURRET PILLAR ========
-        else if (hz.type === 'turret') {
-          // Base pillar
-          ctx.globalAlpha = 0.9; ctx.fillStyle = '#1a1a1a';
-          ctx.beginPath(); ctx.arc(hz.x, hz.y, 12, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = '#fa0'; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.arc(hz.x, hz.y, 12, 0, Math.PI * 2); ctx.stroke();
-          // Gun barrel — rotates
-          ctx.save(); ctx.translate(hz.x, hz.y); ctx.rotate(hz.angle);
-          ctx.fillStyle = '#fa0'; ctx.fillRect(10, -2, 12, 4);
-          // Muzzle glow when about to fire
-          if (hz.fireTimer > hz.fireRate - 20) {
-            ctx.globalAlpha = (hz.fireTimer - (hz.fireRate - 20)) / 20;
-            ctx.shadowColor = '#f44'; ctx.shadowBlur = 10;
-            ctx.fillStyle = '#f44';
-            ctx.beginPath(); ctx.arc(22, 0, 3, 0, Math.PI * 2); ctx.fill();
-            ctx.shadowBlur = 0;
-          }
-          ctx.restore();
-          ctx.globalAlpha = 0.5; ctx.fillStyle = '#fa0'; ctx.font = '7px monospace';
-          ctx.textAlign = 'center'; ctx.fillText('TURRET', hz.x, hz.y + 20);
-        }
+        // (turret pillar render removed — beam array zombie replaces it)
         ctx.globalAlpha = 1;
       }
     }
@@ -9736,7 +9647,9 @@ function render() {
   }
 
   // Explosions
-  for(const e of explosions){const t=e.life/e.maxLife;ctx.globalAlpha=t*0.5;ctx.fillStyle='#f80';ctx.beginPath();ctx.arc(e.x,e.y,e.radius*(1.2-t*0.2),0,Math.PI*2);ctx.fill();ctx.globalAlpha=t*0.3;ctx.fillStyle='#ff0';ctx.beginPath();ctx.arc(e.x,e.y,e.radius*0.5*t,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;
+  for(const e of explosions){const t=e.life/e.maxLife;const _ec1=e.color||'#f80';const _ec2=e.color2||'#ff0';ctx.globalAlpha=t*0.5;ctx.fillStyle=_ec1;ctx.beginPath();ctx.arc(e.x,e.y,e.radius*(1.2-t*0.2),0,Math.PI*2);ctx.fill();ctx.globalAlpha=t*0.3;ctx.fillStyle=_ec2;ctx.beginPath();ctx.arc(e.x,e.y,e.radius*0.5*t,0,Math.PI*2);ctx.fill();
+    // Shockwave ring: bright expanding outline that reads as a pressure wave
+    if(e._shockwave){ctx.globalAlpha=t*0.8;ctx.strokeStyle=_ec1;ctx.lineWidth=3+t*3;ctx.shadowColor=_ec1;ctx.shadowBlur=18;ctx.beginPath();ctx.arc(e.x,e.y,e.radius*(1.3-t*0.3),0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;}}ctx.globalAlpha=1;
 
   // Bullets
   for(const b of bullets){
@@ -9968,6 +9881,35 @@ function render() {
     if(ZOMBIE_TYPES[z.type]?.shielded){ctx.globalAlpha=0.5;ctx.strokeStyle='#4af';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,z.radius+4,-0.8,0.8);ctx.stroke();ctx.globalAlpha=1;}
     // Sniper: laser sight — extends to full bullet range (~960px = 16 speed × 60 life)
     if(z._sniperState==='aim'&&z._sniperCharge>20){ctx.globalAlpha=Math.min(0.6,z._sniperCharge/90);ctx.strokeStyle='#f44';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);ctx.beginPath();ctx.moveTo(z.radius,0);ctx.lineTo(z.radius+800,0);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;}
+    // Beam Array: laser beam render (uses world-space angle, not z.angle rotation)
+    if(z._beamSweepAngle!==undefined&&(z._beamState==='telegraph'||z._beamState==='fire')){
+      ctx.save();ctx.setTransform(1,0,0,1,0,0);
+      // Transform to screen space
+      const _bcx=z.x-camera.x+canvas.width/2+screenShake.x;
+      const _bcy=z.y-camera.y+canvas.height/2+screenShake.y;
+      const _bcos=Math.cos(z._beamSweepAngle),_bsin=Math.sin(z._beamSweepAngle);
+      const _bLen=500;
+      if(z._beamState==='telegraph'){
+        // Thin dashed red warning line
+        const _telA=0.25+Math.sin(performance.now()*0.01)*0.15;
+        ctx.globalAlpha=_telA;ctx.strokeStyle='#f44';ctx.lineWidth=1.5;ctx.setLineDash([8,6]);
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // Active beam — thick bright red with white core and glow
+        ctx.globalAlpha=0.85;ctx.shadowColor='#f44';ctx.shadowBlur=25;
+        ctx.strokeStyle='#f44';ctx.lineWidth=8;
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.strokeStyle='#faa';ctx.lineWidth=3;
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.strokeStyle='#fff';ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.moveTo(_bcx,_bcy);ctx.lineTo(_bcx+_bcos*_bLen,_bcy+_bsin*_bLen);ctx.stroke();
+        ctx.shadowBlur=0;
+      }
+      ctx.restore();
+      // Re-apply the zombie's local transform for the body render below
+      ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
+    }
     const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
     // Type-specific body shape
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:2;
