@@ -515,20 +515,26 @@ body.mobile #mobile-buttons { display: block; }
 
 <!-- ---- SHOP SCREEN (mod terminal) ---- -->
 <div id="shop-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:60;background:rgba(3,3,12,0.92);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box">
-  <!-- Disconnect: top-left red X button -->
-  <button id="btn-shop-leave" style="position:absolute;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));z-index:62;background:rgba(255,40,40,0.12);border:2px solid #f44;border-radius:8px;color:#f44;font-family:'Courier New',monospace;font-size:11px;font-weight:bold;letter-spacing:2px;padding:8px 14px;cursor:pointer;text-shadow:0 0 6px rgba(255,68,68,0.5);box-shadow:0 0 8px rgba(255,40,40,0.2)">✕ DISCONNECT</button>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:750px;width:100%">
-    <!-- Terminal header -->
-    <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:10px;text-align:center">
-      <div style="color:#0ff;font-size:10px;letter-spacing:3px;opacity:0.6">SESSION ACTIVE · CACHE NODE v2.1</div>
-      <div style="color:#fff;font-size:22px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.4);margin-top:4px">MOD TERMINAL</div>
-      <div id="shop-bits-line" style="color:#ff0;font-size:14px;letter-spacing:3px;text-shadow:0 0 6px rgba(255,255,0,0.5);margin-top:6px">◆ 0 BITS</div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:750px;width:100%;position:relative">
+    <!-- Terminal header + REFRESH top-right -->
+    <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:10px;position:relative">
+      <div style="text-align:center">
+        <div style="color:#0ff;font-size:10px;letter-spacing:3px;opacity:0.6">SESSION ACTIVE · CACHE NODE v2.1</div>
+        <div style="color:#fff;font-size:22px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.4);margin-top:4px">MOD TERMINAL</div>
+        <div id="shop-bits-line" style="color:#ff0;font-size:14px;letter-spacing:3px;text-shadow:0 0 6px rgba(255,255,0,0.5);margin-top:6px">◆ 0 BITS</div>
+      </div>
+      <!-- REFRESH: top-right -->
+      <button class="menu-btn" id="btn-shop-reroll" style="position:absolute;top:6px;right:0;padding:7px 16px;font-size:10px;letter-spacing:2px">REFRESH · 15◆</button>
     </div>
     <!-- Cards container — 3 cards -->
     <div id="shop-cards" style="display:flex;flex-direction:row;gap:14px;justify-content:center;margin-top:8px;width:100%"></div>
-    <!-- Action bar: REFRESH + CONFIRM -->
+    <!-- Checkout area — shown after compile, before close -->
+    <div id="shop-checkout" style="display:none;text-align:center;padding:12px 0">
+      <div id="shop-checkout-text" style="color:#0ff;font-size:13px;letter-spacing:2px"></div>
+    </div>
+    <!-- Bottom action bar: DISCONNECT + COMPILE MOD -->
     <div style="display:flex;flex-direction:row;gap:12px;margin-top:10px;width:100%;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px">
-      <button class="menu-btn" id="btn-shop-reroll" style="padding:9px 22px;font-size:11px;letter-spacing:2px">REFRESH · 15◆</button>
+      <button id="btn-shop-leave" style="padding:9px 22px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.08);border:2px solid #f44;border-radius:8px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.4);box-shadow:0 0 6px rgba(255,40,40,0.15)">✕ DISCONNECT</button>
       <button class="menu-btn success" id="btn-shop-confirm" style="padding:9px 22px;font-size:11px;letter-spacing:2px;opacity:0.3;pointer-events:none">COMPILE MOD</button>
     </div>
     <div style="color:#445;font-size:9px;letter-spacing:2px;margin-top:2px">ARCHITECT LEGACY CODE · HANDLE WITH CAUTION</div>
@@ -1507,24 +1513,31 @@ function closeShop() {
   const el = document.getElementById('shop-screen');
   if (el) {
     el.classList.remove('visible');
-    setTimeout(() => { el.style.display = 'none'; }, 500);
+    setTimeout(() => {
+      el.style.display = 'none';
+      // Reset all shop UI elements for next visit
+      const cardsEl = document.getElementById('shop-cards');
+      if (cardsEl) cardsEl.style.display = 'flex';
+      const checkout = document.getElementById('shop-checkout');
+      if (checkout) checkout.style.display = 'none';
+      const confirmBtn = document.getElementById('btn-shop-confirm');
+      if (confirmBtn) { confirmBtn.style.display = ''; confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; }
+      const leaveBtn = document.getElementById('btn-shop-leave');
+      if (leaveBtn) leaveBtn.style.display = '';
+      const rerollBtn = document.getElementById('btn-shop-reroll');
+      if (rerollBtn) rerollBtn.style.display = '';
+    }, 500);
   }
   const loadEl = document.getElementById('shop-loading');
-  if (loadEl) loadEl.style.display = 'none';
-  // Smooth transition: canvas scales back to normal over 0.55s (CSS transition on #game)
+  if (loadEl) { loadEl.classList.remove('visible'); loadEl.style.display = 'none'; }
   canvas.classList.remove('focus-back');
-  // Brief glitch on disconnect — the sim re-syncs
   triggerGlitchSurge(0.25, 12);
-  // Delay resuming gameplay slightly so the transition completes visually
   setTimeout(() => {
     if (gameState === 'shop') gameState = 'playing';
   }, 300);
   shopCards = null;
   _shopActiveChest = null;
   _shopSelectedId = null;
-  // Reset confirm button state
-  const btn = document.getElementById('btn-shop-confirm');
-  if (btn) { btn.style.opacity = '0.3'; btn.style.pointerEvents = 'none'; }
 }
 
 function _updateShopBitsDisplay() {
@@ -1644,7 +1657,7 @@ function buyShopCard(upgradeId) {
     }
   }
   playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
-  // Celebrate the purchase with a brief floating text
+  // Celebrate with floating text in the game world
   const clp = getLocalPlayer();
   if (clp) {
     addFloatingText(clp.x, clp.y - 40, `${u.icon} ${u.name} COMPILED`, u.color);
@@ -1653,10 +1666,45 @@ function buyShopCard(upgradeId) {
       particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 18, maxLife: 18, size: 2.5, color: u.color, type: 'spark' });
     }
   }
-  _updateShopBitsDisplay();
   _pulseBitsHUD();
-  // Auto-close the shop after purchase — one card per visit, back to combat
-  setTimeout(() => { closeShop(); }, 350);
+  // ---- CHECKOUT SEQUENCE ----
+  // Hide cards, show the checkout receipt with cost and new balance
+  const cardsEl = document.getElementById('shop-cards');
+  if (cardsEl) cardsEl.style.display = 'none';
+  // Hide action buttons during checkout
+  const confirmBtn = document.getElementById('btn-shop-confirm');
+  const leaveBtn = document.getElementById('btn-shop-leave');
+  const rerollBtn = document.getElementById('btn-shop-reroll');
+  if (confirmBtn) confirmBtn.style.display = 'none';
+  if (leaveBtn) leaveBtn.style.display = 'none';
+  if (rerollBtn) rerollBtn.style.display = 'none';
+  const checkout = document.getElementById('shop-checkout');
+  const checkoutText = document.getElementById('shop-checkout-text');
+  if (checkout && checkoutText) {
+    checkout.style.display = 'block';
+    // Step 1: show the mod name
+    checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div><div style="color:#0f0;font-size:12px;letter-spacing:2px">COMPILING...</div>`;
+    // Step 2: show cost deducted
+    setTimeout(() => {
+      checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div>` +
+        `<div style="color:#f44;font-size:14px;letter-spacing:2px;margin-bottom:4px">-${cost} ◆</div>` +
+        `<div style="color:#0f0;font-size:12px;letter-spacing:2px">COMPILED SUCCESSFULLY</div>`;
+      playSound(1000, 0.05, 'sine', 0.1);
+    }, 500);
+    // Step 3: show new balance
+    setTimeout(() => {
+      checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div>` +
+        `<div style="color:#f44;font-size:14px;letter-spacing:2px;margin-bottom:4px">-${cost} ◆</div>` +
+        `<div style="color:#0f0;font-size:12px;letter-spacing:2px;margin-bottom:8px">COMPILED SUCCESSFULLY</div>` +
+        `<div style="color:#ff0;font-size:16px;letter-spacing:3px;text-shadow:0 0 8px rgba(255,255,0,0.5)">◆ ${metaShards} BITS REMAINING</div>`;
+      _updateShopBitsDisplay();
+    }, 1000);
+    // Step 4: auto-close after showing the receipt
+    setTimeout(() => { closeShop(); }, 2200);
+  } else {
+    _updateShopBitsDisplay();
+    setTimeout(() => { closeShop(); }, 350);
+  }
 }
 
 function rerollShop() {
