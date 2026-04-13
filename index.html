@@ -4864,62 +4864,44 @@ function _realShowDeathScreen() {
   const canShare = !!navigator.share;
   const dc = document.getElementById('death-content');
 
-  dc.innerHTML = `<div class="death-layout">
-    <!-- LEFT: game over heading, stats, actions -->
-    <div class="death-left">
-      ${circleMsg}
-      <div class="death-title">INSTANCE #${metaStats.totalRuns} TERMINATED</div>
-      <div class="death-mode" style="color:#f48">CAUSE: ${pickDeathCause()}</div>
-      <div class="death-mode">${(gameMode||'dungeon').toUpperCase()} · STRIDE LV ${runLevel}</div>
-      <div class="death-stats">
-        ${showProg ? `<div class="death-stat">
-          <div class="death-stat-val" style="color:#f0f;text-shadow:0 0 14px #f0f,0 0 24px rgba(255,0,255,0.4)">${progValue}</div>
-          <div class="death-stat-lab" style="color:rgba(255,0,255,0.7)">${progLabel}</div>
-        </div>` : ''}
-        <div class="death-stat">
-          <div class="death-stat-val" style="color:#0ff;text-shadow:0 0 14px #0ff,0 0 24px rgba(0,255,255,0.4)">${survivalMin}:${survivalSec.toString().padStart(2,'0')}</div>
-          <div class="death-stat-lab" style="color:rgba(0,255,255,0.7)">TIME</div>
-        </div>
-        <div class="death-stat">
-          <div class="death-stat-val" style="color:#ff0;text-shadow:0 0 14px #ff0,0 0 24px rgba(255,255,0,0.4)">◆ ${runBitsEarned.toLocaleString()}</div>
-          <div class="death-stat-lab" style="color:rgba(255,255,0,0.7)">BITS EARNED</div>
-        </div>
-      </div>
-      ${bestMsg}
-      ${shardsLine}
-      ${(() => {
-        // Crypt recommendation based on run performance
-        const lp = getLocalPlayer();
-        const recNode = (lp && lp.maxHp <= 110 && getMetaLevel('vitality') < 5) ? _META_BY_ID['vitality']
-          : (runLevel <= 3 && getMetaLevel('power') < 5) ? _META_BY_ID['power']
-          : (getMetaLevel('arsenal') < 3 && getMetaLevel('arsenal') < 2) ? _META_BY_ID['arsenal']
-          : (getMetaLevel('fortune') < 3) ? _META_BY_ID['fortune']
-          : null;
-        if (recNode) {
-          const lvl = getMetaLevel(recNode.id);
-          const cost = recNode.costs[lvl];
-          const canBuy = metaShards >= cost;
-          return `<div style="margin:4px 0;padding:6px 10px;border:1px solid rgba(0,255,255,0.25);border-radius:6px;background:rgba(0,255,255,0.04);font-size:10px;letter-spacing:1px;text-align:center">
-            <span style="color:#0ff">CRYPT TIP:</span> <span style="color:#fff">${recNode.icon} ${recNode.name} ${recNode.desc}</span>
-            <span style="color:${canBuy?'#ff0':'#666'}"> · ${cost}◆${canBuy?' (affordable!)':''}</span>
-          </div>`;
-        }
-        return '';
-      })()}
-      ${upgradesBlock}
-      ${fleshBlock}
-      <div class="death-actions">
-        ${canShare ? '<button class="menu-btn primary" id="btn-share" style="padding:9px 22px;min-width:130px">SHARE</button>' : ''}
-        <div class="death-actions-row">
-          <button class="menu-btn success" id="btn-restart" style="padding:10px 24px;min-width:130px">PLAY AGAIN</button>
-          <button class="menu-btn danger" id="btn-quit-death" style="padding:10px 22px;min-width:110px">QUIT</button>
-        </div>
+  // ---- CLEAN DEATH SCREEN — mobile-first, single column, buttons always visible ----
+  dc.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:400px;width:90%;margin:0 auto;padding-top:calc(10px + env(safe-area-inset-top))">
+    <!-- Header: death cause (narrative) -->
+    <div style="text-align:center">
+      <div style="color:#f44;font-size:clamp(20px,5vw,28px);font-weight:bold;letter-spacing:5px;text-shadow:0 0 14px rgba(255,68,68,0.6)">TERMINATED</div>
+      <div style="color:#f88;font-size:11px;letter-spacing:2px;margin-top:4px">${pickDeathCause()}</div>
+    </div>
+
+    <!-- Primary stats: Section + Bits (the two things that matter) -->
+    <div style="display:flex;gap:24px;justify-content:center;margin:6px 0">
+      ${showProg ? `<div style="text-align:center">
+        <div style="color:#f0f;font-size:clamp(28px,7vw,40px);font-weight:bold;text-shadow:0 0 16px #f0f">${progValue}</div>
+        <div style="color:rgba(255,0,255,0.7);font-size:10px;letter-spacing:2px">${progLabel}</div>
+      </div>` : ''}
+      <div style="text-align:center">
+        <div style="color:#ff0;font-size:clamp(28px,7vw,40px);font-weight:bold;text-shadow:0 0 16px #ff0">◆ ${runBitsEarned.toLocaleString()}</div>
+        <div style="color:rgba(255,255,0,0.7);font-size:10px;letter-spacing:2px">BITS EARNED</div>
       </div>
     </div>
-    <!-- RIGHT: leaderboard -->
-    <div class="death-right">
-      ${lbHtml2}
+
+    ${isNewBest ? `<div style="color:#ff0;font-size:13px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 12px rgba(255,255,0,0.7);animation:pulse 0.8s ease-in-out infinite">★ NEW BEST ★</div>` : ''}
+
+    <!-- Time + Kills (secondary, smaller) -->
+    <div style="display:flex;gap:16px;color:#888;font-size:11px;letter-spacing:1px">
+      <span>${survivalMin}:${survivalSec.toString().padStart(2,'0')}</span>
+      <span>·</span>
+      <span>${kills} kills</span>
+      <span>·</span>
+      <span>◆ ${metaShards.toLocaleString()} total</span>
     </div>
+
+    <!-- BUTTONS: always visible, primary action first -->
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <button class="menu-btn success" id="btn-restart" style="padding:12px 32px;font-size:14px;letter-spacing:3px;min-width:150px">PLAY AGAIN</button>
+      <button class="menu-btn" id="btn-quit-death" style="padding:12px 20px;font-size:12px;letter-spacing:2px">QUIT</button>
+    </div>
+
+    ${canShare ? '<button class="menu-btn" id="btn-share" style="padding:6px 18px;font-size:10px;letter-spacing:1px;opacity:0.6">SHARE</button>' : ''}
   </div>`;
 
   // Re-bind buttons
