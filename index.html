@@ -513,15 +513,11 @@ body.mobile #mobile-buttons { display: block; }
     <div style="color:#667;font-size:10px;letter-spacing:2px" id="shop-load-sub">establishing secure channel...</div>
   </div>
   <div data-shop-content style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:750px;width:100%;position:relative">
-    <!-- Terminal header + REFRESH top-right -->
-    <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:10px;position:relative">
-      <div style="text-align:center">
-        <div style="color:#0ff;font-size:10px;letter-spacing:3px;opacity:0.6">SESSION ACTIVE · CACHE NODE v2.1</div>
-        <div style="color:#fff;font-size:22px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.4);margin-top:4px">MOD TERMINAL</div>
-        <div id="shop-bits-line" style="color:#ff0;font-size:14px;letter-spacing:3px;text-shadow:0 0 6px rgba(255,255,0,0.5);margin-top:6px">◆ 0 BITS</div>
-      </div>
-      <!-- REFRESH: top-right -->
-      <button class="menu-btn" id="btn-shop-reroll" style="position:absolute;top:6px;right:0;padding:7px 16px;font-size:10px;letter-spacing:2px">REFRESH · 15◆</button>
+    <!-- Terminal header -->
+    <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:10px;text-align:center">
+      <div style="color:#0ff;font-size:10px;letter-spacing:3px;opacity:0.6">SESSION ACTIVE · CACHE NODE v2.1</div>
+      <div style="color:#fff;font-size:22px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.4);margin-top:4px">MOD TERMINAL</div>
+      <div id="shop-bits-line" style="color:#ff0;font-size:14px;letter-spacing:3px;text-shadow:0 0 6px rgba(255,255,0,0.5);margin-top:6px">◆ 0 BITS</div>
     </div>
     <!-- Cards container — 3 cards -->
     <div id="shop-cards" style="display:flex;flex-direction:row;gap:14px;justify-content:center;margin-top:8px;width:100%"></div>
@@ -1436,14 +1432,13 @@ function draftShopCards(n) {
 
 // Shop state
 let shopCards = null;           // current 4 cards on display
-let shopRerollCost = 15;         // scales per reroll this visit
+// shopRerollCost removed — no reroll mechanic
 let _shopActiveChest = null;     // which chest spawned this shop (so we can clear it on leave)
 let _shopSelectedId = null;       // currently highlighted card id (selected but not yet confirmed)
 
 function openShop(chest) {
   _shopActiveChest = chest || null;
-  shopRerollCost = 15;
-  _shopSelectedId = null; // clear any previous selection
+  _shopSelectedId = null;
   shopCards = draftShopCards(3);
   _resetJoysticks();
   if (!isMultiplayer) gameState = 'shop';
@@ -1517,8 +1512,6 @@ function closeShop() {
       if (confirmBtn) { confirmBtn.style.display = ''; confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; confirmBtn.textContent = 'COMPILE MOD'; }
       const leaveBtn = document.getElementById('btn-shop-leave');
       if (leaveBtn) leaveBtn.style.display = '';
-      const rerollBtn = document.getElementById('btn-shop-reroll');
-      if (rerollBtn) rerollBtn.style.display = '';
       // Reset loading/content phases
       const loadEl = document.getElementById('shop-loading');
       if (loadEl) loadEl.style.display = 'flex';
@@ -1598,14 +1591,6 @@ function _renderShopCards() {
     wrap.appendChild(card);
     list.appendChild(wrap);
   }
-  // Refresh button
-  const rb = document.getElementById('btn-shop-reroll');
-  if (rb) {
-    rb.textContent = `REFRESH · ${shopRerollCost}◆`;
-    const canReroll = metaShards >= shopRerollCost;
-    rb.style.opacity = canReroll ? '1' : '0.4';
-    rb.style.pointerEvents = canReroll ? 'auto' : 'none';
-  }
 }
 
 function selectShopCard(cardId) {
@@ -1675,10 +1660,8 @@ function buyShopCard(upgradeId) {
   // Hide action buttons during checkout
   const confirmBtn = document.getElementById('btn-shop-confirm');
   const leaveBtn = document.getElementById('btn-shop-leave');
-  const rerollBtn = document.getElementById('btn-shop-reroll');
   if (confirmBtn) confirmBtn.style.display = 'none';
   if (leaveBtn) leaveBtn.style.display = 'none';
-  if (rerollBtn) rerollBtn.style.display = 'none';
   const checkout = document.getElementById('shop-checkout');
   const checkoutText = document.getElementById('shop-checkout-text');
   if (checkout && checkoutText) {
@@ -1708,26 +1691,7 @@ function buyShopCard(upgradeId) {
   }
 }
 
-function rerollShop() {
-  if (metaShards < shopRerollCost) return;
-  _shopSelectedId = null;
-  const btn = document.getElementById('btn-shop-confirm');
-  if (btn) { btn.style.opacity = '0.3'; btn.style.pointerEvents = 'none'; btn.textContent = 'COMPILE MOD'; }
-  metaShards -= shopRerollCost;
-  try {
-    localStorage.setItem('necrowave_shards', String(metaShards));
-  } catch (e) {}
-  shopRerollCost = Math.floor(shopRerollCost * 2);
-  shopCards = draftShopCards(3);
-  playSfx('ui_click', 0.24) || playSound(800, 0.08, 'sine', 0.16);
-  triggerGlitchSurge(0.15, 6);
-  _renderShopCards();
-  // Stagger card entrance on reroll too
-  const _rcards = document.querySelectorAll('.shop-card-wrap');
-  _rcards.forEach((c, i) => { setTimeout(() => c.classList.add('card-in'), i * 100); });
-  _updateShopBitsDisplay();
-  _pulseBitsHUD();
-}
+// rerollShop removed — 3 cards, pick 1 or skip. No rerolls.
 
 function _pulseBitsHUD() {
   const el = document.getElementById('xp-label');
@@ -5155,7 +5119,6 @@ addBtn('btn-restart', () => {
 addBtn('btn-menu', () => { togglePauseMenu(); });
 addBtn('btn-resume', () => { togglePauseMenu(); });
 addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
-addBtn('btn-shop-reroll', () => { rerollShop(); });
 addBtn('btn-shop-leave', () => { closeShop(); });
 addBtn('btn-shop-confirm', () => { confirmShopCard(); });
 addBtn('btn-quit-game', () => {
