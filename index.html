@@ -1557,7 +1557,7 @@ function _renderShopCards() {
     card.dataset.cardId = u.id;
     const isSelected = _shopSelectedId === u.id;
     card.style.cssText = `
-      width:210px; padding:16px 14px;
+      width:210px; min-height:240px; padding:16px 14px;
       border:${isSelected ? '3' : '2'}px solid ${isSelected ? '#0f0' : rarityBorder};
       border-radius:10px;
       background:${isSelected ? 'rgba(0,255,0,0.08)' : 'rgba(6,8,16,0.96)'};
@@ -1584,6 +1584,14 @@ function _renderShopCards() {
       <div style="font-size:13px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 8px ${u.color};text-align:center">${u.name}</div>
       <div style="font-size:10px;color:#aab;line-height:1.4;text-align:center;min-height:28px">${u.desc}</div>
       ${owned ? `<div style="font-size:9px;letter-spacing:1px;color:#667;text-align:center">INSTALLED ×${owned}</div>` : ''}
+      ${(() => {
+        const _dtIds = ['firesmash','icesmash','chainsmash','windsmash'];
+        if (!_dtIds.includes(u.id)) return '';
+        const _curTrail = _dtIds.find(tid => tid !== u.id && (runUpgrades[tid] || 0) > 0);
+        if (!_curTrail) return '';
+        const _curDef = _UPGRADE_BY_ID[_curTrail];
+        return `<div style="font-size:8px;letter-spacing:1px;color:#f80;text-align:center;margin-top:2px">REPLACES: ${_curDef ? _curDef.name : _curTrail}</div>`;
+      })()}
       <div style="margin-top:auto;padding-top:8px;border-top:1px solid ${rarityBorder}40;text-align:center">
         <span style="color:${canAfford?'#ff0':'#555'};font-size:14px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 8px rgba(255,255,0,0.6)':'none'}">◆ ${cost}</span>
         ${!canAfford ? `<div style="font-size:8px;color:#555;letter-spacing:1px;margin-top:2px">INSUFFICIENT BITS</div>` : ''}
@@ -1632,7 +1640,11 @@ function buyShopCard(upgradeId) {
     const prevSpent = parseInt(localStorage.getItem('necrowave_bits_spent') || '0', 10);
     localStorage.setItem('necrowave_bits_spent', String(prevSpent + cost));
   } catch (e) {}
-  // Apply the upgrade
+  // Apply the upgrade. Dash trail mods are mutually exclusive — buying one replaces the other.
+  const _dashTrailIds = ['firesmash', 'icesmash', 'chainsmash', 'windsmash'];
+  if (_dashTrailIds.includes(upgradeId)) {
+    for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
+  }
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
   {
@@ -1660,7 +1672,11 @@ function buyShopCard(upgradeId) {
   _pulseBitsHUD();
   // ---- IN-PLACE CONFIRMATION ----
   // Non-selected cards slide out (reverse of entrance). Selected card stays.
-  // No buttons disappear, no layout shift. Then glitch out to gameplay.
+  // Buttons become unselectable during the exit (no accidental taps).
+  const confirmBtn = document.getElementById('btn-shop-confirm');
+  const leaveBtn = document.getElementById('btn-shop-leave');
+  if (confirmBtn) { confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; }
+  if (leaveBtn) { leaveBtn.style.opacity = '0.3'; leaveBtn.style.pointerEvents = 'none'; }
   // Transition non-selected cards out
   document.querySelectorAll('.shop-card-wrap').forEach(wrap => {
     const card = wrap.querySelector('button');
@@ -10562,23 +10578,40 @@ function render() {
       const _bt = performance.now();
       const _bPulse = 0.6 + Math.sin(_bt * 0.004) * 0.3;
       const _br = z.radius;
-      // Outer warning glow — pulsing red/magenta haze
-      ctx.globalAlpha = 0.2 * _bPulse;
-      ctx.shadowColor = '#f44'; ctx.shadowBlur = 40;
-      ctx.fillStyle = '#f44';
-      ctx.beginPath(); ctx.arc(0, 0, _br + 14, 0, Math.PI * 2); ctx.fill();
+      // Phase-aware colors: P1=magenta (summon), P2=orange (projectiles), P3=red (enraged)
+      const _bHpPct = z.maxHp > 0 ? z.hp / z.maxHp : 1;
+      const _bPhase = _bHpPct > 0.6 ? 1 : _bHpPct > 0.3 ? 2 : 3;
+      const _bGlowColor = _bPhase === 1 ? '#f0f' : _bPhase === 2 ? '#f80' : '#f22';
+      const _bRingColor = _bPhase === 1 ? '#f0f' : _bPhase === 2 ? '#fa0' : '#f44';
+      const _bCubeColor = _bPhase === 1 ? '#f44' : _bPhase === 2 ? '#f80' : '#f00';
+      const _bRingSpeed = _bPhase === 1 ? 1 : _bPhase === 2 ? 1.8 : 3;
+      const _bGlitchRate = _bPhase === 1 ? 0.3 : _bPhase === 2 ? 0.5 : 0.8;
+      // Outer warning glow — color shifts per phase
+      ctx.globalAlpha = (0.15 + _bPhase * 0.05) * _bPulse;
+      ctx.shadowColor = _bGlowColor; ctx.shadowBlur = 40 + _bPhase * 10;
+      ctx.fillStyle = _bGlowColor;
+      ctx.beginPath(); ctx.arc(0, 0, _br + 14 + _bPhase * 4, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
-      // Three counter-rotating wireframe rings at different angles
+      // Phase 3: extra pulsing danger ring
+      if (_bPhase === 3) {
+        ctx.globalAlpha = 0.3 * _bPulse;
+        ctx.strokeStyle = '#f00'; ctx.lineWidth = 2;
+        ctx.shadowColor = '#f00'; ctx.shadowBlur = 20;
+        ctx.beginPath(); ctx.arc(0, 0, _br + 26 + Math.sin(_bt * 0.01) * 4, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+      // Counter-rotating wireframe rings — speed increases per phase
       ctx.globalAlpha = 0.55 * _bPulse;
-      ctx.strokeStyle = '#f0f'; ctx.lineWidth = 1.5;
-      for (let ri = 0; ri < 3; ri++) {
-        const rAng = _bt * (0.002 + ri * 0.001) * (ri % 2 === 0 ? 1 : -1);
+      ctx.strokeStyle = _bRingColor; ctx.lineWidth = 1.5;
+      const _ringCount = _bPhase === 3 ? 5 : 3;
+      for (let ri = 0; ri < _ringCount; ri++) {
+        const rAng = _bt * (0.002 * _bRingSpeed + ri * 0.001) * (ri % 2 === 0 ? 1 : -1);
         const rR = _br + 4 + ri * 5;
         ctx.beginPath(); ctx.arc(0, 0, rR, rAng, rAng + Math.PI * 1.2); ctx.stroke();
       }
       // Inner tesseract-style wireframe — rotating cube projected to 2D
       ctx.globalAlpha = 0.7;
-      ctx.strokeStyle = '#f44'; ctx.lineWidth = 1.2;
+      ctx.strokeStyle = _bCubeColor; ctx.lineWidth = 1.2;
       const _ca = _bt * 0.003, _cb = _bt * 0.002;
       const _cs = _br * 0.55;
       // Outer cube vertices
@@ -10603,7 +10636,7 @@ function render() {
       ctx.stroke();
       // Inner cube (smaller, different rotation speed) — creates a nested 4D feel
       ctx.globalAlpha = 0.4;
-      ctx.strokeStyle = '#f0f';
+      ctx.strokeStyle = _bRingColor;
       const _cs2 = _cs * 0.45;
       const _ca2 = _bt * 0.005, _cb2 = _bt * 0.003;
       ctx.beginPath();
@@ -10624,10 +10657,10 @@ function render() {
         ctx.moveTo(rx1, ry1); ctx.lineTo(rx2, ry2);
       }
       ctx.stroke();
-      // Glitch fragments — random flicker blocks near the body
-      if (Math.random() < 0.3) {
+      // Glitch fragments — rate increases per phase
+      if (Math.random() < _bGlitchRate) {
         ctx.globalAlpha = 0.6;
-        ctx.fillStyle = Math.random() < 0.5 ? '#f0f' : '#0ff';
+        ctx.fillStyle = Math.random() < 0.5 ? _bGlowColor : '#0ff';
         const gx = (Math.random() - 0.5) * _br * 2;
         const gy = (Math.random() - 0.5) * _br * 1.5;
         ctx.fillRect(gx, gy, 4 + Math.random() * 8, 2 + Math.random() * 4);
