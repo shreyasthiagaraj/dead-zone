@@ -32,9 +32,7 @@ body.mobile #btn-menu, body.desktop #btn-menu { display: flex; }
 #hp-chip .bar-bg { width: 100%; height: 6px; background: #111; border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.6); }
 #hp-chip .bar { height: 100%; background: #0f0; border-radius: 3px; transition: width 0.2s, background 0.2s; box-shadow: 0 0 8px currentColor; }
 #hp-chip .hp-text { color: #0f0; font-size: 10px; margin-top: 3px; text-shadow: 0 0 4px rgba(0,255,0,0.4); letter-spacing: 1px; }
-#score-chip { display: flex; flex-direction: column; padding: 4px 10px; background: rgba(3,6,14,0.7); border: 1px solid rgba(0,255,255,0.25); border-radius: 8px; box-shadow: 0 0 6px rgba(0,255,255,0.15); pointer-events: none; min-width: 80px; }
-#score-chip .score-val { font-size: 15px; font-weight: bold; color: #0ff; text-shadow: 0 0 6px #0ff, 0 0 12px rgba(0,255,255,0.3); line-height: 1; letter-spacing: 1px; }
-#score-chip .score-label { font-size: 8px; color: #0ff8; letter-spacing: 2px; margin-top: 2px; opacity: 0.7; }
+/* score-chip removed — bits are the score now */
 
 .joystick-zone { position: fixed; bottom: 0; width: 50%; height: 100%; z-index: 15; display: none; }
 body.mobile .joystick-zone { display: block; }
@@ -326,7 +324,6 @@ body.mobile #mobile-buttons { display: block; }
   </button>
   <div id="hp-chip"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
   <div id="xp-chip" title="BITS"><div class="bit-icon">◆</div><div class="xp-label" id="xp-label">0</div></div>
-  <div id="score-chip"><div class="score-val" id="score">0</div><div class="score-label">SCORE</div></div>
 </div>
 <div id="perk-display" style="display:none"></div>
 <div id="streak-hud" style="display:none"></div>
@@ -1918,11 +1915,13 @@ function _xpOrbColor(tier) {
 // Kill currency: orbs were originally XP, now they deposit directly into the
 // persistent bits wallet (`metaShards` retained for backward-compat with localStorage).
 // Spent at the shop (Cache Node) during a run, and at the Crypt between runs.
+let runBitsEarned = 0; // tracks total bits earned THIS run (the performance metric replacing score)
 function grantXP(amount) {
   const mods = runMods || {};
   const bitMult = (1 + (mods.xpMult || 0)) * (1 + getMetaBonus('fortune'));
   const gained = Math.max(1, Math.floor(amount * bitMult));
   metaShards += gained;
+  runBitsEarned += gained;
   try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
   _pulseBitsHUD();
   // Legacy: runXP/runLevel still advance for display/stat purposes but no longer
@@ -4696,17 +4695,18 @@ function _realShowDeathScreen() {
 
   const hordeCircleLost = gameMode === 'horde' && hordeCircleTimer >= HORDE_CIRCLE_CLAIM_TIME;
 
-  // Personal best
+  // Personal best — tracked by bits earned this run (replaces score)
   const bestKey = `deadzone_best_${gameMode}`;
   const prevBest = JSON.parse(localStorage.getItem(bestKey) || '{}');
-  const isNewBest = !prevBest.score || score > prevBest.score;
-  if (isNewBest) localStorage.setItem(bestKey, JSON.stringify({ score, time: survivalTime }));
+  const isNewBest = !prevBest.score || runBitsEarned > prevBest.score;
+  if (isNewBest) localStorage.setItem(bestKey, JSON.stringify({ score: runBitsEarned, time: survivalTime }));
 
-  // Necro-Shards reward: based on score + kills + time + run level, scaled by meta Harvest node
+  // End-of-run bonus bits: based on kills + time + progression, scaled by meta Harvest node
   const baseProgression = (gameMode === 'trench' || gameMode === 'descent') ? (progValueFromMode() * 15) : (gameMode === 'gauntlet' ? (gauntletRoom||0)*12 : 0);
-  const rawShards = Math.floor(score / 800) + Math.floor(kills / 3) + Math.floor(survivalTime / 6) + (runLevel - 1) * 5 + baseProgression;
+  const rawShards = Math.floor(kills / 3) + Math.floor(survivalTime / 6) + (runLevel - 1) * 5 + baseProgression;
   const shardsEarned = Math.max(1, Math.floor(rawShards * (1 + getMetaBonus('harvest')) * (isNewBest ? 1.5 : 1)));
   metaShards += shardsEarned;
+  runBitsEarned += shardsEarned; // bonus adds to the run total
   // Lifetime stats — always persist
   metaStats.totalRuns = (metaStats.totalRuns || 0) + 1;
   metaStats.totalKills = (metaStats.totalKills || 0) + kills;
@@ -4722,7 +4722,7 @@ function _realShowDeathScreen() {
   // Leaderboard history — store up to 50 runs per mode, display all of them in a scrollable list
   const lbKey = `deadzone_lb_${gameMode}`;
   const lbHistory = JSON.parse(localStorage.getItem(lbKey) || '[]');
-  const thisRun = { score, time: survivalTime, date: Date.now() };
+  const thisRun = { score: runBitsEarned, time: survivalTime, date: Date.now() };
   lbHistory.push(thisRun);
   lbHistory.sort((a, b) => b.score - a.score);
   if (lbHistory.length > 50) lbHistory.length = 50;
@@ -4799,8 +4799,8 @@ function _realShowDeathScreen() {
           <div class="death-stat-lab" style="color:rgba(0,255,255,0.7)">TIME</div>
         </div>
         <div class="death-stat">
-          <div class="death-stat-val" style="color:#ff0;text-shadow:0 0 14px #ff0,0 0 24px rgba(255,255,0,0.4)">${score.toLocaleString()}</div>
-          <div class="death-stat-lab" style="color:rgba(255,255,0,0.7)">SCORE</div>
+          <div class="death-stat-val" style="color:#ff0;text-shadow:0 0 14px #ff0,0 0 24px rgba(255,255,0,0.4)">◆ ${runBitsEarned.toLocaleString()}</div>
+          <div class="death-stat-lab" style="color:rgba(255,255,0,0.7)">BITS EARNED</div>
         </div>
       </div>
       ${bestMsg}
@@ -4847,7 +4847,7 @@ function _realShowDeathScreen() {
     addBtn('btn-share', () => {
       navigator.share({
         title: 'NECROWAVE',
-        text: `I scored ${score.toLocaleString()} and survived ${survivalMin}:${survivalSec.toString().padStart(2,'0')} on ${(gameMode||'').toUpperCase()} in NECROWAVE.`,
+        text: `I earned ${runBitsEarned.toLocaleString()} bits and survived ${survivalMin}:${survivalSec.toString().padStart(2,'0')} on ${(gameMode||'').toUpperCase()} in NECROWAVE.`,
       }).catch(() => {});
     });
   }
@@ -5701,7 +5701,7 @@ document.getElementById('btn-dash').addEventListener('mousedown', () => { dash()
 // ============================================================
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
-  gameState = 'playing'; score = 0; kills = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
+  gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; hazeParticles = [];
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
@@ -5786,7 +5786,7 @@ function resetSurvivalState() {
 
 function startMultiplayerGame() {
   initAudio(); loadSfx(); isMultiplayer = true; gameState = 'playing';
-  score = 0; kills = 0; gameTime = 0; spawnTimer = 0; resetPerks();
+  score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; spawnTimer = 0; resetPerks();
   // Reset run-scoped progression (each client tracks their own XP/upgrades)
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
@@ -9240,10 +9240,7 @@ function updateHUD() {
   if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) efx += effectTile(od.icon, od.color, Math.ceil(activeOrbital.timer/60), od.name); }
   // Cache innerHTML strings — avoid DOM parser work when nothing changed this frame
   if (ebar && ebar._lastHTML !== efx) { ebar.innerHTML = efx; ebar._lastHTML = efx; }
-  // Top-left HUD chips
-  const _scoreEl = document.getElementById('score');
-  const _scoreStr = score.toLocaleString();
-  if (_scoreEl._lastText !== _scoreStr) { _scoreEl.textContent = _scoreStr; _scoreEl._lastText = _scoreStr; }
+  // Score chip removed — bits ARE the score now. HUD shows bits wallet only.
   // Center HUD — mode-specific prominent display (no kills — they're gone from HUD)
   const _ch=document.getElementById('center-hud');
   if(_ch){
