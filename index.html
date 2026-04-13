@@ -324,7 +324,7 @@ body.mobile #mobile-buttons { display: block; }
   <div id="hp-chip"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
   <div id="xp-chip" title="BITS"><div class="bit-icon">◆</div><div class="xp-label" id="xp-label">0</div></div>
 </div>
-<div id="perk-display" style="display:none"></div>
+<div id="mods-hud" style="position:fixed;top:calc(82px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));z-index:20;display:flex;flex-wrap:wrap;gap:3px;max-width:180px;pointer-events:none"></div>
 <div id="streak-hud" style="display:none"></div>
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
 <div id="effects-bar" style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right) * 0.5);z-index:20;pointer-events:none;display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap"></div>
@@ -2500,7 +2500,11 @@ function initTrenchSections() {
             x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
             w: 3, h: 2, triggered: false, timer: 0, collapsed: false });
         } else if (htype === 'spawner') {
-          hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120, spawnTimer: 0, spawnRate: 180, alive: true });
+          // Verify spawner isn't inside an obstacle
+          const _sgx = Math.floor(hx / CELL_SIZE), _sgy = Math.floor(hy / CELL_SIZE);
+          if (dungeonGrid[_sgy] && dungeonGrid[_sgy][_sgx]) {
+            hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120, spawnTimer: 0, spawnRate: 180, alive: true });
+          }
         } else if (htype === 'emp') {
           hazards.push({ type: 'emp', x: hx, y: hy, radius: 55 + Math.random() * 25 });
         } else if (htype === 'icepatch') {
@@ -2691,6 +2695,12 @@ function updateTrench() {
       sec.waveSpawnTimer = 60; // ~1s breather between waves (reduced from 1.3s)
       const cx = sec.x + TW / 2, cy = (TRENCH_HEIGHT / 2) * CELL_SIZE;
       addFloatingText(cx, cy - 30, 'INCOMING...', '#ff8040');
+      return;
+    }
+    // Don't clear if spawners are still alive — they must be destroyed too
+    if (sec.hazards && sec.hazards.some(h => h.type === 'spawner' && h.alive)) {
+      const cx2 = sec.x + TW / 2, cy2 = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+      if (gameTime % 60 === 0) addFloatingText(cx2, cy2 - 30, 'DESTROY SPAWNERS', '#f80');
       return;
     }
     sec.cleared = true;
@@ -9322,7 +9332,21 @@ function updateHUD() {
   if (activeOrbital) { const od = ORBITAL_TYPES.find(o=>o.id===activeOrbital.id); if(od) efx += effectTile(od.icon, od.color, Math.ceil(activeOrbital.timer/60), od.name); }
   // Cache innerHTML strings — avoid DOM parser work when nothing changed this frame
   if (ebar && ebar._lastHTML !== efx) { ebar.innerHTML = efx; ebar._lastHTML = efx; }
-  // Score chip removed — bits ARE the score now. HUD shows bits wallet only.
+  // Equipped mods indicator — small icons below the HP/bits chips
+  const _modsHud = document.getElementById('mods-hud');
+  if (_modsHud && gameTime % 30 === 0) { // update every 0.5s, not every frame
+    let _mhtml = '';
+    for (const id in runUpgrades) {
+      const n = runUpgrades[id];
+      if (!n) continue;
+      const u = _UPGRADE_BY_ID[id]; if (!u) continue;
+      _mhtml += `<div style="display:flex;align-items:center;gap:2px;padding:2px 4px;border:1px solid ${u.color}55;border-radius:4px;background:rgba(3,3,12,0.7)">
+        <span style="color:${u.color};font-size:11px;text-shadow:0 0 4px ${u.color}">${u.icon}</span>
+        ${n > 1 ? `<span style="color:#aaa;font-size:8px">×${n}</span>` : ''}
+      </div>`;
+    }
+    if (_modsHud.innerHTML !== _mhtml) _modsHud.innerHTML = _mhtml;
+  }
   // Center HUD — mode-specific prominent display (no kills — they're gone from HUD)
   const _ch=document.getElementById('center-hud');
   if(_ch){
@@ -10119,34 +10143,55 @@ function render() {
           }
         }
 
-        // ======== SPAWNER NODE ========
+        // ======== SPAWNER NODE — highly visible with neon glow like zombies ========
         else if (hz.type === 'spawner') {
           if (hz.alive) {
-            const _sp = 0.6 + Math.sin(_hzt * 0.006) * 0.3;
-            // Pulsing orange core
-            ctx.globalAlpha = _sp;
-            ctx.shadowColor = '#f80'; ctx.shadowBlur = 22;
+            const _sp = 0.7 + Math.sin(_hzt * 0.006) * 0.25;
+            // Large ambient glow — visible from across the room
+            ctx.globalAlpha = 0.2 * _sp;
+            ctx.shadowColor = '#f80'; ctx.shadowBlur = 50;
             ctx.fillStyle = '#f80';
-            ctx.beginPath(); ctx.arc(hz.x, hz.y, 14, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 30, 0, Math.PI * 2); ctx.fill();
             ctx.shadowBlur = 0;
-            // Dark inner ring
+            // Neon outline ring (like zombie neon outlines)
+            ctx.globalAlpha = 0.7 * _sp;
+            ctx.strokeStyle = '#f80'; ctx.lineWidth = 2.5;
+            ctx.shadowColor = '#f80'; ctx.shadowBlur = 16;
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 18, 0, Math.PI * 2); ctx.stroke();
+            ctx.shadowBlur = 0;
+            // Dark body
             ctx.globalAlpha = 1; ctx.fillStyle = '#0a0806';
-            ctx.beginPath(); ctx.arc(hz.x, hz.y, 10, 0, Math.PI * 2); ctx.fill();
-            // HP-based fill
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 15, 0, Math.PI * 2); ctx.fill();
+            // Neon body outline
+            ctx.strokeStyle = '#f80'; ctx.lineWidth = 2;
+            ctx.stroke();
+            // HP-based fill inside
             const _shp = Math.max(0, hz.hp / hz.maxHp);
             ctx.fillStyle = '#f80'; ctx.globalAlpha = 0.8;
-            ctx.beginPath(); ctx.arc(hz.x, hz.y, 8 * _shp, 0, Math.PI * 2); ctx.fill();
-            // Rotating ring
-            ctx.globalAlpha = 0.6; ctx.strokeStyle = '#fa0'; ctx.lineWidth = 1.5;
-            const _sra = _hzt * 0.003;
-            ctx.beginPath(); ctx.arc(hz.x, hz.y, 17, _sra, _sra + Math.PI * 1.2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 12 * _shp, 0, Math.PI * 2); ctx.fill();
+            // Two counter-rotating ring arcs
+            ctx.globalAlpha = 0.65; ctx.strokeStyle = '#fa0'; ctx.lineWidth = 1.5;
+            const _sra = _hzt * 0.004;
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 22, _sra, _sra + Math.PI * 1.2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, 22, _sra + Math.PI, _sra + Math.PI + Math.PI * 0.8); ctx.stroke();
+            // "Eyes" — two glowing dots like zombie eyes
+            ctx.globalAlpha = 0.9;
+            ctx.shadowColor = '#f44'; ctx.shadowBlur = 8;
+            ctx.fillStyle = '#f44';
+            ctx.beginPath(); ctx.arc(hz.x - 4, hz.y - 2, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(hz.x + 4, hz.y - 2, 2.5, 0, Math.PI * 2); ctx.fill();
+            ctx.shadowBlur = 0;
             // Label
-            ctx.globalAlpha = 0.7; ctx.fillStyle = '#fa0'; ctx.font = '8px monospace';
-            ctx.textAlign = 'center'; ctx.fillText('SPAWNER', hz.x, hz.y + 24);
-            if (hz.hitFlash > 0) { hz.hitFlash--; ctx.globalAlpha = 0.4; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hz.x, hz.y, 16, 0, Math.PI*2); ctx.fill(); }
+            ctx.globalAlpha = 0.8; ctx.fillStyle = '#fa0'; ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center'; ctx.fillText('SPAWNER', hz.x, hz.y + 28);
+            // HP bar below
+            const _hpW = 28, _hpH = 3;
+            ctx.fillStyle = '#111'; ctx.fillRect(hz.x - _hpW/2, hz.y + 18, _hpW, _hpH);
+            ctx.fillStyle = _shp > 0.5 ? '#f80' : '#f44';
+            ctx.fillRect(hz.x - _hpW/2, hz.y + 18, _hpW * _shp, _hpH);
+            if (hz.hitFlash > 0) { hz.hitFlash--; ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hz.x, hz.y, 20, 0, Math.PI*2); ctx.fill(); }
           } else {
-            // Destroyed husk
-            ctx.globalAlpha = 0.2; ctx.fillStyle = '#444';
+            ctx.globalAlpha = 0.15; ctx.fillStyle = '#444';
             ctx.beginPath(); ctx.arc(hz.x, hz.y, 10, 0, Math.PI * 2); ctx.fill();
           }
         }
