@@ -8712,7 +8712,13 @@ function update() {
             const _bsx = _tsecBA ? _tsecBA.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE : z.x;
             const _bsy = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
             z._beamPerchX = _bsx; z._beamPerchY = _bsy;
-            z._beamSweepDir = 1; // always sweep clockwise (consistent direction)
+            // Sweep toward the player — compute which rotation direction brings
+            // the beam closer to the player, then sweep that way
+            const _pAngle = Math.atan2(zdy, zdx);
+            let _sweepDelta = _pAngle - z._beamSweepAngle;
+            while (_sweepDelta > Math.PI) _sweepDelta -= Math.PI * 2;
+            while (_sweepDelta < -Math.PI) _sweepDelta += Math.PI * 2;
+            z._beamSweepDir = _sweepDelta >= 0 ? 1 : -1;
           }
           // Cache beam length (raycast to wall) — updated every frame during telegraph/fire
           if (z._beamSweepAngle !== undefined) {
@@ -8736,11 +8742,11 @@ function update() {
             z.angle=z._beamSweepAngle;
             // Store start/end angles for the sweep preview
             z._beamStartAngle = z._beamSweepAngle;
-            z._beamEndAngle = z._beamSweepAngle + z._beamSweepDir * 1.0; // ~57° sweep
+            z._beamEndAngle = z._beamSweepAngle + z._beamSweepDir * 0.5; // ~29° sweep (nerfed from 57°)
             if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;}
           } else if(z._beamState==='fire'){
             z.vx=0;z.vy=0;z._beamTimer++;
-            z._beamSweepAngle += z._beamSweepDir * 0.02;
+            z._beamSweepAngle += z._beamSweepDir * 0.008; // nerfed from 0.02 — much slower sweep
             z.angle=z._beamSweepAngle;
             // Beam sound: continuous hum while firing (re-trigger every 20 frames)
             if (z._beamTimer % 20 === 1) {
