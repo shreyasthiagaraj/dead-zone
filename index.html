@@ -255,16 +255,14 @@ body.mobile #mobile-buttons { display: block; }
 #levelup-flash.flash { opacity: 1; }
 #levelup-flash.fading { opacity: 0; transition: opacity 0.55s ease-out; }
 /* Shop loading + card transitions */
-#shop-loading { position:fixed;top:0;left:0;width:100%;height:100%;z-index:61;background:rgba(3,3,12,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;flex-direction:column;font-family:'Courier New',monospace;opacity:0;transition:opacity 0.4s ease-out; }
-#shop-loading.visible { opacity:1; }
+/* shop-loading is now embedded inside shop-screen — no separate overlay */
 #shop-loading .load-text { color:#0ff;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #0ff;margin-bottom:16px; }
 #shop-loading .load-bar { width:220px;height:4px;background:rgba(0,255,255,0.1);border:1px solid rgba(0,255,255,0.3);border-radius:2px;overflow:hidden; }
 #shop-loading .load-fill { height:100%;width:0%;background:linear-gradient(90deg,#0ff,#4af);box-shadow:0 0 10px #0ff;transition:width 0.1s linear; }
 #shop-loading .load-sub { color:#667;font-size:10px;letter-spacing:2px;margin-top:10px; }
 @keyframes scanline-flicker { 0%,100%{opacity:0.03} 50%{opacity:0.08} }
-#shop-screen { backdrop-filter:blur(4px); }
+#shop-screen { opacity:0; transition:opacity 0.5s ease-out; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 #shop-screen.visible { opacity:1; }
-#shop-screen { opacity:0; transition:opacity 0.4s ease-out; }
 .shop-card-wrap { opacity:0; transform:translateY(20px); transition:opacity 0.3s ease-out, transform 0.3s ease-out; }
 .shop-card-wrap.card-in { opacity:1; transform:translateY(0); }
 /* XP bar above score chip */
@@ -506,16 +504,15 @@ body.mobile #mobile-buttons { display: block; }
   </div>
 </div>
 
-<!-- ---- SHOP LOADING SCREEN ---- -->
-<div id="shop-loading">
-  <div class="load-text" id="shop-load-text">CONNECTING TO CACHE NODE</div>
-  <div class="load-bar"><div class="load-fill" id="shop-load-fill"></div></div>
-  <div class="load-sub" id="shop-load-sub">establishing secure channel...</div>
-</div>
-
-<!-- ---- SHOP SCREEN (mod terminal) ---- -->
-<div id="shop-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:60;background:rgba(3,3,12,0.92);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box">
-  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:750px;width:100%;position:relative">
+<!-- ---- SHOP SCREEN (mod terminal) — single overlay, phases from loading→cards ---- -->
+<div id="shop-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:60;background:rgba(3,3,12,0.7);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box">
+  <!-- Loading phase: shown first, hidden when cards appear -->
+  <div id="shop-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+    <div style="color:#0ff;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #0ff" id="shop-load-text">CONNECTING</div>
+    <div style="width:220px;height:4px;background:rgba(0,255,255,0.1);border:1px solid rgba(0,255,255,0.3);border-radius:2px;overflow:hidden"><div id="shop-load-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#0ff,#4af);box-shadow:0 0 10px #0ff;transition:width 0.1s linear"></div></div>
+    <div style="color:#667;font-size:10px;letter-spacing:2px" id="shop-load-sub">establishing secure channel...</div>
+  </div>
+  <div data-shop-content style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:750px;width:100%;position:relative">
     <!-- Terminal header + REFRESH top-right -->
     <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:10px;position:relative">
       <div style="text-align:center">
@@ -1452,61 +1449,58 @@ function openShop(chest) {
   _resetJoysticks();
   if (!isMultiplayer) gameState = 'shop';
   canvas.classList.add('focus-back');
-  // ---- LOADING TRANSITION ----
-  // Phase 1: glitch surge + show loading screen with typing text + progress bar
+  // ---- SINGLE-OVERLAY TRANSITION ----
+  // The shop screen IS the overlay. It blurs+darkens the game from the start.
+  // Phase 1: show overlay with loading text (game blurs underneath)
+  // Phase 2: hide loading, reveal cards inside the same overlay (no flash)
   triggerGlitchSurge(0.5, 40);
+  const el = document.getElementById('shop-screen');
+  if (!el) return;
+  // Show the loading phase, hide the terminal content
   const loadEl = document.getElementById('shop-loading');
   const loadText = document.getElementById('shop-load-text');
   const loadFill = document.getElementById('shop-load-fill');
   const loadSub = document.getElementById('shop-load-sub');
-  if (loadEl) {
-    loadEl.style.display = 'flex';
-    loadEl.classList.remove('visible');
-    void loadEl.offsetWidth; // force reflow for transition
-    loadEl.classList.add('visible'); // fade in with blur
-    if (loadFill) loadFill.style.width = '0%';
-    if (loadText) loadText.textContent = 'CONNECTING';
-    if (loadSub) loadSub.textContent = 'establishing secure channel...';
-    playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
-    // Typing effect for connection text
-    const _loadSteps = [
-      { t: 200,  text: 'CONNECTING.',            sub: 'establishing secure channel...',    pct: '15%' },
-      { t: 500,  text: 'CONNECTING..',           sub: 'handshake with cache node...',      pct: '35%' },
-      { t: 800,  text: 'CONNECTING...',          sub: 'decrypting mod library...',         pct: '60%' },
-      { t: 1100, text: 'AUTHENTICATING',         sub: 'verifying revenant credentials...', pct: '80%' },
-      { t: 1400, text: 'SESSION ESTABLISHED',    sub: 'loading available mods...',         pct: '100%' },
-    ];
-    for (const step of _loadSteps) {
-      setTimeout(() => {
-        if (loadText) loadText.textContent = step.text;
-        if (loadSub) loadSub.textContent = step.sub;
-        if (loadFill) loadFill.style.width = step.pct;
-        // Small glitch on each step
-        if (step.pct === '60%' || step.pct === '100%') triggerGlitchSurge(0.2, 8);
-        playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
-      }, step.t);
-    }
-    // Phase 2: fade out loading, then show shop
+  const termContent = el.querySelector('[data-shop-content]');
+  if (loadEl) loadEl.style.display = 'flex';
+  if (termContent) termContent.style.display = 'none';
+  if (loadFill) loadFill.style.width = '0%';
+  if (loadText) loadText.textContent = 'CONNECTING';
+  if (loadSub) loadSub.textContent = 'establishing secure channel...';
+  // Fade the whole overlay in (blurs the game smoothly)
+  el.style.display = 'flex';
+  el.classList.remove('visible');
+  void el.offsetWidth;
+  el.classList.add('visible');
+  playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
+  // Loading steps — typing effect inside the blurred overlay
+  const _loadSteps = [
+    { t: 200,  text: 'CONNECTING.',        sub: 'establishing secure channel...',    pct: '15%' },
+    { t: 500,  text: 'CONNECTING..',       sub: 'handshake with cache node...',      pct: '35%' },
+    { t: 800,  text: 'CONNECTING...',      sub: 'decrypting mod library...',         pct: '60%' },
+    { t: 1100, text: 'AUTHENTICATING',     sub: 'verifying revenant credentials...', pct: '80%' },
+    { t: 1400, text: 'SESSION ESTABLISHED',sub: 'loading available mods...',         pct: '100%' },
+  ];
+  for (const step of _loadSteps) {
     setTimeout(() => {
-      if (loadEl) { loadEl.classList.remove('visible'); setTimeout(() => { loadEl.style.display = 'none'; }, 400); }
-      const el = document.getElementById('shop-screen');
-      if (!el) return;
-      el.style.display = 'flex';
-      el.classList.remove('visible');
-      void el.offsetWidth;
-      _renderShopCards();
-      _updateShopBitsDisplay();
-      // Stagger card entrance
-      setTimeout(() => {
-        el.classList.add('visible');
-        const cards = el.querySelectorAll('.shop-card-wrap');
-        cards.forEach((c, i) => {
-          setTimeout(() => c.classList.add('card-in'), i * 120);
-        });
-      }, 60);
-      playSfx('level_up', 0.2) || playSound(900, 0.1, 'sine', 0.15);
-    }, 1700);
+      if (loadText) loadText.textContent = step.text;
+      if (loadSub) loadSub.textContent = step.sub;
+      if (loadFill) loadFill.style.width = step.pct;
+      if (step.pct === '60%' || step.pct === '100%') triggerGlitchSurge(0.2, 8);
+      playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
+    }, step.t);
   }
+  // Phase 2: swap loading→cards inside the same overlay (no fade gap)
+  setTimeout(() => {
+    if (loadEl) loadEl.style.display = 'none';
+    if (termContent) termContent.style.display = 'flex';
+    _renderShopCards();
+    _updateShopBitsDisplay();
+    // Stagger card entrance
+    const cards = el.querySelectorAll('.shop-card-wrap');
+    cards.forEach((c, i) => { setTimeout(() => c.classList.add('card-in'), i * 120); });
+    playSfx('level_up', 0.2) || playSound(900, 0.1, 'sine', 0.15);
+  }, 1700);
 }
 
 function closeShop() {
@@ -1526,10 +1520,13 @@ function closeShop() {
       if (leaveBtn) leaveBtn.style.display = '';
       const rerollBtn = document.getElementById('btn-shop-reroll');
       if (rerollBtn) rerollBtn.style.display = '';
+      // Reset loading/content phases
+      const loadEl = document.getElementById('shop-loading');
+      if (loadEl) loadEl.style.display = 'flex';
+      const termContent = el.querySelector('[data-shop-content]');
+      if (termContent) termContent.style.display = 'none';
     }, 500);
   }
-  const loadEl = document.getElementById('shop-loading');
-  if (loadEl) { loadEl.classList.remove('visible'); loadEl.style.display = 'none'; }
   canvas.classList.remove('focus-back');
   triggerGlitchSurge(0.25, 12);
   setTimeout(() => {
