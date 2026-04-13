@@ -507,7 +507,7 @@ body.mobile #mobile-buttons { display: block; }
 <!-- ---- SHOP SCREEN (mod terminal) — single overlay, phases from loading→cards ---- -->
 <div id="shop-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:60;background:rgba(3,3,12,0.7);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box">
   <!-- Loading phase: shown first, hidden when cards appear -->
-  <div id="shop-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px">
+  <div id="shop-loading" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;transition:opacity 0.4s ease-out">
     <div style="color:#0ff;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #0ff" id="shop-load-text">CONNECTING</div>
     <div style="width:220px;height:4px;background:rgba(0,255,255,0.1);border:1px solid rgba(0,255,255,0.3);border-radius:2px;overflow:hidden"><div id="shop-load-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#0ff,#4af);box-shadow:0 0 10px #0ff;transition:width 0.1s linear"></div></div>
     <div style="color:#667;font-size:10px;letter-spacing:2px" id="shop-load-sub">establishing secure channel...</div>
@@ -1446,55 +1446,65 @@ function openShop(chest) {
   // ---- SINGLE-OVERLAY TRANSITION ----
   // The shop screen IS the overlay. It blurs+darkens the game from the start.
   // Phase 1: show overlay with loading text (game blurs underneath)
-  // Phase 2: hide loading, reveal cards inside the same overlay (no flash)
+  // ---- THREE-BEAT TRANSITION (no jarring pop) ----
+  // Beat 1 (0ms):     Glitch surge + overlay fades in as JUST blur/darken (no text yet).
+  //                    The player sees their game world go soft. Eye stays in place.
+  // Beat 2 (600ms):   "CONNECTING..." text fades in over the blurred game.
+  //                    The player's eye is drawn to the center text.
+  // Beat 3 (1800ms):  Loading hides, terminal cards appear.
+  //                    The player is now looking at the right place.
   triggerGlitchSurge(0.5, 40);
   const el = document.getElementById('shop-screen');
   if (!el) return;
-  // Show the loading phase, hide the terminal content
   const loadEl = document.getElementById('shop-loading');
   const loadText = document.getElementById('shop-load-text');
   const loadFill = document.getElementById('shop-load-fill');
   const loadSub = document.getElementById('shop-load-sub');
   const termContent = el.querySelector('[data-shop-content]');
-  if (loadEl) loadEl.style.display = 'flex';
+  // Start with EVERYTHING hidden — just the blur overlay
+  if (loadEl) { loadEl.style.display = 'flex'; loadEl.style.opacity = '0'; }
   if (termContent) termContent.style.display = 'none';
   if (loadFill) loadFill.style.width = '0%';
-  if (loadText) loadText.textContent = 'CONNECTING';
-  if (loadSub) loadSub.textContent = 'establishing secure channel...';
-  // Fade the whole overlay in (blurs the game smoothly)
+  if (loadText) loadText.textContent = '';
+  if (loadSub) loadSub.textContent = '';
+  // Beat 1: fade in the blur overlay (empty — just darkens + blurs the game)
   el.style.display = 'flex';
   el.classList.remove('visible');
   void el.offsetWidth;
   el.classList.add('visible');
-  playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
-  // Loading steps — typing effect inside the blurred overlay
-  const _loadSteps = [
-    { t: 200,  text: 'CONNECTING.',        sub: 'establishing secure channel...',    pct: '15%' },
-    { t: 500,  text: 'CONNECTING..',       sub: 'handshake with cache node...',      pct: '35%' },
-    { t: 800,  text: 'CONNECTING...',      sub: 'decrypting mod library...',         pct: '60%' },
-    { t: 1100, text: 'AUTHENTICATING',     sub: 'verifying revenant credentials...', pct: '80%' },
-    { t: 1400, text: 'SESSION ESTABLISHED',sub: 'loading available mods...',         pct: '100%' },
-  ];
-  for (const step of _loadSteps) {
-    setTimeout(() => {
-      if (loadText) loadText.textContent = step.text;
-      if (loadSub) loadSub.textContent = step.sub;
-      if (loadFill) loadFill.style.width = step.pct;
-      if (step.pct === '60%' || step.pct === '100%') triggerGlitchSurge(0.2, 8);
-      playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
-    }, step.t);
-  }
-  // Phase 2: swap loading→cards inside the same overlay (no fade gap)
+  // Beat 2: after the blur settles, fade in the connecting text
+  setTimeout(() => {
+    if (loadEl) loadEl.style.opacity = '1';
+    if (loadText) loadText.textContent = 'CONNECTING';
+    if (loadSub) loadSub.textContent = 'establishing secure channel...';
+    playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
+    // Loading steps
+    const _loadSteps = [
+      { t: 200,  text: 'CONNECTING.',        sub: 'handshake with cache node...',      pct: '30%' },
+      { t: 500,  text: 'CONNECTING..',       sub: 'decrypting mod library...',         pct: '60%' },
+      { t: 800,  text: 'CONNECTING...',      sub: 'verifying credentials...',          pct: '85%' },
+      { t: 1000, text: 'SESSION ESTABLISHED',sub: 'loading mods...',                   pct: '100%' },
+    ];
+    for (const step of _loadSteps) {
+      setTimeout(() => {
+        if (loadText) loadText.textContent = step.text;
+        if (loadSub) loadSub.textContent = step.sub;
+        if (loadFill) loadFill.style.width = step.pct;
+        if (step.pct === '100%') triggerGlitchSurge(0.2, 8);
+        playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
+      }, step.t);
+    }
+  }, 600);
+  // Beat 3: swap to terminal cards
   setTimeout(() => {
     if (loadEl) loadEl.style.display = 'none';
     if (termContent) termContent.style.display = 'flex';
     _renderShopCards();
     _updateShopBitsDisplay();
-    // Stagger card entrance
     const cards = el.querySelectorAll('.shop-card-wrap');
     cards.forEach((c, i) => { setTimeout(() => c.classList.add('card-in'), i * 120); });
     playSfx('level_up', 0.2) || playSound(900, 0.1, 'sine', 0.15);
-  }, 1700);
+  }, 1900);
 }
 
 function closeShop() {
