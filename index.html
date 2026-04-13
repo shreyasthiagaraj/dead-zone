@@ -7566,14 +7566,23 @@ function update() {
       else if (_mods.iceSmashLv   > 0 && _mods.iceSmashLv   >= (_mods.chainSmashLv||0) && _mods.iceSmashLv   >= (_mods.windSmashLv||0)) _trailColor = '#8ef';
       else if (_mods.chainSmashLv > 0 && _mods.chainSmashLv >= (_mods.windSmashLv||0)) _trailColor = '#4ff';
       else if (_mods.windSmashLv  > 0) _trailColor = '#cef';
-      // Chromatic triple-afterimage: primary (element tint), plus cyan/magenta ghosts
-      // offset perpendicular to the dash direction. Produces a de-synced "RGB split" feel.
+      // ---- ELEMENT-THEMED AFTERIMAGE + TRAIL ----
+      // The entire dash visual shifts to match the dominant element.
+      // No element: default cyan/magenta glitch. With element: fully themed.
       const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
       const _split = 4 + Math.random() * 2;
+      const _hasDashEl = _mods.fireSmashLv > 0 || _mods.iceSmashLv > 0 || _mods.chainSmashLv > 0 || _mods.windSmashLv > 0;
+      // Pick ghost colors based on element (default: cyan/magenta chromatic)
+      let _ghostA = '#0ff', _ghostB = '#f0f', _sparkColor = '#fff', _glitchColor1 = '#0ff', _glitchColor2 = '#f0f';
+      if (_trailColor === '#f80')  { _ghostA = '#f80'; _ghostB = '#fa0'; _sparkColor = '#ff0'; _glitchColor1 = '#f80'; _glitchColor2 = '#f40'; } // fire
+      else if (_trailColor === '#8ef') { _ghostA = '#8ef'; _ghostB = '#4ef'; _sparkColor = '#cef'; _glitchColor1 = '#8ef'; _glitchColor2 = '#4ef'; } // ice
+      else if (_trailColor === '#4ff') { _ghostA = '#4ff'; _ghostB = '#8ff'; _sparkColor = '#fff'; _glitchColor1 = '#4ff'; _glitchColor2 = '#8ff'; } // lightning
+      else if (_trailColor === '#cef') { _ghostA = '#cef'; _ghostB = '#fff'; _sparkColor = '#eef'; _glitchColor1 = '#cef'; _glitchColor2 = '#fff'; } // wind
+      // Triple afterimage — all in the element palette
       particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: PLAYER_RADIUS, color: _trailColor, type: 'dashtrail' });
-      particles.push({ x: lp.x + _perpX * _split, y: lp.y + _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: '#0ff', type: 'dashtrail' });
-      particles.push({ x: lp.x - _perpX * _split, y: lp.y - _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: '#f0f', type: 'dashtrail' });
-      // Glitch character rain behind the player — the simulation dropping frames
+      particles.push({ x: lp.x + _perpX * _split, y: lp.y + _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: _ghostA, type: 'dashtrail' });
+      particles.push({ x: lp.x - _perpX * _split, y: lp.y - _perpY * _split, vx: 0, vy: 0, life: 10, maxLife: 10, size: PLAYER_RADIUS, color: _ghostB, type: 'dashtrail' });
+      // Glitch characters in element colors
       if (gameTime % 2 === 0) {
         const _glitchChars2 = '█░▓▒╳◆▪◢◣!?';
         const _goffX = -(lp.dashDirX || 0) * (4 + Math.random() * 8) + _perpX * ((Math.random() - 0.5) * 14);
@@ -7581,25 +7590,20 @@ function update() {
         particles.push({
           x: lp.x + _goffX, y: lp.y + _goffY,
           vx: -(lp.dashDirX || 0) * 1.0, vy: -(lp.dashDirY || 0) * 1.0,
-          life: 16, maxLife: 16,
-          size: 10,
-          color: Math.random() < 0.5 ? '#0ff' : '#f0f',
+          life: 16, maxLife: 16, size: 10,
+          color: Math.random() < 0.5 ? _glitchColor1 : _glitchColor2,
           type: 'glitchtext',
           text: _glitchChars2[Math.floor(Math.random() * _glitchChars2.length)],
         });
       }
-      // Leading-edge speed sparkles
+      // Speed sparkles in element color
       if (gameTime % 2 === 0) {
         const _off = (Math.random() - 0.5) * PLAYER_RADIUS * 1.2;
         particles.push({
-          x: lp.x + _perpX * _off,
-          y: lp.y + _perpY * _off,
+          x: lp.x + _perpX * _off, y: lp.y + _perpY * _off,
           vx: -(lp.dashDirX || 1) * (2 + Math.random() * 2),
           vy: -(lp.dashDirY || 0) * (2 + Math.random() * 2),
-          life: 10, maxLife: 10,
-          size: 1.5,
-          color: '#fff',
-          type: 'spark',
+          life: 10, maxLife: 10, size: 1.5, color: _sparkColor, type: 'spark',
         });
       }
       // Per-frame element trail particles — visual trail left in the dash's wake
