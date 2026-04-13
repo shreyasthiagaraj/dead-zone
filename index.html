@@ -521,10 +521,7 @@ body.mobile #mobile-buttons { display: block; }
     </div>
     <!-- Cards container — 3 cards -->
     <div id="shop-cards" style="display:flex;flex-direction:row;gap:14px;justify-content:center;margin-top:8px;width:100%"></div>
-    <!-- Checkout area — shown after compile, before close -->
-    <div id="shop-checkout" style="display:none;text-align:center;padding:12px 0">
-      <div id="shop-checkout-text" style="color:#0ff;font-size:13px;letter-spacing:2px"></div>
-    </div>
+    <!-- Checkout is now in-place on the selected card — no separate area -->
     <!-- Bottom action bar: small DISCONNECT + prominent COMPILE MOD -->
     <div style="display:flex;flex-direction:row;gap:14px;margin-top:10px;width:100%;align-items:center;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px">
       <button id="btn-shop-leave" style="padding:10px 32px;font-size:13px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15);min-width:160px">SKIP</button>
@@ -1516,8 +1513,6 @@ function closeShop() {
       // Reset all shop UI elements for next visit
       const cardsEl = document.getElementById('shop-cards');
       if (cardsEl) cardsEl.style.display = 'flex';
-      const checkout = document.getElementById('shop-checkout');
-      if (checkout) checkout.style.display = 'none';
       const confirmBtn = document.getElementById('btn-shop-confirm');
       if (confirmBtn) { confirmBtn.style.display = ''; confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; confirmBtn.textContent = 'COMPILE MOD'; }
       const leaveBtn = document.getElementById('btn-shop-leave');
@@ -1663,42 +1658,37 @@ function buyShopCard(upgradeId) {
     }
   }
   _pulseBitsHUD();
-  // ---- CHECKOUT SEQUENCE ----
-  // Hide cards, show the checkout receipt with cost and new balance
-  const cardsEl = document.getElementById('shop-cards');
-  if (cardsEl) cardsEl.style.display = 'none';
-  // Hide action buttons during checkout
+  // ---- IN-PLACE CONFIRMATION ----
+  // The selected card transforms to show "COMPILED" — no separate screen.
+  // The player's eye is already on the card. Confirm what happened right there.
+  // Hide buttons
   const confirmBtn = document.getElementById('btn-shop-confirm');
   const leaveBtn = document.getElementById('btn-shop-leave');
   if (confirmBtn) confirmBtn.style.display = 'none';
   if (leaveBtn) leaveBtn.style.display = 'none';
-  const checkout = document.getElementById('shop-checkout');
-  const checkoutText = document.getElementById('shop-checkout-text');
-  if (checkout && checkoutText) {
-    checkout.style.display = 'block';
-    // Step 1: show the mod name
-    checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div><div style="color:#0f0;font-size:12px;letter-spacing:2px">COMPILING...</div>`;
-    // Step 2: show cost deducted
-    setTimeout(() => {
-      checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div>` +
-        `<div style="color:#f44;font-size:14px;letter-spacing:2px;margin-bottom:4px">-${cost} ◆</div>` +
-        `<div style="color:#0f0;font-size:12px;letter-spacing:2px">COMPILED SUCCESSFULLY</div>`;
-      playSound(1000, 0.05, 'sine', 0.1);
-    }, 500);
-    // Step 3: show new balance
-    setTimeout(() => {
-      checkoutText.innerHTML = `<div style="color:${u.color};font-size:20px;text-shadow:0 0 12px ${u.color};margin-bottom:8px">${u.icon} ${u.name}</div>` +
-        `<div style="color:#f44;font-size:14px;letter-spacing:2px;margin-bottom:4px">-${cost} ◆</div>` +
-        `<div style="color:#0f0;font-size:12px;letter-spacing:2px;margin-bottom:8px">COMPILED SUCCESSFULLY</div>` +
-        `<div style="color:#ff0;font-size:16px;letter-spacing:3px;text-shadow:0 0 8px rgba(255,255,0,0.5)">◆ ${metaShards} BITS REMAINING</div>`;
-      _updateShopBitsDisplay();
-    }, 1000);
-    // Step 4: auto-close after showing the receipt
-    setTimeout(() => { closeShop(); }, 2200);
-  } else {
-    _updateShopBitsDisplay();
-    setTimeout(() => { closeShop(); }, 350);
+  // Transform the selected card in-place
+  const selectedCard = document.querySelector(`.shop-card-wrap button[data-card-id="${upgradeId}"]`);
+  if (selectedCard) {
+    selectedCard.style.border = '3px solid #0f0';
+    selectedCard.style.boxShadow = '0 0 30px rgba(0,255,0,0.5), inset 0 0 20px rgba(0,255,0,0.1)';
+    selectedCard.style.background = 'rgba(0,255,0,0.08)';
+    selectedCard.innerHTML = `
+      <div style="text-align:center;padding:20px 0">
+        <div style="font-size:36px;color:${u.color};text-shadow:0 0 16px ${u.color};margin-bottom:8px">${u.icon}</div>
+        <div style="color:#0f0;font-size:14px;font-weight:bold;letter-spacing:3px;margin-bottom:6px">✓ COMPILED</div>
+        <div style="color:${u.color};font-size:12px;letter-spacing:2px;margin-bottom:10px">${u.name}</div>
+        <div style="color:#f44;font-size:13px;letter-spacing:2px">-${cost} ◆</div>
+      </div>
+    `;
   }
+  // Fade non-selected cards out
+  document.querySelectorAll('.shop-card-wrap button').forEach(c => {
+    if (c.dataset.cardId !== upgradeId) c.style.opacity = '0.2';
+  });
+  // Update the bits display in the header to show new balance
+  _updateShopBitsDisplay();
+  // Auto-close after the player has time to see the result
+  setTimeout(() => { closeShop(); }, 1500);
 }
 
 // rerollShop removed — 3 cards, pick 1 or skip. No rerolls.
