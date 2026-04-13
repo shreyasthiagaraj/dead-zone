@@ -8625,22 +8625,35 @@ function update() {
             z.vx=0;z.vy=0;z._beamTimer++;
             z._beamSweepAngle += z._beamSweepDir * 0.02;
             z.angle=z._beamSweepAngle;
-            // Beam particles: sparks at the wall hit point + along the beam
+            // Beam sound: continuous hum while firing (re-trigger every 20 frames)
+            if (z._beamTimer % 20 === 1) {
+              playSound(180, 0.35, 'sawtooth', 0.06);
+              playSound(360, 0.2, 'sine', 0.04);
+            }
+            // Beam particles along the entire path
+            const _bLen = z._beamLen || 200;
+            const _bcos = Math.cos(z._beamSweepAngle), _bsin = Math.sin(z._beamSweepAngle);
+            // Perpendicular direction for drift
+            const _bperpX = -_bsin, _bperpY = _bcos;
             if (gameTime % 2 === 0) {
-              const _bLen = z._beamLen || 200;
-              const _bcos = Math.cos(z._beamSweepAngle), _bsin = Math.sin(z._beamSweepAngle);
-              // Impact sparks at the wall
+              // Impact sparks at the wall hit point
               const _hx = z.x + _bcos * _bLen, _hy = z.y + _bsin * _bLen;
-              for (let _sp = 0; _sp < 3; _sp++) {
-                const _sa = Math.random() * Math.PI * 2, _ss = 1 + Math.random() * 3;
+              for (let _sp = 0; _sp < 4; _sp++) {
+                const _sa = Math.random() * Math.PI * 2, _ss = 1 + Math.random() * 4;
                 particles.push({ x: _hx, y: _hy, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
-                  life: 10, maxLife: 10, size: 2, color: '#f44', type: 'spark' });
+                  life: 12, maxLife: 12, size: 2 + Math.random(), color: Math.random()<0.5?'#f44':'#faa', type: 'spark' });
               }
-              // Scattered sparks along the beam
-              const _bd = 40 + Math.random() * (_bLen - 60);
-              particles.push({ x: z.x + _bcos*_bd, y: z.y + _bsin*_bd,
-                vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2,
-                life: 8, maxLife: 8, size: 1.5, color: '#faa', type: 'spark' });
+              // Light particles drifting off the beam along its length (3-4 per frame)
+              for (let _lp = 0; _lp < 3; _lp++) {
+                const _ld = 20 + Math.random() * (_bLen - 30);
+                const _drift = (Math.random() - 0.5) * 3;
+                particles.push({
+                  x: z.x + _bcos * _ld + _bperpX * (Math.random()-0.5) * 8,
+                  y: z.y + _bsin * _ld + _bperpY * (Math.random()-0.5) * 8,
+                  vx: _bperpX * _drift, vy: _bperpY * _drift,
+                  life: 10 + Math.floor(Math.random()*6), maxLife: 16,
+                  size: 1 + Math.random(), color: Math.random()<0.3?'#fff':'#f88', type: 'spark' });
+              }
             }
             // Damage: raycast-limited range
             if(isHost&&gameTime%4===0){
