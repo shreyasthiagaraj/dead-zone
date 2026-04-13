@@ -263,6 +263,7 @@ body.mobile #mobile-buttons { display: block; }
 @keyframes scanline-flicker { 0%,100%{opacity:0.03} 50%{opacity:0.08} }
 #shop-screen { opacity:0; transition:opacity 0.5s ease-out; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 #shop-screen.visible { opacity:1; }
+#mods-panel.visible { opacity:1; }
 .shop-card-wrap { opacity:0; transform:translateY(20px); transition:opacity 0.3s ease-out, transform 0.3s ease-out; }
 .shop-card-wrap.card-in { opacity:1; transform:translateY(0); }
 /* XP bar above score chip */
@@ -328,9 +329,15 @@ body.mobile #mobile-buttons { display: block; }
 <button id="mods-badge" style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(60px + env(safe-area-inset-right));z-index:21;display:none;align-items:center;gap:5px;padding:5px 12px;background:rgba(3,6,14,0.75);border:1.5px solid #0ff4;border-radius:8px;color:#0ff;font-family:'Courier New',monospace;font-size:12px;font-weight:bold;letter-spacing:1px;cursor:pointer;-webkit-tap-highlight-color:transparent;text-shadow:0 0 6px rgba(0,255,255,0.4);box-shadow:0 0 8px rgba(0,255,255,0.12)">
   <span style="font-size:14px">⚙</span><span id="mods-badge-count">0</span>
 </button>
-<div id="mods-panel" style="display:none;position:fixed;top:calc(44px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));z-index:22;max-width:220px;max-height:60vh;overflow-y:auto;background:rgba(3,6,14,0.92);border:1.5px solid #0ff4;border-radius:10px;padding:10px;font-family:'Courier New',monospace;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);box-shadow:0 0 16px rgba(0,255,255,0.15)">
-  <div style="color:#0ff;font-size:10px;letter-spacing:2px;margin-bottom:8px;text-align:center;opacity:0.7">EQUIPPED MODS</div>
-  <div id="mods-panel-list"></div>
+<div id="mods-panel" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:58;background:rgba(3,3,12,0.85);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box;opacity:0;transition:opacity 0.4s ease-out">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:10px;max-width:500px;width:100%">
+    <div style="width:100%;border-bottom:1px solid rgba(0,255,255,0.2);padding-bottom:8px;text-align:center">
+      <div style="color:#0ff;font-size:10px;letter-spacing:3px;opacity:0.6">REVENANT LOADOUT</div>
+      <div style="color:#fff;font-size:18px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 10px #0ff;margin-top:4px">EQUIPPED MODS</div>
+    </div>
+    <div id="mods-panel-list" style="width:100%;max-height:55vh;overflow-y:auto;padding:4px 0"></div>
+    <button class="menu-btn" id="btn-mods-close" style="padding:9px 28px;font-size:12px;letter-spacing:2px;margin-top:6px">CLOSE</button>
+  </div>
 </div>
 <div id="streak-hud" style="display:none"></div>
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
@@ -5135,37 +5142,53 @@ addBtn('btn-menu', () => { togglePauseMenu(); });
 addBtn('btn-resume', () => { togglePauseMenu(); });
 addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
 addBtn('btn-shop-leave', () => { closeShop(); });
-// Mods badge: tap to toggle the equipped mods panel
+// Mods badge: tap to open full-screen equipped mods view (pauses the game)
+let _modsViewOpen = false;
 addBtn('mods-badge', () => {
   const panel = document.getElementById('mods-panel');
   if (!panel) return;
-  const isOpen = panel.style.display === 'block';
-  if (isOpen) {
-    panel.style.display = 'none';
-    return;
-  }
+  if (_modsViewOpen) { _closeModsView(); return; }
+  _modsViewOpen = true;
+  if (gameState === 'playing') gameState = 'mods_view';
+  canvas.classList.add('focus-back');
   // Build the panel content
   const list = document.getElementById('mods-panel-list');
   if (!list) return;
   let html = '';
+  const _modEntries = [];
   for (const id in runUpgrades) {
     const n = runUpgrades[id]; if (!n) continue;
     const u = _UPGRADE_BY_ID[id]; if (!u) continue;
-    html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid rgba(255,255,255,0.06)">
-      <span style="font-size:16px;color:${u.color};text-shadow:0 0 6px ${u.color};min-width:22px;text-align:center">${u.icon}</span>
-      <div style="flex:1;min-width:0">
-        <div style="color:${u.color};font-size:10px;font-weight:bold;letter-spacing:1px">${u.name}${n>1?' ×'+n:''}</div>
-        <div style="color:#889;font-size:8px;line-height:1.3">${u.desc}</div>
-      </div>
-    </div>`;
+    _modEntries.push({ u, n });
   }
-  if (!html) html = '<div style="color:#556;font-size:10px;text-align:center;padding:12px">No mods equipped</div>';
+  if (_modEntries.length === 0) {
+    html = '<div style="color:#556;font-size:11px;text-align:center;padding:20px">No mods equipped yet</div>';
+  } else {
+    html = `<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center">`;
+    for (const { u, n } of _modEntries) {
+      html += `<div style="width:140px;padding:10px 8px;border:1.5px solid ${u.color}55;border-radius:8px;background:rgba(6,8,16,0.95);display:flex;flex-direction:column;align-items:center;gap:4px">
+        <div style="font-size:22px;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
+        <div style="font-size:10px;font-weight:bold;letter-spacing:1px;color:${u.color};text-align:center">${u.name}${n>1?' ×'+n:''}</div>
+        <div style="font-size:8px;color:#889;line-height:1.3;text-align:center">${u.desc}</div>
+      </div>`;
+    }
+    html += '</div>';
+  }
   list.innerHTML = html;
-  panel.style.display = 'block';
-  // Auto-close after 4 seconds
-  clearTimeout(panel._closeTimer);
-  panel._closeTimer = setTimeout(() => { panel.style.display = 'none'; }, 4000);
+  panel.style.display = 'flex';
+  panel.classList.remove('visible');
+  void panel.offsetWidth;
+  panel.classList.add('visible');
 });
+function _closeModsView() {
+  const panel = document.getElementById('mods-panel');
+  if (panel) { panel.classList.remove('visible'); setTimeout(() => { panel.style.display = 'none'; }, 400); }
+  canvas.classList.remove('focus-back');
+  if (gameState === 'mods_view') gameState = 'playing';
+  _modsViewOpen = false;
+}
+// Close button inside the panel
+addBtn('btn-mods-close', () => { _closeModsView(); });
 addBtn('btn-shop-confirm', () => { confirmShopCard(); });
 addBtn('btn-quit-game', () => {
   document.getElementById('pause-screen').style.display = 'none';
@@ -8756,7 +8779,7 @@ function update() {
             if(z._beamTimer>90){z._beamState='fire';z._beamTimer=0;}
           } else if(z._beamState==='fire'){
             z.vx=0;z.vy=0;z._beamTimer++;
-            z._beamSweepAngle += z._beamSweepDir * 0.008; // nerfed from 0.02 — much slower sweep
+            z._beamSweepAngle += z._beamSweepDir * 0.004; // very slow sweep
             z.angle=z._beamSweepAngle;
             // Beam sound: continuous hum while firing (re-trigger every 20 frames)
             if (z._beamTimer % 20 === 1) {
@@ -9541,7 +9564,7 @@ function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
-  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying') { renderMenuBackground(); renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop') { renderMenuBackground(); renderMinimap(); return; }
   // Cache nearest-zombie distance for the local player — used by the close-range vignette
   {
     _playerNearestZombieDist = Infinity;
