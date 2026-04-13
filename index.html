@@ -3608,9 +3608,26 @@ let masterGain = null;
 let sfxBus = null;
 let musicBus = null;
 
+// iOS silent switch bypass: a tiny silent HTML5 audio element played on first
+// user interaction switches Safari to "media playback" audio category, which
+// ignores the hardware silent/mute switch. Without this, Web Audio API is
+// muted when the phone is in silent mode.
+let _iosSilentBypassed = false;
+function _bypassIOSSilentSwitch() {
+  if (_iosSilentBypassed) return;
+  _iosSilentBypassed = true;
+  try {
+    // Create a tiny silent WAV as a data URI and play it
+    const silentDataURI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    const a = new Audio(silentDataURI);
+    a.setAttribute('playsinline', '');
+    a.play().catch(() => {});
+  } catch (e) {}
+}
+
 function initAudio() {
+  _bypassIOSSilentSwitch();
   if (audioCtx) {
-    // iOS may suspend AudioContext — resume on each user interaction
     if (audioCtx.state === 'suspended') audioCtx.resume();
     return;
   }
