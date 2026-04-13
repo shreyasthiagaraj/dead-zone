@@ -10972,16 +10972,38 @@ function render() {
     ctx.restore();
     // Body (not rotated with gun)
     ctx.save();ctx.translate(p.x,p.y);
-    if(p.invincible>0&&Math.floor(p.invincible/50)%2===0)ctx.globalAlpha=0.5;
+    const _isDashing = p.dashTimer > 100 || (p._dashFrames && p._dashFrames > 0);
+    if(p.invincible>0&&Math.floor(p.invincible/50)%2===0&&!_isDashing)ctx.globalAlpha=0.5;
+    // ---- DASH DISTORTION: compressed + glitched body during dash ----
+    if (_isDashing) {
+      // Stretch in dash direction, compress perpendicular — looks like a speed blur
+      const _dAng = p.dashAngle || p.angle || 0;
+      ctx.rotate(_dAng);
+      ctx.scale(1.4, 0.6); // elongated in movement direction
+      ctx.rotate(-_dAng);
+      // Rapid flicker — body phase-shifts between visible and ghostly
+      ctx.globalAlpha = 0.4 + Math.random() * 0.4;
+    }
     // Element tint: player outline shifts color when element is active
     const _elemColor = (p===getLocalPlayer()&&activeElement) ? (activeElement.id==='fire'?'#f80':activeElement.id==='ice'?'#4ef':activeElement.id==='lightning'?'#eef':null) : null;
     const _elemId = (p===getLocalPlayer()&&activeElement) ? activeElement.id : null;
     const _pc=p.damageFlash>0?'#f44':(_elemColor||p.color);
-    ctx.shadowColor=_pc;ctx.shadowBlur=_elemColor?20:15;
-    ctx.fillStyle=_pc;ctx.globalAlpha=_elemColor?0.18:0.12;ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS+(_elemColor?5:3),0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=p.invincible>0&&Math.floor(p.invincible/50)%2===0?0.5:1;
+    // Dash override: body glows bright cyan (or element color) during dash
+    const _dashColor = _isDashing ? '#0ff' : null;
+    const _bodyColor = _dashColor || _pc;
+    ctx.shadowColor=_bodyColor;ctx.shadowBlur=_isDashing?30:(_elemColor?20:15);
+    ctx.fillStyle=_bodyColor;ctx.globalAlpha=_isDashing?0.3:(_elemColor?0.18:0.12);ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS+(_isDashing?8:(_elemColor?5:3)),0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=_isDashing?(0.4+Math.random()*0.4):(p.invincible>0&&Math.floor(p.invincible/50)%2===0?0.5:1);
     ctx.fillStyle='#0a0a12';ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle=_pc;ctx.lineWidth=_elemColor?3:2.5;ctx.stroke();ctx.shadowBlur=0;
+    ctx.strokeStyle=_bodyColor;ctx.lineWidth=_isDashing?3:(_elemColor?3:2.5);ctx.stroke();ctx.shadowBlur=0;
+    // Dash: chromatic split copies of the body (offset left/right)
+    if (_isDashing) {
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = '#0ff'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(-3, 0, PLAYER_RADIUS, 0, Math.PI*2); ctx.stroke();
+      ctx.strokeStyle = '#f0f';
+      ctx.beginPath(); ctx.arc(3, 0, PLAYER_RADIUS, 0, Math.PI*2); ctx.stroke();
+    }
     // Element-specific visual effects
     if(_elemId==='lightning'){
       // Crackling electric arcs around body
