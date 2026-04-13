@@ -531,8 +531,8 @@ body.mobile #mobile-buttons { display: block; }
     </div>
     <!-- Bottom action bar: small DISCONNECT + prominent COMPILE MOD -->
     <div style="display:flex;flex-direction:row;gap:14px;margin-top:10px;width:100%;align-items:center;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px">
-      <button id="btn-shop-leave" style="padding:6px 14px;font-size:9px;letter-spacing:1px;font-family:'Courier New',monospace;background:none;border:1px solid #f44;border-radius:6px;color:#f44;cursor:pointer;opacity:0.7">SKIP</button>
-      <button class="menu-btn success" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none">COMPILE MOD</button>
+      <button id="btn-shop-leave" style="padding:10px 32px;font-size:13px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15);min-width:160px">SKIP</button>
+      <button class="menu-btn success" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:160px">COMPILE MOD</button>
     </div>
   </div>
 </div>
@@ -1824,10 +1824,26 @@ function _anyShopChestActive() {
   return false;
 }
 function spawnShopChest(x, y) {
+  // Ensure the terminal doesn't spawn on an obstacle — retry nearby positions
+  const _gx = Math.floor(x / CELL_SIZE), _gy = Math.floor(y / CELL_SIZE);
+  if (!dungeonGrid[_gy] || !dungeonGrid[_gy][_gx]) {
+    // Try offsets to find walkable ground
+    const _offsets = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[2,0],[0,2]];
+    let found = false;
+    for (const [ox, oy] of _offsets) {
+      const nx = _gx + ox, ny = _gy + oy;
+      if (ny >= 0 && ny < GRID_H && nx >= 0 && nx < GRID_W && dungeonGrid[ny] && dungeonGrid[ny][nx]) {
+        x = nx * CELL_SIZE + CELL_SIZE / 2;
+        y = ny * CELL_SIZE + CELL_SIZE / 2;
+        found = true; break;
+      }
+    }
+    if (!found) return; // nowhere to place it — skip this shop
+  }
   barrels.push({
     x, y,
     radius: 22,
-    hp: 9999, maxHp: 9999, // immune to damage (also skipped in barrel collision)
+    hp: 9999, maxHp: 9999,
     _chest: true,
     _shopChest: true,
     _content: { type: '_shop_entry' },
@@ -9857,18 +9873,30 @@ function render() {
       const scale = 0.3 + easedT * 0.7;
       const pulse = 0.7 + Math.sin(performance.now() * 0.005) * 0.25;
       const _t = performance.now();
-      // Cyan ambient glow
-      ctx.globalAlpha = 0.25 * pulse * easedT;
-      ctx.shadowColor = '#0ff'; ctx.shadowBlur = 40;
+      // Large pulsing ground glow — visible from across the room
+      ctx.globalAlpha = 0.18 * pulse * easedT;
+      ctx.shadowColor = '#0ff'; ctx.shadowBlur = 80;
       ctx.fillStyle = '#0ff';
-      ctx.beginPath(); ctx.arc(0, 0, (br.radius + 20) * scale, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, (br.radius + 50) * scale, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
-      // Vertical data beam from above
-      const beamH = 300 * easedT;
+      // Bright inner glow ring
+      ctx.globalAlpha = 0.35 * pulse * easedT;
+      ctx.shadowColor = '#0ff'; ctx.shadowBlur = 30;
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath(); ctx.arc(0, 0, (br.radius + 24) * scale, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      // Pulsing outer ring outline
+      ctx.globalAlpha = 0.5 * pulse * easedT;
+      ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2;
+      ctx.shadowColor = '#0ff'; ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.arc(0, 0, (br.radius + 40) * scale, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur = 0;
+      // Vertical data beam from above — taller, brighter
+      const beamH = 500 * easedT;
       if (easedT > 0.3) {
         const _bgrd = ctx.createLinearGradient(0, -beamH, 0, 5);
         _bgrd.addColorStop(0, 'rgba(0,255,255,0)');
-        _bgrd.addColorStop(0.8, `rgba(0,255,255,${0.12 * pulse})`);
+        _bgrd.addColorStop(0.6, `rgba(0,255,255,${0.15 * pulse})`);
         _bgrd.addColorStop(1, `rgba(0,255,255,${0.25 * pulse})`);
         ctx.fillStyle = _bgrd;
         ctx.fillRect(-10 * scale, -beamH, 20 * scale, beamH + 5);
