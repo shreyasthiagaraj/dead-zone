@@ -6819,39 +6819,20 @@ function fireWeaponForPlayer(p) {
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  // Triple shot: 3 bullets in a spread
+  // Shot count: base 1 + Wide Spread extra projectiles + Triple power-up
   const isTriple = hasPowerUp('triple');
-  const _multiExtra = (p === getLocalPlayer() && runMods) ? (runMods.multiShot || 0) : 0;
-  const shotCount = (isTriple ? 3 : 1) + _multiExtra;
+  const _wideExtra = gun.extraProjectiles || 0;
+  const shotCount = (isTriple ? 3 : 1) + _wideExtra;
   if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
-  // Wind: bullets pierce more and fly faster (slipstream)
-  const _windActive = activeElement?.id === 'wind';
-  const _windPierceBonus = _windActive ? 3 : 0;
-  const _windSpeedMult = _windActive ? 1.3 : 1;
-  // Overcharge: every Nth shot fires at 3x damage (local player only)
-  let _overchargeShot = false;
-  if (p === getLocalPlayer() && runMods && runMods.overchargeEvery > 0) {
-    _overchargeCounter++;
-    if (_overchargeCounter >= runMods.overchargeEvery) {
-      _overchargeCounter = 0;
-      _overchargeShot = true;
-    }
-  }
   for (let si = 0; si < shotCount; si++) {
-    const _isMultiExtra = si >= (isTriple ? 3 : 1); // multi-shot extra bullets
-    const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.15) : 0;
+    const _isWideExtra = si >= (isTriple ? 3 : 1);
+    const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.18) : 0;
     const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
     const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
     let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage;
-    if (_isMultiExtra) dmg = Math.floor(gun.damage * 0.6); // multi-shot: 60% damage
-    if (playerHasPowerUp(p, 'rage')) dmg *= 2;
-    // Post-dash rider: Predator Round damage boost
-    if (p === getLocalPlayer() && p._postDashTimer > 0 && runMods && runMods.predatorRound > 0) {
-      dmg = Math.floor(dmg * (1 + (runMods.predatorRound >= 2 ? 0.6 : 0.4)));
-    }
+    if (_isWideExtra) dmg = Math.floor(gun.damage * (gun.wideSpreadDmgMult || 0.7));
+    // No base crit — crit is conditional only (applied at hit time)
     let isCrit = false;
-    if (Math.random() < 0.05) { dmg *= 2; isCrit = true; }
-    if (_overchargeShot) { dmg *= 3; isCrit = true; }
     const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
     const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize;
     // ---- VISUAL SCALING from card stacks ----
@@ -8151,11 +8132,17 @@ function dropZombieLoot(z) {
   // Item drop roll — health / ammo / power-up / element. Rare on normals,
   // common on elites, guaranteed on bosses. Replaces chest-based spawns.
   if (isHost) maybeDropPickup(z);
-  // Vampirism: heal local player per kill
+  // Recovery Loop: heal on elite/boss kill (milestone sustain)
   const mods = runMods || {};
   const lp = getLocalPlayer();
-  if (lp && lp.alive && mods.hpPerKill > 0) {
-    lp.hp = Math.min(lp.maxHp, lp.hp + mods.hpPerKill);
+  if (lp && lp.alive && mods.recoveryLoop > 0) {
+    const isElite = z.boss || z.type === 'tank' || z.type === 'brute' || z.type === 'sniper' || z.type === 'shielder' || z.type === 'splitter';
+    if (isElite) {
+      const heal = mods.recoveryLoop >= 2 ? 15 : 10;
+      lp.hp = Math.min(lp.maxHp, lp.hp + heal);
+      addFloatingText(lp.x, lp.y - 20, '+' + heal + ' HP', '#4f4');
+      for(let hi=0;hi<6;hi++){const ha=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ha)*12,y:lp.y+Math.sin(ha)*12,vx:Math.cos(ha)*1,vy:-1.5,life:14,maxLife:14,size:2,color:'#4f4',type:'spark'});}
+    }
   }
   // Death Explosion upgrade (blast mods scale the radius)
   if (isHost && mods.deathExplosion > 0 && !z._exploded) {
@@ -8360,13 +8347,14 @@ function damagePlayerObj(p,damage) {
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);runStats.damageTaken+=damage;}
   if(p.hp<=0){
-    // Second Chance upgrade (run-scoped, one use): revive at 50% HP
-    if (p === getLocalPlayer() && runMods && runMods.revive && !p._revivedThisRun) {
-      p._revivedThisRun = true;
-      runMods.revive = false; // consume
-      p.hp = Math.floor(p.maxHp * 0.5); p.invincible = 1800; p.damageFlash = 30;
-      addFloatingText(p.x, p.y - 30, 'SECOND CHANCE!', '#0f0'); screenShake.intensity = 18;
-      for (let k = 0; k < 30; k++) { const a = Math.random()*Math.PI*2, s = 3+Math.random()*5; particles.push({x:p.x,y:p.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:28+Math.random()*15,maxLife:43,size:3+Math.random()*3,color:Math.random()<0.5?'#0f0':'#fff',type:'spark'}); }
+    // FAIL SAFE: survive lethal damage once per run with 1 HP + 30 barrier
+    if (p === getLocalPlayer() && runMods && runMods.failSafe && !p._failSafeUsed) {
+      p._failSafeUsed = true;
+      runMods.failSafe = false;
+      p.hp = 1; p.barrier = (p.barrier || 0) + 30; p.invincible = 1800; p.damageFlash = 30;
+      addFloatingText(p.x, p.y - 30, 'FAIL SAFE!', '#0f0'); screenShake.intensity = 20;
+      triggerGlitchSurge(0.5, 40);
+      for (let k = 0; k < 40; k++) { const a = Math.random()*Math.PI*2, s = 3+Math.random()*6; particles.push({x:p.x,y:p.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*15,maxLife:45,size:3+Math.random()*4,color:Math.random()<0.5?'#0f0':'#fff',type:'spark'}); }
       return;
     }
     // Second Wind perk: revive once (works for any player with the perk)
@@ -8835,8 +8823,19 @@ function update() {
 
     // Post-dash rider timer decay
     if (lp._postDashTimer > 0) lp._postDashTimer--;
-    // Barrier decay: 1 HP per second
-    if (lp.barrier > 0 && gameTime % 60 === 0) lp.barrier = Math.max(0, lp.barrier - 1);
+    // Barrier decay: 2 HP per second
+    if (lp.barrier > 0 && gameTime % 30 === 0) lp.barrier = Math.max(0, lp.barrier - 1);
+    if (lp.barrier > 50) lp.barrier = 50; // cap
+    // Emergency Buffer: grant barrier when below 25% HP (once per section)
+    const _em = runMods || {};
+    if (_em.emergencyBuffer > 0 && !lp._emergencyUsed && lp.hp > 0 && lp.hp < lp.maxHp * 0.25) {
+      lp._emergencyUsed = true;
+      const _ebAmount = _em.emergencyBuffer >= 2 ? 30 : 20;
+      lp.barrier = (lp.barrier || 0) + _ebAmount;
+      addFloatingText(lp.x, lp.y - 30, 'EMERGENCY BUFFER', '#ff4');
+      for(let bi=0;bi<12;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*20,y:lp.y+Math.sin(ba)*20,vx:Math.cos(ba)*2,vy:-2,life:16,maxLife:16,size:3,color:'#ff4',type:'spark'});}
+      screenShake.intensity=Math.max(screenShake.intensity,4);
+    }
     // Compromised timer decay on all zombies
     for (const _cz of zombies) {
       if (_cz._compromised && _cz._compromisedTimer > 0) { _cz._compromisedTimer--; if (_cz._compromisedTimer <= 0) _cz._compromised = false; }
