@@ -1167,6 +1167,7 @@ function getScaledGun() {
     bulletSize: BASE_GUN.bulletSize * sizeMult,
     knockback: BASE_GUN.knockback,
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
+    bounceCount: m.bounceCount || 0,
     bulletColor,
   };
 }
@@ -1198,15 +1199,15 @@ const UPGRADE_POOL = [
   { id:'hollow',     name:'HOLLOW POINTS',  desc:'+25% dmg vs hurt enemies (<50%)', flavor:'exploits already-failing processes',                        rarity:'rare',      max:4, icon:'◎',  color:'#f60' },
   { id:'overcharge', name:'OVERCHARGE',     desc:'Every 6th shot deals 3x damage',  flavor:'manual capacitor discharge. timed.',                        rarity:'rare',      max:3, icon:'⫸',  color:'#ff8' },
   // Bullet elements — rare, stack up to 4 levels
-  { id:'firebul',    name:'FIRE BULLETS',   desc:'Chance to ignite targets',        flavor:'thermal throttle exploit — they cook from the inside',      rarity:'rare',      max:4, icon:'🜂',  color:'#f80' },
-  { id:'icebul',     name:'ICE BULLETS',    desc:'Chance to slow & freeze targets', flavor:'clock-cycle freeze. time slows for the target',             rarity:'rare',      max:4, icon:'❄',  color:'#8ef' },
-  { id:'chainbul',   name:'CHAIN BULLETS',  desc:'Chance to chain to nearest',      flavor:'shared-bus signal jumps between nodes',                     rarity:'rare',      max:4, icon:'⚡',  color:'#4ff' },
-  { id:'windbul',    name:'WIND BULLETS',   desc:'+1 pierce, +15% bullet speed',    flavor:'priority hack. your packets beat theirs to the wire',       rarity:'rare',      max:4, icon:'💨', color:'#cef' },
+  { id:'firebul',    name:'THERMAL ROUNDS', desc:'Chance to ignite targets',        flavor:'thermal throttle exploit — they cook from the inside',      rarity:'rare',      max:4, icon:'🜂',  color:'#f80' },
+  { id:'icebul',     name:'CRYO ROUNDS',    desc:'Chance to slow & freeze targets', flavor:'clock-cycle freeze. time slows for the target',             rarity:'rare',      max:4, icon:'❄',  color:'#8ef' },
+  { id:'chainbul',   name:'ARC ROUNDS',     desc:'Chance to chain to nearest',      flavor:'shared-bus signal jumps between nodes',                     rarity:'rare',      max:4, icon:'⚡',  color:'#4ff' },
+  { id:'windbul',    name:'PULSE ROUNDS',   desc:'+1 pierce, +15% bullet speed',    flavor:'priority hack. your packets beat theirs to the wire',       rarity:'rare',      max:4, icon:'💨', color:'#cef' },
   // Dash element trails — epic, stack up to 3 levels. Leave elemental effects in the dash's wake.
-  { id:'firesmash',  name:'FLAME TRAIL',    desc:'Dash ignites enemies in its wake', flavor:'exhaust ports vent coolant fire across the path',          rarity:'epic',      max:3, icon:'🜂', color:'#f60' },
-  { id:'icesmash',   name:'FROST TRAIL',    desc:'Dash freezes enemies in its wake', flavor:'thermal sinks crash the clock of everything you pass',     rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
-  { id:'chainsmash', name:'STORM TRAIL',    desc:'Dash shocks enemies in its wake',  flavor:'discharge arcs off your hull — nothing grounded survives', rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
-  { id:'windsmash',  name:'GALE TRAIL',     desc:'Dash staggers enemies in its wake',flavor:'pressure wake flings them — their packets go nowhere',     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
+  { id:'firesmash',  name:'THERMAL WAKE',   desc:'Dash ignites enemies in its wake', flavor:'exhaust ports vent coolant fire across the path',          rarity:'epic',      max:3, icon:'🜂', color:'#f60' },
+  { id:'icesmash',   name:'CRYO WAKE',      desc:'Dash freezes enemies in its wake', flavor:'cryogenic sinks crash the clock of everything you pass',   rarity:'epic',      max:3, icon:'❆',  color:'#6df' },
+  { id:'chainsmash', name:'ARC WAKE',       desc:'Dash shocks enemies in its wake',  flavor:'discharge arcs off your hull — nothing grounded survives', rarity:'epic',      max:3, icon:'⚡',  color:'#4ff' },
+  { id:'windsmash',  name:'PULSE WAKE',     desc:'Dash staggers enemies in its wake',flavor:'pressure wake flings them — their packets go nowhere',     rarity:'epic',      max:3, icon:'🌀', color:'#ace' },
   // Dash shockwave — triggers a blast at dash end position. Combines with trail elements above.
   { id:'shockdash',  name:'SHOCKWAVE DASH', desc:'Dash ends in a radial knockback wave', flavor:'deceleration releases stored kinetic as an outward pulse', rarity:'rare', max:3, icon:'◈',  color:'#4af' },
   // Area / orbital — epic
@@ -1228,6 +1229,11 @@ const UPGRADE_POOL = [
   { id:'revive',     name:'SECOND CHANCE',  desc:'Revive once with 50% HP',         flavor:'one-time emergency rollback. use wisely.',                  rarity:'legendary', max:1, icon:'☥',  color:'#0f0' },
   { id:'berserk',    name:'BERSERKER',      desc:'+60% dmg, -25% max HP',           flavor:'manual overclock. fragile but furious.',                    rarity:'legendary', max:1, icon:'☠',  color:'#f00' },
   { id:'frag',       name:'FRAGMENTATION',  desc:'Bullets split into 2 on hit',     flavor:'bullet fragmentation payload. splits on impact.',           rarity:'legendary', max:1, icon:'✳',  color:'#f4f' },
+  // New mods — build diversity
+  { id:'ricochet',   name:'RICOCHET',       desc:'Bullets bounce off walls',        flavor:'reflection protocol — walls become weapons',                rarity:'rare',      max:3, icon:'⟐',  color:'#adf' },
+  { id:'chainreact', name:'CHAIN REACTION', desc:'Death explosions chain to kills', flavor:'cascading failure. one crash triggers the next.',           rarity:'epic',      max:3, icon:'⛓',  color:'#f80' },
+  { id:'multi',      name:'MULTI-SHOT',     desc:'+1 bullet per shot (60% dmg)',    flavor:'packet duplication. more of everything.',                   rarity:'epic',      max:2, icon:'⫸',  color:'#fa4' },
+  { id:'siphon',     name:'SIPHON',         desc:'Store 2% of dmg dealt as HP',     flavor:'leeching bandwidth. every hit restores a fragment of you.', rarity:'rare',      max:3, icon:'⌽',  color:'#f4a' },
 ];
 
 const _UPGRADE_BY_ID = Object.fromEntries(UPGRADE_POOL.map(u => [u.id, u]));
@@ -1256,6 +1262,7 @@ function rebuildRunMods() {
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     maxHpBonus: 0, maxHpPenalty: 0,
     frag: false, ghostBullets: false, revive: false, berserk: false,
+    bounceCount: 0, chainReaction: 0, multiShot: 0, siphonRate: 0,
   };
   for (const id in runUpgrades) {
     const n = runUpgrades[id];
@@ -1295,6 +1302,11 @@ function rebuildRunMods() {
       case 'revive':     m.revive = true; break;
       case 'berserk':    m.damageMult += 0.60; m.maxHpPenalty += 0.25; m.berserk = true; break;
       case 'frag':       m.frag = true; break;
+      // New mods
+      case 'ricochet':   m.bounceCount   += n; break;
+      case 'chainreact': m.chainReaction += n; break;
+      case 'multi':      m.multiShot     += n; break;
+      case 'siphon':     m.siphonRate    += 0.02 * n; break;
     }
   }
   // Clamp crit/dmg reduction caps
@@ -2910,10 +2922,10 @@ function updateDescent() {
 
 // ---- ELEMENT ZONES ----
 const ELEMENT_TYPES = [
-  { id: 'fire',      name: 'FIRE',      color: '#f80', icon: '🔥' },
-  { id: 'ice',       name: 'ICE',       color: '#aef', icon: '🧊' },
-  { id: 'lightning', name: 'LIGHTNING', color: '#4ff', icon: '⚡' },
-  { id: 'wind',      name: 'WIND',      color: '#cef', icon: '💨' },
+  { id: 'fire',      name: 'THERMAL',   color: '#f80', icon: '🔥' },
+  { id: 'ice',       name: 'CRYO',      color: '#aef', icon: '🧊' },
+  { id: 'lightning', name: 'ARC',       color: '#4ff', icon: '⚡' },
+  { id: 'wind',      name: 'PULSE',     color: '#cef', icon: '💨' },
 ];
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
@@ -5547,7 +5559,7 @@ const LORE_LIST = [
   },
   {
     key: 'mods', name: 'MODS', color: '#fa0', icon: '⚙',
-    desc: 'Code patches for the Disrupter, and for yourself. Three kinds: permanent upgrades forged into your core at the Forge (they persist across instances); run mods purchased at the Mod Terminal (they stack through the end of the current run); and patches dropped by admin processes in the world (brief, desperate, loud). Elements — fire, ice, lightning, wind — are all mods. Rage, multipath, sustained beam — all mods. Everything you pick up or buy is a mod. The more you compile, the more of the sim you can exploit at once.'
+    desc: 'Code patches for the Disrupter, and for yourself. Three kinds: permanent upgrades forged into your core at the Forge (they persist across instances); run mods purchased at the Mod Terminal (they stack through the end of the current run); and patches dropped by admin processes in the world (brief, desperate, loud). Elements — thermal, cryo, arc, pulse — are all mods. Rage, multipath, sustained beam — all mods. Everything you pick up or buy is a mod. The more you compile, the more of the sim you can exploit at once.'
   },
   {
     key: 'unsigned', name: 'THE UNSIGNED', color: '#f44', icon: '⌬',
@@ -6573,7 +6585,8 @@ function fireWeaponForPlayer(p) {
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   // Triple shot: 3 bullets in a spread
   const isTriple = hasPowerUp('triple');
-  const shotCount = isTriple ? 3 : 1;
+  const _multiExtra = (p === getLocalPlayer() && runMods) ? (runMods.multiShot || 0) : 0;
+  const shotCount = (isTriple ? 3 : 1) + _multiExtra;
   if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
   // Wind: bullets pierce more and fly faster (slipstream)
   const _windActive = activeElement?.id === 'wind';
@@ -6589,10 +6602,12 @@ function fireWeaponForPlayer(p) {
     }
   }
   for (let si = 0; si < shotCount; si++) {
-    const spreadOff = shotCount > 1 ? (si - 1) * 0.15 : 0;
+    const _isMultiExtra = si >= (isTriple ? 3 : 1); // multi-shot extra bullets
+    const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.15) : 0;
     const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
     const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
-    let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage; // triple: 50% damage per bullet
+    let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage;
+    if (_isMultiExtra) dmg = Math.floor(gun.damage * 0.6); // multi-shot: 60% damage
     if (playerHasPowerUp(p, 'rage')) dmg *= 2;
     let isCrit = false;
     if (Math.random() < 0.05) { dmg *= 3; isCrit = true; }
@@ -6626,7 +6641,7 @@ function fireWeaponForPlayer(p) {
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
-      _element: activeElement?.id || null, _homing: false, _bouncing: 0,
+      _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
       // Per-bullet sway: small random angular velocity, amplified quadratically with age
       _angVel: (Math.random() - 0.5) * 0.022,
     });
@@ -7909,10 +7924,41 @@ function dropZombieLoot(z) {
   if (lp && lp.alive && mods.hpPerKill > 0) {
     lp.hp = Math.min(lp.maxHp, lp.hp + mods.hpPerKill);
   }
-  // Death Explosion upgrade
+  // Death Explosion upgrade (blast mods scale the radius)
   if (isHost && mods.deathExplosion > 0 && !z._exploded) {
     z._exploded = true;
-    createExplosion(z.x, z.y, 60, mods.deathExplosion, 'player');
+    const _deRadius = Math.floor(60 * (mods.blastRadiusMult || 1));
+    createExplosion(z.x, z.y, _deRadius, mods.deathExplosion, 'player');
+    // Chain reaction: if the explosion kills other zombies, they also explode
+    if (mods.chainReaction > 0) {
+      z._chainDepth = z._chainDepth || 0;
+      if (z._chainDepth < mods.chainReaction) {
+        for (const cz of zombies) {
+          if (cz === z || cz.hp > 0 || cz._exploded) continue;
+          const cdx = cz.x-z.x, cdy = cz.y-z.y;
+          if (cdx*cdx+cdy*cdy < _deRadius*_deRadius) {
+            cz._exploded = true;
+            cz._chainDepth = z._chainDepth + 1;
+            const chainDmg = Math.floor(mods.deathExplosion * 0.6);
+            createExplosion(cz.x, cz.y, _deRadius, chainDmg, 'player');
+          }
+        }
+      }
+    }
+  }
+  // Cryo shatter: frozen enemies emit AoE frost on death (always, not just at 3+ stacks)
+  if (isHost && z._frozenTimer > 0) {
+    for (const oz of zombies) {
+      if (oz === z || oz.hp <= 0) continue;
+      const _sdx = oz.x - z.x, _sdy = oz.y - z.y;
+      if (_sdx*_sdx + _sdy*_sdy < 80*80) {
+        damageZombie(oz, 40, _sdx*0.05, _sdy*0.05);
+        oz._slowTimer = Math.max(oz._slowTimer || 0, 120);
+        oz._iceStacks = (oz._iceStacks || 0) + 1;
+      }
+    }
+    for (let _si=0;_si<12;_si++){const _sa=Math.random()*Math.PI*2,_ss=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:16,maxLife:16,size:2+Math.random()*3,color:'#aef',type:'spark'});}
+    playSound(1400, 0.06, 'square', 0.08);
   }
   // ---- QUALITATIVE STACK THRESHOLDS ----
   // At 3+ stacks of an element bullet card, zombie deaths gain a NEW behavior.
@@ -8145,6 +8191,9 @@ function update() {
     }
     {
       let moveSpeed=lp.speed;
+      // Power-up speed boosts
+      if (hasPowerUp('ghost')) moveSpeed *= 1.5;
+      if (hasPowerUp('frenzy')) moveSpeed *= 2;
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -8493,6 +8542,11 @@ function update() {
         if (gameTime % 4 === 0) { for (const ap of activePowerUps) { const pdef = POWERUP_TYPES.find(p=>p.id===ap.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} } }
     }
 
+    // Siphon bank drain: 1 HP per 3 frames (~20 HP/sec)
+    if (gameTime % 3 === 0 && lp._siphonBank > 0 && lp.hp < lp.maxHp) {
+      lp.hp = Math.min(lp.maxHp, lp.hp + 1);
+      lp._siphonBank = Math.max(0, lp._siphonBank - 1);
+    }
     // Arcade system updates
     updateStreak();
     updateElementZones();
@@ -8688,6 +8742,22 @@ function update() {
                     if (_mods.hollowPoint > 0 && z.hp < z.maxHp * 0.5) {
                       _dmg = Math.floor(_dmg * (1 + _mods.hollowPoint));
                     }
+                    // Cryo shatter: frozen enemies take 2x damage
+                    if (z._frozenTimer > 0) {
+                      _dmg = Math.floor(_dmg * 2);
+                      addFloatingText(z.x, z.y - z.radius - 16, 'SHATTER', '#aef');
+                      for(let si=0;si<8;si++){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*8,y:z.y+Math.sin(sa)*8,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:14,maxLife:14,size:2+Math.random()*3,color:'#aef',type:'spark'});}
+                      z._frozenTimer = 0; // shatter breaks the freeze
+                    }
+                    // Siphon: store fraction of damage as pending healing
+                    if (_mods.siphonRate > 0) {
+                      const _slp = getLocalPlayer();
+                      if (_slp && _slp.alive) {
+                        _slp._siphonBank = (_slp._siphonBank || 0) + _dmg * _mods.siphonRate;
+                        const cap = 30 + 20 * (runUpgrades.siphon || 0);
+                        if (_slp._siphonBank > cap) _slp._siphonBank = cap;
+                      }
+                    }
                   }
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
                   // Crits still float a magenta number — regular hits don't spam the screen.
@@ -8761,7 +8831,11 @@ function update() {
                         }
                       }
                     }
-                    // Wind: no on-hit proc — the effect is baked into pierce + velocity at fire time.
+                    // Pulse ascendant: gravity pull nearby enemies toward impact
+                    if (_mods.ascendant === 'wind') {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const pdx=oz.x-z.x,pdy=oz.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);if(pd<120&&pd>5){const pull=3*(1-pd/120);oz.vx+=(z.x-oz.x)/pd*pull;oz.vy+=(z.y-oz.y)/pd*pull;}}
+                      if(gameTime%2===0)for(let vi=0;vi<3;vi++){const va=Math.random()*Math.PI*2,vd=20+Math.random()*30;particles.push({x:z.x+Math.cos(va)*vd,y:z.y+Math.sin(va)*vd,vx:-Math.cos(va)*2,vy:-Math.sin(va)*2,life:10,maxLife:10,size:2,color:'#cef',type:'spark'});}
+                    }
                     // Fragmentation: spawn two small side bullets (no recursion)
                     if (_mods.frag && !b._frag) {
                       const ang = Math.atan2(b.vy, b.vx);
