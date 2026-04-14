@@ -29,7 +29,7 @@ body.mobile #btn-menu, body.desktop #btn-menu { display: flex; }
 #btn-menu:active { transform: scale(0.92); box-shadow: 0 0 14px rgba(0,255,255,0.6); }
 #btn-menu svg { filter: drop-shadow(0 0 4px currentColor); }
 #hp-chip { display: flex; flex-direction: column; width: 128px; padding: 6px 8px 6px 10px; background: rgba(3,6,14,0.7); border: 1px solid #0f03; border-radius: 8px; box-shadow: 0 0 6px rgba(0,255,0,0.15), inset 0 0 6px rgba(0,255,0,0.04); pointer-events: none; }
-#hp-chip .bar-bg { width: 100%; height: 6px; background: #111; border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.6); }
+#hp-chip .bar-bg { width: 100%; height: 6px; background: #111; border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.6); position: relative; }
 #hp-chip .bar { height: 100%; background: #0f0; border-radius: 3px; transition: width 0.2s, background 0.2s; box-shadow: 0 0 8px currentColor; }
 #hp-chip .hp-text { color: #0f0; font-size: 10px; margin-top: 3px; text-shadow: 0 0 4px rgba(0,255,0,0.4); letter-spacing: 1px; }
 /* score-chip removed — bits are the score now */
@@ -322,7 +322,7 @@ body.mobile #mobile-buttons { display: block; }
       <line x1="4" y1="17" x2="20" y2="17"/>
     </svg>
   </button>
-  <div id="hp-chip"><div class="bar-bg"><div class="bar" id="health-bar"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
+  <div id="hp-chip"><div class="bar-bg"><div class="bar" id="health-bar"></div><div id="barrier-bar" style="position:absolute;top:0;left:0;height:100%;background:#4ff;border-radius:3px;box-shadow:0 0 6px #4ff;opacity:0.7;width:0%;transition:width 0.2s"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
   <div id="xp-chip" title="BITS"><div class="bit-icon">◆</div><div class="xp-label" id="xp-label">0</div></div>
 </div>
 <!-- Mod count badge (top-right) + expandable panel -->
@@ -1234,6 +1234,25 @@ const UPGRADE_POOL = [
   { id:'chainreact', name:'CHAIN REACTION', desc:'Death explosions chain. +1 chain depth per level', flavor:'cascading failure. one crash triggers the next.', rarity:'epic', max:3, icon:'⛓', color:'#f80' },
   { id:'multi',      name:'MULTI-SHOT',     desc:'+1 extra bullet per level (60% dmg each)', flavor:'packet duplication. more of everything.',          rarity:'epic',      max:2, icon:'⫸',  color:'#fa4' },
   { id:'siphon',     name:'SIPHON',         desc:'+2% of damage stored as HP per level', flavor:'leeching bandwidth. every hit restores a fragment of you.', rarity:'rare', max:3, icon:'⌽', color:'#f4a' },
+  // ---- CORRUPT CLASS ----
+  { id:'corruptbul',   name:'VIRAL PAYLOAD',  desc:'15% chance to apply Corrupt per level. 5 stacks = Compromised (+50% dmg taken)', flavor:'injected malware. it eats them from the inside.', rarity:'common', max:3, icon:'☣', color:'#a4f' },
+  { id:'corruptsmash', name:'CORRUPT WAKE',   desc:'Dash applies 2 Corrupt stacks. Replaces other wakes', flavor:'your wake carries the infection.', rarity:'epic', max:3, icon:'☣', color:'#a4f' },
+  { id:'cascadefail',  name:'CASCADE FAILURE', desc:'Compromised enemies spread Corrupt on death + AoE', flavor:'one failure cascades through the network.', rarity:'rare', max:2, icon:'⚠', color:'#a4f' },
+  // ---- CLASS ENHANCEMENT ----
+  { id:'reactorbloom', name:'REACTOR BLOOM',  desc:'Overheated enemies explode on death. Lv2: bigger blast', flavor:'thermal runaway. the reactor goes critical.', rarity:'rare', max:2, icon:'✸', color:'#f80' },
+  { id:'coldsnap',     name:'COLD SNAP',      desc:'Chill slows +30% more per level. Freeze lasts +20% longer', flavor:'deep freeze. nothing moves.', rarity:'rare', max:2, icon:'❆', color:'#8ef' },
+  { id:'vectorsnap',   name:'VECTOR SNAP',    desc:'+30% dmg to staggered enemies per level', flavor:'hit them while they stumble.', rarity:'rare', max:2, icon:'◈', color:'#cef' },
+  { id:'slipstream',   name:'SLIPSTREAM',     desc:'+20% move speed for 1.5s after dash per level', flavor:'momentum carries forward.', rarity:'rare', max:2, icon:'»', color:'#0ff' },
+  // ---- POST-DASH RIDERS ----
+  { id:'predator',     name:'PREDATOR ROUND', desc:'Next 3 shots after dash deal +40% dmg. Lv2: +60%', flavor:'the first strike after repositioning hits hardest.', rarity:'rare', max:2, icon:'◆', color:'#f44' },
+  { id:'overchargedash', name:'OVERCHARGE DASH', desc:'Arc proc +30% for 1.5s after dash. Lv2: +50%', flavor:'the dash charges your arc capacitors.', rarity:'rare', max:2, icon:'⚡', color:'#4ff' },
+  { id:'shielddash',   name:'SHIELD DASH',    desc:'Gain 15 barrier after dash. Lv2: 25 barrier', flavor:'momentum converted to defense.', rarity:'rare', max:2, icon:'🛡', color:'#4ff' },
+  // ---- SYNERGY CARDS (require 2 classes) ----
+  { id:'syn_overload',     name:'OVERLOAD',          desc:'Overheated+Charged enemies discharge Arc burst when hit', flavor:'two unstable states collide.', rarity:'epic', max:1, icon:'⚡', color:'#fa4', prereqs:['firebul|firesmash','chainbul|chainsmash'] },
+  { id:'syn_thermalshock', name:'THERMAL SHOCK',     desc:'Thermal dmg to Frozen enemies causes massive AoE burst', flavor:'fire meets ice. something breaks.', rarity:'epic', max:1, icon:'✴', color:'#f84', prereqs:['firebul|firesmash','icebul|icesmash'] },
+  { id:'syn_condfreeze',   name:'CONDUCTIVE FREEZE', desc:'Arc chains travel 2x farther through Chilled/Frozen enemies', flavor:'cold conductors. current flows freely.', rarity:'epic', max:1, icon:'❄', color:'#4ef', prereqs:['icebul|icesmash','chainbul|chainsmash'] },
+  { id:'syn_stormdrive',   name:'STORM DRIVE',       desc:'After dash, Arc chain range +80% for 1.5s', flavor:'the storm follows your wake.', rarity:'epic', max:1, icon:'⚡', color:'#4af', prereqs:['chainbul|chainsmash','windbul|windsmash'] },
+  { id:'syn_faultcascade', name:'FAULT CASCADE',     desc:'Compromised enemies emit Arc pulses when damaged', flavor:'corrupted systems arc and spark.', rarity:'epic', max:1, icon:'☣', color:'#84f', prereqs:['chainbul|chainsmash','corruptbul|corruptsmash'] },
 ];
 
 const _UPGRADE_BY_ID = Object.fromEntries(UPGRADE_POOL.map(u => [u.id, u]));
@@ -1248,9 +1267,9 @@ function rebuildRunMods() {
     overchargeEvery: 0, // every Nth shot deals massive damage (0 = disabled)
     lifestealOnCrit: 0, // heal per crit
     // Bullet element levels (independent — you can stack multiple)
-    fireBulletsLv: 0, iceBulletsLv: 0, chainBulletsLv: 0, windBulletsLv: 0,
+    fireBulletsLv: 0, iceBulletsLv: 0, chainBulletsLv: 0, windBulletsLv: 0, corruptBulletsLv: 0,
     // Dash trail element levels — apply effects to enemies in the dash path
-    fireSmashLv: 0, iceSmashLv: 0, chainSmashLv: 0, windSmashLv: 0,
+    fireSmashLv: 0, iceSmashLv: 0, chainSmashLv: 0, windSmashLv: 0, corruptSmashLv: 0,
     // Shockwave dash — triggers an explosion at the dash end position
     shockDashLv: 0,
     // Ascendant: element (fire/ice/chain/wind) that has >= 3 total levels across bullets + smash
@@ -1263,6 +1282,11 @@ function rebuildRunMods() {
     maxHpBonus: 0, maxHpPenalty: 0,
     frag: false, ghostBullets: false, revive: false, berserk: false,
     bounceCount: 0, chainReaction: 0, multiShot: 0, siphonRate: 0,
+    // Corrupt & synergy & rider system
+    cascadeFailureLv: 0, reactorBloom: 0, coldSnap: 0, vectorSnap: 0,
+    predatorRound: 0, overchargeDash: 0, shieldDash: 0, slipstream: 0,
+    synergyOverload: false, synergyThermalShock: false, synergyConductiveFreeze: false,
+    synergyStormDrive: false, synergyFaultCascade: false,
   };
   for (const id in runUpgrades) {
     const n = runUpgrades[id];
@@ -1307,6 +1331,25 @@ function rebuildRunMods() {
       case 'chainreact': m.chainReaction += n; break;
       case 'multi':      m.multiShot     += n; break;
       case 'siphon':     m.siphonRate    += 0.02 * n; break;
+      // Corrupt class
+      case 'corruptbul':    m.corruptBulletsLv += n; break;
+      case 'corruptsmash':  m.corruptSmashLv   += n; break;
+      case 'cascadefail':   m.cascadeFailureLv += n; break;
+      // Class enhancement
+      case 'reactorbloom':  m.reactorBloom  += n; break;
+      case 'coldsnap':      m.coldSnap      += n; break;
+      case 'vectorsnap':    m.vectorSnap    += n; break;
+      case 'slipstream':    m.slipstream    += n; break;
+      // Post-dash riders
+      case 'predator':      m.predatorRound   += n; break;
+      case 'overchargedash': m.overchargeDash += n; break;
+      case 'shielddash':   m.shieldDash    += n; break;
+      // Synergies (boolean flags)
+      case 'syn_overload':     m.synergyOverload = true; break;
+      case 'syn_thermalshock': m.synergyThermalShock = true; break;
+      case 'syn_condfreeze':   m.synergyConductiveFreeze = true; break;
+      case 'syn_stormdrive':   m.synergyStormDrive = true; break;
+      case 'syn_faultcascade': m.synergyFaultCascade = true; break;
     }
   }
   // Clamp caps — damage soft-cap, crit, damage reduction
@@ -1315,26 +1358,28 @@ function rebuildRunMods() {
   if (m.dmgReduction > 0.24) m.dmgReduction = 0.24;
   // Compute ascendant — highest total element count across bullets+smash must be >= 3
   const totals = [
-    { el: 'fire',  n: m.fireBulletsLv  + m.fireSmashLv  },
-    { el: 'ice',   n: m.iceBulletsLv   + m.iceSmashLv   },
-    { el: 'chain', n: m.chainBulletsLv + m.chainSmashLv },
-    { el: 'wind',  n: m.windBulletsLv  + m.windSmashLv  },
+    { el: 'fire',    n: m.fireBulletsLv    + m.fireSmashLv    },
+    { el: 'ice',     n: m.iceBulletsLv     + m.iceSmashLv     },
+    { el: 'chain',   n: m.chainBulletsLv   + m.chainSmashLv   },
+    { el: 'wind',    n: m.windBulletsLv    + m.windSmashLv    },
+    { el: 'corrupt', n: m.corruptBulletsLv + m.corruptSmashLv },
   ];
   totals.sort((a, b) => b.n - a.n);
   m.ascendant = (totals[0].n >= 3) ? totals[0].el : null;
   // Dominant bullet element (for rendering tint)
   const bulletTotals = [
-    { el: 'fire',  n: m.fireBulletsLv  },
-    { el: 'ice',   n: m.iceBulletsLv   },
-    { el: 'chain', n: m.chainBulletsLv },
-    { el: 'wind',  n: m.windBulletsLv  },
+    { el: 'fire',    n: m.fireBulletsLv    },
+    { el: 'ice',     n: m.iceBulletsLv     },
+    { el: 'chain',   n: m.chainBulletsLv   },
+    { el: 'wind',    n: m.windBulletsLv    },
+    { el: 'corrupt', n: m.corruptBulletsLv },
   ];
   bulletTotals.sort((a, b) => b.n - a.n);
   m.dominantBullet = (bulletTotals[0].n >= 1) ? bulletTotals[0].el : null;
   runMods = m;
 }
 // Color palette for element tinting
-const _ELEM_COLOR = { fire: '#f80', ice: '#8ef', chain: '#4ff', wind: '#cef' };
+const _ELEM_COLOR = { fire: '#f80', ice: '#8ef', chain: '#4ff', wind: '#cef', corrupt: '#a4f' };
 // Counter for OVERCHARGE upgrade — advances per bullet fired
 let _overchargeCounter = 0;
 
@@ -1424,6 +1469,11 @@ function _rarityAllowed(r, cap) {
   return _RARITY_ORDER.indexOf(r) <= _RARITY_ORDER.indexOf(cap);
 }
 
+// Prereq check for synergy cards: each prereq group is "id1|id2" — player must own at least 1
+function _meetsPrereqs(u) {
+  if (!u.prereqs) return true;
+  return u.prereqs.every(group => group.split('|').some(id => (runUpgrades[id] || 0) > 0));
+}
 // Draft N unique shop cards. Weighted by rarity, filtered by unlock tier and by max stack.
 let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare guarantee
 function draftShopCards(n) {
@@ -1440,7 +1490,7 @@ function draftShopCards(n) {
     const rarePool = UPGRADE_POOL.filter(u =>
       (u.rarity === 'rare' || u.rarity === 'epic') &&
       (runUpgrades[u.id] || 0) < u.max &&
-      _rarityAllowed(u.rarity, cap)
+      _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
     );
     if (rarePool.length > 0) {
       const r = rarePool[Math.floor(Math.random() * rarePool.length)];
@@ -1452,7 +1502,7 @@ function draftShopCards(n) {
     const pool = UPGRADE_POOL.filter(u =>
       !attempted.has(u.id) &&
       (runUpgrades[u.id] || 0) < u.max &&
-      _rarityAllowed(u.rarity, cap)
+      _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
     );
     if (pool.length === 0) break;
     const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -1695,7 +1745,7 @@ function buyShopCard(upgradeId) {
     localStorage.setItem('necrowave_bits_spent', String(prevSpent + cost));
   } catch (e) {}
   // Apply the upgrade. Dash trail mods are mutually exclusive — buying one replaces the other.
-  const _dashTrailIds = ['firesmash', 'icesmash', 'chainsmash', 'windsmash'];
+  const _dashTrailIds = ['firesmash', 'icesmash', 'chainsmash', 'windsmash', 'corruptsmash'];
   if (_dashTrailIds.includes(upgradeId)) {
     for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
@@ -2924,6 +2974,7 @@ const ELEMENT_TYPES = [
   { id: 'ice',       name: 'CRYO',      color: '#aef', icon: '🧊' },
   { id: 'lightning', name: 'ARC',       color: '#4ff', icon: '⚡' },
   { id: 'wind',      name: 'PULSE',     color: '#cef', icon: '💨' },
+  { id: 'corrupt',   name: 'CORRUPT',   color: '#a4f', icon: '☣' },
 ];
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
@@ -3015,7 +3066,22 @@ function applyElementOnHit(z, damage, srcX, srcY) {
       const _ra = (_wri / 10) * Math.PI * 2;
       particles.push({ x: z.x + Math.cos(_ra) * 8, y: z.y + Math.sin(_ra) * 8, vx: Math.cos(_ra) * 5, vy: Math.sin(_ra) * 5, life: 14, maxLife: 14, size: 3, color: '#cef', type: 'spark' });
     }
+  } else if (el === 'corrupt') {
+    _applyCorruptStack(z);
   }
+}
+
+// Corrupt status: stacks build to Compromised threshold
+function _applyCorruptStack(z) {
+  z._corruptStacks = (z._corruptStacks || 0) + 1;
+  if (z._corruptStacks >= 5 && !z._compromised) {
+    z._compromised = true; z._compromisedTimer = 300; z._corruptStacks = 0;
+    addFloatingText(z.x, z.y - z.radius - 12, 'COMPROMISED', '#a4f');
+    for(let ci=0;ci<10;ci++){const ca=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(ca)*8,y:z.y+Math.sin(ca)*8,vx:Math.cos(ca)*3,vy:Math.sin(ca)*3,life:16,maxLife:16,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
+    screenShake.intensity = Math.max(screenShake.intensity, 3);
+  }
+  // Corrupt particle on each stack application
+  particles.push({x:z.x+(Math.random()-0.5)*12,y:z.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*2,vy:-1.5,life:14,maxLife:14,size:2+Math.random()*2,color:'#a4f',type:'spark'});
 }
 
 let _weaponLastFired = 0, _weaponMuzzleFlash = 0;
@@ -6651,6 +6717,10 @@ function fireWeaponForPlayer(p) {
     let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage;
     if (_isMultiExtra) dmg = Math.floor(gun.damage * 0.6); // multi-shot: 60% damage
     if (playerHasPowerUp(p, 'rage')) dmg *= 2;
+    // Post-dash rider: Predator Round damage boost
+    if (p === getLocalPlayer() && p._postDashTimer > 0 && runMods && runMods.predatorRound > 0) {
+      dmg = Math.floor(dmg * (1 + (runMods.predatorRound >= 2 ? 0.6 : 0.4)));
+    }
     let isCrit = false;
     if (Math.random() < 0.05) { dmg *= 2; isCrit = true; }
     if (_overchargeShot) { dmg *= 3; isCrit = true; }
@@ -6667,6 +6737,7 @@ function fireWeaponForPlayer(p) {
     else if (_rm.dominantBullet === 'ice')   _buildColor = '#8ef';
     else if (_rm.dominantBullet === 'chain') _buildColor = '#4ff';
     else if (_rm.dominantBullet === 'wind')  _buildColor = '#cef';
+    else if (_rm.dominantBullet === 'corrupt') _buildColor = '#a4f';
     const _finalColor = isCrit ? '#f0f' : _isMultiExtra ? '#fa8' : (elColor || _buildColor);
     const _finalSize = (isCrit ? bSize + 2 : _isMultiExtra ? bSize * 0.85 : bSize) * _sizeBoost;
     bullets.push({
@@ -6863,9 +6934,10 @@ function applyDashTrailEffects(lp) {
   const _mods = runMods || {};
   const hasFire  = _mods.fireSmashLv  > 0;
   const hasIce   = _mods.iceSmashLv   > 0;
-  const hasChain = _mods.chainSmashLv > 0;
-  const hasWind  = _mods.windSmashLv  > 0;
-  if (!hasFire && !hasIce && !hasChain && !hasWind) return;
+  const hasChain   = _mods.chainSmashLv   > 0;
+  const hasWind    = _mods.windSmashLv    > 0;
+  const hasCorrupt = _mods.corruptSmashLv > 0;
+  if (!hasFire && !hasIce && !hasChain && !hasWind && !hasCorrupt) return;
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = DASH_TRAIL_RADIUS * DASH_TRAIL_RADIUS;
   for (const z of zombies) {
@@ -6926,6 +6998,12 @@ function applyDashTrailEffects(lp) {
         particles.push({ x: z.x, y: z.y, vx: dirX*3, vy: dirY*3,
           life: 16, maxLife: 16, size: 1.5, color: '#cef', type: 'spark' });
       }
+    }
+    // CORRUPT WAKE — apply corrupt stacks
+    if (hasCorrupt) {
+      const lv = _mods.corruptSmashLv;
+      for (let cs = 0; cs < 1 + lv; cs++) _applyCorruptStack(z);
+      particles.push({ x: z.x, y: z.y, vx: (Math.random()-0.5)*2, vy: -1.5, life: 14, maxLife: 14, size: 2 + Math.random()*2, color: '#a4f', type: 'spark' });
     }
   }
 }
@@ -8032,14 +8110,30 @@ function dropZombieLoot(z) {
     screenShake.intensity = Math.max(screenShake.intensity, 6);
     playSfx('ice_hit', 0.35) || playSound(1400, 0.08, 'square', 0.1);
   }
+  // Compromised death spread: corrupt stacks spread to nearby enemies
+  if (isHost && z._compromised) {
+    const _spreadR = mods.cascadeFailureLv > 0 ? 100 : 60;
+    const _spreadStacks = mods.cascadeFailureLv > 0 ? 3 : 2;
+    for (const oz of zombies) {
+      if (oz === z || oz.hp <= 0) continue;
+      const _cdx = oz.x - z.x, _cdy = oz.y - z.y;
+      if (_cdx*_cdx + _cdy*_cdy < _spreadR*_spreadR) {
+        for (let _cs = 0; _cs < _spreadStacks; _cs++) _applyCorruptStack(oz);
+        if (mods.cascadeFailureLv > 0) damageZombie(oz, 20 + mods.cascadeFailureLv * 15, _cdx*0.03, _cdy*0.03);
+      }
+    }
+    for(let _pi=0;_pi<12;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
+  }
   // ---- QUALITATIVE STACK THRESHOLDS ----
   // At 3+ stacks of an element bullet card, zombie deaths gain a NEW behavior.
   // These are the build payoffs that make deep investment feel transformative.
   if (isHost) {
-    // FIRE 3+: burning enemies EXPLODE on death (30 dmg, 40px radius)
-    if (mods.fireBulletsLv >= 3 && z._burning > 0 && !z._exploded) {
+    // Reactor Bloom OR FIRE 3+: burning enemies EXPLODE on death
+    if ((mods.reactorBloom > 0 || mods.fireBulletsLv >= 3) && z._burning > 0 && !z._exploded) {
       z._exploded = true;
-      createExplosion(z.x, z.y, 40, 30, 'player');
+      const _bloomR = mods.reactorBloom >= 2 ? 60 : 40;
+      const _bloomD = mods.reactorBloom >= 2 ? 50 : 30;
+      createExplosion(z.x, z.y, _bloomR, _bloomD, 'player');
       for (let _fi = 0; _fi < 8; _fi++) {
         const _fa = Math.random()*Math.PI*2, _fs = 2+Math.random()*4;
         particles.push({ x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs, life: 18, maxLife: 18, size: 3+Math.random()*2, color: '#f80', type: 'explosion' });
@@ -8186,6 +8280,11 @@ function damagePlayerObj(p,damage) {
   if (p === getLocalPlayer() && runMods && runMods.dmgReduction > 0) {
     damage = damage * (1 - runMods.dmgReduction);
   }
+  // Barrier absorbs damage before HP
+  if (p.barrier > 0) {
+    if (damage <= p.barrier) { p.barrier -= damage; p.damageFlash = 6; return; }
+    damage -= p.barrier; p.barrier = 0;
+  }
   p.hp-=damage;p.damageFlash=15;p.invincible=300;
   if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);runStats.damageTaken+=damage;}
   if(p.hp<=0){
@@ -8268,6 +8367,8 @@ function update() {
       // Power-up speed boosts
       if (hasPowerUp('ghost')) moveSpeed *= 1.5;
       if (hasPowerUp('frenzy')) moveSpeed *= 2;
+      // Slipstream: speed boost after dash
+      if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -8367,9 +8468,19 @@ function update() {
       // Element trails: apply fire/ice/chain/wind effects to any zombie within the dash
       // radius this frame. Per-dash hit set prevents double-procs.
       applyDashTrailEffects(lp);
-      // On the final frame of the dash, trigger the shockwave if the upgrade is taken.
+      // On the final frame of the dash, trigger the shockwave and post-dash riders.
       if (lp._dashFrames === 0) {
         triggerShockwaveDash(lp);
+        // Post-dash rider window (90 frames = 1.5s)
+        const _rm = runMods || {};
+        if (_rm.predatorRound > 0 || _rm.overchargeDash > 0 || _rm.slipstream > 0 || _rm.synergyStormDrive) {
+          lp._postDashTimer = 90;
+        }
+        // Shield Dash: grant barrier
+        if (_rm.shieldDash > 0) {
+          lp.barrier = (lp.barrier || 0) + (_rm.shieldDash >= 2 ? 25 : 15);
+          for(let bi=0;bi<8;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*16,y:lp.y+Math.sin(ba)*16,vx:Math.cos(ba)*1.5,vy:-1,life:14,maxLife:14,size:2,color:'#4ff',type:'spark'});}
+        }
       }
     }
     lp.x+=lp.vx;lp.y+=lp.vy;
@@ -8624,6 +8735,14 @@ function update() {
         }
     }
 
+    // Post-dash rider timer decay
+    if (lp._postDashTimer > 0) lp._postDashTimer--;
+    // Barrier decay: 1 HP per second
+    if (lp.barrier > 0 && gameTime % 60 === 0) lp.barrier = Math.max(0, lp.barrier - 1);
+    // Compromised timer decay on all zombies
+    for (const _cz of zombies) {
+      if (_cz._compromised && _cz._compromisedTimer > 0) { _cz._compromisedTimer--; if (_cz._compromisedTimer <= 0) _cz._compromised = false; }
+    }
     // Siphon bank drain: 1 HP per 3 frames (~20 HP/sec)
     if (gameTime % 3 === 0 && lp._siphonBank > 0 && lp.hp < lp.maxHp) {
       lp.hp = Math.min(lp.maxHp, lp.hp + 1);
@@ -8762,6 +8881,7 @@ function update() {
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
     if(b._element==='lightning'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:6+Math.random()*4,maxLife:10,size:1.5+Math.random()*2,color:Math.random()>0.5?'#4ff':'#fff',type:'spark'});
     if(b._element==='wind'&&gameTime%3===0)particles.push({x:b.x-b.vx*0.3+(Math.random()-0.5)*4,y:b.y-b.vy*0.3+(Math.random()-0.5)*4,vx:-b.vx*0.05,vy:-b.vy*0.05,life:8,maxLife:8,size:2+Math.random()*1.5,color:'#cef',type:'spark'});
+    if(b._element==='corrupt'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:10,maxLife:10,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});
     // Homing behavior: curve toward nearest zombie
     if(b._homing&&b.owner==='player'){let bestD=300,bestZ=null;for(const z of zombies){const d=Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);if(d<bestD){bestD=d;bestZ=z;}}if(bestZ){const ta=Math.atan2(bestZ.y-b.y,bestZ.x-b.x),ba=Math.atan2(b.vy,b.vx);let da=ta-ba;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;const turn=0.08;const na=ba+da*turn;const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
     // ---- BULLET SPREAD OVER DISTANCE ----
@@ -8903,14 +9023,20 @@ function update() {
                     // Chain (lightning): jump to nearby enemies. Base chance 10% × level. Ascendant = always proc + extra jumps.
                     if (_mods.chainBulletsLv > 0) {
                       const isAsc = _mods.ascendant === 'chain';
-                      const ch = isAsc ? 1 : 0.10 * _mods.chainBulletsLv;
+                      let ch = isAsc ? 1 : 0.10 * _mods.chainBulletsLv;
+                      // Overcharge Dash: boost arc proc chance after dashing
+                      const _lp2 = getLocalPlayer();
+                      if (_lp2 && _lp2._postDashTimer > 0 && _mods.overchargeDash > 0) ch = Math.min(1, ch + (_mods.overchargeDash >= 2 ? 0.5 : 0.3));
                       if (Math.random() < ch) {
-                        // At 3+ stacks: jumps to 4 targets (qualitative threshold)
                         const maxJumps = _mods.chainBulletsLv >= 3 ? 4 : (1 + Math.floor(_mods.chainBulletsLv * 0.75) + (isAsc ? 1 : 0));
                         let lastZ = z;
                         const hitSet = new Set([z.zid]);
+                        // Conductive Freeze: 2x range through chilled/frozen. Storm Drive: +80% range after dash
+                        let _chainRange2 = 28900; /* 170px base */
+                        if (_mods.synergyConductiveFreeze && (z._slowTimer > 0 || z._frozenTimer > 0)) _chainRange2 = 28900 * 4; /* 340px */
+                        if (_mods.synergyStormDrive && _lp2 && _lp2._postDashTimer > 0) _chainRange2 = Math.floor(_chainRange2 * 3.24); /* +80% = 1.8x, squared = 3.24x */
                         for (let ci = 0; ci < maxJumps; ci++) {
-                          let bestD2 = 28900 /* 170px */, bestZ = null;
+                          let bestD2 = _chainRange2, bestZ = null;
                           for (const oz of zombies) {
                             if (hitSet.has(oz.zid)) continue;
                             const ddx = oz.x - lastZ.x, ddy = oz.y - lastZ.y;
@@ -8933,6 +9059,32 @@ function update() {
                       for(let vi=0;vi<6;vi++){const va=Math.random()*Math.PI*2,vd=40+Math.random()*70;particles.push({x:z.x+Math.cos(va)*vd,y:z.y+Math.sin(va)*vd,vx:-Math.cos(va)*3.5+Math.sin(va)*1.5,vy:-Math.sin(va)*3.5-Math.cos(va)*1.5,life:12+Math.random()*6,maxLife:18,size:2+Math.random()*2,color:Math.random()>0.5?'#cef':'#eaf',type:'spark'});}
                       // Brief radial distortion ring
                       if(gameTime%3===0){particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:6,color:'#cef8',type:'spark'});}
+                    }
+                    // Corrupt bullet proc: apply corrupt stacks
+                    if (_mods.corruptBulletsLv > 0) {
+                      const _corruptChance = _mods.ascendant === 'corrupt' ? 1.0 : 0.15 * _mods.corruptBulletsLv;
+                      if (Math.random() < _corruptChance) _applyCorruptStack(z);
+                    }
+                    // Compromised: +50% damage bonus
+                    if (z._compromised) { _dmg = Math.floor(_dmg * 1.5); }
+                    // Vector Snap: bonus damage to staggered enemies
+                    if (_mods.vectorSnap > 0 && z.staggerTimer > 0) { _dmg = Math.floor(_dmg * (1 + 0.3 * _mods.vectorSnap)); }
+                    // ---- SYNERGY EFFECTS ----
+                    // Overload: Overheated + Charged → arc discharge
+                    if (_mods.synergyOverload && z._burning > 0 && z._shocked > 0) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80)damageZombie(oz,Math.floor(_dmg*0.4),0,0);}
+                      for(let oi=0;oi<6;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*4,vy:Math.sin(oa)*4,life:12,maxLife:12,size:3,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
+                    }
+                    // Thermal Shock: thermal dmg to frozen → massive burst
+                    if (_mods.synergyThermalShock && z._frozenTimer > 0 && (z._burning > 0 || b._element === 'fire')) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<100){damageZombie(oz,Math.floor(_dmg*0.6),0,0);oz._slowTimer=Math.max(oz._slowTimer||0,60);}}
+                      for(let ti=0;ti<12;ti++){const ta=Math.random()*Math.PI*2,ts=4+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(ta)*ts,vy:Math.sin(ta)*ts,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.5?'#f84':'#aef',type:'explosion'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,6);
+                    }
+                    // Fault Cascade: compromised enemies emit arc pulses when damaged
+                    if (_mods.synergyFaultCascade && z._compromised) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(_dmg*0.25),0,0);oz._shocked=Math.max(oz._shocked||0,20);}}
+                      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:6,maxLife:6,size:4,color:'#84f',type:'spark'});
                     }
                     // Fragmentation: spawn two small side bullets (no recursion)
                     if (_mods.frag && !b._frag) {
@@ -9154,7 +9306,7 @@ function update() {
         }
         if(z._burnTimer<=0)z._burning=0;}
       if(z._frozenTimer>0){z._frozenTimer--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);pushOutOfObstacles(z,z.radius);continue;}
-      if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
+      if(z._slowTimer>0){z._slowTimer--;const _csBonus=runMods&&runMods.coldSnap>0?(1-0.15*runMods.coldSnap):1;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3*_csBonus):0.5;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.7;z.vy*=0.7;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(gameTime%4===0)particles.push({x:z.x+(Math.random()-0.5)*8,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:2,color:'#ff8',type:'spark'});continue;}
       let np=z._np, zd=z._npD;
       if(!np)continue;
@@ -10119,6 +10271,9 @@ function updateHUD() {
   }
   const hp=Math.max(0,lp.hp/lp.maxHp*100),hb=document.getElementById('health-bar');
   hb.style.width=hp+'%';hb.style.background=hp>50?'#0f0':hp>25?'#fa0':'#f44';
+  // Barrier bar overlay
+  const _bb=document.getElementById('barrier-bar');
+  if(_bb){const _bpct=lp.barrier>0?Math.min(100,lp.barrier/lp.maxHp*100):0;_bb.style.width=_bpct+'%';}
   // HUD corruption during glitch surges — briefly scrambles HP and BITS text so the
   // player sees the simulation's substrate breaking through the interface
   const _hudGlitching = (window._hudGlitchFrames || 0) > 0;
@@ -11522,7 +11677,7 @@ function render() {
       ctx.globalAlpha=1;
       ctx.restore();
     }
-    const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
+    const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._compromised?'#c8f':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
     // Type-specific body shape
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:2;
     ctx.shadowColor=_zc;ctx.shadowBlur=z.hitFlash>0?20:12;
@@ -11587,6 +11742,10 @@ function render() {
       ctx.shadowColor='#4ef';ctx.shadowBlur=isFrozen?10:4;
       for(let fi=0;fi<numCrystals;fi++){const fa=fi/numCrystals*Math.PI*2,fr=z.radius+(isFrozen?4:3);ctx.save();ctx.translate(Math.cos(fa)*fr,Math.sin(fa)*fr);ctx.rotate(fa);ctx.fillStyle=isFrozen?'#8ff':'#4ef';ctx.beginPath();ctx.moveTo(0,isFrozen?-5:-3);ctx.lineTo(isFrozen?3:2,0);ctx.lineTo(0,isFrozen?5:3);ctx.lineTo(isFrozen?-3:-2,0);ctx.closePath();ctx.fill();ctx.restore();}
       ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // Compromised: purple corruption aura + glitch distortion
+    if(z._compromised){ctx.globalAlpha=0.3;ctx.shadowColor='#a4f';ctx.shadowBlur=16;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(0,0,z.radius+4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.6;for(let ci=0;ci<3;ci++){const ca=Math.random()*Math.PI*2,cr=z.radius+Math.random()*6;ctx.fillStyle=Math.random()>0.5?'#a4f':'#f0f';ctx.fillRect(Math.cos(ca)*cr-2,Math.sin(ca)*cr-1,4+Math.random()*4,2);}ctx.globalAlpha=1;}
+    // Corrupt stacks indicator (small dots when not yet compromised)
+    else if(z._corruptStacks>0){ctx.globalAlpha=0.5;for(let ci=0;ci<z._corruptStacks;ci++){const ca=(ci/5)*Math.PI*2-Math.PI/2;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(Math.cos(ca)*(z.radius+3),Math.sin(ca)*(z.radius+3),2,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
