@@ -706,7 +706,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 9;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 11;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -6938,9 +6938,29 @@ function triggerShockwaveDash(lp) {
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
   const lv = _mods.shockDashLv || 0;
-  if (lv <= 0) return;
-  const SHOCKWAVE_RADIUS = 150;
+  // Baseline mini-shockwave on every dash (small knockback, no damage)
+  // Shockwave Dash mod upgrades it to a full 150px damaging blast.
+  const BASE_RADIUS = 45;
+  const SHOCKWAVE_RADIUS = lv > 0 ? 150 : BASE_RADIUS;
   const radius = SHOCKWAVE_RADIUS * (_mods.blastRadiusMult || 1);
+  if (lv <= 0) {
+    // Mini shockwave: knockback only, no damage, small VFX
+    if (isHost) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - lp.x, dy = z.y - lp.y, d = Math.sqrt(dx*dx+dy*dy);
+        if (d < radius + z.radius && d > 0.1) {
+          const push = 4 * (1 - d / radius);
+          z.vx += (dx/d) * push; z.vy += (dy/d) * push;
+          z.staggerTimer = Math.max(z.staggerTimer || 0, 8);
+        }
+      }
+    }
+    // Small ring of particles
+    for (let i = 0; i < 10; i++) { const a = (i/10)*Math.PI*2; particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:10,maxLife:10,size:2,color:'#4af',type:'spark'}); }
+    screenShake.intensity = Math.max(screenShake.intensity, 2);
+    return;
+  }
   // Determine dominant element for VFX
   let blastElem = null;
   if (_mods.fireSmashLv > 0)  blastElem = 'fire';
