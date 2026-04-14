@@ -8252,52 +8252,35 @@ function dropZombieLoot(z) {
     }
     for(let _pi=0;_pi<12;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
   }
-  // ---- QUALITATIVE STACK THRESHOLDS ----
-  // At 3+ stacks of an element bullet card, zombie deaths gain a NEW behavior.
-  // These are the build payoffs that make deep investment feel transformative.
+  // ---- BUILD SYSTEM v2: DEATH EFFECTS ----
   if (isHost) {
-    // Reactor Bloom OR FIRE 3+: burning enemies EXPLODE on death
-    if ((mods.reactorBloom > 0 || mods.fireBulletsLv >= 3) && z._burning > 0 && !z._exploded) {
+    // THERMAL Lv2+: Overheated enemies explode on death (Reactor Bloom enhances)
+    if (mods.thermalRoundsLv >= 2 && (z._overheat > 0 || z._burning > 0) && !z._exploded) {
       z._exploded = true;
-      const _bloomR = mods.reactorBloom >= 2 ? 60 : 40;
-      const _bloomD = mods.reactorBloom >= 2 ? 50 : 30;
-      createExplosion(z.x, z.y, _bloomR, _bloomD, 'player');
-      for (let _fi = 0; _fi < 8; _fi++) {
-        const _fa = Math.random()*Math.PI*2, _fs = 2+Math.random()*4;
-        particles.push({ x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs, life: 18, maxLife: 18, size: 3+Math.random()*2, color: '#f80', type: 'explosion' });
+      const _bR = mods.reactorBloom >= 2 ? 70 : mods.reactorBloom >= 1 ? 55 : 40;
+      const _bD = mods.reactorBloom >= 2 ? 50 : 30;
+      createExplosion(z.x, z.y, _bR, _bD, 'player');
+      for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:3+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});}
+      // Lv3: explosions spread Overheat to nearby
+      if (mods.thermalRoundsLv >= 3 || mods.reactorBloom >= 2) {
+        for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<_bR)applyOverheat(oz,10,1);}
       }
     }
-    // ICE 3+: frozen enemies SHATTER for 50 AoE damage on death
-    if (mods.iceBulletsLv >= 3 && (z._frozenTimer > 0 || z._slowTimer > 0)) {
-      const _shatterR = 50;
-      for (const oz of zombies) {
-        if (oz === z || oz.hp <= 0) continue;
-        const _sdx = oz.x - z.x, _sdy = oz.y - z.y;
-        if (_sdx*_sdx + _sdy*_sdy < _shatterR*_shatterR) {
-          damageZombie(oz, 50, _sdx*0.1, _sdy*0.1);
-        }
-      }
-      for (let _ii = 0; _ii < 10; _ii++) {
-        const _ia = Math.random()*Math.PI*2, _is = 3+Math.random()*4;
-        particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is, vy: Math.sin(_ia)*_is, life: 18, maxLife: 18, size: 2+Math.random()*2, color: '#8ef', type: 'spark' });
-      }
-      playSound(1400, 0.06, 'square', 0.08);
+    // CRYO Lv3: Frozen enemies shatter on kill (AoE frost damage)
+    if (mods.cryoRoundsLv >= 3 && (z._frozen || z._frozenTimer > 0 || z._chill > 0)) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<70*70){damageZombie(oz,40,dx*0.05,dy*0.05);applyChill(oz,2);}}
+      for(let i=0;i<20;i++){const a=(i/20)*Math.PI*2,s=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:28,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});}
+      decals.push({x:z.x,y:z.y,size:40,alpha:0.25,color:'#245'});
+      screenShake.intensity=Math.max(screenShake.intensity,6);
     }
-    // CHAIN 3+: lightning jumps to 4 targets instead of normal chain count
-    // (This is handled in the bullet collision code — we set a flag here for the render)
-    // WIND 3+: death creates a brief slow field at the zombie's position
-    if (mods.windBulletsLv >= 3) {
-      for (const oz of zombies) {
-        if (oz === z || oz.hp <= 0) continue;
-        const _wdx = oz.x - z.x, _wdy = oz.y - z.y;
-        if (_wdx*_wdx + _wdy*_wdy < 60*60) {
-          oz._slowTimer = Math.max(oz._slowTimer || 0, 40);
-        }
-      }
-      for (let _wi = 0; _wi < 6; _wi++) {
-        const _wa = Math.random()*Math.PI*2, _ws = 1+Math.random()*2;
-        particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws, life: 24, maxLife: 24, size: 2, color: '#cef', type: 'spark' });
-      }
+    // ARC Lv3: Charged enemies discharge on death (chain lightning)
+    if (mods.arcRoundsLv >= 3 && z._charged) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<120){damageZombie(oz,25,0,0);applyCharged(oz);particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:oz.x,ty:oz.y});}}
+    }
+    // VIRAL PAYLOAD Lv3: Compromised spread Corrupt on death
+    if (mods.viralPayloadLv >= 3 && z._compromised) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<80*80)applyCorrupt(oz,2);}
+      for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
     }
   }
   // Siege mode: no enemy health drops — all items come from scheduled spawns
@@ -9064,163 +9047,123 @@ function update() {
                   // pointed backward and never triggered the block.
                   if(ZOMBIE_TYPES[z.type]?.shielded&&z._shieldAngle!==undefined){const ba=Math.atan2(b.y-z.y,b.x-z.x);let sd=ba-z._shieldAngle;while(sd>Math.PI)sd-=Math.PI*2;while(sd<-Math.PI)sd+=Math.PI*2;if(Math.abs(sd)<1.2){b.pierced=(b.pierced||0)+99;for(let _si=0;_si<5;_si++){const _sa=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(_sa)*3,vy:Math.sin(_sa)*3,life:10,maxLife:10,size:3,color:'#4af',type:'spark'});}playSound(800,0.05,'sine',0.12);continue;}}
                   const a=Math.atan2(b.vy,b.vx);
-                  // Apply upgrade modifiers at hit time (crit / hollow point)
+                  // ---- BUILD SYSTEM v2: BULLET HIT LOGIC ----
                   let _dmg = b.damage;
-                  const _mods = runMods || {};
+                  const _m = runMods || {};
                   const _isLocal = b.ownerId === getLocalPlayer()?.id;
+                  const _lp3 = getLocalPlayer();
                   if (_isLocal) {
-                    if (!b.crit && _mods.critChance > 0 && Math.random() < _mods.critChance) {
-                      _dmg = Math.floor(_dmg * (1 + _mods.critDamageMult));
-                      b.crit = true;
-                    }
-                    if (_mods.hollowPoint > 0 && z.hp < z.maxHp * 0.5) {
-                      _dmg = Math.floor(_dmg * (1 + _mods.hollowPoint));
-                    }
-                    // Cryo shatter: frozen enemies take 2x damage
-                    if (z._frozenTimer > 0) {
+                    // -- FROZEN SHATTER: 2x damage to Frozen enemies --
+                    if (z._frozen || z._frozenTimer > 0) {
                       _dmg = Math.floor(_dmg * 2);
                       addFloatingText(z.x, z.y - z.radius - 16, 'SHATTER', '#aef');
-                      for(let si=0;si<14;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:z.x+Math.cos(sa)*6,y:z.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:16+Math.random()*8,maxLife:24,size:2.5+Math.random()*3.5,color:Math.random()>0.4?'#aef':'#8df',type:'spark'});}
-                      // Ice crystal shards flying outward
-                      for(let ci=0;ci<5;ci++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs-1,life:22+Math.random()*10,maxLife:32,size:3+Math.random()*2,color:'#cff',type:'spark',gravity:0.06});}
-                      screenShake.intensity = Math.max(screenShake.intensity, 4);
-                      playSfx('ice_hit', 0.3) || playSound(1400, 0.06, 'square', 0.08);
-                      z._frozenTimer = 0;
+                      for(let si=0;si<16;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:z.x+Math.cos(sa)*6,y:z.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:24,size:3+Math.random()*3,color:Math.random()>0.4?'#aef':'#cff',type:'spark'});}
+                      for(let ci=0;ci<6;ci++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs-1,life:22,maxLife:30,size:3+Math.random()*2,color:'#cff',type:'spark',gravity:0.06});}
+                      screenShake.intensity=Math.max(screenShake.intensity,5);
+                      playSfx('ice_hit',0.3)||playSound(1400,0.06,'square',0.08);
+                      z._frozen=false; z._frozenTimer=0;
                     }
-                    // Siphon: store fraction of damage as pending healing
-                    if (_mods.siphonRate > 0) {
-                      const _slp = getLocalPlayer();
-                      if (_slp && _slp.alive) {
-                        _slp._siphonBank = (_slp._siphonBank || 0) + _dmg * _mods.siphonRate;
-                        const cap = 30 + 20 * (runUpgrades.siphon || 0);
-                        if (_slp._siphonBank > cap) _slp._siphonBank = cap;
-                        // Siphon particle: pink mote drifts from enemy toward player
-                        if (gameTime % 3 === 0) {
-                          const _sdx2 = _slp.x - z.x, _sdy2 = _slp.y - z.y, _sd2 = Math.sqrt(_sdx2*_sdx2+_sdy2*_sdy2)||1;
-                          particles.push({x:z.x,y:z.y,vx:_sdx2/_sd2*4+(Math.random()-0.5),vy:_sdy2/_sd2*4+(Math.random()-0.5),life:Math.min(20,Math.floor(_sd2/4)),maxLife:20,size:2+Math.random()*1.5,color:'#f4a',type:'spark'});
-                        }
-                      }
+                    // -- EXPOSED: +30% damage --
+                    if (z._exposed) { _dmg = Math.floor(_dmg * (1 + 0.3 * Math.max(1, _m.vectorSnap))); }
+                    // -- COMPROMISED: +50% damage --
+                    if (z._compromised) { _dmg = Math.floor(_dmg * 1.5); }
+                    // -- CRIT WINDOWS (conditional only, no global crit stat) --
+                    if (!b.crit) {
+                      let _critChance = 0;
+                      if (z._exposed && _m.precisionBreach > 0) _critChance += _m.precisionBreach >= 2 ? 0.40 : 0.25;
+                      if ((z._frozen || z._frozenTimer > 0) && _m.shatterpoint > 0) _critChance = 1.0; // guaranteed
+                      if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorRound >= 3) _critChance += 0.30;
+                      if (_critChance > 0 && Math.random() < _critChance) { _dmg = Math.floor(_dmg * 2); b.crit = true; }
+                    }
+                    // -- POST-DASH RIDER: Predator Round damage boost --
+                    if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorRound > 0 && _lp3._postDashShotsLeft > 0) {
+                      _dmg = Math.floor(_dmg * (_m.predatorRound >= 2 ? 1.6 : 1.4));
+                      _lp3._postDashShotsLeft--;
+                    }
+                    // -- POST-DASH RIDER: Fatal Exception (bonus vs Compromised) --
+                    if (_lp3 && _lp3._postDashTimer > 0 && _m.fatalException > 0 && z._compromised) {
+                      _dmg = Math.floor(_dmg * 1.5);
+                      addFloatingText(z.x, z.y - z.radius - 20, 'EXCEPTION', '#a4f');
                     }
                   }
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
-                  // Crits still float a magenta number — regular hits don't spam the screen.
                   if (_isLocal && b.crit) {
-                    floatingTexts.push({
-                      x: z.x + (Math.random() - 0.5) * 16,
-                      y: z.y - z.radius - 4,
-                      text: Math.max(1, Math.floor(_dmg)).toString(),
-                      color: '#f0f',
-                      vy: -1.4,
-                      life: 28, maxLife: 28,
-                      _dmgNum: true, _crit: true,
-                    });
+                    floatingTexts.push({x:z.x+(Math.random()-0.5)*16,y:z.y-z.radius-4,text:Math.floor(_dmg)+'',color:'#f0f',vy:-1.4,life:28,maxLife:28,_dmgNum:true,_crit:true});
                   }
                   if (_isLocal) {
-                    // Lifesteal: crits restore HP
-                    if (b.crit && _mods.lifestealOnCrit > 0) {
-                      const _lp = getLocalPlayer();
-                      if (_lp && _lp.alive) _lp.hp = Math.min(_lp.maxHp, _lp.hp + _mods.lifestealOnCrit);
+                    // ---- CLASS PROCS ----
+                    const _sf = _m.statusForce || 1;
+                    // THERMAL ROUNDS: apply Overheat
+                    if (_m.thermalRoundsLv > 0) {
+                      const ch = 0.20 + 0.15 * _m.thermalRoundsLv; // 35%/50%/65%
+                      if (Math.random() < ch) applyOverheat(z, Math.floor(_dmg * 0.15), _sf);
                     }
-                    // ---- BULLET ELEMENT PROCS ----
-                    // Fire: ignite with DoT. Base chance 12% × level (nerfed from 15%).
-                    // Ascendant = always proc. Stack value is lower and the duration is
-                    // shorter — fire is no longer the dominant element.
-                    if (_mods.fireBulletsLv > 0) {
-                      const isAsc = _mods.ascendant === 'fire';
-                      const ch = isAsc ? 0.75 : 0.12 * _mods.fireBulletsLv;
-                      if (Math.random() < ch) {
-                        if (!z._burning) playIgniteSound();
-                        z._burning = (z._burning || 0) + Math.floor(_dmg * 0.18 * (1 + 0.15 * _mods.fireBulletsLv));
-                        z._burnTimer = 150 + _mods.fireBulletsLv * 25;
-                      }
+                    // CRYO ROUNDS: apply Chill
+                    if (_m.cryoRoundsLv > 0) {
+                      const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
+                      if (Math.random() < ch) applyChill(z, 1, _sf);
                     }
-                    // Ice: slow/freeze. Base chance 15% × level. Ascendant = always proc + freeze threshold lower.
-                    if (_mods.iceBulletsLv > 0) {
-                      const isAsc = _mods.ascendant === 'ice';
-                      const ch = isAsc ? 1 : 0.15 * _mods.iceBulletsLv;
+                    // ARC ROUNDS: apply Charged + chain
+                    if (_m.arcRoundsLv > 0) {
+                      let ch = 0.15 + 0.10 * _m.arcRoundsLv; // 25%/35%/45%
+                      if (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ch = Math.min(1, ch + (_m.overchargeDash >= 2 ? 0.5 : 0.3));
                       if (Math.random() < ch) {
-                        z._slowTimer = Math.max(z._slowTimer || 0, 100 + _mods.iceBulletsLv * 30);
-                        z._iceStacks = (z._iceStacks || 0) + 1;
-                        const freezeThreshold = Math.max(2, 5 - _mods.iceBulletsLv - (isAsc ? 1 : 0));
-                        if (z._iceStacks >= freezeThreshold) {
-                          z._frozenTimer = 60 + _mods.iceBulletsLv * 30;
-                          z._iceStacks = 0;
-                        }
-                      }
-                    }
-                    // Chain (lightning): jump to nearby enemies. Base chance 10% × level. Ascendant = always proc + extra jumps.
-                    if (_mods.chainBulletsLv > 0) {
-                      const isAsc = _mods.ascendant === 'chain';
-                      let ch = isAsc ? 1 : 0.10 * _mods.chainBulletsLv;
-                      // Overcharge Dash: boost arc proc chance after dashing
-                      const _lp2 = getLocalPlayer();
-                      if (_lp2 && _lp2._postDashTimer > 0 && _mods.overchargeDash > 0) ch = Math.min(1, ch + (_mods.overchargeDash >= 2 ? 0.5 : 0.3));
-                      if (Math.random() < ch) {
-                        const maxJumps = _mods.chainBulletsLv >= 3 ? 4 : (1 + Math.floor(_mods.chainBulletsLv * 0.75) + (isAsc ? 1 : 0));
-                        let lastZ = z;
-                        const hitSet = new Set([z.zid]);
-                        // Conductive Freeze: 2x range through chilled/frozen. Storm Drive: +80% range after dash
-                        let _chainRange2 = 28900; /* 170px base */
-                        if (_mods.synergyConductiveFreeze && (z._slowTimer > 0 || z._frozenTimer > 0)) _chainRange2 = 28900 * 4; /* 340px */
-                        if (_mods.synergyStormDrive && _lp2 && _lp2._postDashTimer > 0) _chainRange2 = Math.floor(_chainRange2 * 3.24); /* +80% = 1.8x, squared = 3.24x */
-                        for (let ci = 0; ci < maxJumps; ci++) {
-                          let bestD2 = _chainRange2, bestZ = null;
-                          for (const oz of zombies) {
-                            if (hitSet.has(oz.zid)) continue;
-                            const ddx = oz.x - lastZ.x, ddy = oz.y - lastZ.y;
-                            const d2 = ddx*ddx + ddy*ddy;
-                            if (d2 < bestD2) { bestD2 = d2; bestZ = oz; }
+                        applyCharged(z);
+                        // Static Chain: arc jumps to nearby enemies
+                        if (_m.staticChain > 0) {
+                          const maxJ = Math.min(4, _m.staticChain);
+                          let lastZ = z; const hitS = new Set([z.zid]);
+                          let _chainR2 = 28900; // 170px
+                          if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
+                          if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
+                          for (let ci = 0; ci < maxJ; ci++) {
+                            let bD2 = _chainR2, bZ = null;
+                            for (const oz of zombies) { if (hitS.has(oz.zid)) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+                            if (!bZ) break;
+                            // Prefer Charged targets (chain more reliably)
+                            if (_m.arcRoundsLv >= 2 && bZ._charged) _dmg = Math.floor(_dmg * 1.15);
+                            damageZombie(bZ, Math.floor(_dmg * 0.35), 0, 0);
+                            applyCharged(bZ);
+                            particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+                            hitS.add(bZ.zid); lastZ = bZ;
                           }
-                          if (!bestZ) break;
-                          damageZombie(bestZ, Math.floor(_dmg * (0.35 + 0.05 * _mods.chainBulletsLv)), 0, 0);
-                          bestZ.staggerTimer = Math.max(bestZ.staggerTimer, 12);
-                          particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 1, color: '#4ff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
-                          hitSet.add(bestZ.zid);
-                          lastZ = bestZ;
                         }
                       }
                     }
-                    // Pulse ascendant: gravity pull nearby enemies toward impact
-                    if (_mods.ascendant === 'wind') {
-                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const pdx=oz.x-z.x,pdy=oz.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);if(pd<120&&pd>5){const pull=3*(1-pd/120);oz.vx+=(z.x-oz.x)/pd*pull;oz.vy+=(z.y-oz.y)/pd*pull;}}
-                      // Inward-spiraling particles showing the pull
-                      for(let vi=0;vi<6;vi++){const va=Math.random()*Math.PI*2,vd=40+Math.random()*70;particles.push({x:z.x+Math.cos(va)*vd,y:z.y+Math.sin(va)*vd,vx:-Math.cos(va)*3.5+Math.sin(va)*1.5,vy:-Math.sin(va)*3.5-Math.cos(va)*1.5,life:12+Math.random()*6,maxLife:18,size:2+Math.random()*2,color:Math.random()>0.5?'#cef':'#eaf',type:'spark'});}
-                      // Brief radial distortion ring
-                      if(gameTime%3===0){particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:6,color:'#cef8',type:'spark'});}
-                    }
-                    // Corrupt bullet proc: apply corrupt stacks
-                    if (_mods.corruptBulletsLv > 0) {
-                      const _corruptChance = _mods.ascendant === 'corrupt' ? 1.0 : 0.15 * _mods.corruptBulletsLv;
-                      if (Math.random() < _corruptChance) _applyCorruptStack(z);
-                    }
-                    // Compromised: +50% damage bonus
-                    if (z._compromised) { _dmg = Math.floor(_dmg * 1.5); }
-                    // Vector Snap: bonus damage to staggered enemies
-                    if (_mods.vectorSnap > 0 && z.staggerTimer > 0) { _dmg = Math.floor(_dmg * (1 + 0.3 * _mods.vectorSnap)); }
-                    // ---- SYNERGY EFFECTS ----
-                    // Overload: Overheated + Charged → arc discharge
-                    if (_mods.synergyOverload && z._burning > 0 && z._shocked > 0) {
-                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80)damageZombie(oz,Math.floor(_dmg*0.4),0,0);}
-                      for(let oi=0;oi<6;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*4,vy:Math.sin(oa)*4,life:12,maxLife:12,size:3,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
-                    }
-                    // Thermal Shock: thermal dmg to frozen → massive burst
-                    if (_mods.synergyThermalShock && z._frozenTimer > 0 && (z._burning > 0 || b._element === 'fire')) {
-                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<100){damageZombie(oz,Math.floor(_dmg*0.6),0,0);oz._slowTimer=Math.max(oz._slowTimer||0,60);}}
-                      for(let ti=0;ti<12;ti++){const ta=Math.random()*Math.PI*2,ts=4+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(ta)*ts,vy:Math.sin(ta)*ts,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.5?'#f84':'#aef',type:'explosion'});}
-                      screenShake.intensity=Math.max(screenShake.intensity,6);
-                    }
-                    // Fault Cascade: compromised enemies emit arc pulses when damaged
-                    if (_mods.synergyFaultCascade && z._compromised) {
-                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(_dmg*0.25),0,0);oz._shocked=Math.max(oz._shocked||0,20);}}
-                      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:6,maxLife:6,size:4,color:'#84f',type:'spark'});
-                    }
-                    // Fragmentation: spawn two small side bullets (no recursion)
-                    if (_mods.frag && !b._frag) {
-                      const ang = Math.atan2(b.vy, b.vx);
-                      for (let fi = -1; fi <= 1; fi += 2) {
-                        const fa = ang + fi * (Math.PI * 0.4);
-                        bullets.push({ x: b.x, y: b.y, vx: Math.cos(fa)*12, vy: Math.sin(fa)*12, damage: Math.floor(b.damage * 0.35), color: b.color, size: Math.max(1.5, b.size*0.6), knockback:0, pierce:0, pierced:0, life:10, maxLife:10, owner:'player', ownerId:b.ownerId, trail:[], crit:false, _element:b._element||null, _frag: true });
+                    // PULSE SHOT: apply Exposed + knockback
+                    if (_m.pulseShotLv > 0) {
+                      applyExposed(z);
+                      const pushF = 2 + _m.pulseShotLv;
+                      z.vx += Math.cos(a) * pushF; z.vy += Math.sin(a) * pushF;
+                      z.staggerTimer = Math.max(z.staggerTimer || 0, 10);
+                      // Lv3: hits on Exposed create mini impact pulse
+                      if (_m.pulseShotLv >= 3 && z._exposed) {
+                        for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const pd = Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2); if (pd < 60) { damageZombie(oz, Math.floor(_dmg * 0.2), 0, 0); oz.staggerTimer = Math.max(oz.staggerTimer||0, 6); } }
+                        for(let pi=0;pi<6;pi++){const pa=(pi/6)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:10,maxLife:10,size:2,color:'#cef',type:'spark'});}
                       }
+                    }
+                    // VIRAL PAYLOAD: apply Corrupt
+                    if (_m.viralPayloadLv > 0) {
+                      const ch = 0.20 + 0.15 * _m.viralPayloadLv;
+                      if (Math.random() < ch) applyCorrupt(z, 1);
+                    }
+                    // ---- SYNERGY EFFECTS ----
+                    // Overload: Overheated + Charged → arc discharge burst
+                    if (_m.synergyOverload && z._overheat > 0 && z._charged) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(_dmg*0.4),0,0);applyCharged(oz);}}
+                      for(let oi=0;oi<8;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*5,vy:Math.sin(oa)*5,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,5);
+                    }
+                    // Thermal Shock: thermal dmg to Frozen → massive AoE
+                    if (_m.synergyThermalShock && (z._frozen || z._frozenTimer > 0) && z._overheat > 0) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<100){damageZombie(oz,Math.floor(_dmg*0.6),0,0);applyChill(oz,1);}}
+                      for(let ti=0;ti<16;ti++){const ta=Math.random()*Math.PI*2,ts=4+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ta)*ts,vy:Math.sin(ta)*ts,life:20,maxLife:20,size:3+Math.random()*4,color:Math.random()>0.5?'#f84':'#aef',type:'explosion'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,8);
+                    }
+                    // Fault Cascade: Compromised → arc pulses when damaged
+                    if (_m.synergyFaultCascade && z._compromised) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(_dmg*0.25),0,0);applyCharged(oz);}}
+                      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:5,color:'#84f',type:'spark'});
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
                   }
