@@ -3063,6 +3063,73 @@ function updateElementZones() {
   if (activeElement) { activeElement.timer--; if (activeElement.timer <= 0) activeElement = null; }
 }
 
+// ============================================================
+// STATUS APPLICATION SYSTEM v2
+// 6 statuses: Overheat, Chill/Frozen, Charged, Exposed, Compromised
+// Each has apply function + VFX. Called from bullet procs and dash trails.
+// ============================================================
+function applyOverheat(z, value, force) {
+  if (!isHost) return;
+  force = force || 1;
+  z._overheat = Math.min(60, (z._overheat || 0) + Math.floor(value * force));
+  z._overheatTimer = Math.max(z._overheatTimer || 0, 180); // 3s refresh
+  // VFX: fire burst on application
+  for(let i=0;i<3;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*6,y:z.y+Math.sin(a)*6,vx:Math.cos(a)*1.5,vy:-2-Math.random()*2,life:14,maxLife:14,size:3+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});}
+}
+function applyChill(z, stacks, force) {
+  if (!isHost) return;
+  force = force || 1;
+  const m = runMods || {};
+  const bonus = m.coldSnap > 0 ? 1 + 0.5 * m.coldSnap : 1;
+  z._chill = Math.min(5, (z._chill || 0) + Math.ceil(stacks * bonus));
+  z._chillTimer = Math.max(z._chillTimer || 0, 240); // 4s
+  // Check freeze threshold
+  const threshold = m.cryoRoundsLv >= 2 ? 3 : 4;
+  if (z._chill >= threshold && !z._frozen) {
+    z._frozen = true;
+    const frozenDur = m.coldSnap >= 2 ? 210 : 150; // 3.5s or 2.5s
+    z._frozenTimer = frozenDur;
+    z._chill = 0;
+    addFloatingText(z.x, z.y - z.radius - 10, 'FROZEN', '#aef');
+    for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*8,y:z.y+Math.sin(a)*8,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:18,maxLife:18,size:3+Math.random()*2,color:'#aef',type:'spark'});}
+    screenShake.intensity = Math.max(screenShake.intensity, 3);
+  }
+  // Chill particle
+  if(stacks>0)particles.push({x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,vx:(Math.random()-0.5),vy:-0.8,life:16,maxLife:16,size:2+Math.random()*2,color:'#8ef',type:'spark'});
+}
+function applyCharged(z) {
+  if (!isHost) return;
+  z._charged = true;
+  z._chargedTimer = Math.max(z._chargedTimer || 0, 180); // 3s
+  // VFX: brief electric spark
+  for(let i=0;i<2;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius,y:z.y+Math.sin(a)*z.radius,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
+}
+function applyExposed(z) {
+  if (!isHost) return;
+  z._exposed = true;
+  z._exposedTimer = Math.max(z._exposedTimer || 0, 180); // 3s
+  // VFX: vulnerability flash
+  particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#eaf',type:'spark'});
+}
+function applyCorrupt(z, stacks) {
+  if (!isHost) return;
+  const m = runMods || {};
+  const threshold = m.compromisedCore > 0 ? 4 : 5;
+  z._corrupt = (z._corrupt || 0) + (stacks || 1);
+  if (z._corrupt >= threshold && !z._compromised) {
+    z._compromised = true;
+    const dur = m.compromisedCore >= 2 ? 450 : 300; // 7.5s or 5s
+    z._compromisedTimer = dur;
+    z._corrupt = 0;
+    addFloatingText(z.x, z.y - z.radius - 12, 'COMPROMISED', '#a4f');
+    for(let i=0;i<14;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x+Math.cos(a)*8,y:z.y+Math.sin(a)*8,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}
+    screenShake.intensity = Math.max(screenShake.intensity, 4);
+  }
+  // Corrupt particle per stack
+  particles.push({x:z.x+(Math.random()-0.5)*12,y:z.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*2,vy:-1.5,life:14,maxLife:14,size:2+Math.random()*2,color:'#a4f',type:'spark'});
+}
+
+// Legacy bridge: applyElementOnHit still called from old activeElement pickup system
 function applyElementOnHit(z, damage, srcX, srcY) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
@@ -9356,18 +9423,25 @@ function update() {
       if(z._shocked>0){z._shocked--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);pushOutOfObstacles(z,z.radius);if(gameTime%20===0)damageZombie(z,10,0,0,true);if(z._shocked<=0){z._shocked=0;}continue;}
       // Enraged: revert after timer expires
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
-      // Element effects: burn, slow, freeze
-      if(z._burnTimer>0){z._burnTimer--;if(gameTime%18===0&&z._burning>0){damageZombie(z,z._burning,0,0,true);}
-        if(z._burning>0){
-          // Fire particles (every 3 frames — slightly more sparse than before)
-          if(gameTime%3===0){for(let fi=0;fi<2;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2-Math.random()*3,life:18,maxLife:18,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}
-          // Fire trail: leave burning decals on the ground
-          if(gameTime%6===0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.4,color:'#420'});
-          // (Fire no longer spreads between enemies — removed. Corruption is contained to hit targets.)
-        }
-        if(z._burnTimer<=0)z._burning=0;}
-      if(z._frozenTimer>0){z._frozenTimer--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);pushOutOfObstacles(z,z.radius);continue;}
-      if(z._slowTimer>0){z._slowTimer--;const _csBonus=runMods&&runMods.coldSnap>0?(1-0.15*runMods.coldSnap):1;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3*_csBonus):0.5;}
+      // ---- STATUS EFFECT TICKS (v2) ----
+      // OVERHEAT: DOT every 15 frames, fire particles
+      if(z._overheatTimer>0){z._overheatTimer--;if(gameTime%15===0&&z._overheat>0)damageZombie(z,z._overheat,0,0,true);if(z._overheat>0&&gameTime%3===0){for(let fi=0;fi<3;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],type:'explosion'});}if(gameTime%8===0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0)z._overheat=0;}
+      // Legacy burn compat
+      if(z._burnTimer>0){z._burnTimer--;if(gameTime%18===0&&z._burning>0)damageZombie(z,z._burning,0,0,true);if(z._burnTimer<=0)z._burning=0;}
+      // FROZEN: hard CC, skip AI
+      if(z._frozen&&z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0)z._frozen=false;continue;}
+      // Legacy frozen compat
+      else if(z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);continue;}
+      // CHILL: slow based on stacks (-20% per stack)
+      if(z._chill>0&&z._chillTimer>0){z._chillTimer--;const slowFactor=Math.max(0.1,1-z._chill*0.2);z.speed=(ZOMBIE_TYPES[z.type]?.speed||2)*slowFactor;if(z._chillTimer<=0)z._chill=0;}
+      // Legacy slow compat
+      else if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
+      // CHARGED: tick down conduit mark
+      if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(gameTime%4===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
+      // EXPOSED: tick down vulnerability mark
+      if(z._exposed&&z._exposedTimer>0){z._exposedTimer--;if(z._exposedTimer<=0)z._exposed=false;}
+      // COMPROMISED: tick down, emit glitch particles
+      if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0)z._compromised=false;if(gameTime%5===0)particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.7;z.vy*=0.7;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(gameTime%4===0)particles.push({x:z.x+(Math.random()-0.5)*8,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:2,color:'#ff8',type:'spark'});continue;}
       let np=z._np, zd=z._npD;
       if(!np)continue;
@@ -11738,7 +11812,7 @@ function render() {
       ctx.globalAlpha=1;
       ctx.restore();
     }
-    const _zc=z._frozenTimer>0?'#adf':z._shocked>0?'#bff':z._compromised?'#c8f':z._burning>0?'#f85':z.hitFlash>0?'#fff':z.color;
+    const _zc=z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._shocked>0?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#eaf':z.hitFlash>0?'#fff':z.color;
     // Type-specific body shape
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:2;
     ctx.shadowColor=_zc;ctx.shadowBlur=z.hitFlash>0?20:12;
@@ -11806,7 +11880,13 @@ function render() {
     // Compromised: purple corruption aura + glitch distortion
     if(z._compromised){ctx.globalAlpha=0.3;ctx.shadowColor='#a4f';ctx.shadowBlur=16;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(0,0,z.radius+4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.6;for(let ci=0;ci<3;ci++){const ca=Math.random()*Math.PI*2,cr=z.radius+Math.random()*6;ctx.fillStyle=Math.random()>0.5?'#a4f':'#f0f';ctx.fillRect(Math.cos(ca)*cr-2,Math.sin(ca)*cr-1,4+Math.random()*4,2);}ctx.globalAlpha=1;}
     // Corrupt stacks indicator (small dots when not yet compromised)
-    else if(z._corruptStacks>0){ctx.globalAlpha=0.5;for(let ci=0;ci<z._corruptStacks;ci++){const ca=(ci/5)*Math.PI*2-Math.PI/2;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(Math.cos(ca)*(z.radius+3),Math.sin(ca)*(z.radius+3),2,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
+    else if((z._corruptStacks||0)+(z._corrupt||0)>0){const _cs=Math.max(z._corruptStacks||0,z._corrupt||0);ctx.globalAlpha=0.5;for(let ci=0;ci<_cs;ci++){const ca=(ci/5)*Math.PI*2-Math.PI/2;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(Math.cos(ca)*(z.radius+3),Math.sin(ca)*(z.radius+3),2,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
+    // Charged: electrical arcs across body + cyan flicker
+    if(z._charged){ctx.globalAlpha=0.6;ctx.shadowColor='#4ff';ctx.shadowBlur=10;for(let ci=0;ci<4;ci++){const a1=Math.random()*Math.PI*2,a2=a1+Math.random()*1.5;ctx.strokeStyle=Math.random()>0.3?'#4ff':'#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(Math.cos(a1)*z.radius*0.5,Math.sin(a1)*z.radius*0.5);const mx=Math.cos((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6,my=Math.sin((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6;ctx.lineTo(mx,my);ctx.lineTo(Math.cos(a2)*z.radius*0.5,Math.sin(a2)*z.radius*0.5);ctx.stroke();}ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // Exposed: pulsing target reticle + vulnerability shimmer
+    if(z._exposed){const _ep=0.4+Math.sin(performance.now()*0.008)*0.3;ctx.globalAlpha=_ep;ctx.strokeStyle='#eaf';ctx.lineWidth=2;ctx.shadowColor='#eaf';ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(0,-z.radius-10);ctx.lineTo(0,-z.radius-4);ctx.moveTo(0,z.radius+4);ctx.lineTo(0,z.radius+10);ctx.moveTo(-z.radius-10,0);ctx.lineTo(-z.radius-4,0);ctx.moveTo(z.radius+4,0);ctx.lineTo(z.radius+10,0);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // Overheat: pulsing orange glow + heat shimmer rings
+    if(z._overheat>0){const _hp2=0.15+z._overheat/60*0.25;ctx.globalAlpha=_hp2;ctx.shadowColor='#f80';ctx.shadowBlur=14;ctx.fillStyle='#f80';ctx.beginPath();ctx.arc(0,0,z.radius+3,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
