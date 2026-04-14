@@ -2,6 +2,36 @@
 
 ---
 
+## Third Action Button (Beyond Dash)
+
+The player currently has two verbs: shoot and dash. A third action button would deepen combat rhythm. Constraint: one button, instant, no menu, mobile thumb-friendly.
+
+### Option 1: PULSE (energy burst) — RECOMMENDED
+Short-range radial blast centered on player. ~3s cooldown.
+- **Base**: Small AoE knockback + damage around the player
+- **Design rationale**: Fills "they're too close" gap. Dash = escape, Pulse = stand-your-ground. Creates three-verb loop: shoot (ranged), dash (reposition), pulse (close-range defense).
+- **Mod potential**: Apply your element, increase radius, reduce cooldown, lifesteal-on-pulse, lingering zone, double-tap chain
+
+### Option 2: DEPLOY (placeable)
+Drop something at your feet — mine, turret, decoy, barrier wall. ~8s cooldown.
+- **Base**: Drops a mine that detonates on enemy proximity
+- **Design rationale**: Adds spatial/tactical layer — shaping the battlefield. Mobile-friendly (tap = drop at position).
+- **Mod potential**: Cards swap deploy type (turret shoots your element, mine applies element AoE, decoy draws aggro, wall blocks projectiles)
+
+### Option 3: OVERLOAD (timed self-buff)
+3-second overdrive state. Massive fire rate + speed + i-frames. ~10s cooldown.
+- **Base**: 2x fire rate, speed boost, screen tint, dramatic particles
+- **Design rationale**: "Pop your ultimate" rhythm. Save for the right moment.
+- **Mod potential**: Element explosion on activation, barrier during overdrive, guaranteed crits, taunt + reward
+
+### Option 4: RECALL (teleport back)
+First tap = mark position. Second tap within 4s = teleport back, damage trail between points.
+- **Base**: Mark → fight → snap back to safety + damage everything in between
+- **Design rationale**: Highest skill ceiling. Big brain plays. Dash forward, mark, recall out.
+- **Mod potential**: Return damage buff, elemental trail, extended window, beacon explosion on recall
+
+---
+
 ## Monetization (Near-Term, Mobile-First)
 
 ### Ethical / Mobile Standard
