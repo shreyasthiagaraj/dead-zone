@@ -6252,6 +6252,9 @@ function startRunFromShell() {
 function _executeRunStart() {
   _shellTransitioning = false;
   _shellFadeAlpha = 0; _shellFadeDir = 0;
+  // Restore HUD elements hidden by enterShell
+  ['hp-chip','minimap'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+  const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   gameMode = 'trench';
   startSoloGame();
 }
@@ -6625,8 +6628,8 @@ function fireWeaponForPlayer(p) {
     else if (_rm.dominantBullet === 'ice')   _buildColor = '#8ef';
     else if (_rm.dominantBullet === 'chain') _buildColor = '#4ff';
     else if (_rm.dominantBullet === 'wind')  _buildColor = '#cef';
-    const _finalColor = isCrit ? '#f0f' : (elColor || _buildColor);
-    const _finalSize = (isCrit ? bSize + 2 : bSize) * _sizeBoost;
+    const _finalColor = isCrit ? '#f0f' : _isMultiExtra ? '#fa8' : (elColor || _buildColor);
+    const _finalSize = (isCrit ? bSize + 2 : _isMultiExtra ? bSize * 0.85 : bSize) * _sizeBoost;
     bullets.push({
       x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed*_windSpeedMult, vy: s*gun.bulletSpeed*_windSpeedMult,
       damage: dmg, color: _finalColor, size: _finalSize,
@@ -7957,8 +7960,14 @@ function dropZombieLoot(z) {
         oz._iceStacks = (oz._iceStacks || 0) + 1;
       }
     }
-    for (let _si=0;_si<12;_si++){const _sa=Math.random()*Math.PI*2,_ss=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:16,maxLife:16,size:2+Math.random()*3,color:'#aef',type:'spark'});}
-    playSound(1400, 0.06, 'square', 0.08);
+    // Expanding frost ring + radial ice shards
+    for(let _si=0;_si<20;_si++){const _sa=(_si/20)*Math.PI*2,_ss=4+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:20+Math.random()*10,maxLife:30,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});}
+    // Inner burst
+    for(let _ci=0;_ci<8;_ci++){const _ca=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(_ca)*2,vy:Math.sin(_ca)*2-1,life:24,maxLife:24,size:4+Math.random()*2,color:'#8df',type:'spark',gravity:0.04});}
+    // Ground frost decal
+    decals.push({x:z.x,y:z.y,size:40+Math.random()*20,alpha:0.25,color:'#245'});
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    playSfx('ice_hit', 0.35) || playSound(1400, 0.08, 'square', 0.1);
   }
   // ---- QUALITATIVE STACK THRESHOLDS ----
   // At 3+ stacks of an element bullet card, zombie deaths gain a NEW behavior.
@@ -8540,12 +8549,22 @@ function update() {
         // (sunbeam damage handled above)
         // Power-up aura particles — one per active power-up
         if (gameTime % 4 === 0) { for (const ap of activePowerUps) { const pdef = POWERUP_TYPES.find(p=>p.id===ap.id); if(pdef){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*(hasPowerUp('giant')?40:20),y:lp.y+Math.sin(a)*(hasPowerUp('giant')?40:20),vx:Math.cos(a)*0.5,vy:-1,life:15,maxLife:15,size:hasPowerUp('giant')?5:3,color:pdef.color,type:'spark'});} } }
+        // Ghost: spectral afterimage trail
+        if (hasPowerUp('ghost') && (lp.vx*lp.vx+lp.vy*lp.vy) > 1) {
+          particles.push({x:lp.x+(Math.random()-0.5)*6,y:lp.y+(Math.random()-0.5)*6,vx:-lp.vx*0.1,vy:-lp.vy*0.1,life:12,maxLife:12,size:PLAYER_RADIUS*0.8,color:'#fff3',type:'smoke'});
+        }
+        // Frenzy: intense orange/red speed trail
+        if (hasPowerUp('frenzy') && (lp.vx*lp.vx+lp.vy*lp.vy) > 1) {
+          for(let fi=0;fi<2;fi++)particles.push({x:lp.x+(Math.random()-0.5)*8,y:lp.y+(Math.random()-0.5)*8,vx:-lp.vx*0.15+(Math.random()-0.5)*2,vy:-lp.vy*0.15+(Math.random()-0.5)*2,life:10+Math.random()*6,maxLife:16,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#f40',type:'explosion'});
+        }
     }
 
     // Siphon bank drain: 1 HP per 3 frames (~20 HP/sec)
     if (gameTime % 3 === 0 && lp._siphonBank > 0 && lp.hp < lp.maxHp) {
       lp.hp = Math.min(lp.maxHp, lp.hp + 1);
       lp._siphonBank = Math.max(0, lp._siphonBank - 1);
+      // Green heal particle
+      if (gameTime % 6 === 0) { const ha=Math.random()*Math.PI*2; particles.push({x:lp.x+Math.cos(ha)*10,y:lp.y+Math.sin(ha)*10,vx:Math.cos(ha)*0.5,vy:-1.5,life:12,maxLife:12,size:2,color:'#4f4',type:'spark'}); }
     }
     // Arcade system updates
     updateStreak();
@@ -8676,6 +8695,8 @@ function update() {
     // Elemental bullet particle trails
     if(b._element==='fire'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1.5,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
+    if(b._element==='lightning'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:6+Math.random()*4,maxLife:10,size:1.5+Math.random()*2,color:Math.random()>0.5?'#4ff':'#fff',type:'spark'});
+    if(b._element==='wind'&&gameTime%3===0)particles.push({x:b.x-b.vx*0.3+(Math.random()-0.5)*4,y:b.y-b.vy*0.3+(Math.random()-0.5)*4,vx:-b.vx*0.05,vy:-b.vy*0.05,life:8,maxLife:8,size:2+Math.random()*1.5,color:'#cef',type:'spark'});
     // Homing behavior: curve toward nearest zombie
     if(b._homing&&b.owner==='player'){let bestD=300,bestZ=null;for(const z of zombies){const d=Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);if(d<bestD){bestD=d;bestZ=z;}}if(bestZ){const ta=Math.atan2(bestZ.y-b.y,bestZ.x-b.x),ba=Math.atan2(b.vy,b.vx);let da=ta-ba;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;const turn=0.08;const na=ba+da*turn;const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
     // ---- BULLET SPREAD OVER DISTANCE ----
@@ -8692,9 +8713,9 @@ function update() {
     }
     const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
     // Bouncing behavior: ricochet off walls
-    if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;continue;}
+    if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
     const _bAH=ARENA_H;
-    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));continue;}bullets.splice(i,1);continue;}
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}bullets.splice(i,1);continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
@@ -8746,8 +8767,12 @@ function update() {
                     if (z._frozenTimer > 0) {
                       _dmg = Math.floor(_dmg * 2);
                       addFloatingText(z.x, z.y - z.radius - 16, 'SHATTER', '#aef');
-                      for(let si=0;si<8;si++){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*8,y:z.y+Math.sin(sa)*8,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:14,maxLife:14,size:2+Math.random()*3,color:'#aef',type:'spark'});}
-                      z._frozenTimer = 0; // shatter breaks the freeze
+                      for(let si=0;si<14;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:z.x+Math.cos(sa)*6,y:z.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:16+Math.random()*8,maxLife:24,size:2.5+Math.random()*3.5,color:Math.random()>0.4?'#aef':'#8df',type:'spark'});}
+                      // Ice crystal shards flying outward
+                      for(let ci=0;ci<5;ci++){const ca=Math.random()*Math.PI*2,cs=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs-1,life:22+Math.random()*10,maxLife:32,size:3+Math.random()*2,color:'#cff',type:'spark',gravity:0.06});}
+                      screenShake.intensity = Math.max(screenShake.intensity, 4);
+                      playSfx('ice_hit', 0.3) || playSound(1400, 0.06, 'square', 0.08);
+                      z._frozenTimer = 0;
                     }
                     // Siphon: store fraction of damage as pending healing
                     if (_mods.siphonRate > 0) {
@@ -8756,6 +8781,11 @@ function update() {
                         _slp._siphonBank = (_slp._siphonBank || 0) + _dmg * _mods.siphonRate;
                         const cap = 30 + 20 * (runUpgrades.siphon || 0);
                         if (_slp._siphonBank > cap) _slp._siphonBank = cap;
+                        // Siphon particle: pink mote drifts from enemy toward player
+                        if (gameTime % 3 === 0) {
+                          const _sdx2 = _slp.x - z.x, _sdy2 = _slp.y - z.y, _sd2 = Math.sqrt(_sdx2*_sdx2+_sdy2*_sdy2)||1;
+                          particles.push({x:z.x,y:z.y,vx:_sdx2/_sd2*4+(Math.random()-0.5),vy:_sdy2/_sd2*4+(Math.random()-0.5),life:Math.min(20,Math.floor(_sd2/4)),maxLife:20,size:2+Math.random()*1.5,color:'#f4a',type:'spark'});
+                        }
                       }
                     }
                   }
@@ -8834,7 +8864,10 @@ function update() {
                     // Pulse ascendant: gravity pull nearby enemies toward impact
                     if (_mods.ascendant === 'wind') {
                       for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const pdx=oz.x-z.x,pdy=oz.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);if(pd<120&&pd>5){const pull=3*(1-pd/120);oz.vx+=(z.x-oz.x)/pd*pull;oz.vy+=(z.y-oz.y)/pd*pull;}}
-                      if(gameTime%2===0)for(let vi=0;vi<3;vi++){const va=Math.random()*Math.PI*2,vd=20+Math.random()*30;particles.push({x:z.x+Math.cos(va)*vd,y:z.y+Math.sin(va)*vd,vx:-Math.cos(va)*2,vy:-Math.sin(va)*2,life:10,maxLife:10,size:2,color:'#cef',type:'spark'});}
+                      // Inward-spiraling particles showing the pull
+                      for(let vi=0;vi<6;vi++){const va=Math.random()*Math.PI*2,vd=40+Math.random()*70;particles.push({x:z.x+Math.cos(va)*vd,y:z.y+Math.sin(va)*vd,vx:-Math.cos(va)*3.5+Math.sin(va)*1.5,vy:-Math.sin(va)*3.5-Math.cos(va)*1.5,life:12+Math.random()*6,maxLife:18,size:2+Math.random()*2,color:Math.random()>0.5?'#cef':'#eaf',type:'spark'});}
+                      // Brief radial distortion ring
+                      if(gameTime%3===0){particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:6,color:'#cef8',type:'spark'});}
                     }
                     // Fragmentation: spawn two small side bullets (no recursion)
                     if (_mods.frag && !b._frag) {
@@ -11474,7 +11507,7 @@ function render() {
       ctx.globalAlpha = 1;
     }
     // Shocked effect — sparks around body
-    if(z._shocked>0){ctx.globalAlpha=0.7;for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*6;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random(),0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
+    if(z._shocked>0){ctx.globalAlpha=0.8;ctx.shadowColor='#4ff';ctx.shadowBlur=6;for(let si=0;si<5;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*8;ctx.fillStyle=Math.random()>0.4?'#4ff':'#fff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random()*1.5,0,Math.PI*2);ctx.fill();}if(Math.random()>0.5){const la=Math.random()*Math.PI*2,lr=z.radius*0.6;ctx.strokeStyle='#4ff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,0);const mx=Math.cos(la)*lr+(Math.random()-0.5)*4,my=Math.sin(la)*lr+(Math.random()-0.5)*4;ctx.lineTo(mx,my);ctx.lineTo(mx+Math.cos(la)*lr*0.5+(Math.random()-0.5)*6,my+Math.sin(la)*lr*0.5+(Math.random()-0.5)*6);ctx.stroke();}ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Ice/frozen effect — neon ice with glowing crystals
     if(z._frozenTimer>0||z._slowTimer>0){
       const isFrozen=z._frozenTimer>0;
@@ -11965,7 +11998,8 @@ function render() {
     if(hasPowerUp('shield')){ctx.fillStyle='rgba(0,200,255,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('giant')){ctx.fillStyle='rgba(0,200,0,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
     if(hasPowerUp('freeze')){ctx.fillStyle='rgba(150,200,255,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    if(hasPowerUp('frenzy')){ctx.fillStyle='rgba(255,100,0,0.08)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('frenzy')){ctx.fillStyle='rgba(255,100,0,0.15)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    if(hasPowerUp('ghost')){ctx.fillStyle='rgba(200,220,255,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
   }
 
   // ---- BOSS PROXIMITY AURA ----
