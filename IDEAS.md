@@ -1,3 +1,36 @@
+# IDEAS
+
+---
+
+## Monetization (Near-Term, Mobile-First)
+
+### Ethical / Mobile Standard
+- **Ad-for-Bits**: Watch an ad to double death rewards. One per run. Industry standard, low friction.
+- **Starter Pack**: One-time purchase. Permanent +10% bit bonus + exclusive skin. Good value anchor.
+- **Revive Token**: Continue from death (premium currency or ad watch). Capped at 1 per run so it doesn't trivialize difficulty.
+
+### Cosmetic (No Gameplay Advantage)
+- **Player Skins**: Different character visuals, dash trail colors, death effects.
+- **Bullet Skins**: Neon trails, custom colors, particle effects per weapon type.
+- **Shell Customization**: Decorate The Shell staging area with trophies, banners, ambient effects.
+
+### Progression
+- **Battle Pass / Seasonal Challenges**: Rotating objectives that unlock cosmetic tiers. Free tier + premium tier.
+- **Daily Challenges**: "Kill 50 enemies with cryo rounds" — rewards bits, cosmetic tokens.
+- **Leaderboard Seasons**: Weekly/monthly competitive runs. Top players get exclusive cosmetics.
+
+### Premium Currency
+- "Cores" bought with real money or earned very slowly through play.
+- Cores buy: cosmetic skins, revive tokens, XP boosters (temporary +50% bits for 3 runs).
+- Cores NEVER buy: gameplay power. No pay-to-win. Upgrades must be earned through play.
+
+### Retention
+- **Daily Login Reward**: Small bit bonus for each consecutive day. Resets on miss.
+- **Achievement System**: Permanent unlock goals that grant bits + cosmetics.
+- **Prestige System**: After beating the game, reset run progress for a permanent multiplier.
+
+---
+
 # Future Ideas — Roguelite Progression
 
 ## 1. Meta-currency + Permanent Upgrades
