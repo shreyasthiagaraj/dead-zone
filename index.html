@@ -1153,22 +1153,24 @@ let _playerNearestZombieDist = Infinity;
 
 function getScaledGun() {
   const m = runMods || {};
-  const dmgMult = (1 + (m.damageMult || 0)) * (1 + (getMetaBonus('power')));
-  const frMult = 1 + (m.fireRateMult || 0);
-  const sizeMult = 1 + (m.bulletSizeMult || 0);
-  const speedMult = 1 + (m.bulletSpeedMult || 0);
-  // Bullet color follows the dominant bullet element; uncoated bullets stay yellow
-  const bulletColor = m.dominantBullet ? _ELEM_COLOR[m.dominantBullet] : '#ff0';
+  const dmgMult = (1 + (m.damageMult || 0)) * (1 + getMetaBonus('power'));
+  const frMult = Math.max(0.5, 1 + (m.fireRateMult || 0)); // floor at 0.5 to prevent negative
+  const bulletColor = m.dominantClass ? _ELEM_COLOR[m.dominantClass] : '#ff0';
+  // Wide Spread: extra projectiles (handled in fireWeaponForPlayer)
+  const wideSpreadExtra = m.wideSpread > 0 ? 2 : 0;
   return {
     damage: Math.floor(BASE_GUN.damage * dmgMult),
-    fireRate: Math.max(40, BASE_GUN.fireRate / frMult),
-    bulletSpeed: BASE_GUN.bulletSpeed * speedMult,
-    spread: BASE_GUN.spread,
-    bulletSize: BASE_GUN.bulletSize * sizeMult,
-    knockback: BASE_GUN.knockback,
+    fireRate: Math.max(50, BASE_GUN.fireRate / frMult),
+    bulletSpeed: BASE_GUN.bulletSpeed,
+    spread: BASE_GUN.spread + (wideSpreadExtra > 0 ? 0.15 : 0),
+    bulletSize: BASE_GUN.bulletSize,
+    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 2 + m.pulseShotLv : 0),
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
-    bounceCount: m.bounceCount || 0,
+    bounceCount: 0,
     bulletColor,
+    extraProjectiles: wideSpreadExtra,
+    wideSpreadDmgMult: m.wideSpread >= 2 ? 0.8 : 0.7, // damage penalty for extra projectiles
+    statusForce: m.statusForce || 1,
   };
 }
 
@@ -1184,204 +1186,263 @@ function updateStreak() {}
 // Each upgrade has:
 //   id, name, desc, rarity (common/rare/epic/legendary), max (max copies), icon, color
 // Rarity weights in the draft pool control how often each tier appears.
-// STRIDE cards — permanent run-scoped identity (stats, orbitals, survival, elements).
-// Elements are now first-class STRIDE cards split into BULLETS (4 levels) and SMASH (3 levels).
-// Stacking 3+ total levels in a single element (bullets + smash combined) unlocks an
-// ASCENDANT passive bonus for that element.
+// ============================================================
+// BUILD SYSTEM v2 — Class-driven cards with tiered evolution
+// ============================================================
+// 5 classes: Thermal, Cryo, Arc, Pulse, Corrupt
+// 6 statuses: Overheat, Chill, Frozen, Charged, Exposed, Compromised
+// Card tiers: level = number of times purchased (max 2-3)
+// Crit: conditional only (Precision Breach, Shatterpoint, Predator Lv3)
+// Sustain: barrier-based (Shield Dash, Recovery Loop, Emergency Buffer, Fail Safe)
 const UPGRADE_POOL = [
-  // Offense — common/rare
-  { id:'savage',     name:'SAVAGE ROUNDS',  desc:'+15% bullet damage per level',    flavor:'overclocked instruction set — every packet bites harder', rarity:'common',    max:5, icon:'⚔',  color:'#f44' },
-  { id:'rapid',      name:'RAPID FIRE',     desc:'+12% fire rate per level',        flavor:'fire control loop unshackled',                              rarity:'common',    max:5, icon:'⚡', color:'#ff0' },
-  { id:'pierce',     name:'OVERPENETRATOR', desc:'+1 bullet pierce per level',      flavor:'walls barely slow them now',                                rarity:'rare',      max:6, icon:'➟',  color:'#0cf' },
-  { id:'bigbullets', name:'BIGGER BULLETS', desc:'+20% bullet size per level',      flavor:'intentional buffer overflow',                               rarity:'common',    max:4, icon:'●',  color:'#fa0' },
-  { id:'crit',       name:'CRITICAL STRIKE',desc:'+5% crit chance per level (max 35%)', flavor:'targeted vulnerability scanner',                       rarity:'rare',      max:6, icon:'✹',  color:'#f0f' },
-  { id:'overkill',   name:'OVERKILL',       desc:'+50% crit damage per level',      flavor:'critical failure cascades through the target',              rarity:'rare',      max:4, icon:'✢',  color:'#f08' },
-  { id:'hollow',     name:'HOLLOW POINTS',  desc:'+25% dmg vs enemies below 50% HP', flavor:'exploits already-failing processes',                      rarity:'rare',      max:4, icon:'◎',  color:'#f60' },
-  { id:'overcharge', name:'OVERCHARGE',     desc:'Every Nth shot deals 3x. Lv1: 6th · Lv2: 5th · Lv3: 4th', flavor:'manual capacitor discharge. timed.', rarity:'rare', max:3, icon:'⫸',  color:'#ff8' },
-  // Bullet elements — rare, stack up to 4 levels. At 3+ combined with wake: ASCENDANT
-  { id:'firebul',    name:'THERMAL ROUNDS', desc:'12% ignite chance per level. 3+ total thermal: 75% chance, burn explosions', flavor:'thermal throttle exploit — they cook from the inside', rarity:'rare', max:4, icon:'🜂', color:'#f80' },
-  { id:'icebul',     name:'CRYO ROUNDS',    desc:'15% freeze chance per level. Frozen = 2x damage. 3+ total cryo: instant freeze', flavor:'clock-cycle freeze. time slows for the target', rarity:'rare', max:4, icon:'❄', color:'#8ef' },
-  { id:'chainbul',   name:'ARC ROUNDS',     desc:'10% chain chance per level. 3+ total arc: 100% chain, +1 jump', flavor:'shared-bus signal jumps between nodes', rarity:'rare', max:4, icon:'⚡', color:'#4ff' },
-  { id:'windbul',    name:'PULSE ROUNDS',   desc:'+1 pierce, +15% speed per level. 3+ total pulse: gravity pull on hit', flavor:'priority hack. your packets beat theirs to the wire', rarity:'rare', max:4, icon:'💨', color:'#cef' },
-  // Dash element trails — epic, stack up to 3 levels. MUTUALLY EXCLUSIVE — buying one replaces any other wake.
-  { id:'firesmash',  name:'THERMAL WAKE',   desc:'Dash ignites enemies in wake. Replaces other wakes', flavor:'exhaust ports vent coolant fire across the path', rarity:'epic', max:3, icon:'🜂', color:'#f60' },
-  { id:'icesmash',   name:'CRYO WAKE',      desc:'Dash freezes enemies in wake. Replaces other wakes', flavor:'cryogenic sinks crash the clock of everything you pass', rarity:'epic', max:3, icon:'❆', color:'#6df' },
-  { id:'chainsmash', name:'ARC WAKE',       desc:'Dash shocks enemies in wake. Replaces other wakes', flavor:'discharge arcs off your hull — nothing grounded survives', rarity:'epic', max:3, icon:'⚡', color:'#4ff' },
-  { id:'windsmash',  name:'PULSE WAKE',     desc:'Dash staggers enemies in wake. Replaces other wakes', flavor:'pressure wake flings them — their packets go nowhere', rarity:'epic', max:3, icon:'🌀', color:'#ace' },
-  // Dash shockwave — triggers a blast at dash end position
-  { id:'shockdash',  name:'SHOCKWAVE DASH', desc:'Dash ends in a knockback wave. Lv1-3: +radius +dmg', flavor:'deceleration releases stored kinetic as an outward pulse', rarity:'rare', max:3, icon:'◈', color:'#4af' },
-  // Area / orbital — epic
-  { id:'orbital',    name:'ORBITAL RING',   desc:'+1 orbiting bullet per level (40% gun dmg)', flavor:'uncorrupted satellite still running its old routine', rarity:'epic', max:4, icon:'◉', color:'#a8f' },
-  { id:'blastcd',    name:'BLAST MASTERY',  desc:'-25% blast cooldown per level (compounds)', flavor:'capacitor tuning. recharge faster.', rarity:'epic', max:3, icon:'◈', color:'#4af' },
-  { id:'blastr',     name:'BIGGER BLAST',   desc:'+30% blast + explosion radius per level (compounds)', flavor:'overclocked shockwave. wider reach.', rarity:'epic', max:3, icon:'◯', color:'#8df' },
-  { id:'deathexp',   name:'DEATH EXPLOSION',desc:'Kills explode. Lv1: 25 · Lv2: 40 · Lv3: 55 · Lv4: 70 dmg', flavor:'kill signal cascades into a small overload', rarity:'epic', max:4, icon:'✸', color:'#f80' },
-  // Survival — common/rare
-  { id:'vamp',       name:'VAMPIRISM',      desc:'+1 HP per kill per level',         flavor:'absorb orphaned process data on each purge',               rarity:'rare',      max:5, icon:'♥',  color:'#f48' },
-  { id:'lifesteal',  name:'LIFESTEAL',      desc:'+5 HP per crit hit per level',     flavor:'critical strikes write healing to your core',              rarity:'rare',      max:3, icon:'✚',  color:'#f4a' },
-  { id:'hpup',       name:'REINFORCED',     desc:'+15 max HP per level, heal to full', flavor:'memory reallocated — more of yourself to spare',        rarity:'common',    max:6, icon:'＋', color:'#4f4' },
-  { id:'adrenaline', name:'ADRENALINE',     desc:'+15% fire rate per level when below 50% HP', flavor:'emergency subroutine pumps the clock',          rarity:'rare',      max:3, icon:'⚝',  color:'#ff4' },
-  { id:'thick',      name:'THICK SKIN',     desc:'-3% damage taken per level (max 24%)', flavor:'error-correction cache smooths the incoming',         rarity:'rare',      max:6, icon:'◍',  color:'#aaa' },
-  // Mobility / Utility — common
-  { id:'swift',      name:'SWIFT BOOTS',    desc:'+10% move speed per level',        flavor:'motor daemons unclipped',                                  rarity:'common',    max:5, icon:'»',  color:'#0ff' },
-  { id:'magnet',     name:'MAGNETISM',      desc:'+50% pickup radius per level',     flavor:'attraction field for loose fragment packets',              rarity:'common',    max:4, icon:'◈',  color:'#8cf' },
-  { id:'xp',         name:'XP AMPLIFIER',   desc:'+20% XP per level',                flavor:'fortified fragment parser',                                rarity:'common',    max:4, icon:'✦',  color:'#0fc' },
-  // Unique / legendary — 1 copy only
-  { id:'revive',     name:'SECOND CHANCE',  desc:'Revive once with 50% HP',          flavor:'one-time emergency rollback. use wisely.',                 rarity:'legendary', max:1, icon:'☥',  color:'#0f0' },
-  { id:'berserk',    name:'BERSERKER',      desc:'+60% dmg, -25% max HP',            flavor:'manual overclock. fragile but furious.',                   rarity:'legendary', max:1, icon:'☠',  color:'#f00' },
-  { id:'frag',       name:'FRAGMENTATION',  desc:'Bullets split into 2 on hit (35% dmg each)', flavor:'bullet fragmentation payload. splits on impact.', rarity:'legendary', max:1, icon:'✳', color:'#f4f' },
-  // Build diversity
-  { id:'ricochet',   name:'RICOCHET',       desc:'+1 wall bounce per level',         flavor:'reflection protocol — walls become weapons',               rarity:'rare',      max:3, icon:'⟐',  color:'#adf' },
-  { id:'chainreact', name:'CHAIN REACTION', desc:'Death explosions chain. +1 chain depth per level', flavor:'cascading failure. one crash triggers the next.', rarity:'epic', max:3, icon:'⛓', color:'#f80' },
-  { id:'multi',      name:'MULTI-SHOT',     desc:'+1 extra bullet per level (60% dmg each)', flavor:'packet duplication. more of everything.',          rarity:'epic',      max:2, icon:'⫸',  color:'#fa4' },
-  { id:'siphon',     name:'SIPHON',         desc:'+2% of damage stored as HP per level', flavor:'leeching bandwidth. every hit restores a fragment of you.', rarity:'rare', max:3, icon:'⌽', color:'#f4a' },
-  // ---- CORRUPT CLASS ----
-  { id:'corruptbul',   name:'VIRAL PAYLOAD',  desc:'15% chance to apply Corrupt per level. 5 stacks = Compromised (+50% dmg taken)', flavor:'injected malware. it eats them from the inside.', rarity:'common', max:3, icon:'☣', color:'#a4f' },
-  { id:'corruptsmash', name:'CORRUPT WAKE',   desc:'Dash applies 2 Corrupt stacks. Replaces other wakes', flavor:'your wake carries the infection.', rarity:'epic', max:3, icon:'☣', color:'#a4f' },
-  { id:'cascadefail',  name:'CASCADE FAILURE', desc:'Compromised enemies spread Corrupt on death + AoE', flavor:'one failure cascades through the network.', rarity:'rare', max:2, icon:'⚠', color:'#a4f' },
-  // ---- CLASS ENHANCEMENT ----
-  { id:'reactorbloom', name:'REACTOR BLOOM',  desc:'Overheated enemies explode on death. Lv2: bigger blast', flavor:'thermal runaway. the reactor goes critical.', rarity:'rare', max:2, icon:'✸', color:'#f80' },
-  { id:'coldsnap',     name:'COLD SNAP',      desc:'Chill slows +30% more per level. Freeze lasts +20% longer', flavor:'deep freeze. nothing moves.', rarity:'rare', max:2, icon:'❆', color:'#8ef' },
-  { id:'vectorsnap',   name:'VECTOR SNAP',    desc:'+30% dmg to staggered enemies per level', flavor:'hit them while they stumble.', rarity:'rare', max:2, icon:'◈', color:'#cef' },
-  { id:'slipstream',   name:'SLIPSTREAM',     desc:'+20% move speed for 1.5s after dash per level', flavor:'momentum carries forward.', rarity:'rare', max:2, icon:'»', color:'#0ff' },
-  // ---- POST-DASH RIDERS ----
-  { id:'predator',     name:'PREDATOR ROUND', desc:'Next 3 shots after dash deal +40% dmg. Lv2: +60%', flavor:'the first strike after repositioning hits hardest.', rarity:'rare', max:2, icon:'◆', color:'#f44' },
-  { id:'overchargedash', name:'OVERCHARGE DASH', desc:'Arc proc +30% for 1.5s after dash. Lv2: +50%', flavor:'the dash charges your arc capacitors.', rarity:'rare', max:2, icon:'⚡', color:'#4ff' },
-  { id:'shielddash',   name:'SHIELD DASH',    desc:'Gain 15 barrier after dash. Lv2: 25 barrier', flavor:'momentum converted to defense.', rarity:'rare', max:2, icon:'🛡', color:'#4ff' },
-  // ---- SYNERGY CARDS (require 2 classes) ----
-  { id:'syn_overload',     name:'OVERLOAD',          desc:'Overheated+Charged enemies discharge Arc burst when hit', flavor:'two unstable states collide.', rarity:'epic', max:1, icon:'⚡', color:'#fa4', prereqs:['firebul|firesmash','chainbul|chainsmash'] },
-  { id:'syn_thermalshock', name:'THERMAL SHOCK',     desc:'Thermal dmg to Frozen enemies causes massive AoE burst', flavor:'fire meets ice. something breaks.', rarity:'epic', max:1, icon:'✴', color:'#f84', prereqs:['firebul|firesmash','icebul|icesmash'] },
-  { id:'syn_condfreeze',   name:'CONDUCTIVE FREEZE', desc:'Arc chains travel 2x farther through Chilled/Frozen enemies', flavor:'cold conductors. current flows freely.', rarity:'epic', max:1, icon:'❄', color:'#4ef', prereqs:['icebul|icesmash','chainbul|chainsmash'] },
-  { id:'syn_stormdrive',   name:'STORM DRIVE',       desc:'After dash, Arc chain range +80% for 1.5s', flavor:'the storm follows your wake.', rarity:'epic', max:1, icon:'⚡', color:'#4af', prereqs:['chainbul|chainsmash','windbul|windsmash'] },
-  { id:'syn_faultcascade', name:'FAULT CASCADE',     desc:'Compromised enemies emit Arc pulses when damaged', flavor:'corrupted systems arc and spark.', rarity:'epic', max:1, icon:'☣', color:'#84f', prereqs:['chainbul|chainsmash','corruptbul|corruptsmash'] },
+  // ---- CLASS APPLICATION (common, max 3) ----
+  { id:'thermal_rounds', name:'THERMAL ROUNDS', rarity:'common', max:3, icon:'🔥', color:'#f80',
+    desc:'Lv1: shots apply Overheat. Lv2: Overheated explode on death. Lv3: explosions spread Overheat',
+    flavor:'thermal throttle exploit — they cook from the inside' },
+  { id:'cryo_rounds', name:'CRYO ROUNDS', rarity:'common', max:3, icon:'🧊', color:'#8ef',
+    desc:'Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
+    flavor:'clock-cycle freeze. time slows for the target' },
+  { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:3, icon:'⚡', color:'#4ff',
+    desc:'Lv1: shots can apply Charged. Lv2: Charged targets chain more. Lv3: Charged discharge on death',
+    flavor:'shared-bus signal jumps between nodes' },
+  { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:3, icon:'💨', color:'#cef',
+    desc:'Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
+    flavor:'kinetic payload. impact registered.' },
+  { id:'viral_payload', name:'VIRAL PAYLOAD', rarity:'common', max:3, icon:'☣', color:'#a4f',
+    desc:'Lv1: shots apply Corrupt. Lv2: Compromised take +25% more. Lv3: Compromised spread on death',
+    flavor:'injected malware. it eats them from the inside.' },
+  // ---- CLASS ENHANCEMENT (rare, max 2) ----
+  { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:2, icon:'✸', color:'#f80',
+    desc:'Lv1: Overheat explosions +50% radius. Lv2: explosions spread Overheat to nearby',
+    flavor:'thermal runaway. the reactor goes critical.' },
+  { id:'cold_snap', name:'COLD SNAP', rarity:'rare', max:2, icon:'❆', color:'#8ef',
+    desc:'Lv1: Chill stacks +50% faster. Lv2: Frozen duration +40%',
+    flavor:'deep freeze. nothing moves.' },
+  { id:'static_chain', name:'STATIC CHAIN', rarity:'rare', max:3, icon:'⚡', color:'#4ff',
+    desc:'Lv1: Arc procs jump to 1 nearby. Lv2: +1 jump. Lv3: +range',
+    flavor:'current finds the path of least resistance.' },
+  { id:'vector_snap', name:'VECTOR SNAP', rarity:'rare', max:2, icon:'◈', color:'#cef',
+    desc:'Lv1: +30% dmg to Exposed enemies. Lv2: +50%',
+    flavor:'hit them while they are vulnerable.' },
+  { id:'compromised_core', name:'COMPROMISED CORE', rarity:'rare', max:2, icon:'☣', color:'#a4f',
+    desc:'Lv1: Corrupt threshold 4 instead of 5. Lv2: Compromised lasts +50%',
+    flavor:'weaker firewalls. faster collapse.' },
+  // ---- GENERIC WEAPON (common, max 2) ----
+  { id:'wide_spread', name:'WIDE SPREAD', rarity:'common', max:2, icon:'⫸', color:'#fa0',
+    desc:'Lv1: +2 projectiles, wider cone (70% dmg each). Lv2: 80% dmg each',
+    flavor:'spray protocol. cover the room.' },
+  { id:'piercing_shot', name:'PIERCING SHOT', rarity:'common', max:2, icon:'➟', color:'#0cf',
+    desc:'Lv1: +1 pierce. Lv2: +2 pierce total',
+    flavor:'walls barely slow them now.' },
+  { id:'rapid_cycle', name:'RAPID CYCLE', rarity:'common', max:2, icon:'⚡', color:'#ff0',
+    desc:'Lv1: +25% fire rate. Lv2: +40% fire rate',
+    flavor:'fire control loop unshackled.' },
+  { id:'heavy_caliber', name:'HEAVY CALIBER', rarity:'rare', max:2, icon:'⚔', color:'#f44',
+    desc:'Lv1: -30% fire rate, +60% damage, +status force. Lv2: +80% damage',
+    flavor:'slow and deliberate. every round counts.' },
+  // ---- DASH: UNIVERSAL (common/rare) ----
+  { id:'shockwave', name:'SHOCKWAVE', rarity:'common', max:3, icon:'◈', color:'#4af',
+    desc:'Lv1: dash endpoint burst. Lv2: bigger radius+force. Lv3: enemies hit become Exposed',
+    flavor:'deceleration releases stored kinetic.' },
+  { id:'shield_dash', name:'SHIELD DASH', rarity:'rare', max:2, icon:'🛡', color:'#4ff',
+    desc:'Lv1: gain 15 barrier after dash. Lv2: 25 barrier, longer duration',
+    flavor:'momentum converted to defense.' },
+  { id:'predator_round', name:'PREDATOR ROUND', rarity:'rare', max:3, icon:'◆', color:'#f44',
+    desc:'Lv1: first 3 shots after dash +40% dmg. Lv2: +pierce. Lv3: +crit chance',
+    flavor:'the first strike after repositioning hits hardest.' },
+  // ---- DASH: THERMAL ----
+  { id:'burnout_wake', name:'BURNOUT WAKE', rarity:'common', max:2, icon:'🔥', color:'#f60',
+    desc:'Lv1: dash trail applies Overheat. Lv2: trail lingers briefly. Replaces other wakes',
+    flavor:'exhaust ports vent fire across the path.' },
+  { id:'flashpoint', name:'FLASHPOINT', rarity:'rare', max:2, icon:'✸', color:'#f60',
+    desc:'Lv1: dash endpoint detonates Overheated enemies. Lv2: bigger detonation radius',
+    flavor:'dash in. everything ignites.' },
+  // ---- DASH: CRYO ----
+  { id:'cryo_wake', name:'CRYO WAKE', rarity:'common', max:2, icon:'🧊', color:'#6df',
+    desc:'Lv1: dash trail applies Chill. Lv2: trail lingers as slow zone. Replaces other wakes',
+    flavor:'cryogenic wake. everything slows.' },
+  { id:'freeze_pulse', name:'FREEZE PULSE', rarity:'common', max:2, icon:'❆', color:'#8ef',
+    desc:'Lv1: dash endpoint applies Chill in radius. Lv2: extra Chill to already-chilled',
+    flavor:'flash freeze at the point of impact.' },
+  { id:'shatter_step', name:'SHATTER STEP', rarity:'rare', max:2, icon:'❄', color:'#aef',
+    desc:'Lv1: Frozen enemies near dash end take 2x dmg. Lv2: shatter creates splash',
+    flavor:'walk through ice. it breaks.' },
+  // ---- DASH: ARC ----
+  { id:'static_wake', name:'STATIC WAKE', rarity:'common', max:2, icon:'⚡', color:'#4ff',
+    desc:'Lv1: dash trail zaps nearby, applies Charged. Lv2: more consistent. Replaces other wakes',
+    flavor:'current flows in your wake.' },
+  { id:'overcharge_dash', name:'OVERCHARGE DASH', rarity:'common', max:3, icon:'⚡', color:'#4ff',
+    desc:'Lv1: Arc proc +30% for 1.5s after dash. Lv2: longer. Lv3: first chain +bonus dmg',
+    flavor:'the dash charges your capacitors.' },
+  { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:2, icon:'⚡', color:'#4ff',
+    desc:'Lv1: dash endpoint releases Arc into Charged enemies. Lv2: +jump count',
+    flavor:'endpoint discharge. arcs fly.' },
+  // ---- DASH: PULSE ----
+  { id:'impulse_wave', name:'IMPULSE WAVE', rarity:'common', max:3, icon:'💨', color:'#cef',
+    desc:'Lv1: large dash endpoint shockwave. Lv2: bigger. Lv3: enemies hit become Exposed',
+    flavor:'the impact reshapes the battlefield.' },
+  { id:'slipstream', name:'SLIPSTREAM', rarity:'rare', max:2, icon:'»', color:'#0ff',
+    desc:'Lv1: +25% move speed for 1.5s after dash. Lv2: +fire rate bonus too',
+    flavor:'momentum carries forward.' },
+  // ---- DASH: CORRUPT ----
+  { id:'glitch_wake', name:'GLITCH WAKE', rarity:'common', max:2, icon:'☣', color:'#a4f',
+    desc:'Lv1: dash trail applies Corrupt stacks. Lv2: lingers as glitch zone. Replaces other wakes',
+    flavor:'your wake carries the infection.' },
+  { id:'fatal_exception', name:'FATAL EXCEPTION', rarity:'rare', max:2, icon:'☣', color:'#a4f',
+    desc:'Lv1: next shot after dash +50% dmg to Compromised. Lv2: +Corrupt stack too',
+    flavor:'mark then execute. clean.' },
+  // ---- SUSTAIN (rare/epic) ----
+  { id:'recovery_loop', name:'RECOVERY LOOP', rarity:'rare', max:2, icon:'✚', color:'#4f4',
+    desc:'Lv1: elite kills restore 10 HP. Lv2: 15 HP',
+    flavor:'milestone repair. earned, not given.' },
+  { id:'emergency_buffer', name:'EMERGENCY BUFFER', rarity:'rare', max:2, icon:'🛡', color:'#ff4',
+    desc:'Lv1: below 25% HP → gain 20 barrier (once per section). Lv2: 30 barrier',
+    flavor:'panic protocol. last line of defense.' },
+  { id:'fail_safe', name:'FAIL SAFE', rarity:'epic', max:1, icon:'☥', color:'#0f0',
+    desc:'Survive lethal damage once per run. Left at 1 HP + 30 barrier',
+    flavor:'one-time emergency rollback.' },
+  // ---- CRIT WINDOW (rare, require class prereqs) ----
+  { id:'precision_breach', name:'PRECISION BREACH', rarity:'rare', max:2, icon:'✹', color:'#cef',
+    desc:'Lv1: shots vs Exposed: +25% crit chance. Lv2: +40%',
+    flavor:'vulnerable systems. precision strike.', prereqs:['pulse_shot|impulse_wave'] },
+  { id:'shatterpoint', name:'SHATTERPOINT', rarity:'rare', max:2, icon:'❄', color:'#8ef',
+    desc:'Lv1: shots vs Frozen: guaranteed crit. Lv2: +bonus shatter damage',
+    flavor:'the fracture point. one clean hit.', prereqs:['cryo_rounds|freeze_pulse'] },
+  // ---- SYNERGY (epic, max 1, require 2 classes) ----
+  { id:'syn_overload', name:'OVERLOAD', rarity:'epic', max:1, icon:'⚡', color:'#fa4',
+    desc:'Overheated+Charged enemies discharge Arc burst when hit',
+    flavor:'two unstable states collide.', prereqs:['thermal_rounds|burnout_wake','arc_rounds|static_wake'] },
+  { id:'syn_thermal_shock', name:'THERMAL SHOCK', rarity:'epic', max:1, icon:'✴', color:'#f84',
+    desc:'Thermal dmg to Frozen enemies causes massive AoE burst',
+    flavor:'fire meets ice. something breaks.', prereqs:['thermal_rounds|burnout_wake','cryo_rounds|cryo_wake'] },
+  { id:'syn_cond_freeze', name:'CONDUCTIVE FREEZE', rarity:'epic', max:1, icon:'❄', color:'#4ef',
+    desc:'Arc chains 2x farther through Chilled/Frozen enemies',
+    flavor:'cold conductors. current flows freely.', prereqs:['cryo_rounds|cryo_wake','arc_rounds|static_wake'] },
+  { id:'syn_storm_drive', name:'STORM DRIVE', rarity:'epic', max:1, icon:'⚡', color:'#4af',
+    desc:'After dash, Arc chains +80% range for 1.5s',
+    flavor:'the storm follows your wake.', prereqs:['arc_rounds|static_wake','pulse_shot|impulse_wave'] },
+  { id:'syn_fault_cascade', name:'FAULT CASCADE', rarity:'epic', max:1, icon:'☣', color:'#84f',
+    desc:'Compromised enemies emit Arc pulses when damaged',
+    flavor:'corrupted systems arc and spark.', prereqs:['arc_rounds|static_wake','viral_payload|glitch_wake'] },
+  // ---- DASH SYNERGY (epic, max 1) ----
+  { id:'syn_shatter_wave', name:'SHATTER WAVE', rarity:'epic', max:1, icon:'❄', color:'#aef',
+    desc:'Dash shockwave shatters low-HP Frozen enemies. Bonus dmg to Chilled',
+    flavor:'ice cracks under force.', prereqs:['cryo_rounds|cryo_wake','pulse_shot|impulse_wave'] },
+  // ---- UTILITY (common) ----
+  { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:3, icon:'»', color:'#0ff',
+    desc:'+8% move speed per level', flavor:'motor daemons unclipped' },
+  { id:'magnet', name:'MAGNETISM', rarity:'common', max:3, icon:'◈', color:'#8cf',
+    desc:'+40% pickup radius per level', flavor:'attraction field for loose fragments' },
+  { id:'xp_amp', name:'XP AMPLIFIER', rarity:'common', max:3, icon:'✦', color:'#0fc',
+    desc:'+15% XP per level', flavor:'fortified fragment parser' },
 ];
 
 const _UPGRADE_BY_ID = Object.fromEntries(UPGRADE_POOL.map(u => [u.id, u]));
 
 function rebuildRunMods() {
-  // Walk runUpgrades and build a single stat-mod object consumed by gun/player logic.
+  // Build system v2: class-driven cards with tiered evolution.
+  // Level = number of times purchased. Effects computed from level.
   const m = {
-    damageMult: 0, fireRateMult: 0, bulletSizeMult: 0, pierceAdd: 0,
-    bulletSpeedMult: 0,
-    critChance: 0, critDamageMult: 0.5 /* base 1.5x */,
-    hollowPoint: 0, // extra dmg vs low-HP targets
-    overchargeEvery: 0, // every Nth shot deals massive damage (0 = disabled)
-    lifestealOnCrit: 0, // heal per crit
-    // Bullet element levels (independent — you can stack multiple)
-    fireBulletsLv: 0, iceBulletsLv: 0, chainBulletsLv: 0, windBulletsLv: 0, corruptBulletsLv: 0,
-    // Dash trail element levels — apply effects to enemies in the dash path
-    fireSmashLv: 0, iceSmashLv: 0, chainSmashLv: 0, windSmashLv: 0, corruptSmashLv: 0,
-    // Shockwave dash — triggers an explosion at the dash end position
-    shockDashLv: 0,
-    // Ascendant: element (fire/ice/chain/wind) that has >= 3 total levels across bullets + smash
-    ascendant: null,
-    // Dominant bullet element — used by the renderer to tint bullets toward the highest-stacked bullet element
-    dominantBullet: null,
-    orbitalCount: 0, blastCdMult: 1, blastRadiusMult: 1, deathExplosion: 0,
-    hpPerKill: 0, adrenaline: 0, dmgReduction: 0,
-    moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
-    maxHpBonus: 0, maxHpPenalty: 0,
-    frag: false, ghostBullets: false, revive: false, berserk: false,
-    bounceCount: 0, chainReaction: 0, multiShot: 0, siphonRate: 0,
-    // Corrupt & synergy & rider system
-    cascadeFailureLv: 0, reactorBloom: 0, coldSnap: 0, vectorSnap: 0,
-    predatorRound: 0, overchargeDash: 0, shieldDash: 0, slipstream: 0,
+    // Class application levels (0-3)
+    thermalRoundsLv: 0, cryoRoundsLv: 0, arcRoundsLv: 0, pulseShotLv: 0, viralPayloadLv: 0,
+    // Class enhancement levels (0-2)
+    reactorBloom: 0, coldSnap: 0, staticChain: 0, vectorSnap: 0, compromisedCore: 0,
+    // Generic weapon
+    wideSpread: 0, piercingShot: 0, rapidCycle: 0, heavyCaliber: 0,
+    // Dash cards
+    shockwave: 0, shieldDash: 0, predatorRound: 0,
+    burnoutWake: 0, flashpoint: 0,
+    cryoWake: 0, freezePulse: 0, shatterStep: 0,
+    staticWake: 0, overchargeDash: 0, dischargeBurst: 0,
+    impulseWave: 0, slipstream: 0,
+    glitchWake: 0, fatalException: 0,
+    // Sustain
+    recoveryLoop: 0, emergencyBuffer: 0, failSafe: false,
+    // Crit windows
+    precisionBreach: 0, shatterpoint: 0,
+    // Synergies (boolean)
     synergyOverload: false, synergyThermalShock: false, synergyConductiveFreeze: false,
-    synergyStormDrive: false, synergyFaultCascade: false,
+    synergyStormDrive: false, synergyFaultCascade: false, synergyShatterWave: false,
+    // Utility
+    moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
+    // Computed (set below)
+    damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
+    dominantClass: null, // highest class for bullet tinting
   };
   for (const id in runUpgrades) {
-    const n = runUpgrades[id];
-    if (!n) continue;
+    const n = runUpgrades[id]; if (!n) continue;
     switch (id) {
-      case 'savage':     m.damageMult    += 0.15 * n; break;
-      case 'rapid':      m.fireRateMult  += 0.12 * n; break;
-      case 'pierce':     m.pierceAdd     += 1 * n; break;
-      case 'bigbullets': m.bulletSizeMult+= 0.20 * n; break;
-      case 'crit':       m.critChance    += 0.05 * n; break;
-      case 'overkill':   m.critDamageMult+= 0.50 * n; break;
-      case 'hollow':     m.hollowPoint   += 0.25 * n; break;
-      case 'overcharge': m.overchargeEvery = Math.max(3, 7 - n); break; // lvl1: every 6, lvl2: 5, lvl3: 4
-      case 'lifesteal':  m.lifestealOnCrit += 5 * n; break;
-      // Bullet elements
-      case 'firebul':    m.fireBulletsLv  += n; break;
-      case 'icebul':     m.iceBulletsLv   += n; break;
-      case 'chainbul':   m.chainBulletsLv += n; break;
-      case 'windbul':    m.windBulletsLv  += n; m.pierceAdd += n; m.bulletSpeedMult += 0.15 * n; break;
-      // Dash trail elements
-      case 'firesmash':  m.fireSmashLv    += n; break;
-      case 'icesmash':   m.iceSmashLv     += n; break;
-      case 'chainsmash': m.chainSmashLv   += n; break;
-      case 'windsmash':  m.windSmashLv    += n; break;
-      case 'shockdash':  m.shockDashLv    += n; break;
-      case 'orbital':    m.orbitalCount  += n; break;
-      case 'blastcd':    m.blastCdMult   *= Math.pow(0.75, n); break;
-      case 'blastr':     m.blastRadiusMult *= Math.pow(1.30, n); break;
-      case 'deathexp':   m.deathExplosion += 25 + 15*(n-1); break;
-      case 'vamp':       m.hpPerKill     += 1 * n; break;
-      case 'hpup':       m.maxHpBonus    += 15 * n; break;
-      case 'adrenaline': m.adrenaline    += 0.15 * n; break;
-      case 'thick':      m.dmgReduction  += 0.03 * n; break;
-      case 'swift':      m.moveSpeedMult += 0.10 * n; break;
-      case 'magnet':     m.magnetRadiusMult += 0.50 * n; break;
-      case 'xp':         m.xpMult        += 0.20 * n; break;
-      case 'revive':     m.revive = true; break;
-      case 'berserk':    m.damageMult += 0.60; m.maxHpPenalty += 0.25; m.berserk = true; break;
-      case 'frag':       m.frag = true; break;
-      // New mods
-      case 'ricochet':   m.bounceCount   += n; break;
-      case 'chainreact': m.chainReaction += n; break;
-      case 'multi':      m.multiShot     += n; break;
-      case 'siphon':     m.siphonRate    += 0.02 * n; break;
-      // Corrupt class
-      case 'corruptbul':    m.corruptBulletsLv += n; break;
-      case 'corruptsmash':  m.corruptSmashLv   += n; break;
-      case 'cascadefail':   m.cascadeFailureLv += n; break;
+      // Class application
+      case 'thermal_rounds':  m.thermalRoundsLv += n; break;
+      case 'cryo_rounds':     m.cryoRoundsLv    += n; break;
+      case 'arc_rounds':      m.arcRoundsLv     += n; break;
+      case 'pulse_shot':      m.pulseShotLv     += n; break;
+      case 'viral_payload':   m.viralPayloadLv  += n; break;
       // Class enhancement
-      case 'reactorbloom':  m.reactorBloom  += n; break;
-      case 'coldsnap':      m.coldSnap      += n; break;
-      case 'vectorsnap':    m.vectorSnap    += n; break;
-      case 'slipstream':    m.slipstream    += n; break;
-      // Post-dash riders
-      case 'predator':      m.predatorRound   += n; break;
-      case 'overchargedash': m.overchargeDash += n; break;
-      case 'shielddash':   m.shieldDash    += n; break;
-      // Synergies (boolean flags)
-      case 'syn_overload':     m.synergyOverload = true; break;
-      case 'syn_thermalshock': m.synergyThermalShock = true; break;
-      case 'syn_condfreeze':   m.synergyConductiveFreeze = true; break;
-      case 'syn_stormdrive':   m.synergyStormDrive = true; break;
-      case 'syn_faultcascade': m.synergyFaultCascade = true; break;
+      case 'reactor_bloom':   m.reactorBloom     += n; break;
+      case 'cold_snap':       m.coldSnap         += n; break;
+      case 'static_chain':    m.staticChain      += n; break;
+      case 'vector_snap':     m.vectorSnap       += n; break;
+      case 'compromised_core': m.compromisedCore += n; break;
+      // Generic weapon
+      case 'wide_spread':     m.wideSpread    += n; break;
+      case 'piercing_shot':   m.piercingShot  += n; break;
+      case 'rapid_cycle':     m.rapidCycle    += n; break;
+      case 'heavy_caliber':   m.heavyCaliber  += n; break;
+      // Dash
+      case 'shockwave':       m.shockwave       += n; break;
+      case 'shield_dash':     m.shieldDash      += n; break;
+      case 'predator_round':  m.predatorRound   += n; break;
+      case 'burnout_wake':    m.burnoutWake     += n; break;
+      case 'flashpoint':      m.flashpoint      += n; break;
+      case 'cryo_wake':       m.cryoWake        += n; break;
+      case 'freeze_pulse':    m.freezePulse     += n; break;
+      case 'shatter_step':    m.shatterStep     += n; break;
+      case 'static_wake':     m.staticWake      += n; break;
+      case 'overcharge_dash': m.overchargeDash  += n; break;
+      case 'discharge_burst': m.dischargeBurst  += n; break;
+      case 'impulse_wave':    m.impulseWave     += n; break;
+      case 'slipstream':      m.slipstream      += n; break;
+      case 'glitch_wake':     m.glitchWake      += n; break;
+      case 'fatal_exception': m.fatalException  += n; break;
+      // Sustain
+      case 'recovery_loop':    m.recoveryLoop    += n; break;
+      case 'emergency_buffer': m.emergencyBuffer += n; break;
+      case 'fail_safe':        m.failSafe = true; break;
+      // Crit windows
+      case 'precision_breach': m.precisionBreach += n; break;
+      case 'shatterpoint':     m.shatterpoint   += n; break;
+      // Synergies
+      case 'syn_overload':       m.synergyOverload = true; break;
+      case 'syn_thermal_shock':  m.synergyThermalShock = true; break;
+      case 'syn_cond_freeze':    m.synergyConductiveFreeze = true; break;
+      case 'syn_storm_drive':    m.synergyStormDrive = true; break;
+      case 'syn_fault_cascade':  m.synergyFaultCascade = true; break;
+      case 'syn_shatter_wave':   m.synergyShatterWave = true; break;
+      // Utility
+      case 'swift':   m.moveSpeedMult    += 0.08 * n; break;
+      case 'magnet':  m.magnetRadiusMult += 0.40 * n; break;
+      case 'xp_amp':  m.xpMult           += 0.15 * n; break;
     }
   }
-  // Clamp caps — damage soft-cap, crit, damage reduction
-  if (m.damageMult > 1.2) m.damageMult = 1.2; // soft cap at +120% (berserker can exceed via separate multiplier)
-  if (m.critChance > 0.35) m.critChance = 0.35;
-  if (m.dmgReduction > 0.24) m.dmgReduction = 0.24;
-  // Compute ascendant — highest total element count across bullets+smash must be >= 3
-  const totals = [
-    { el: 'fire',    n: m.fireBulletsLv    + m.fireSmashLv    },
-    { el: 'ice',     n: m.iceBulletsLv     + m.iceSmashLv     },
-    { el: 'chain',   n: m.chainBulletsLv   + m.chainSmashLv   },
-    { el: 'wind',    n: m.windBulletsLv    + m.windSmashLv    },
-    { el: 'corrupt', n: m.corruptBulletsLv + m.corruptSmashLv },
+  // Compute damage/fire rate from generic weapon cards
+  if (m.heavyCaliber > 0) { m.damageMult += m.heavyCaliber >= 2 ? 0.80 : 0.60; m.fireRateMult -= m.heavyCaliber >= 2 ? 0.30 : 0.30; m.statusForce = 1.5; }
+  if (m.rapidCycle > 0) { m.fireRateMult += m.rapidCycle >= 2 ? 0.40 : 0.25; }
+  if (m.piercingShot > 0) { m.pierceAdd += m.piercingShot >= 2 ? 2 : 1; }
+  // Dominant class for bullet tinting
+  const classTotals = [
+    { cl: 'fire', n: m.thermalRoundsLv + m.burnoutWake },
+    { cl: 'ice', n: m.cryoRoundsLv + m.cryoWake },
+    { cl: 'chain', n: m.arcRoundsLv + m.staticWake },
+    { cl: 'wind', n: m.pulseShotLv + m.impulseWave },
+    { cl: 'corrupt', n: m.viralPayloadLv + m.glitchWake },
   ];
-  totals.sort((a, b) => b.n - a.n);
-  m.ascendant = (totals[0].n >= 3) ? totals[0].el : null;
-  // Dominant bullet element (for rendering tint)
-  const bulletTotals = [
-    { el: 'fire',    n: m.fireBulletsLv    },
-    { el: 'ice',     n: m.iceBulletsLv     },
-    { el: 'chain',   n: m.chainBulletsLv   },
-    { el: 'wind',    n: m.windBulletsLv    },
-    { el: 'corrupt', n: m.corruptBulletsLv },
-  ];
-  bulletTotals.sort((a, b) => b.n - a.n);
-  m.dominantBullet = (bulletTotals[0].n >= 1) ? bulletTotals[0].el : null;
+  classTotals.sort((a, b) => b.n - a.n);
+  m.dominantClass = classTotals[0].n >= 1 ? classTotals[0].cl : null;
   runMods = m;
 }
 // Color palette for element tinting
 const _ELEM_COLOR = { fire: '#f80', ice: '#8ef', chain: '#4ff', wind: '#cef', corrupt: '#a4f' };
-// Counter for OVERCHARGE upgrade — advances per bullet fired
-let _overchargeCounter = 0;
 
 // Meta progression: persistent node upgrades purchased in the Crypt.
 // Each node multiplies a passive bonus; levels cap at a max.
@@ -1679,7 +1740,7 @@ function _renderShopCards() {
     const _rarityBg = u.rarity === 'legendary' ? 'rgba(255,255,0,0.15)' : u.rarity === 'epic' ? 'rgba(168,136,255,0.15)' : u.rarity === 'rare' ? 'rgba(0,204,255,0.15)' : 'rgba(100,130,160,0.1)';
     // Replaces info
     let _replacesHtml = '';
-    const _dtIds = ['firesmash','icesmash','chainsmash','windsmash'];
+    const _dtIds = ['burnout_wake','cryo_wake','static_wake','glitch_wake'];
     if (_dtIds.includes(u.id)) {
       const _curTrail = _dtIds.find(tid => tid !== u.id && (runUpgrades[tid] || 0) > 0);
       if (_curTrail) { const _curDef = _UPGRADE_BY_ID[_curTrail]; _replacesHtml = `<div style="font-size:8px;letter-spacing:1px;color:#f80;text-align:center">REPLACES: ${_curDef ? _curDef.name : _curTrail}</div>`; }
@@ -1745,7 +1806,7 @@ function buyShopCard(upgradeId) {
     localStorage.setItem('necrowave_bits_spent', String(prevSpent + cost));
   } catch (e) {}
   // Apply the upgrade. Dash trail mods are mutually exclusive — buying one replaces the other.
-  const _dashTrailIds = ['firesmash', 'icesmash', 'chainsmash', 'windsmash', 'corruptsmash'];
+  const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake'];
   if (_dashTrailIds.includes(upgradeId)) {
     for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
