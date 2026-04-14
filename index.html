@@ -6861,11 +6861,11 @@ function fireWeaponForPlayer(p) {
     const _sizeBoost = 1 + Math.min(0.8, (_rm.bulletSizeMult || 0) + (_rm.damageMult || 0) * 0.15);
     // Tint toward dominant bullet element even when not proccing
     let _buildColor = gun.bulletColor;
-    if (_rm.dominantBullet === 'fire')  _buildColor = '#f80';
-    else if (_rm.dominantBullet === 'ice')   _buildColor = '#8ef';
-    else if (_rm.dominantBullet === 'chain') _buildColor = '#4ff';
-    else if (_rm.dominantBullet === 'wind')  _buildColor = '#cef';
-    else if (_rm.dominantBullet === 'corrupt') _buildColor = '#a4f';
+    if (_rm.dominantClass === 'fire')  _buildColor = '#f80';
+    else if (_rm.dominantClass === 'ice')   _buildColor = '#8ef';
+    else if (_rm.dominantClass === 'chain') _buildColor = '#4ff';
+    else if (_rm.dominantClass === 'wind')  _buildColor = '#cef';
+    else if (_rm.dominantClass === 'corrupt') _buildColor = '#a4f';
     const _finalColor = isCrit ? '#f0f' : _isMultiExtra ? '#fa8' : (elColor || _buildColor);
     const _finalSize = (isCrit ? bSize + 2 : _isMultiExtra ? bSize * 0.85 : bSize) * _sizeBoost;
     bullets.push({
@@ -7002,7 +7002,7 @@ function dash() {
   playSound(420, 0.04, 'square', 0.12);
   // ---- ELEMENT DASH ACTIVATION VFX + SOUND ----
   // When trail mods are equipped, the dash burst takes on the element's character.
-  if (_mods.fireSmashLv > 0) {
+  if (_mods.burnoutWake > 0) {
     // Fire: orange/red flame burst radiating outward + ignite sizzle
     for (let fi = 0; fi < 16; fi++) {
       const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 4;
@@ -7012,7 +7012,7 @@ function dash() {
     }
     playIgniteSound();
   }
-  if (_mods.iceSmashLv > 0) {
+  if (_mods.cryoWake > 0) {
     // Ice: pale blue crystal shards flying outward + sharp crackle
     for (let fi = 0; fi < 14; fi++) {
       const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
@@ -7022,7 +7022,7 @@ function dash() {
     playSound(1400, 0.06, 'square', 0.08);
     playSound(1800, 0.04, 'sine', 0.06);
   }
-  if (_mods.chainSmashLv > 0) {
+  if (_mods.staticWake > 0) {
     // Lightning: electric arcs radiating from player + zap sound
     for (let fi = 0; fi < 6; fi++) {
       const a = (fi / 6) * Math.PI * 2;
@@ -7038,7 +7038,7 @@ function dash() {
     }
     playSfx('zap', 0.2) || playSound(220, 0.1, 'sawtooth', 0.1);
   }
-  if (_mods.windSmashLv > 0) {
+  if (_mods.impulseWave > 0) {
     // Wind: pale streaks radiating outward + whoosh
     for (let fi = 0; fi < 12; fi++) {
       const a = Math.random() * Math.PI * 2, s = 4 + Math.random() * 5;
@@ -7052,86 +7052,45 @@ function dash() {
   lp._dashHitSet = new Set();
 }
 
-// ---- DASH TRAIL ELEMENT EFFECTS ----
-// Called each frame during the dash. Walks nearby zombies and applies element procs
-// (fire burn / ice slow+freeze / chain shock / wind stagger) based on dash trail upgrades.
-// Tracks already-affected zombies in lp._dashHitSet so each zombie is hit once per dash.
+// ---- DASH TRAIL EFFECTS (v2) ----
+// Called each frame during dash. 5 wake types (mutually exclusive trails).
+// Each uses the new status application functions.
 const DASH_TRAIL_RADIUS = 60;
 function applyDashTrailEffects(lp) {
   if (!lp || !lp.alive) return;
-  const _mods = runMods || {};
-  const hasFire  = _mods.fireSmashLv  > 0;
-  const hasIce   = _mods.iceSmashLv   > 0;
-  const hasChain   = _mods.chainSmashLv   > 0;
-  const hasWind    = _mods.windSmashLv    > 0;
-  const hasCorrupt = _mods.corruptSmashLv > 0;
-  if (!hasFire && !hasIce && !hasChain && !hasWind && !hasCorrupt) return;
+  const _m = runMods || {};
+  const hasBurnout = _m.burnoutWake > 0;
+  const hasCryo    = _m.cryoWake > 0;
+  const hasStatic  = _m.staticWake > 0;
+  const hasGlitch  = _m.glitchWake > 0;
+  if (!hasBurnout && !hasCryo && !hasStatic && !hasGlitch) return;
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = DASH_TRAIL_RADIUS * DASH_TRAIL_RADIUS;
   for (const z of zombies) {
-    if (!z || z.hp <= 0) continue;
-    if (hitSet.has(z.zid)) continue;
+    if (!z || z.hp <= 0 || hitSet.has(z.zid)) continue;
     const dx = z.x - lp.x, dy = z.y - lp.y;
     if (dx*dx + dy*dy > r2) continue;
     hitSet.add(z.zid);
-    // FIRE TRAIL — ignite with a modest DoT that scales with level (nerfed)
-    if (hasFire) {
-      const lv = _mods.fireSmashLv;
-      if (!z._burning) playIgniteSound();
-      z._burning = (z._burning || 0) + Math.floor(3 + 2 * lv);
-      z._burnTimer = Math.max(z._burnTimer || 0, 140 + 30 * lv);
-      // Flame puff at the zombie
-      for (let i = 0; i < 5; i++) {
-        const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
-        particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 1,
-          life: 18, maxLife: 18, size: 2 + Math.random()*2, color: '#f80', type: 'spark' });
-      }
+    // BURNOUT WAKE — apply Overheat
+    if (hasBurnout) {
+      applyOverheat(z, 8 + _m.burnoutWake * 4, 1);
+      for(let i=0;i<5;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*2;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1.5,life:16,maxLife:16,size:3+Math.random()*2,color:['#f80','#fa0'][Math.floor(Math.random()*2)],type:'explosion'});}
     }
-    // FROST TRAIL — slow + stack toward freeze
-    if (hasIce) {
-      const lv = _mods.iceSmashLv;
-      z._slowTimer = Math.max(z._slowTimer || 0, 120 + 40 * lv);
-      z._iceStacks = (z._iceStacks || 0) + 1 + Math.floor(lv / 2);
-      const freezeThreshold = Math.max(2, 4 - lv);
-      if (z._iceStacks >= freezeThreshold) {
-        z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * lv);
-        z._iceStacks = 0;
-      }
-      for (let i = 0; i < 4; i++) {
-        const a = Math.random() * Math.PI * 2, s = 0.5 + Math.random();
-        particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-          life: 20, maxLife: 20, size: 2 + Math.random(), color: '#8ef', type: 'spark' });
-      }
+    // CRYO WAKE — apply Chill
+    if (hasCryo) {
+      applyChill(z, 1 + _m.cryoWake, 1);
+      for(let i=0;i<4;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*0.8,vy:Math.sin(a)*0.8,life:20,maxLife:20,size:2+Math.random(),color:'#8ef',type:'spark'});}
     }
-    // STORM TRAIL — shock + stagger; damage tick comes from the existing _shocked DoT
-    if (hasChain) {
-      const lv = _mods.chainSmashLv;
-      z._shocked = Math.max(z._shocked || 0, 45 + 10 * lv);
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
-      z.attackCooldown = Math.max(z.attackCooldown || 0, 30);
-      // Arc effect
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
-        size: 1, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+    // STATIC WAKE — apply Charged + zap
+    if (hasStatic) {
+      applyCharged(z);
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
     }
-    // GALE TRAIL — stagger + push along dash direction
-    if (hasWind) {
-      const lv = _mods.windSmashLv;
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 30 + 10 * lv);
-      z.attackCooldown = Math.max(z.attackCooldown || 0, 20);
-      const dirX = lp.dashDirX || 0, dirY = lp.dashDirY || 0;
-      const push = 6 + 2 * lv;
-      z.vx += dirX * push;
-      z.vy += dirY * push;
-      for (let i = 0; i < 3; i++) {
-        particles.push({ x: z.x, y: z.y, vx: dirX*3, vy: dirY*3,
-          life: 16, maxLife: 16, size: 1.5, color: '#cef', type: 'spark' });
-      }
-    }
-    // CORRUPT WAKE — apply corrupt stacks
-    if (hasCorrupt) {
-      const lv = _mods.corruptSmashLv;
-      for (let cs = 0; cs < 1 + lv; cs++) _applyCorruptStack(z);
-      particles.push({ x: z.x, y: z.y, vx: (Math.random()-0.5)*2, vy: -1.5, life: 14, maxLife: 14, size: 2 + Math.random()*2, color: '#a4f', type: 'spark' });
+    // GLITCH WAKE — apply Corrupt
+    if (hasGlitch) {
+      applyCorrupt(z, 1 + _m.glitchWake);
+      particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*2,vy:-1.5,life:14,maxLife:14,size:2+Math.random()*2,color:'#a4f',type:'spark'});
     }
   }
 }
@@ -7146,12 +7105,14 @@ function applyDashTrailEffects(lp) {
 function triggerShockwaveDash(lp) {
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
-  const lv = _mods.shockDashLv || 0;
-  // Baseline mini-shockwave on every dash (small knockback, no damage)
-  // Shockwave Dash mod upgrades it to a full 150px damaging blast.
+  const lv = _mods.shockwave || 0;
+  // Baseline mini-shockwave on every dash. Shockwave card upgrades to full blast.
+  // Impulse Wave = even larger Pulse-flavored shockwave.
+  const iwLv = _mods.impulseWave || 0;
   const BASE_RADIUS = 45;
-  const SHOCKWAVE_RADIUS = lv > 0 ? 150 : BASE_RADIUS;
-  const radius = SHOCKWAVE_RADIUS * (_mods.blastRadiusMult || 1);
+  const effectiveLv = Math.max(lv, iwLv); // best shockwave level
+  const SHOCKWAVE_RADIUS = effectiveLv > 0 ? (120 + effectiveLv * 30) : BASE_RADIUS;
+  const radius = SHOCKWAVE_RADIUS;
   if (lv <= 0) {
     // Mini shockwave: knockback + stagger, small damage, visible VFX
     if (isHost) {
@@ -7175,10 +7136,10 @@ function triggerShockwaveDash(lp) {
   }
   // Determine dominant element for VFX
   let blastElem = null;
-  if (_mods.fireSmashLv > 0)  blastElem = 'fire';
-  if ((_mods.iceSmashLv||0) > (blastElem?_mods.fireSmashLv:0)) blastElem = 'ice';
-  if ((_mods.chainSmashLv||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':'_']||0)) blastElem = 'chain';
-  if ((_mods.windSmashLv||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':blastElem==='chain'?'chainSmashLv':'_']||0)) blastElem = 'wind';
+  if (_mods.burnoutWake > 0)  blastElem = 'fire';
+  if ((_mods.cryoWake||0) > (blastElem?_mods.burnoutWake:0)) blastElem = 'ice';
+  if ((_mods.staticWake||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':'_']||0)) blastElem = 'chain';
+  if ((_mods.impulseWave||0) > (_mods[blastElem==='fire'?'fireSmashLv':blastElem==='ice'?'iceSmashLv':blastElem==='chain'?'chainSmashLv':'_']||0)) blastElem = 'wind';
   // Element colors (matches experimental branch exactly)
   let c1, c2, decalCol;
   if (blastElem === 'fire')      { c1='#f80'; c2='#fa0'; decalCol='#420'; }
@@ -7278,17 +7239,17 @@ function triggerShockwaveDash(lp) {
     // Element trail procs on everything the shockwave touches
     if (hitSet.has(z.zid)) continue;
     hitSet.add(z.zid);
-    if ((_mods.fireSmashLv||0) > 0) {
+    if ((_mods.burnoutWake||0) > 0) {
       if (!z._burning) playIgniteSound();
-      z._burning = (z._burning || 0) + Math.floor(4 + 3 * _mods.fireSmashLv);
-      z._burnTimer = Math.max(z._burnTimer || 0, 160 + 30 * _mods.fireSmashLv);
+      z._burning = (z._burning || 0) + Math.floor(4 + 3 * _mods.burnoutWake);
+      z._burnTimer = Math.max(z._burnTimer || 0, 160 + 30 * _mods.burnoutWake);
     }
-    if ((_mods.iceSmashLv||0) > 0) {
-      z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.iceSmashLv);
-      z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * _mods.iceSmashLv);
+    if ((_mods.cryoWake||0) > 0) {
+      z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.cryoWake);
+      z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * _mods.cryoWake);
     }
-    if ((_mods.chainSmashLv||0) > 0) {
-      z._shocked = Math.max(z._shocked || 0, 60 + 10 * _mods.chainSmashLv);
+    if ((_mods.staticWake||0) > 0) {
+      z._shocked = Math.max(z._shocked || 0, 60 + 10 * _mods.staticWake);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
       // Lightning arc from player to the shocked zombie
       particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
@@ -7300,8 +7261,8 @@ function triggerShockwaveDash(lp) {
           life: 14, maxLife: 14, size: 2 + Math.random(), color: '#4ff', type: 'spark' });
       }
     }
-    if ((_mods.windSmashLv||0) > 0) {
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 40 + 10 * _mods.windSmashLv);
+    if ((_mods.impulseWave||0) > 0) {
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 40 + 10 * _mods.impulseWave);
     }
   }
   // Lightning blast: chain arcs between hit zombies (nearest-neighbor chain)
@@ -8496,19 +8457,19 @@ function update() {
       lp._dashFrames--;
       lp.vx = (lp.dashDirX || 1) * DASH_SPEED;
       lp.vy = (lp.dashDirY || 0) * DASH_SPEED;
-      // Element trail color — dominant dash element determines tint
+      // Wake trail color — active wake determines tint
       const _mods = runMods || {};
       let _trailColor = '#0ff';
-      if (_mods.fireSmashLv  > 0 && _mods.fireSmashLv  >= (_mods.iceSmashLv||0) && _mods.fireSmashLv  >= (_mods.chainSmashLv||0) && _mods.fireSmashLv  >= (_mods.windSmashLv||0)) _trailColor = '#f80';
-      else if (_mods.iceSmashLv   > 0 && _mods.iceSmashLv   >= (_mods.chainSmashLv||0) && _mods.iceSmashLv   >= (_mods.windSmashLv||0)) _trailColor = '#8ef';
-      else if (_mods.chainSmashLv > 0 && _mods.chainSmashLv >= (_mods.windSmashLv||0)) _trailColor = '#4ff';
-      else if (_mods.windSmashLv  > 0) _trailColor = '#cef';
+      if (_mods.burnoutWake > 0) _trailColor = '#f80';
+      else if (_mods.cryoWake > 0) _trailColor = '#8ef';
+      else if (_mods.staticWake > 0) _trailColor = '#4ff';
+      else if (_mods.glitchWake > 0) _trailColor = '#a4f';
       // ---- ELEMENT-THEMED AFTERIMAGE + TRAIL ----
       // The entire dash visual shifts to match the dominant element.
       // No element: default cyan/magenta glitch. With element: fully themed.
       const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
       const _split = 4 + Math.random() * 2;
-      const _hasDashEl = _mods.fireSmashLv > 0 || _mods.iceSmashLv > 0 || _mods.chainSmashLv > 0 || _mods.windSmashLv > 0;
+      const _hasDashEl = _mods.burnoutWake > 0 || _mods.cryoWake > 0 || _mods.staticWake > 0 || _mods.impulseWave > 0;
       // Pick ghost colors based on element (default: cyan/magenta chromatic)
       let _ghostA = '#0ff', _ghostB = '#f0f', _sparkColor = '#fff', _glitchColor1 = '#0ff', _glitchColor2 = '#f0f';
       if (_trailColor === '#f80')  { _ghostA = '#f80'; _ghostB = '#fa0'; _sparkColor = '#ff0'; _glitchColor1 = '#f80'; _glitchColor2 = '#f40'; } // fire
@@ -8544,7 +8505,7 @@ function update() {
         });
       }
       // Per-frame element trail particles — visual trail left in the dash's wake
-      if (_mods.fireSmashLv > 0 && gameTime % 2 === 0) {
+      if (_mods.burnoutWake > 0 && gameTime % 2 === 0) {
         // Fire trail: rising flame puffs behind the player
         for (let fi = 0; fi < 2; fi++) {
           particles.push({ x: lp.x + (Math.random()-0.5)*12, y: lp.y + (Math.random()-0.5)*12,
@@ -8553,14 +8514,14 @@ function update() {
             color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
         }
       }
-      if (_mods.iceSmashLv > 0 && gameTime % 3 === 0) {
+      if (_mods.cryoWake > 0 && gameTime % 3 === 0) {
         // Ice trail: crystal shards spinning off the body
         const _ia = Math.random() * Math.PI * 2;
         particles.push({ x: lp.x + Math.cos(_ia)*8, y: lp.y + Math.sin(_ia)*8,
           vx: Math.cos(_ia)*1.5, vy: Math.sin(_ia)*1.5,
           life: 20, maxLife: 20, size: 2 + Math.random(), color: '#8ef', type: 'spark' });
       }
-      if (_mods.chainSmashLv > 0 && gameTime % 3 === 0) {
+      if (_mods.staticWake > 0 && gameTime % 3 === 0) {
         // Lightning trail: short arc behind the player
         const _la = Math.random() * Math.PI * 2;
         const _lr = 15 + Math.random() * 20;
@@ -8568,7 +8529,7 @@ function update() {
           size: 1, color: '#4ff', type: 'lightning',
           tx: lp.x + Math.cos(_la)*_lr, ty: lp.y + Math.sin(_la)*_lr });
       }
-      if (_mods.windSmashLv > 0 && gameTime % 2 === 0) {
+      if (_mods.impulseWave > 0 && gameTime % 2 === 0) {
         // Wind trail: pale speed streaks behind the player
         particles.push({
           x: lp.x - (lp.dashDirX||0)*10 + (Math.random()-0.5)*14,
@@ -8584,13 +8545,39 @@ function update() {
         triggerShockwaveDash(lp);
         // Post-dash rider window (90 frames = 1.5s)
         const _rm = runMods || {};
-        if (_rm.predatorRound > 0 || _rm.overchargeDash > 0 || _rm.slipstream > 0 || _rm.synergyStormDrive) {
-          lp._postDashTimer = 90;
-        }
+        lp._postDashTimer = 90;
+        lp._postDashShotsLeft = 3;
         // Shield Dash: grant barrier
         if (_rm.shieldDash > 0) {
           lp.barrier = (lp.barrier || 0) + (_rm.shieldDash >= 2 ? 25 : 15);
-          for(let bi=0;bi<8;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*16,y:lp.y+Math.sin(ba)*16,vx:Math.cos(ba)*1.5,vy:-1,life:14,maxLife:14,size:2,color:'#4ff',type:'spark'});}
+          for(let bi=0;bi<10;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*18,y:lp.y+Math.sin(ba)*18,vx:Math.cos(ba)*2,vy:-1.5,life:16,maxLife:16,size:2.5,color:'#4ff',type:'spark'});}
+        }
+        // Flashpoint: detonate Overheated enemies near dash endpoint
+        if (_rm.flashpoint > 0 && isHost) {
+          const fpR = _rm.flashpoint >= 2 ? 90 : 60;
+          for (const fz of zombies) { if (fz.hp <= 0 || fz._overheat <= 0) continue; const fd = Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd < fpR) { damageZombie(fz, 30 + fz._overheat, 0, 0); fz._overheat = 0; fz._overheatTimer = 0; for(let fi=0;fi<10;fi++){const fa=Math.random()*Math.PI*2,fs=3+Math.random()*4;particles.push({x:fz.x,y:fz.y,vx:Math.cos(fa)*fs,vy:Math.sin(fa)*fs,life:16,maxLife:16,size:3+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});} } }
+          screenShake.intensity = Math.max(screenShake.intensity, 6);
+        }
+        // Freeze Pulse: apply Chill in radius at dash endpoint
+        if (_rm.freezePulse > 0 && isHost) {
+          const fpR2 = 70; for (const fz of zombies) { if (fz.hp <= 0) continue; const fd = Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd < fpR2) { const extra = (_rm.freezePulse >= 2 && fz._chill > 0) ? 2 : 1; applyChill(fz, extra); } }
+          for(let i=0;i<12;i++){const a=(i/12)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*4,vy:Math.sin(a)*4,life:14,maxLife:14,size:2.5,color:'#8ef',type:'spark'});}
+        }
+        // Shatter Step: bonus damage to Frozen enemies near endpoint
+        if (_rm.shatterStep > 0 && isHost) {
+          for (const fz of zombies) { if (fz.hp <= 0 || !fz._frozen) continue; const fd = Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd < 60) { const shD = Math.floor(fz.maxHp * 0.3); damageZombie(fz, shD, 0, 0); fz._frozen = false; fz._frozenTimer = 0; addFloatingText(fz.x, fz.y - fz.radius - 12, 'SHATTER', '#aef'); for(let si=0;si<20;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:24,size:3+Math.random()*3,color:'#aef',type:'spark'});} if (_rm.shatterStep >= 2) { for (const oz of zombies) { if (oz === fz || oz.hp <= 0) continue; const sd = Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2); if (sd < 50) { damageZombie(oz, Math.floor(shD*0.4), 0, 0); applyChill(oz, 1); } } } } }
+          screenShake.intensity = Math.max(screenShake.intensity, 8);
+        }
+        // Discharge Burst: release Arc into Charged enemies at endpoint
+        if (_rm.dischargeBurst > 0 && isHost) {
+          const maxJ = _rm.dischargeBurst >= 2 ? 4 : 2;
+          let lastP = { x: lp.x, y: lp.y }; const hitS = new Set();
+          for (let j = 0; j < maxJ; j++) { let bD2 = 28900, bZ = null; for (const cz of zombies) { if (cz.hp <= 0 || !cz._charged || hitS.has(cz.zid)) continue; const d2 = (cz.x-lastP.x)**2+(cz.y-lastP.y)**2; if (d2 < bD2) { bD2 = d2; bZ = cz; } } if (!bZ) break; damageZombie(bZ, 25, 0, 0); particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y}); hitS.add(bZ.zid); lastP = bZ; }
+        }
+        // Shockwave Lv3 / Impulse Wave Lv3: enemies hit become Exposed
+        if ((_rm.shockwave >= 3 || _rm.impulseWave >= 3) && isHost) {
+          const _swR = 120 + Math.max(_rm.shockwave||0, _rm.impulseWave||0) * 30;
+          for (const ez of zombies) { if (ez.hp <= 0) continue; const ed = Math.sqrt((ez.x-lp.x)**2+(ez.y-lp.y)**2); if (ed < _swR) applyExposed(ez); }
         }
       }
     }
