@@ -6983,7 +6983,7 @@ function deployBeacon() {
   else if (_m.cryoRoundsLv > 0 || _m.cryoWake > 0) classId = 'ice';
   else if (_m.arcRoundsLv > 0 || _m.staticWake > 0) classId = 'chain';
   else if (_m.viralPayloadLv > 0 || _m.glitchWake > 0) classId = 'corrupt';
-  activeBeacon = { x: lp.x, y: lp.y, timer: BEACON_DURATION, angle: 0, fireCd: 0, classId };
+  activeBeacon = { x: lp.x, y: lp.y, timer: BEACON_DURATION, angle: 0, fireCd: 0, classId, _armTimer: 60 };
   // Deploy VFX: drop slam
   for (let i = 0; i < 16; i++) {
     const a = (i/16)*Math.PI*2;
@@ -7007,9 +7007,11 @@ function updateBeacon() {
   let best = null, bestD = BEACON_RANGE;
   for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2); if (d < bestD) { bestD = d; best = z; } }
   if (best) b.angle = Math.atan2(best.y - b.y, best.x - b.x);
-  // ---- TRAP MINE: detonate when enemy is close ----
-  if (_bm.trapMine > 0) {
-    const triggerR = 30; // very close proximity
+  // Arm timer (mine needs 1 second to arm)
+  if (b._armTimer > 0) b._armTimer--;
+  // ---- TRAP MINE: detonate when enemy is close (after armed) ----
+  if (_bm.trapMine > 0 && b._armTimer <= 0) {
+    const triggerR = 30;
     for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2); if (d < triggerR + z.radius) {
       // BOOM
       const mineR = _bm.trapMine >= 2 ? 100 : 80;
@@ -9550,16 +9552,6 @@ function update() {
         }
         _zc._np = bestP;
         _zc._npD = bestP ? Math.sqrt(bestD2) : Infinity;
-        // BEACON TAUNT: if beacon is active and closer, zombie targets beacon instead
-        if (activeBeacon && activeBeacon.timer > 0) {
-          const _bdx = activeBeacon.x - _zc.x, _bdy = activeBeacon.y - _zc.y;
-          const _bd2 = _bdx*_bdx + _bdy*_bdy;
-          // Beacon has strong aggro — 1.5x effective range (zombies prefer it)
-          if (_bd2 * 0.45 < bestD2) {
-            _zc._np = { x: activeBeacon.x, y: activeBeacon.y, alive: true, _isBeacon: true };
-            _zc._npD = Math.sqrt(_bd2);
-          }
-        }
       }
     }
     for(const z of zombies){
