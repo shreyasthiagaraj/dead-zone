@@ -43,13 +43,17 @@ body.mobile .joystick-zone { display: block; }
 body.mobile #mobile-buttons { display: block; }
 .mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: transparent; color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s, opacity 0.12s linear; }
 .mobile-btn svg { display: block; filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
-/* Blast button — medium-sized, right-aligned with the top-right effects bar */
-#btn-dash { width: 68px; height: 68px; right: calc(10px + env(safe-area-inset-right) * 0.5); bottom: calc(81px + env(safe-area-inset-bottom)); }
-#btn-pulse { width: 64px; height: 64px; right: calc(12px + env(safe-area-inset-right) * 0.5); bottom: calc(161px + env(safe-area-inset-bottom)); }
+/* Action buttons: diamond layout (top=pulse, right=dash, bottom=shoot) */
+/* Diamond center: right 78px, bottom 140px */
+#btn-pulse { width: 58px; height: 58px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(195px + env(safe-area-inset-bottom)); }
+#btn-dash { width: 58px; height: 58px; right: calc(4px + env(safe-area-inset-right) * 0.5); bottom: calc(140px + env(safe-area-inset-bottom)); }
+#btn-shoot { width: 58px; height: 58px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(85px + env(safe-area-inset-bottom)); }
 .mobile-btn.pulse-ready { border-color: #f0f; color: #f0f; box-shadow: 0 0 14px rgba(255,0,255,0.4); text-shadow: 0 0 8px rgba(255,0,255,0.6); }
 .mobile-btn.pulse-cooldown { border-color: #636; color: #636; pointer-events: none; opacity: 0.5; }
-/* Repair (fix) button — stacked above blast with a big gap so you don't accidentally hit it */
-#btn-repair { width: 60px; height: 60px; right: calc(14px + env(safe-area-inset-right) * 0.5); bottom: calc(225px + env(safe-area-inset-bottom)); }
+.mobile-btn.shoot-btn { border-color: #fa0; color: #fa0; box-shadow: 0 0 14px rgba(255,170,0,0.4); text-shadow: 0 0 8px rgba(255,170,0,0.6); }
+.mobile-btn.shoot-btn.firing { border-color: #ff0; color: #ff0; transform: scale(1.08); box-shadow: 0 0 22px rgba(255,255,0,0.6); }
+/* Repair (fix) button — above diamond for siege mode */
+#btn-repair { width: 56px; height: 56px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(265px + env(safe-area-inset-bottom)); }
 .mobile-btn:active, .mobile-btn.pressed { border-color: #0ff; color: #0ff; transform: scale(1.1); box-shadow: 0 0 22px rgba(0,255,255,0.6); }
 .mobile-btn.dash-ready { border-color: #0ff; color: #0ff; box-shadow: 0 0 14px rgba(0,255,255,0.4); text-shadow: 0 0 8px rgba(0,255,255,0.6); }
 .mobile-btn.dash-cooldown { border-color: #0ff; color: #0ff; pointer-events: none; }
@@ -371,6 +375,15 @@ body.mobile #mobile-buttons { display: block; }
         <line x1="2" y1="20" x2="8" y2="20"/>
         <line x1="2" y1="26" x2="7" y2="26"/>
       </g>
+    </svg>
+  </div>
+  <div class="mobile-btn shoot-btn" id="btn-shoot" aria-label="Shoot">
+    <svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="20" cy="20" r="4" fill="currentColor" stroke="none"/>
+      <line x1="20" y1="8" x2="20" y2="15" stroke-width="2.5"/>
+      <line x1="20" y1="25" x2="20" y2="32" stroke-width="2.5"/>
+      <line x1="8" y1="20" x2="15" y2="20" stroke-width="2.5"/>
+      <line x1="25" y1="20" x2="32" y2="20" stroke-width="2.5"/>
     </svg>
   </div>
   <div class="mobile-btn repair-btn disabled" id="btn-repair" aria-label="Repair" style="display:none">
@@ -3668,6 +3681,7 @@ const keys = {};
 let mouse = { x: 0, y: 0, down: false, worldX: 0, worldY: 0 };
 let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0 };
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
+let shootButtonHeld = false; // when true, left joystick aims instead of moving
 
 // ---- CAMERA ----
 let camera = { x: 0, y: 0 };
@@ -6144,6 +6158,12 @@ document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.pr
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
 document.getElementById('btn-pulse').addEventListener('touchstart', (e) => { e.preventDefault(); pulseAttack(); }, { passive: false });
 document.getElementById('btn-pulse').addEventListener('mousedown', () => { pulseAttack(); });
+// Shoot button: hold to fire, joystick becomes aim while held
+document.getElementById('btn-shoot').addEventListener('touchstart', (e) => { e.preventDefault(); shootButtonHeld = true; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing'); }, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchend', (e) => { e.preventDefault(); shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); }, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchcancel', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); });
+document.getElementById('btn-shoot').addEventListener('mousedown', () => { shootButtonHeld = true; rightJoystick.firing = true; rightJoystick.aiming = true; });
+document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; });
 // Repair button — hold to fix the wall
 (() => {
   const rb = document.getElementById('btn-repair');
@@ -6805,13 +6825,16 @@ window.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', () => canvas.focus());
 
 // Touch
-function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; const hw=window.innerWidth/2; if (tx<hw&&!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (tx>=hw&&!rightJoystick.active) { if(gameState==='shell'&&_shellNearTerminal&&_shellInteractCooldown<=0) shellInteract(_shellNearTerminal); rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=false; } } }
-function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_RIGHT_MAX){dx=dx/d*JOYSTICK_RIGHT_MAX;dy=dy/d*JOYSTICK_RIGHT_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_RIGHT_MAX;rightJoystick.ny=dy/JOYSTICK_RIGHT_MAX;const mag=Math.sqrt(rightJoystick.nx*rightJoystick.nx+rightJoystick.ny*rightJoystick.ny);rightJoystick.aiming=mag>0.15;rightJoystick.firing=mag>0.65; } } }
-function handleTouchEnd(e) { for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;} } if (gameState === 'playing' || gameState === 'shell') e.preventDefault(); }
+// Single joystick: left side of screen = movement/aim joystick. Right side = buttons only.
+function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } } }
+function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } } }
+function handleTouchEnd(e) { for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} } if (gameState === 'playing' || gameState === 'shell') e.preventDefault(); }
 if (isMobile) {
   // Listen on canvas and joystick zones for touch start
   canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
   document.getElementById('joystick-left').addEventListener('touchstart', handleTouchStart, {passive:false});
+  // Right joystick zone removed — right side is buttons only
+  // But keep the zone element for touch passthrough
   document.getElementById('joystick-right').addEventListener('touchstart', handleTouchStart, {passive:false});
   document.addEventListener('touchmove', handleTouchMove, {passive:false});
   document.addEventListener('touchend', handleTouchEnd, {passive:false});
@@ -8525,9 +8548,28 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile left joystick: movement only (no flashlight — that's right joystick)
-    if(isMobile&&leftJoystick.active){
-      dx=leftJoystick.nx;dy=leftJoystick.ny;
+    // Mobile: single joystick controls movement OR aim (when shoot held)
+    if(isMobile&&leftJoystick.active) {
+      if (shootButtonHeld) {
+        // Shoot held: joystick aims, player fires in aim direction
+        const aimMag = Math.sqrt(leftJoystick.nx*leftJoystick.nx + leftJoystick.ny*leftJoystick.ny);
+        if (aimMag > 0.15) {
+          lp.angle = Math.atan2(leftJoystick.ny, leftJoystick.nx);
+        }
+        // Always fire while shoot is held
+        rightJoystick.aiming = true; rightJoystick.firing = true;
+        // dx/dy stay 0 — no movement while aiming
+      } else {
+        dx=leftJoystick.nx;dy=leftJoystick.ny;
+        // Face movement direction
+        const moveMag = Math.sqrt(dx*dx+dy*dy);
+        if (moveMag > 0.2) lp.angle = Math.atan2(dy, dx);
+        // Not firing from joystick
+        rightJoystick.aiming = false; rightJoystick.firing = false;
+      }
+    } else if (isMobile && !leftJoystick.active) {
+      // Joystick released — stop firing if it was aim-mode
+      if (shootButtonHeld) { rightJoystick.aiming = false; rightJoystick.firing = false; }
     }
     // Gamepad left stick — additive with keyboard
     if(gamepad.connected&&(gamepad.lx!==0||gamepad.ly!==0)){
@@ -12531,18 +12573,13 @@ function render() {
 
 function renderJoysticks(){
   if(leftJoystick.active){
-    ctx.shadowColor='#0ff';ctx.shadowBlur=10;
-    ctx.globalAlpha=0.2;ctx.strokeStyle='#0ff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_LEFT_MAX,0,Math.PI*2);ctx.stroke();
+    // Color changes: cyan=move, orange=aiming (shoot held)
+    const jc = shootButtonHeld ? '#fa0' : '#0ff';
+    ctx.shadowColor=jc;ctx.shadowBlur=10;
+    ctx.globalAlpha=0.2;ctx.strokeStyle=jc;ctx.lineWidth=2;ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_LEFT_MAX,0,Math.PI*2);ctx.stroke();
     ctx.globalAlpha=0.15;ctx.fillStyle='#0a0a1a';ctx.beginPath();ctx.arc(leftJoystick.cx+leftJoystick.dx,leftJoystick.cy+leftJoystick.dy,18,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=0.5;ctx.strokeStyle='#0ff';ctx.lineWidth=2;ctx.stroke();
-    ctx.shadowBlur=0;ctx.globalAlpha=1;}
-  if(rightJoystick.active){const jColor=rightJoystick.firing?'#f44':rightJoystick.aiming?'#ff0':'#0ff';
-    ctx.shadowColor=jColor;ctx.shadowBlur=10;
-    ctx.globalAlpha=0.2;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_RIGHT_MAX,0,Math.PI*2);ctx.stroke();
-    // Fire threshold ring
-    ctx.globalAlpha=0.15;ctx.strokeStyle='#f44';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(rightJoystick.cx,rightJoystick.cy,JOYSTICK_RIGHT_MAX*0.65,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);
-    ctx.globalAlpha=0.15;ctx.fillStyle='#0a0a1a';ctx.beginPath();ctx.arc(rightJoystick.cx+rightJoystick.dx,rightJoystick.cy+rightJoystick.dy,20,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=0.5;ctx.strokeStyle=jColor;ctx.lineWidth=2;ctx.stroke();
+    ctx.globalAlpha=0.5;ctx.strokeStyle=jc;ctx.lineWidth=2;ctx.stroke();
+    if (shootButtonHeld) { ctx.globalAlpha=0.1;ctx.strokeStyle='#f44';ctx.setLineDash([4,4]);ctx.beginPath();ctx.arc(leftJoystick.cx,leftJoystick.cy,JOYSTICK_LEFT_MAX*0.5,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]); }
     ctx.shadowBlur=0;ctx.globalAlpha=1;}
 }
 
