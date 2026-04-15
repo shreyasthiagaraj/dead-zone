@@ -6158,10 +6158,31 @@ document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.pr
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
 document.getElementById('btn-pulse').addEventListener('touchstart', (e) => { e.preventDefault(); pulseAttack(); }, { passive: false });
 document.getElementById('btn-pulse').addEventListener('mousedown', () => { pulseAttack(); });
-// Shoot button: hold to fire, joystick becomes aim while held
-document.getElementById('btn-shoot').addEventListener('touchstart', (e) => { e.preventDefault(); shootButtonHeld = true; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing'); }, { passive: false });
-document.getElementById('btn-shoot').addEventListener('touchend', (e) => { e.preventDefault(); shootButtonHeld = false; rightJoystick.active = false; rightJoystick.firing = false; rightJoystick.aiming = false; rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); }, { passive: false });
-document.getElementById('btn-shoot').addEventListener('touchcancel', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); });
+// Shoot button: press → fire + drag to aim via right joystick spawned at touch point
+document.getElementById('btn-shoot').addEventListener('touchstart', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  shootButtonHeld = true;
+  const sb = document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing');
+  // The shoot button touch becomes the right aim joystick
+  const t = e.changedTouches[0]; if (!t) return;
+  rightJoystick.active = true; rightJoystick.id = t.identifier;
+  rightJoystick.cx = t.clientX; rightJoystick.cy = t.clientY;
+  rightJoystick.dx = 0; rightJoystick.dy = 0; rightJoystick.nx = 0; rightJoystick.ny = 0;
+  rightJoystick.firing = true; rightJoystick.aiming = true;
+}, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchend', (e) => {
+  e.preventDefault();
+  shootButtonHeld = false;
+  rightJoystick.active = false; rightJoystick.firing = false; rightJoystick.aiming = false;
+  rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;
+  const sb = document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing');
+}, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchcancel', () => {
+  shootButtonHeld = false;
+  rightJoystick.active = false; rightJoystick.firing = false; rightJoystick.aiming = false;
+  rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;
+  const sb = document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing');
+});
 document.getElementById('btn-shoot').addEventListener('mousedown', () => { shootButtonHeld = true; rightJoystick.firing = true; rightJoystick.aiming = true; });
 document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; });
 // Repair button — hold to fix the wall
@@ -6826,7 +6847,7 @@ canvas.addEventListener('mousedown', () => canvas.focus());
 
 // Touch
 // Touch: left joystick always available. When shoot held, additional touches create right aim joystick.
-function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } else if (shootButtonHeld && !rightJoystick.active) { rightJoystick.active=true;rightJoystick.id=t.identifier;rightJoystick.cx=tx;rightJoystick.cy=ty;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.firing=true;rightJoystick.aiming=true; } } }
+function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } } }
 function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if(d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } if (rightJoystick.active&&t.identifier===rightJoystick.id) { let dx=t.clientX-rightJoystick.cx,dy=t.clientY-rightJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if(d>JOYSTICK_RIGHT_MAX){dx=dx/d*JOYSTICK_RIGHT_MAX;dy=dy/d*JOYSTICK_RIGHT_MAX;} rightJoystick.dx=dx;rightJoystick.dy=dy;rightJoystick.nx=dx/JOYSTICK_RIGHT_MAX;rightJoystick.ny=dy/JOYSTICK_RIGHT_MAX; } } }
 function handleTouchEnd(e) { for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} if (rightJoystick.active&&t.identifier===rightJoystick.id){rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;} } if (gameState === 'playing' || gameState === 'shell') e.preventDefault(); }
 if (isMobile) {
