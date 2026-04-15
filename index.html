@@ -6751,7 +6751,7 @@ function startSoloGame() {
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
   _nextZombieId = 1;
-  camera.x = c.x; camera.y = c.y; cameraOffset.x = 0; cameraOffset.y = 0; window._camLerp = 0.08;
+  camera.x = c.x; camera.y = c.y; cameraOffset.x = 0; cameraOffset.y = 0; window._camLerp = 0.08; window._camSettleFrames = 30;
   if (gameMode === 'dungeon') placeExit();
   showScreen(null);
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
@@ -10376,13 +10376,16 @@ function update() {
   let camTarget = lp;
   if (!lp.alive) { const alive = players.find(p => p.alive); if (alive) camTarget = alive; }
   // Aim-based camera offset: player sits at ~30% screen width when aiming sideways
-  const aimOffsetMax = canvas.width * 0.22;
-  const aimCosA = Math.cos(camTarget.angle), aimSinA = Math.sin(camTarget.angle);
-  const targetOffX = aimCosA * aimOffsetMax;
-  const targetOffY = aimSinA * aimOffsetMax * 0.5;
-  // Very slow easing to prevent nausea on fast direction changes
-  cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.012);
-  cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.012);
+  // Suppress for first 30 frames after section start to prevent jarring pan
+  if (window._camSettleFrames > 0) { window._camSettleFrames--; cameraOffset.x = 0; cameraOffset.y = 0; }
+  else {
+    const aimOffsetMax = canvas.width * 0.22;
+    const aimCosA = Math.cos(camTarget.angle), aimSinA = Math.sin(camTarget.angle);
+    const targetOffX = aimCosA * aimOffsetMax;
+    const targetOffY = aimSinA * aimOffsetMax * 0.5;
+    cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.012);
+    cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.012);
+  }
   // Camera lerp: smoothly ramps up when shooting, smoothly ramps down when not
   const _camTarget = (lp._firing || shootButtonHeld) ? 0.30 : 0.08;
   window._camLerp = lerp(window._camLerp || 0.08, _camTarget, 0.04); // smooth transition between speeds
