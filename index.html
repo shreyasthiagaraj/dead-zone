@@ -1356,6 +1356,16 @@ const UPGRADE_POOL = [
   { id:'syn_shatter_wave', name:'SHATTER WAVE', rarity:'epic', max:1, icon:'❄', color:'#aef',
     desc:'Dash shockwave shatters low-HP Frozen enemies. Bonus dmg to Chilled',
     flavor:'ice cracks under force.', prereqs:['cryo_rounds|cryo_wake','pulse_shot|impulse_wave'] },
+  // ---- BEACON MODS (modify what the beacon does) ----
+  { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:2, icon:'💣', color:'#fa0',
+    desc:'Lv1: beacon detonates when enemies reach it (80px, 50 dmg). Lv2: 100px, 80 dmg',
+    flavor:'proximity fuse. walk into the trap.' },
+  { id:'gravity_well', name:'GRAVITY WELL', rarity:'rare', max:2, icon:'◎', color:'#a4f',
+    desc:'Lv1: beacon pulls enemies toward it (slow drag). Lv2: stronger pull + larger radius',
+    flavor:'singularity field. everything falls inward.' },
+  { id:'hazard_zone', name:'HAZARD ZONE', rarity:'rare', max:2, icon:'⬡', color:'#f80',
+    desc:'Lv1: beacon emits persistent class-colored damage field. Lv2: larger field + stronger DOT',
+    flavor:'scorched earth protocol. the ground itself fights.' },
   // ---- UTILITY (common) ----
   { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:3, icon:'»', color:'#0ff',
     desc:'+8% move speed per level', flavor:'motor daemons unclipped' },
@@ -1393,6 +1403,7 @@ function rebuildRunMods() {
     synergyStormDrive: false, synergyFaultCascade: false, synergyShatterWave: false,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
+    trapMine: 0, gravityWell: 0, hazardZone: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -1451,6 +1462,10 @@ function rebuildRunMods() {
       case 'swift':   m.moveSpeedMult    += 0.08 * n; break;
       case 'magnet':  m.magnetRadiusMult += 0.40 * n; break;
       case 'xp_amp':  m.xpMult           += 0.15 * n; break;
+      // Beacon mods
+      case 'trap_mine':    m.trapMine    += n; break;
+      case 'gravity_well': m.gravityWell += n; break;
+      case 'hazard_zone':  m.hazardZone  += n; break;
     }
   }
   // Compute damage/fire rate from generic weapon cards
@@ -6984,46 +6999,83 @@ function deployBeacon() {
 function updateBeacon() {
   if (!activeBeacon || !isHost) return;
   const b = activeBeacon;
+  const _bm = runMods || {};
+  const bColor = b.classId === 'fire' ? '#f80' : b.classId === 'ice' ? '#8ef' : b.classId === 'chain' ? '#4ff' : b.classId === 'corrupt' ? '#a4f' : '#0ff';
   b.timer--;
-  if (b.timer <= 0) {
-    // Expiry: class-specific nova
-    _beaconExpire(b);
-    activeBeacon = null;
-    return;
-  }
+  if (b.timer <= 0) { _beaconExpire(b); activeBeacon = null; return; }
   // Find nearest enemy
   let best = null, bestD = BEACON_RANGE;
-  for (const z of zombies) {
-    if (z.hp <= 0) continue;
-    const d = Math.sqrt((z.x-b.x)**2 + (z.y-b.y)**2);
-    if (d < bestD) { bestD = d; best = z; }
-  }
+  for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2); if (d < bestD) { bestD = d; best = z; } }
   if (best) b.angle = Math.atan2(best.y - b.y, best.x - b.x);
-  // Fire
-  b.fireCd--;
-  if (b.fireCd <= 0 && best) {
-    b.fireCd = BEACON_FIRE_RATE;
-    const a = b.angle;
-    const bColor = b.classId === 'fire' ? '#f80' : b.classId === 'ice' ? '#8ef' : b.classId === 'chain' ? '#4ff' : b.classId === 'corrupt' ? '#a4f' : '#0ff';
-    bullets.push({ x: b.x+Math.cos(a)*12, y: b.y+Math.sin(a)*12,
-      vx: Math.cos(a)*14, vy: Math.sin(a)*14,
-      damage: BEACON_DAMAGE, color: bColor, size: 2.5,
-      knockback: 1, pierce: 0, pierced: 0, life: 18, maxLife: 18,
-      flame: false, explosive: false, explosionRadius: 0,
-      tracer: false, chain: false, chainRange: 0, chainCount: 0,
-      laserGlow: false, grenade: false,
-      owner: 'player', ownerId: getLocalPlayer()?.id, trail: [], crit: false,
-      _element: b.classId || null, _homing: false, _bouncing: 0, _angVel: 0,
-      _beaconBullet: true });
-    // Muzzle flash particles
-    for(let i=0;i<3;i++){particles.push({x:b.x+Math.cos(a)*14,y:b.y+Math.sin(a)*14,vx:Math.cos(a)*3+(Math.random()-0.5)*2,vy:Math.sin(a)*3+(Math.random()-0.5)*2,life:8,maxLife:8,size:2,color:bColor,type:'spark'});}
+  // ---- TRAP MINE: detonate when enemy is close ----
+  if (_bm.trapMine > 0) {
+    const triggerR = 30; // very close proximity
+    for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2); if (d < triggerR + z.radius) {
+      // BOOM
+      const mineR = _bm.trapMine >= 2 ? 100 : 80;
+      const mineD = _bm.trapMine >= 2 ? 80 : 50;
+      createExplosion(b.x, b.y, mineR, mineD, 'player');
+      // Apply class status to all in blast
+      for (const oz of zombies) { if (oz.hp <= 0) continue; const od = Math.sqrt((oz.x-b.x)**2+(oz.y-b.y)**2); if (od < mineR) {
+        if (b.classId==='fire') applyOverheat(oz, 15, 1.5);
+        if (b.classId==='ice') applyChill(oz, 3);
+        if (b.classId==='chain') applyCharged(oz);
+        if (b.classId==='corrupt') applyCorrupt(oz, 3);
+      }}
+      for(let i=0;i<24;i++){const a=Math.random()*Math.PI*2,s=4+Math.random()*6;particles.push({x:b.x,y:b.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:4+Math.random()*3,color:bColor,type:'explosion'});}
+      screenShake.intensity = Math.max(screenShake.intensity, 10);
+      playExplosionSound();
+      addFloatingText(b.x, b.y - 16, 'DETONATED', bColor);
+      activeBeacon = null; return;
+    }}
+  }
+  // ---- GRAVITY WELL: pull enemies toward beacon ----
+  if (_bm.gravityWell > 0) {
+    const pullR = _bm.gravityWell >= 2 ? 180 : 130;
+    const pullStr = _bm.gravityWell >= 2 ? 1.8 : 1.0;
+    for (const z of zombies) { if (z.hp <= 0) continue;
+      const dx = b.x - z.x, dy = b.y - z.y, d = Math.sqrt(dx*dx+dy*dy);
+      if (d < pullR && d > 5) { const f = pullStr * (1 - d/pullR); z.vx += (dx/d)*f; z.vy += (dy/d)*f; }
+    }
+    // Pull VFX: inward spiraling particles
+    if (gameTime % 4 === 0) { for(let i=0;i<3;i++){const a=Math.random()*Math.PI*2,r=40+Math.random()*60;particles.push({x:b.x+Math.cos(a)*r,y:b.y+Math.sin(a)*r,vx:-Math.cos(a)*2.5+Math.sin(a)*1,vy:-Math.sin(a)*2.5-Math.cos(a)*1,life:14,maxLife:14,size:2,color:'#a4f',type:'spark'});} }
+  }
+  // ---- HAZARD ZONE: persistent damage field ----
+  if (_bm.hazardZone > 0) {
+    const zoneR = _bm.hazardZone >= 2 ? 90 : 60;
+    if (gameTime % 10 === 0) { // tick every 10 frames
+      for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);
+        if (d < zoneR) {
+          damageZombie(z, _bm.hazardZone >= 2 ? 6 : 4, 0, 0, true);
+          if (b.classId==='fire') applyOverheat(z, 5, 1);
+          if (b.classId==='ice') applyChill(z, 1);
+          if (b.classId==='chain') applyCharged(z);
+          if (b.classId==='corrupt') applyCorrupt(z, 1);
+        }
+      }
+    }
+    // Zone VFX: class-colored ground glow particles
+    if (gameTime % 3 === 0) { const a=Math.random()*Math.PI*2,r=Math.random()*zoneR;particles.push({x:b.x+Math.cos(a)*r,y:b.y+Math.sin(a)*r,vx:(Math.random()-0.5)*0.5,vy:-0.5-Math.random()*0.5,life:16,maxLife:16,size:2+Math.random()*2,color:bColor,type:'spark'}); }
+  }
+  // ---- BASE TURRET: auto-shoot (only if no trap mine) ----
+  if (_bm.trapMine <= 0) {
+    b.fireCd--;
+    if (b.fireCd <= 0 && best) {
+      b.fireCd = BEACON_FIRE_RATE;
+      const a = b.angle;
+      bullets.push({ x:b.x+Math.cos(a)*12,y:b.y+Math.sin(a)*12, vx:Math.cos(a)*14,vy:Math.sin(a)*14,
+        damage:BEACON_DAMAGE, color:bColor, size:2.5, knockback:1, pierce:0, pierced:0,
+        life:18, maxLife:18, flame:false, explosive:false, explosionRadius:0,
+        tracer:false, chain:false, chainRange:0, chainCount:0, laserGlow:false, grenade:false,
+        owner:'player', ownerId:getLocalPlayer()?.id, trail:[], crit:false,
+        _element:b.classId||null, _homing:false, _bouncing:0, _angVel:0, _beaconBullet:true });
+      for(let i=0;i<3;i++){particles.push({x:b.x+Math.cos(a)*14,y:b.y+Math.sin(a)*14,vx:Math.cos(a)*3+(Math.random()-0.5)*2,vy:Math.sin(a)*3+(Math.random()-0.5)*2,life:8,maxLife:8,size:2,color:bColor,type:'spark'});}
+    }
   }
   // Ambient particles: rotating halo
   if (gameTime % 3 === 0) {
     const pa = (gameTime * 0.05) % (Math.PI * 2);
-    const bColor = b.classId === 'fire' ? '#f80' : b.classId === 'ice' ? '#8ef' : b.classId === 'chain' ? '#4ff' : b.classId === 'corrupt' ? '#a4f' : '#0ff';
-    particles.push({ x: b.x + Math.cos(pa)*16, y: b.y + Math.sin(pa)*16,
-      vx: Math.cos(pa)*0.5, vy: -0.8, life: 14, maxLife: 14, size: 2, color: bColor, type: 'spark' });
+    particles.push({ x:b.x+Math.cos(pa)*16,y:b.y+Math.sin(pa)*16, vx:Math.cos(pa)*0.5,vy:-0.8, life:14,maxLife:14,size:2,color:bColor,type:'spark' });
   }
 }
 
@@ -9498,6 +9550,16 @@ function update() {
         }
         _zc._np = bestP;
         _zc._npD = bestP ? Math.sqrt(bestD2) : Infinity;
+        // BEACON TAUNT: if beacon is active and closer, zombie targets beacon instead
+        if (activeBeacon && activeBeacon.timer > 0) {
+          const _bdx = activeBeacon.x - _zc.x, _bdy = activeBeacon.y - _zc.y;
+          const _bd2 = _bdx*_bdx + _bdy*_bdy;
+          // Beacon has strong aggro — 1.5x effective range (zombies prefer it)
+          if (_bd2 * 0.45 < bestD2) {
+            _zc._np = { x: activeBeacon.x, y: activeBeacon.y, alive: true, _isBeacon: true };
+            _zc._npD = Math.sqrt(_bd2);
+          }
+        }
       }
     }
     for(const z of zombies){
