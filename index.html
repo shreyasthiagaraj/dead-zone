@@ -6338,6 +6338,12 @@ function updateShell() {
     screenShake.y = (Math.random()-0.5)*2*screenShake.intensity;
     screenShake.intensity *= screenShake.decay;
   } else { screenShake.x = 0; screenShake.y = 0; screenShake.intensity = 0; }
+  // Terminal glow particles — always spawn even without player
+  for (const _bt of shellTerminals) {
+    if (gameTime % 4 === 0) { const ta=Math.random()*Math.PI*2; particles.push({x:_bt.x+Math.cos(ta)*12,y:_bt.y+Math.sin(ta)*12,vx:Math.cos(ta)*0.3,vy:-0.8-Math.random()*0.5,life:20+Math.random()*15,maxLife:35,size:2+Math.random()*2,color:_bt.color,type:'spark'}); }
+  }
+  // Gateway beacon particles
+  if (shellGatewayPos && gameTime % 2 === 0) { const ga=Math.random()*Math.PI*2,gd2=10+Math.random()*25; particles.push({x:shellGatewayPos.x+Math.cos(ga)*gd2,y:shellGatewayPos.y+Math.sin(ga)*gd2,vx:-Math.cos(ga)*0.5,vy:-0.5-Math.random()*0.5,life:18+Math.random()*12,maxLife:30,size:2+Math.random()*2.5,color:Math.random()>0.5?'#0ff':'#f0f',type:'spark'}); }
   // ---- Terminal proximity — auto-open on walk-up ----
   _shellNearTerminal = null;
   for (const t of shellTerminals) {
@@ -6354,19 +6360,7 @@ function updateShell() {
     const gd = Math.sqrt((lp.x - shellGatewayPos.x)**2 + (lp.y - shellGatewayPos.y)**2);
     if (gd < 45) startRunFromShell();
   }
-  // (Particle, float text, fade, glitch-in, and ambient ticks moved to top of updateShell)
-  // Terminal glow particles — constant beacon effect
-  for (const t of shellTerminals) {
-    if (gameTime % 4 === 0) {
-      const ta = Math.random()*Math.PI*2;
-      particles.push({ x:t.x+Math.cos(ta)*12, y:t.y+Math.sin(ta)*12, vx:Math.cos(ta)*0.3, vy:-0.8-Math.random()*0.5, life:20+Math.random()*15, maxLife:35, size:2+Math.random()*2, color:t.color, type:'spark' });
-    }
-  }
-  // Gateway beacon particles — draws the eye
-  if (shellGatewayPos && gameTime % 2 === 0) {
-    const ga = Math.random()*Math.PI*2, gd = 10+Math.random()*25;
-    particles.push({ x:shellGatewayPos.x+Math.cos(ga)*gd, y:shellGatewayPos.y+Math.sin(ga)*gd, vx:-Math.cos(ga)*0.5, vy:-0.5-Math.random()*0.5, life:18+Math.random()*12, maxLife:30, size:2+Math.random()*2.5, color:Math.random()>0.5?'#0ff':'#f0f', type:'spark' });
-  }
+  // (Terminal/gateway particles moved to top of updateShell — spawn before player check)
 }
 
 function shellInteract(terminal) {
@@ -6378,8 +6372,7 @@ function shellInteract(terminal) {
 }
 
 function renderShellOverlays() {
-  const lp = getLocalPlayer();
-  if (!lp) return;
+  const lp = getLocalPlayer(); // may be null during spawn sequence — overlays still render
   const t = performance.now();
   // ---- Shell title ----
   ctx.save();
@@ -6463,7 +6456,7 @@ function renderShellOverlays() {
   // ---- Gateway — dramatic glowing portal, draws the eye ----
   if (shellGatewayPos) {
     const gx = shellGatewayPos.x, gy = shellGatewayPos.y;
-    const gd = Math.sqrt((lp.x-gx)**2 + (lp.y-gy)**2);
+    const gd = lp ? Math.sqrt((lp.x-gx)**2 + (lp.y-gy)**2) : 999;
     const near = gd < 100;
     const pulse = 0.6 + Math.sin(t * 0.005) * 0.3;
     ctx.save();
@@ -6534,7 +6527,7 @@ function renderShellOverlays() {
     ctx.restore();
   }
   // ---- Glitch-in chromatic effect ----
-  if (_shellGlitchInTimer > 0) {
+  if (_shellGlitchInTimer > 0 && lp) {
     const a = _shellGlitchInTimer / 60;
     ctx.save();
     ctx.globalAlpha = a * 0.3;
