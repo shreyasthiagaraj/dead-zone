@@ -6924,9 +6924,9 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 // ============================================================
 // PULSE — SPECIAL ATTACK (radial energy burst)
 // ============================================================
-const PULSE_COOLDOWN = 180; // 3 seconds at 60fps
-const PULSE_RADIUS = 90;    // base radius
-const PULSE_DAMAGE = 25;    // base damage
+const PULSE_COOLDOWN = 240; // 4 seconds at 60fps
+const PULSE_RADIUS = 140;   // big radius — this is a room-clearer
+const PULSE_DAMAGE = 60;    // serious damage
 
 function pulseAttack() {
   if (gameState === 'shell') return;
@@ -6937,18 +6937,18 @@ function pulseAttack() {
   const _m = runMods || {};
   const radius = PULSE_RADIUS;
   let dmg = PULSE_DAMAGE;
-  // ---- CLASS-SPECIFIC PULSE EFFECTS ----
-  let pulseColor = '#f0f', pulseColor2 = '#fff';
+  // ---- CLASS-COLORED VFX ----
+  let c1 = '#f0f', c2 = '#fff', decalCol = '#323';
   const hasThermal = _m.thermalRoundsLv > 0 || _m.burnoutWake > 0;
   const hasCryo = _m.cryoRoundsLv > 0 || _m.cryoWake > 0;
   const hasArc = _m.arcRoundsLv > 0 || _m.staticWake > 0;
   const hasPulseClass = _m.pulseShotLv > 0 || _m.impulseWave > 0;
   const hasCorrupt = _m.viralPayloadLv > 0 || _m.glitchWake > 0;
-  if (hasThermal) { pulseColor = '#f80'; pulseColor2 = '#fa0'; }
-  else if (hasCryo) { pulseColor = '#8ef'; pulseColor2 = '#cff'; }
-  else if (hasArc) { pulseColor = '#4ff'; pulseColor2 = '#fff'; }
-  else if (hasCorrupt) { pulseColor = '#a4f'; pulseColor2 = '#f0f'; }
-  else if (hasPulseClass) { pulseColor = '#cef'; pulseColor2 = '#fff'; }
+  if (hasThermal)       { c1='#f80'; c2='#fa0'; decalCol='#420'; }
+  else if (hasCryo)     { c1='#aef'; c2='#cef'; decalCol='#245'; }
+  else if (hasArc)      { c1='#4ff'; c2='#8ff'; decalCol='#234'; }
+  else if (hasCorrupt)  { c1='#a4f'; c2='#f0f'; decalCol='#324'; }
+  else if (hasPulseClass) { c1='#cef'; c2='#fff'; decalCol='#345'; }
   // ---- DAMAGE + STATUS APPLICATION ----
   if (isHost) {
     for (const z of zombies) {
@@ -6956,43 +6956,63 @@ function pulseAttack() {
       const dx = z.x - lp.x, dy = z.y - lp.y, d = Math.sqrt(dx*dx+dy*dy);
       if (d > radius + z.radius || d < 0.1) continue;
       const closeness = 1 - d / (radius + z.radius);
-      const push = 8 * closeness;
+      // Heavy knockback — sends enemies FLYING
+      const push = 14 * closeness;
       z.vx += (dx/d) * push; z.vy += (dy/d) * push;
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
-      damageZombie(z, Math.floor(dmg * closeness), (dx/d)*3, (dy/d)*3);
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
+      damageZombie(z, Math.floor(dmg * closeness), (dx/d)*5, (dy/d)*5);
       // Class-specific status application
-      if (hasThermal) applyOverheat(z, Math.floor(10 * closeness), 1);
-      if (hasCryo) applyChill(z, 1);
+      if (hasThermal) applyOverheat(z, Math.floor(15 * closeness), 1.5);
+      if (hasCryo) applyChill(z, 2);
       if (hasArc) applyCharged(z);
       if (hasPulseClass) applyExposed(z);
-      if (hasCorrupt) applyCorrupt(z, 1);
+      if (hasCorrupt) applyCorrupt(z, 2);
     }
   }
-  // ---- OVER-THE-TOP VFX ----
-  // Expanding ring of particles
-  for (let i = 0; i < 24; i++) {
-    const a = (i/24) * Math.PI * 2;
-    const s = 6 + Math.random() * 4;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 16 + Math.random()*8, maxLife: 24, size: 3 + Math.random()*3,
-      color: Math.random() > 0.4 ? pulseColor : pulseColor2, type: 'spark' });
+  // ---- SHOCKWAVE-STYLE VFX (big, dramatic, satisfying) ----
+  // RING 1: 32 fast expanding particles
+  for (let i = 0; i < 32; i++) {
+    const a = (Math.PI * 2 * i) / 32;
+    particles.push({ x: lp.x + Math.cos(a)*15, y: lp.y + Math.sin(a)*15,
+      vx: Math.cos(a)*10, vy: Math.sin(a)*10,
+      life: 22, maxLife: 22, size: 5, color: c1, type: 'spark' });
   }
-  // Inner burst
-  for (let i = 0; i < 12; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const s = 2 + Math.random() * 3;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 20, maxLife: 20, size: 4 + Math.random()*3,
-      color: pulseColor2, type: 'explosion' });
+  // RING 2: 16 slower particles
+  for (let i = 0; i < 16; i++) {
+    const a = (Math.PI * 2 * i) / 16;
+    particles.push({ x: lp.x + Math.cos(a)*10, y: lp.y + Math.sin(a)*10,
+      vx: Math.cos(a)*6, vy: Math.sin(a)*6,
+      life: 18, maxLife: 18, size: 4, color: c2, type: 'spark' });
   }
-  // Ground decal
-  decals.push({ x: lp.x, y: lp.y, size: radius * 0.6, alpha: 0.2, color: pulseColor === '#f80' ? '#420' : pulseColor === '#8ef' ? '#245' : pulseColor === '#4ff' ? '#234' : pulseColor === '#a4f' ? '#324' : '#323' });
-  // Screen effects
-  screenShake.intensity = Math.max(screenShake.intensity, 8);
-  triggerGlitchSurge(0.2, 10);
+  // Inner explosion burst
+  for (let i = 0; i < 14; i++) {
+    const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+      life: 24, maxLife: 24, size: 4 + Math.random()*4, color: c2, type: 'explosion' });
+  }
+  // Ground decals: 8 ring + 1 large center
+  for (let i = 0; i < 8; i++) {
+    const da = (Math.PI * 2 * i) / 8, dd = 30 + Math.random() * 40;
+    decals.push({ x: lp.x + Math.cos(da)*dd, y: lp.y + Math.sin(da)*dd,
+      size: 10 + Math.random()*15, alpha: 0.35, color: decalCol });
+  }
+  decals.push({ x: lp.x, y: lp.y, size: 60 + Math.random()*20, alpha: 0.3, color: decalCol });
+  // Class-specific bonus VFX
+  if (hasArc) {
+    // Lightning bolts radiating outward
+    for (let bi = 0; bi < 8; bi++) {
+      const ba = Math.random() * Math.PI * 2, br = 60 + Math.random() * 80;
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 26,
+        size: 1, color: '#4ff', type: 'lightning',
+        tx: lp.x + Math.cos(ba)*br, ty: lp.y + Math.sin(ba)*br });
+    }
+  }
+  // Screen effects — BIG
+  screenShake.intensity = Math.max(screenShake.intensity, 14);
+  triggerGlitchSurge(0.35, 18);
   playExplosionSound();
   // Brief invulnerability frames (reward for timing)
-  lp.invincible = Math.max(lp.invincible || 0, 200); // ~0.33s i-frames
+  lp.invincible = Math.max(lp.invincible || 0, 300); // 0.5s i-frames
 }
 
 function dash() {
