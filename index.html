@@ -43,13 +43,14 @@ body.mobile .joystick-zone { display: block; }
 body.mobile #mobile-buttons { display: block; }
 .mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: transparent; color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s, opacity 0.12s linear; }
 .mobile-btn svg { display: block; filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
-/* Action buttons: diamond layout (top=pulse, right=dash, bottom=shoot) */
+/* Action buttons: diamond layout (top=mark, right=dash, bottom=shoot) */
 /* Diamond center: right 78px, bottom 140px */
-#btn-pulse { width: 58px; height: 58px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(195px + env(safe-area-inset-bottom)); }
+#btn-mark { width: 58px; height: 58px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(195px + env(safe-area-inset-bottom)); }
 #btn-dash { width: 58px; height: 58px; right: calc(4px + env(safe-area-inset-right) * 0.5); bottom: calc(140px + env(safe-area-inset-bottom)); }
 #btn-shoot { width: 58px; height: 58px; right: calc(49px + env(safe-area-inset-right) * 0.5); bottom: calc(85px + env(safe-area-inset-bottom)); }
-.mobile-btn.pulse-ready { border-color: #f0f; color: #f0f; box-shadow: 0 0 14px rgba(255,0,255,0.4); text-shadow: 0 0 8px rgba(255,0,255,0.6); }
-.mobile-btn.pulse-cooldown { border-color: #636; color: #636; pointer-events: none; opacity: 0.5; }
+.mobile-btn.mark-ready { border-color: #f44; color: #f44; box-shadow: 0 0 14px rgba(255,68,68,0.4); text-shadow: 0 0 8px rgba(255,68,68,0.6); }
+.mobile-btn.mark-cooldown { border-color: #633; color: #633; pointer-events: none; opacity: 0.5; }
+.mobile-btn.mark-active { border-color: #f44; color: #f44; box-shadow: 0 0 22px rgba(255,68,68,0.7); animation: pulse 0.5s ease-in-out infinite; }
 .mobile-btn.shoot-btn { border-color: #fa0; color: #fa0; box-shadow: 0 0 14px rgba(255,170,0,0.4); text-shadow: 0 0 8px rgba(255,170,0,0.6); }
 .mobile-btn.shoot-btn.firing { border-color: #ff0; color: #ff0; transform: scale(1.08); box-shadow: 0 0 22px rgba(255,255,0,0.6); }
 /* Repair (fix) button — above diamond for siege mode */
@@ -350,16 +351,15 @@ body.mobile #mobile-buttons { display: block; }
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
 <div id="effects-bar" style="position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right) * 0.5);z-index:20;pointer-events:none;display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap"></div>
 <div id="mobile-buttons">
-  <div class="mobile-btn pulse-ready" id="btn-pulse" aria-label="Pulse">
-    <svg viewBox="0 0 40 40" width="36" height="36" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="20" cy="20" r="8" stroke-width="2.5"/>
-      <circle cx="20" cy="20" r="14" stroke-width="1.5" opacity="0.6"/>
-      <g stroke-width="2" opacity="0.7">
-        <line x1="20" y1="2" x2="20" y2="8"/>
-        <line x1="20" y1="32" x2="20" y2="38"/>
-        <line x1="2" y1="20" x2="8" y2="20"/>
-        <line x1="32" y1="20" x2="38" y2="20"/>
-      </g>
+  <div class="mobile-btn mark-ready" id="btn-mark" aria-label="Mark">
+    <svg viewBox="0 0 40 40" width="34" height="34" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="20" cy="20" r="12" stroke-width="2"/>
+      <circle cx="20" cy="20" r="6" stroke-width="2"/>
+      <circle cx="20" cy="20" r="2" fill="currentColor" stroke="none"/>
+      <line x1="20" y1="3" x2="20" y2="10" stroke-width="2"/>
+      <line x1="20" y1="30" x2="20" y2="37" stroke-width="2"/>
+      <line x1="3" y1="20" x2="10" y2="20" stroke-width="2"/>
+      <line x1="30" y1="20" x2="37" y2="20" stroke-width="2"/>
     </svg>
   </div>
   <div class="mobile-btn dash-ready" id="btn-dash" aria-label="Dash">
@@ -3702,7 +3702,7 @@ function createPlayerObj(id, name, color, x, y) {
     id, name, color, x, y, vx: 0, vy: 0, angle: 0,
     hp: baseHp, maxHp: baseHp, speed: baseSpeed,
     weapons: [createWeapon('pistol')], currentWeapon: 0,
-    dashCooldown: 0, dashTimer: 0, dashAngle: 0, _pulseCooldown: 0,
+    dashCooldown: 0, dashTimer: 0, dashAngle: 0, _markCooldown: 0, _markTarget: null, _markTimer: 0, _markShotsLeft: 0,
     invincible: 0, damageFlash: 0, alive: true,
     burstLeft: 0, burstTimer: 0,
     moveAngle: 0,
@@ -6156,8 +6156,8 @@ function activateRightJoystickFromButton(touch) {
 }
 document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); dash(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
-document.getElementById('btn-pulse').addEventListener('touchstart', (e) => { e.preventDefault(); pulseAttack(); }, { passive: false });
-document.getElementById('btn-pulse').addEventListener('mousedown', () => { pulseAttack(); });
+document.getElementById('btn-mark').addEventListener('touchstart', (e) => { e.preventDefault(); markTarget(); }, { passive: false });
+document.getElementById('btn-mark').addEventListener('mousedown', () => { markTarget(); });
 // Shoot button: hold to fire, joystick becomes aim while held
 document.getElementById('btn-shoot').addEventListener('touchstart', (e) => { e.preventDefault(); shootButtonHeld = true; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing'); }, { passive: false });
 document.getElementById('btn-shoot').addEventListener('touchend', (e) => { e.preventDefault(); shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); }, { passive: false });
@@ -6795,7 +6795,7 @@ function handleKeyDown(e) {
     if (e.key === '0') switchWeapon(9);
     if (e.key === 'e') tryPickup(true);
     if (e.key === ' ') { e.preventDefault(); dash(); }
-    if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); pulseAttack(); }
+    if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); markTarget(); }
     if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
   }
 }
@@ -6945,98 +6945,68 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 // Dash — a short invincible lunge in the player's current movement or facing direction.
 // Replaces the old shockwave-blast. A future STRIDE upgrade can layer a shockwave on top.
 // ============================================================
-// PULSE — SPECIAL ATTACK (radial energy burst)
+// MARK — SPECIAL ATTACK (target lock on nearest/aimed enemy)
 // ============================================================
-const PULSE_COOLDOWN = 60; // 1 second (ticks once per frame at 60fps)
-const PULSE_RADIUS = 140;   // big radius — this is a room-clearer
-const PULSE_DAMAGE = 60;    // serious damage
+const MARK_COOLDOWN = 90;       // 1.5 seconds
+const MARK_DURATION = 180;      // 3 seconds active
+const MARK_RANGE = 300;         // scan range
+const MARK_DMG_BONUS = 1.0;    // +100% damage to marked target
+const MARK_SHOTS = 8;           // shots before mark expires
 
-function pulseAttack() {
+function markTarget() {
   if (gameState === 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
-  if (lp._pulseCooldown > 0) return;
-  lp._pulseCooldown = PULSE_COOLDOWN;
+  if (lp._markCooldown > 0) return;
+  // Find best target: closest enemy in the player's facing direction (±60°)
+  let best = null, bestScore = Infinity;
+  for (const z of zombies) {
+    if (z.hp <= 0) continue;
+    const dx = z.x - lp.x, dy = z.y - lp.y, d = Math.sqrt(dx*dx+dy*dy);
+    if (d > MARK_RANGE) continue;
+    // Prefer enemies near the crosshair (facing direction)
+    const aToZ = Math.atan2(dy, dx);
+    const aDiff = Math.abs(((aToZ - lp.angle + Math.PI*3) % (Math.PI*2)) - Math.PI);
+    if (aDiff > 1.05) continue; // ~60° cone
+    const score = d * (1 + aDiff * 2); // closer + more centered = better
+    if (score < bestScore) { bestScore = score; best = z; }
+  }
+  if (!best) {
+    // No target — short cooldown penalty
+    lp._markCooldown = 20;
+    playSound(200, 0.1, 'sine', 0.05);
+    return;
+  }
+  // LOCK ON
+  lp._markCooldown = MARK_COOLDOWN;
+  lp._markTarget = best.zid;
+  lp._markTimer = MARK_DURATION;
+  lp._markShotsLeft = MARK_SHOTS;
+  best._marked = true;
+  best._markedTimer = MARK_DURATION;
+  // Class-specific mark bonus
   const _m = runMods || {};
-  const radius = PULSE_RADIUS;
-  let dmg = PULSE_DAMAGE;
-  // ---- CLASS-COLORED VFX ----
-  let c1 = '#f0f', c2 = '#fff', decalCol = '#323';
-  const hasThermal = _m.thermalRoundsLv > 0 || _m.burnoutWake > 0;
-  const hasCryo = _m.cryoRoundsLv > 0 || _m.cryoWake > 0;
-  const hasArc = _m.arcRoundsLv > 0 || _m.staticWake > 0;
-  const hasPulseClass = _m.pulseShotLv > 0 || _m.impulseWave > 0;
-  const hasCorrupt = _m.viralPayloadLv > 0 || _m.glitchWake > 0;
-  if (hasThermal)       { c1='#f80'; c2='#fa0'; decalCol='#420'; }
-  else if (hasCryo)     { c1='#aef'; c2='#cef'; decalCol='#245'; }
-  else if (hasArc)      { c1='#4ff'; c2='#8ff'; decalCol='#234'; }
-  else if (hasCorrupt)  { c1='#a4f'; c2='#f0f'; decalCol='#324'; }
-  else if (hasPulseClass) { c1='#cef'; c2='#fff'; decalCol='#345'; }
-  // ---- DAMAGE + STATUS APPLICATION ----
-  if (isHost) {
-    for (const z of zombies) {
-      if (z.hp <= 0) continue;
-      const dx = z.x - lp.x, dy = z.y - lp.y, d = Math.sqrt(dx*dx+dy*dy);
-      if (d > radius + z.radius || d < 0.1) continue;
-      const closeness = 1 - d / (radius + z.radius);
-      // Heavy knockback — sends enemies FLYING
-      const push = 14 * closeness;
-      z.vx += (dx/d) * push; z.vy += (dy/d) * push;
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
-      damageZombie(z, Math.floor(dmg * closeness), (dx/d)*5, (dy/d)*5);
-      // Class-specific status application
-      if (hasThermal) applyOverheat(z, Math.floor(15 * closeness), 1.5);
-      if (hasCryo) applyChill(z, 2);
-      if (hasArc) applyCharged(z);
-      if (hasPulseClass) applyExposed(z);
-      if (hasCorrupt) applyCorrupt(z, 2);
-    }
+  if (_m.thermalRoundsLv > 0 || _m.burnoutWake > 0) best._markClass = 'fire';
+  else if (_m.cryoRoundsLv > 0 || _m.cryoWake > 0) best._markClass = 'ice';
+  else if (_m.arcRoundsLv > 0 || _m.staticWake > 0) best._markClass = 'chain';
+  else if (_m.viralPayloadLv > 0 || _m.glitchWake > 0) best._markClass = 'corrupt';
+  else best._markClass = null;
+  // ---- LOCK-ON VFX ----
+  // Targeting beam from player to target
+  particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 20, maxLife: 20,
+    size: 1, color: '#f44', type: 'lightning', tx: best.x, ty: best.y });
+  // Target burst
+  for (let i = 0; i < 10; i++) {
+    const a = (i/10)*Math.PI*2;
+    particles.push({ x: best.x+Math.cos(a)*20, y: best.y+Math.sin(a)*20,
+      vx: -Math.cos(a)*3, vy: -Math.sin(a)*3,
+      life: 14, maxLife: 14, size: 2.5, color: '#f44', type: 'spark' });
   }
-  // ---- SHOCKWAVE-STYLE VFX (big, dramatic, satisfying) ----
-  // RING 1: 32 fast expanding particles
-  for (let i = 0; i < 32; i++) {
-    const a = (Math.PI * 2 * i) / 32;
-    particles.push({ x: lp.x + Math.cos(a)*15, y: lp.y + Math.sin(a)*15,
-      vx: Math.cos(a)*10, vy: Math.sin(a)*10,
-      life: 22, maxLife: 22, size: 5, color: c1, type: 'spark' });
-  }
-  // RING 2: 16 slower particles
-  for (let i = 0; i < 16; i++) {
-    const a = (Math.PI * 2 * i) / 16;
-    particles.push({ x: lp.x + Math.cos(a)*10, y: lp.y + Math.sin(a)*10,
-      vx: Math.cos(a)*6, vy: Math.sin(a)*6,
-      life: 18, maxLife: 18, size: 4, color: c2, type: 'spark' });
-  }
-  // Inner explosion burst
-  for (let i = 0; i < 14; i++) {
-    const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-      life: 24, maxLife: 24, size: 4 + Math.random()*4, color: c2, type: 'explosion' });
-  }
-  // Ground decals: 8 ring + 1 large center
-  for (let i = 0; i < 8; i++) {
-    const da = (Math.PI * 2 * i) / 8, dd = 30 + Math.random() * 40;
-    decals.push({ x: lp.x + Math.cos(da)*dd, y: lp.y + Math.sin(da)*dd,
-      size: 10 + Math.random()*15, alpha: 0.35, color: decalCol });
-  }
-  decals.push({ x: lp.x, y: lp.y, size: 60 + Math.random()*20, alpha: 0.3, color: decalCol });
-  // Class-specific bonus VFX
-  if (hasArc) {
-    // Lightning bolts radiating outward
-    for (let bi = 0; bi < 8; bi++) {
-      const ba = Math.random() * Math.PI * 2, br = 60 + Math.random() * 80;
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 26,
-        size: 1, color: '#4ff', type: 'lightning',
-        tx: lp.x + Math.cos(ba)*br, ty: lp.y + Math.sin(ba)*br });
-    }
-  }
-  // Screen effects — BIG
-  screenShake.intensity = Math.max(screenShake.intensity, 14);
-  triggerGlitchSurge(0.35, 18);
-  // Heavy "boop" — low sine thump + sub-bass tail
-  playSound(80, 0.5, 'sine', 0.12); playSound(45, 0.35, 'sine', 0.2);
-  // Brief invulnerability frames (reward for timing)
-  lp.invincible = Math.max(lp.invincible || 0, 300); // 0.5s i-frames
+  // Sound: sharp targeting ping
+  playSound(1200, 0.15, 'sine', 0.06);
+  playSound(1600, 0.1, 'sine', 0.04);
+  screenShake.intensity = Math.max(screenShake.intensity, 3);
+  addFloatingText(best.x, best.y - best.radius - 14, 'MARKED', '#f44');
 }
 
 function dash() {
@@ -8267,6 +8237,18 @@ function dropZombieLoot(z) {
   // Item drop roll — health / ammo / power-up / element. Rare on normals,
   // common on elites, guaranteed on bosses. Replaces chest-based spawns.
   if (isHost) maybeDropPickup(z);
+  // MARK death bonus: class-specific effect when marked target dies
+  if (z._marked && z._markClass) {
+    const _mc = z._markClass;
+    if (_mc === 'fire') { createExplosion(z.x, z.y, 70, 40, 'player'); for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:16,maxLife:16,size:3+Math.random()*3,color:'#f80',type:'explosion'});} }
+    else if (_mc === 'ice') { for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<80)applyChill(oz,3);} for(let i=0;i<14;i++){const a=(i/14)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*4,vy:Math.sin(a)*4,life:16,maxLife:16,size:3,color:'#aef',type:'spark'});} }
+    else if (_mc === 'chain') { for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<120){damageZombie(oz,20,0,0);applyCharged(oz);particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:oz.x,ty:oz.y});}} }
+    else if (_mc === 'corrupt') { for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<80)applyCorrupt(oz,3);} for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:16,maxLife:16,size:2+Math.random()*2,color:'#a4f',type:'spark'});} }
+    addFloatingText(z.x, z.y - z.radius - 20, 'EXECUTED', '#f44');
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    // Clear mark on player
+    const _mlp = getLocalPlayer(); if (_mlp) { _mlp._markTarget = null; _mlp._markTimer = 0; _mlp._markShotsLeft = 0; }
+  }
   // Recovery Loop: heal on elite/boss kill (milestone sustain)
   const mods = runMods || {};
   const lp = getLocalPlayer();
@@ -8903,7 +8885,12 @@ function update() {
     else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
-    if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;if(lp._pulseCooldown>0)lp._pulseCooldown--;
+    if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
+    // Mark cooldown + expiry
+    if(lp._markCooldown>0)lp._markCooldown--;
+    if(lp._markTimer>0){lp._markTimer--;if(lp._markTimer<=0||lp._markShotsLeft<=0){lp._markTarget=null;lp._markTimer=0;lp._markShotsLeft=0;for(const z of zombies){if(z._marked){z._marked=false;z._markedTimer=0;}}}}
+    // Tick marked zombie timers
+    for(const z of zombies){if(z._marked){z._markedTimer=(z._markedTimer||0)-1;if(z._markedTimer<=0||z.hp<=0)z._marked=false;}}
     if(isMobile&&gameTime%2===0)tryPickup();
     // Check exit — dungeon mode only (gauntlet handles its own exit in updateGauntlet)
     if(exitPos&&isHost&&gameMode==='dungeon'){
@@ -9204,6 +9191,13 @@ function update() {
                     if (z._exposed) { _dmg = Math.floor(_dmg * (1 + 0.3 * Math.max(1, _m.vectorSnap))); }
                     // -- COMPROMISED: +50% damage --
                     if (z._compromised) { _dmg = Math.floor(_dmg * 1.5); }
+                    // -- MARKED: +100% damage, light homing already hit, consume shot --
+                    if (z._marked && _lp3 && _lp3._markTarget === z.zid) {
+                      _dmg = Math.floor(_dmg * (1 + MARK_DMG_BONUS));
+                      _lp3._markShotsLeft = Math.max(0, (_lp3._markShotsLeft || 0) - 1);
+                      // Mark hit VFX: red flash + "!"
+                      for(let mi=0;mi<4;mi++){const ma=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(ma)*6,y:z.y+Math.sin(ma)*6,vx:Math.cos(ma)*3,vy:Math.sin(ma)*3,life:10,maxLife:10,size:2.5,color:'#f44',type:'spark'});}
+                    }
                     // -- CRIT WINDOWS (conditional only, no global crit stat) --
                     if (!b.crit) {
                       let _critChance = 0;
@@ -10514,16 +10508,12 @@ function updateHUD() {
       db.style.opacity = '';
     }
   }
-  // Pulse cooldown indicator
-  const pb=document.getElementById('btn-pulse');
-  if (pb) {
-    if (lp._pulseCooldown > 0) {
-      pb.className = 'mobile-btn pulse-cooldown';
-      pb.style.opacity = '0.25';
-    } else {
-      pb.className = 'mobile-btn pulse-ready';
-      pb.style.opacity = '';
-    }
+  // Mark button state
+  const mb2=document.getElementById('btn-mark');
+  if (mb2) {
+    if (lp._markTimer > 0) { mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; }
+    else if (lp._markCooldown > 0) { mb2.className = 'mobile-btn mark-cooldown'; mb2.style.opacity = '0.25'; }
+    else { mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; }
   }
   // Siege repair button — only enabled when the local player is near a damaged wall section
   if (gameMode === 'siege') {
@@ -11978,6 +11968,16 @@ function render() {
     if(z._exposed){const _ep=0.4+Math.sin(performance.now()*0.008)*0.3;ctx.globalAlpha=_ep;ctx.strokeStyle='#eaf';ctx.lineWidth=2;ctx.shadowColor='#eaf';ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(0,-z.radius-10);ctx.lineTo(0,-z.radius-4);ctx.moveTo(0,z.radius+4);ctx.lineTo(0,z.radius+10);ctx.moveTo(-z.radius-10,0);ctx.lineTo(-z.radius-4,0);ctx.moveTo(z.radius+4,0);ctx.lineTo(z.radius+10,0);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Overheat: pulsing orange glow + heat shimmer rings
     if(z._overheat>0){const _hp2=0.15+z._overheat/60*0.25;ctx.globalAlpha=_hp2;ctx.shadowColor='#f80';ctx.shadowBlur=14;ctx.fillStyle='#f80';ctx.beginPath();ctx.arc(0,0,z.radius+3,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // MARKED: bright red target reticle — impossible to miss
+    if(z._marked){const _mp=0.6+Math.sin(performance.now()*0.012)*0.3;const _mr=z.radius+10+Math.sin(performance.now()*0.008)*3;
+      ctx.save();ctx.globalAlpha=_mp;ctx.strokeStyle='#f44';ctx.lineWidth=2.5;ctx.shadowColor='#f44';ctx.shadowBlur=14;
+      // Outer spinning ring
+      const _mRot=performance.now()*0.003;ctx.beginPath();for(let mi=0;mi<4;mi++){const a=_mRot+mi*Math.PI/2;ctx.moveTo(Math.cos(a)*(_mr-4),Math.sin(a)*(_mr-4));ctx.lineTo(Math.cos(a)*(_mr+6),Math.sin(a)*(_mr+6));}ctx.stroke();
+      // Diamond reticle
+      ctx.beginPath();ctx.moveTo(0,-_mr);ctx.lineTo(_mr*0.4,-_mr*0.4);ctx.moveTo(0,-_mr);ctx.lineTo(-_mr*0.4,-_mr*0.4);ctx.moveTo(0,_mr);ctx.lineTo(_mr*0.4,_mr*0.4);ctx.moveTo(0,_mr);ctx.lineTo(-_mr*0.4,_mr*0.4);ctx.stroke();
+      // Center dot
+      ctx.globalAlpha=0.8;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;ctx.restore();}
     const eyeC=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
     // Glow halo behind eyes
     ctx.globalAlpha=0.4;ctx.fillStyle=eyeC;
@@ -12085,7 +12085,7 @@ function render() {
 
     // Dash cooldown (desktop only, local player only)
     if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
-    if(p===getLocalPlayer()&&p._pulseCooldown>0&&!isMobile){const pct=1-p._pulseCooldown/PULSE_COOLDOWN;ctx.strokeStyle='#f0f';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+10,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
+    if(p===getLocalPlayer()&&p._markCooldown>0&&!isMobile){const pct=1-p._markCooldown/MARK_COOLDOWN;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+10,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
     // Shield force field — glowing circle
     if(playerHasPowerUp(p,'shield')){
       const pulse=0.4+Math.sin(performance.now()*0.006)*0.2;
