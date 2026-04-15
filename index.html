@@ -6392,12 +6392,32 @@ function renderShellOverlays() {
   ctx.fillText('THE SHELL', ARENA_W / 2, 1.2 * CELL_SIZE);
   ctx.shadowBlur = 0;
   ctx.restore();
-  // ---- Subtle ambient glow over the whole room ----
+  // ---- Patterned floor: hex grid + scan lines (computer monitor feel) ----
   ctx.save();
-  ctx.globalAlpha = 0.03;
+  // Hex dot grid pattern
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#0af';
+  for (let gy = 2; gy < ARENA_H/CELL_SIZE - 1; gy++) {
+    for (let gx = 2; gx < ARENA_W/CELL_SIZE - 1; gx++) {
+      const off = (gy % 2) * CELL_SIZE * 0.5;
+      ctx.beginPath(); ctx.arc(gx*CELL_SIZE + off, gy*CELL_SIZE, 1.5, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  // Horizontal scan lines (CRT monitor effect)
+  ctx.globalAlpha = 0.025;
+  ctx.strokeStyle = '#0af';
+  ctx.lineWidth = 0.5;
+  for (let sy = CELL_SIZE; sy < ARENA_H - CELL_SIZE; sy += 6) {
+    ctx.beginPath(); ctx.moveTo(CELL_SIZE, sy); ctx.lineTo(ARENA_W - CELL_SIZE, sy); ctx.stroke();
+  }
+  // Ambient glow
+  ctx.globalAlpha = 0.04;
   ctx.fillStyle = '#0af';
   ctx.fillRect(CELL_SIZE, CELL_SIZE, (ARENA_W/CELL_SIZE - 2)*CELL_SIZE, (ARENA_H/CELL_SIZE - 2)*CELL_SIZE);
   ctx.restore();
+  // Boost CRT glitch in Shell — periodic flicker
+  if (gameTime % 120 < 4) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.12);
+  if (gameTime % 300 < 2) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.25);
   // ---- Terminals ----
   for (const term of shellTerminals) {
     const near = _shellNearTerminal === term;
@@ -7009,7 +7029,7 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 // ============================================================
 // BEACON — SPECIAL ATTACK (deploy a turret at your feet)
 // ============================================================
-const BEACON_COOLDOWN = 300;    // 5 seconds
+const BEACON_COOLDOWN = 420;    // 7 seconds
 const BEACON_DURATION = 240;    // 4 seconds active
 const BEACON_RANGE = 160;       // turret scan range
 const BEACON_FIRE_RATE = 14;    // frames between shots (slower)
@@ -10344,7 +10364,7 @@ function update() {
   cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.012);
   cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.012);
   // Camera lerp: faster when shooting so you can see what you're aiming at
-  const _camSpeed = (lp._firing || shootButtonHeld) ? 0.5 : 0.08;
+  const _camSpeed = (lp._firing || shootButtonHeld) ? 0.40 : 0.08;
   camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,_camSpeed);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,_camSpeed);
 
   if(screenShake.intensity>0.1){screenShake.x=(Math.random()-0.5)*screenShake.intensity*2;screenShake.y=(Math.random()-0.5)*screenShake.intensity*2;screenShake.intensity*=screenShake.decay;}else{screenShake.x=0;screenShake.y=0;screenShake.intensity=0;}
