@@ -8548,28 +8548,25 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: single joystick controls movement OR aim (when shoot held)
-    if(isMobile&&leftJoystick.active) {
+    // Mobile: single joystick. Shoot button toggles between move mode and aim mode.
+    if (isMobile) {
       if (shootButtonHeld) {
-        // Shoot held: joystick aims, player fires in aim direction
-        const aimMag = Math.sqrt(leftJoystick.nx*leftJoystick.nx + leftJoystick.ny*leftJoystick.ny);
-        if (aimMag > 0.15) {
-          lp.angle = Math.atan2(leftJoystick.ny, leftJoystick.nx);
-        }
-        // Always fire while shoot is held
+        // SHOOT HELD: always fire. Joystick aims if active, otherwise fire in current direction.
         rightJoystick.aiming = true; rightJoystick.firing = true;
-        // dx/dy stay 0 — no movement while aiming
+        if (leftJoystick.active) {
+          const aimMag = Math.sqrt(leftJoystick.nx*leftJoystick.nx + leftJoystick.ny*leftJoystick.ny);
+          if (aimMag > 0.15) lp.angle = Math.atan2(leftJoystick.ny, leftJoystick.nx);
+        }
+        // dx/dy stay 0 — no movement while shooting
       } else {
-        dx=leftJoystick.nx;dy=leftJoystick.ny;
-        // Face movement direction
-        const moveMag = Math.sqrt(dx*dx+dy*dy);
-        if (moveMag > 0.2) lp.angle = Math.atan2(dy, dx);
-        // Not firing from joystick
+        // NOT SHOOTING: joystick moves, player faces movement direction
         rightJoystick.aiming = false; rightJoystick.firing = false;
+        if (leftJoystick.active) {
+          dx = leftJoystick.nx; dy = leftJoystick.ny;
+          const moveMag = Math.sqrt(dx*dx+dy*dy);
+          if (moveMag > 0.2) lp.angle = Math.atan2(dy, dx);
+        }
       }
-    } else if (isMobile && !leftJoystick.active) {
-      // Joystick released — stop firing if it was aim-mode
-      if (shootButtonHeld) { rightJoystick.aiming = false; rightJoystick.firing = false; }
     }
     // Gamepad left stick — additive with keyboard
     if(gamepad.connected&&(gamepad.lx!==0||gamepad.ly!==0)){
@@ -8900,7 +8897,7 @@ function update() {
       // Freeze movement while fading (trench transitions only)
       if (gameMode === 'trench' && trenchFadeDir !== 0) { lp.vx = 0; lp.vy = 0; }
     }
-    if(isMobile){if(rightJoystick.active&&rightJoystick.aiming)lp.angle=Math.atan2(rightJoystick.ny,rightJoystick.nx);}
+    if(isMobile){/* angle set by movement/aim code above — no override needed */}
     else if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){lp.angle=Math.atan2(gamepad.ry,gamepad.rx);}
     else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
