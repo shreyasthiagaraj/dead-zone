@@ -6208,53 +6208,98 @@ function enterShell(fromDeath) {
   initAudio(); loadSfx();
   isMultiplayer = false; isHost = true;
   generateShellRoom();
-  players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], shellPlayerSpawn.x, shellPlayerSpawn.y)];
-  localPlayerIdx = 0;
+  // DON'T create the player yet — spawn sequence will materialize them
+  players = []; localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = [];
   floatingTexts = []; explosions = []; barrels = []; xpOrbs = [];
-  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = [];
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; activeBeacon = null;
   activeOrbital = null;
   camera.x = ARENA_W / 2; camera.y = ARENA_H / 2;
   cameraOffset.x = 0; cameraOffset.y = 0;
   screenShake.intensity = 0;
   showScreen(null);
-  // Hide combat HUD + action buttons — Shell has no combat
   ['hp-chip','effects-bar','center-hud','minimap','btn-dash','btn-shoot','btn-mark'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
   gameState = 'shell';
   _shellTransitioning = false;
-  _shellFadeAlpha = fromDeath ? 1 : 0;
-  _shellFadeDir = fromDeath ? -1 : 0;
   _shellNearTerminal = null;
-  _shellInteractCooldown = 0;
+  _shellInteractCooldown = 30; // brief cooldown to prevent instant terminal open
   playMusic('music_ambient', 2.0);
   leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
   rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;
   for(const k in keys) delete keys[k];
   document.activeElement?.blur(); canvas.focus();
-  if (fromDeath) {
-    // Glitch-in: player materializes from particles
-    _shellGlitchInTimer = 60;
-    triggerGlitchSurge(0.3, 30);
-    for (let i = 0; i < 40; i++) {
-      const a = Math.random() * Math.PI * 2, d = 30 + Math.random() * 60;
-      particles.push({ x: shellPlayerSpawn.x + Math.cos(a)*d, y: shellPlayerSpawn.y + Math.sin(a)*d, vx: -Math.cos(a)*2, vy: -Math.sin(a)*2, life: 30, maxLife: 30, size: 3, color: Math.random()<0.5?'#0ff':'#f0f', type:'spark' });
+  // ---- SPAWN SEQUENCE: Shell appears first, then player materializes ----
+  _shellFadeAlpha = 1;
+  _shellFadeDir = -1; // fade in the Shell
+  _shellGlitchInTimer = 0;
+  // Phase 1: Shell fades in over ~0.5s (player not visible yet)
+  // Phase 2: After shell is visible, elaborate glitch-in spawn
+  const _spawnDelay = fromDeath ? 30 : 60; // faster after death (already saw reboot screen)
+  setTimeout(() => {
+    // Create the player NOW — they materialize
+    players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], shellPlayerSpawn.x, shellPlayerSpawn.y)];
+    localPlayerIdx = 0;
+    const lp = getLocalPlayer();
+    if (lp) lp.invincible = 2000; // invincible during spawn
+    _shellGlitchInTimer = 90; // 1.5s of glitch-in effect
+    triggerGlitchSurge(0.45, 50);
+    screenShake.intensity = 6;
+    // Digital construction particles — converge from all directions
+    const sx = shellPlayerSpawn.x, sy = shellPlayerSpawn.y;
+    // Ring 1: outer particles rushing inward (cyan data streams)
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random()*Math.PI*2, d = 60+Math.random()*80;
+      particles.push({x:sx+Math.cos(a)*d,y:sy+Math.sin(a)*d,vx:-Math.cos(a)*4,vy:-Math.sin(a)*4,life:25,maxLife:25,size:2+Math.random()*2,color:'#0ff',type:'spark'});
     }
-    // Show run summary floating text
-    if (_shellDeathStats) {
+    // Ring 2: magenta glitch fragments assembling
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random()*Math.PI*2, d = 40+Math.random()*50;
+      particles.push({x:sx+Math.cos(a)*d,y:sy+Math.sin(a)*d,vx:-Math.cos(a)*3,vy:-Math.sin(a)*3,life:30,maxLife:30,size:3+Math.random()*3,color:'#f0f',type:'spark'});
+    }
+    // Vertical data column (scanning line effect)
+    for (let i = 0; i < 12; i++) {
+      particles.push({x:sx+(Math.random()-0.5)*10,y:sy-40+i*7,vx:0,vy:0,life:35-i*2,maxLife:35,size:2,color:'#0ff',type:'spark'});
+    }
+    // Sound: digital materialization
+    playSound(200, 0.15, 'sine', 0.2); playSound(600, 0.1, 'sine', 0.15);
+    setTimeout(() => { playSound(400, 0.12, 'sine', 0.12); playSound(1000, 0.06, 'sine', 0.08); }, 200);
+    // Show run summary after death
+    if (fromDeath && _shellDeathStats) {
       const s = _shellDeathStats;
-      const cx = shellPlayerSpawn.x, cy = shellPlayerSpawn.y - 50;
-      floatingTexts.push({ x: cx, y: cy - 24, text: `${s.progLabel} ${s.progValue}`, color: '#f0f', vy: -0.1, life: 240, maxLife: 240 });
-      floatingTexts.push({ x: cx, y: cy - 8, text: `+${s.shardsEarned} BITS`, color: '#ff0', vy: -0.1, life: 240, maxLife: 240 });
-      if (s.isNewBest) floatingTexts.push({ x: cx, y: cy + 8, text: 'NEW PERSONAL BEST', color: '#ff0', vy: -0.1, life: 240, maxLife: 240 });
-      floatingTexts.push({ x: cx, y: cy + 24, text: `${s.kills} KILLS`, color: '#888', vy: -0.1, life: 240, maxLife: 240 });
+      setTimeout(() => {
+        floatingTexts.push({ x: sx, y: sy - 60, text: `${s.progLabel} ${s.progValue}`, color: '#f0f', vy: -0.15, life: 240, maxLife: 240 });
+        floatingTexts.push({ x: sx, y: sy - 44, text: `+${s.shardsEarned} BITS`, color: '#ff0', vy: -0.15, life: 240, maxLife: 240 });
+        if (s.isNewBest) floatingTexts.push({ x: sx, y: sy - 28, text: 'NEW PERSONAL BEST', color: '#ff0', vy: -0.15, life: 240, maxLife: 240 });
+        floatingTexts.push({ x: sx, y: sy - 12, text: `${s.kills} KILLS`, color: '#888', vy: -0.15, life: 240, maxLife: 240 });
+      }, 500);
       _shellDeathStats = null;
     }
-  }
+  }, _spawnDelay * 16); // convert frames to ms
 }
 
 function updateShell() {
+  // Tick particles/fade BEFORE player check (player may not exist during spawn sequence)
+  { let _pw = 0;
+    for (let i = 0; i < particles.length; i++) { const p = particles[i]; p.x += p.vx; p.y += p.vy; if (p.gravity) p.vy += p.gravity; const drag = p.type === 'blood' ? 0.985 : 0.95; p.vx *= drag; p.vy *= drag; p.life--; if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; } }
+    particles.length = _pw; if (particles.length > 450) particles.splice(0, particles.length - 450);
+  }
+  { let _tw = 0; for (let i = 0; i < floatingTexts.length; i++) { const t = floatingTexts[i]; t.y += t.vy; t.life--; if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; } } floatingTexts.length = _tw; }
+  if (_shellFadeDir !== 0) {
+    _shellFadeAlpha += _shellFadeDir * (1/15);
+    if (_shellFadeDir === 1 && _shellFadeAlpha >= 1) { _shellFadeAlpha = 1; _shellFadeDir = 0; _executeRunStart(); }
+    else if (_shellFadeDir === -1 && _shellFadeAlpha <= 0) { _shellFadeAlpha = 0; _shellFadeDir = 0; }
+  }
+  if (_shellGlitchInTimer > 0) {
+    _shellGlitchInTimer--;
+    const lp2 = getLocalPlayer();
+    if (lp2 && gameTime % 2 === 0) { const a = Math.random()*Math.PI*2, d = 15+Math.random()*30; particles.push({x:lp2.x+Math.cos(a)*d,y:lp2.y+Math.sin(a)*d,vx:-Math.cos(a)*2,vy:-Math.sin(a)*2,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()<0.5?'#0ff':'#f0f',type:'spark'}); }
+  }
+  // Screen shake decay
+  if (screenShake.intensity > 0.1) { screenShake.x=(Math.random()-0.5)*2*screenShake.intensity;screenShake.y=(Math.random()-0.5)*2*screenShake.intensity;screenShake.intensity*=screenShake.decay; } else { screenShake.x=0;screenShake.y=0;screenShake.intensity=0; }
+  // Ambient particles
+  if (gameTime % 3 === 0) { for (let _ap=0;_ap<2;_ap++) { const px=camera.x+(Math.random()-0.5)*canvas.width*0.8,py=camera.y+(Math.random()-0.5)*canvas.height*0.8; const gx=Math.floor(px/CELL_SIZE),gy=Math.floor(py/CELL_SIZE); if(dungeonGrid&&dungeonGrid[gy]&&dungeonGrid[gy][gx])particles.push({x:px,y:py,vx:(Math.random()-0.5)*0.3,vy:-0.2-Math.random()*0.4,life:100+Math.random()*80,maxLife:180,size:1.5+Math.random()*2,color:['#0af6','#0ff4','#08f4','#4af3'][Math.floor(Math.random()*4)],type:'spark'}); } }
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   // ---- Player movement (no dash, no combat) ----
@@ -6308,57 +6353,7 @@ function updateShell() {
     const gd = Math.sqrt((lp.x - shellGatewayPos.x)**2 + (lp.y - shellGatewayPos.y)**2);
     if (gd < 45) startRunFromShell();
   }
-  // ---- Particle tick ----
-  { let _pw = 0;
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i];
-      p.x += p.vx; p.y += p.vy;
-      if (p.gravity) p.vy += p.gravity;
-      const drag = p.type === 'blood' ? 0.985 : 0.95;
-      p.vx *= drag; p.vy *= drag;
-      p.life--;
-      if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; }
-    }
-    particles.length = _pw;
-    if (particles.length > 450) particles.splice(0, particles.length - 450);
-  }
-  // ---- Floating text tick ----
-  { let _tw = 0;
-    for (let i = 0; i < floatingTexts.length; i++) {
-      const t = floatingTexts[i]; t.y += t.vy; t.life--;
-      if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; }
-    }
-    floatingTexts.length = _tw;
-  }
-  // ---- Shell fade tick ----
-  if (_shellFadeDir !== 0) {
-    _shellFadeAlpha += _shellFadeDir * (1/15); // ~15 frames = 250ms
-    if (_shellFadeDir === 1 && _shellFadeAlpha >= 1) {
-      _shellFadeAlpha = 1; _shellFadeDir = 0;
-      _executeRunStart();
-    } else if (_shellFadeDir === -1 && _shellFadeAlpha <= 0) {
-      _shellFadeAlpha = 0; _shellFadeDir = 0;
-    }
-  }
-  // ---- Glitch-in timer ----
-  if (_shellGlitchInTimer > 0) {
-    _shellGlitchInTimer--;
-    if (gameTime % 3 === 0) {
-      const a = Math.random()*Math.PI*2, d = 20+Math.random()*40;
-      particles.push({ x:lp.x+Math.cos(a)*d, y:lp.y+Math.sin(a)*d, vx:-Math.cos(a)*1.5, vy:-Math.sin(a)*1.5, life:15, maxLife:15, size:2, color:Math.random()<0.5?'#0ff':'#f0f', type:'spark' });
-    }
-  }
-  // ---- Ambient particles — denser for a lived-in feel ----
-  if (gameTime % 3 === 0) {
-    for (let _ap = 0; _ap < 2; _ap++) {
-      const px = camera.x + (Math.random()-0.5)*canvas.width * 0.8;
-      const py = camera.y + (Math.random()-0.5)*canvas.height * 0.8;
-      const gx = Math.floor(px/CELL_SIZE), gy = Math.floor(py/CELL_SIZE);
-      if (dungeonGrid && dungeonGrid[gy] && dungeonGrid[gy][gx]) {
-        particles.push({ x:px, y:py, vx:(Math.random()-0.5)*0.3, vy:-0.2-Math.random()*0.4, life:100+Math.random()*80, maxLife:180, size:1.5+Math.random()*2, color:['#0af6','#0ff4','#08f4','#4af3'][Math.floor(Math.random()*4)], type:'spark' });
-      }
-    }
-  }
+  // (Particle, float text, fade, glitch-in, and ambient ticks moved to top of updateShell)
   // Terminal glow particles — constant beacon effect
   for (const t of shellTerminals) {
     if (gameTime % 4 === 0) {
@@ -6588,42 +6583,86 @@ function showDeathToShell() {
   gameState = 'dying';
   stopSunbeamLoop(); stopWeaponLoop();
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
-  // Calculate and persist stats
   _shellDeathStats = calculateDeathStats();
-  // Phase 1: crash effects (same as existing death)
-  triggerGlitchSurge(0.55, 96);
-  window._hudGlitchFrames = 80;
-  screenShake.intensity = Math.max(screenShake.intensity, 14);
+  // ---- PHASE 1: FREEZE + GLITCH OUT (1.5s) ----
+  // Stage freezes, player glitches and dissolves
+  triggerGlitchSurge(0.7, 120);
+  window._hudGlitchFrames = 100;
+  screenShake.intensity = Math.max(screenShake.intensity, 16);
   const flashEl = document.getElementById('levelup-flash');
   if (flashEl) {
-    flashEl.style.background = 'radial-gradient(circle, rgba(200,20,20,0.3), rgba(0,0,0,0))';
+    flashEl.style.background = 'radial-gradient(circle, rgba(200,20,20,0.4), rgba(0,0,0,0))';
     flashEl.classList.remove('fading'); flashEl.classList.add('flash');
-    setTimeout(() => { flashEl.classList.remove('flash'); flashEl.classList.add('fading'); flashEl.style.background = ''; }, 260);
-    setTimeout(() => { flashEl.classList.remove('fading'); }, 900);
+    setTimeout(() => { flashEl.classList.remove('flash'); flashEl.classList.add('fading'); flashEl.style.background = ''; }, 300);
+    setTimeout(() => { flashEl.classList.remove('fading'); }, 1000);
+  }
+  // Player glitch-out particles (dissolving)
+  const lp = getLocalPlayer();
+  if (lp) {
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random()*Math.PI*2, s = 1+Math.random()*4;
+      particles.push({x:lp.x+(Math.random()-0.5)*20,y:lp.y+(Math.random()-0.5)*20,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*20,maxLife:50,size:2+Math.random()*3,color:Math.random()<0.5?'#0ff':'#f0f',type:'spark'});
+    }
+    // Glitch rectangles flying off the body
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random()*Math.PI*2, s = 2+Math.random()*3;
+      particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*15,maxLife:35,size:4+Math.random()*4,color:Math.random()>0.5?'#0ff':'#f44',type:'spark'});
+    }
   }
   // "SIGNAL LOST" banner
   const wa = document.getElementById('wave-announce');
   if (wa) {
     const numEl = document.getElementById('wave-num');
     const subEl = document.getElementById('wave-sub');
-    if (numEl) { numEl.textContent = 'SIGNAL LOST'; numEl.style.color = '#f44'; numEl.style.textShadow = '0 0 16px #f44, 0 0 32px rgba(255,40,40,0.6)'; }
-    if (subEl) { subEl.textContent = 'instance terminated \u00B7 rebooting to shell'; subEl.style.color = '#f88'; }
+    if (numEl) { numEl.textContent = 'SIGNAL LOST'; numEl.style.color = '#f44'; numEl.style.textShadow = '0 0 20px #f44, 0 0 40px rgba(255,40,40,0.7)'; }
+    if (subEl) { subEl.textContent = 'process terminated'; subEl.style.color = '#f88'; }
     wa.style.opacity = '1';
   }
-  // Phase 2: after crash, fade to black then enter shell
+  // ---- PHASE 2: FADE TO BLACK (0.5s after 1.5s) ----
   setTimeout(() => {
     if (wa) wa.style.opacity = '0';
-    // Fade to black over ~500ms
     let _deathFade = 0;
     const fadeInt = setInterval(() => {
-      _deathFade += 1/30;
+      _deathFade += 1/20; // fast fade
       _shellFadeAlpha = Math.min(1, _deathFade);
       if (_deathFade >= 1) {
         clearInterval(fadeInt);
-        window._deathBeatPlaying = false;
-        enterShell(true);
+        // ---- PHASE 3: "REBOOTING..." on black screen (1.5s) ----
+        _showRebootScreen();
       }
     }, 16);
+  }, 1500);
+}
+
+function _showRebootScreen() {
+  // Full black screen with "REBOOTING..." text
+  // Use the wave-announce overlay since it's above everything
+  const wa = document.getElementById('wave-announce');
+  if (wa) {
+    const numEl = document.getElementById('wave-num');
+    const subEl = document.getElementById('wave-sub');
+    if (numEl) { numEl.textContent = 'REBOOTING'; numEl.style.color = '#0ff'; numEl.style.textShadow = '0 0 16px #0ff, 0 0 32px rgba(0,255,255,0.5)'; }
+    if (subEl) { subEl.textContent = 'restoring defensive instance...'; subEl.style.color = '#4af'; }
+    wa.style.opacity = '1';
+  }
+  // Animated dots: REBOOTING. → REBOOTING.. → REBOOTING...
+  let _dotPhase = 0;
+  const _dotInt = setInterval(() => {
+    _dotPhase = (_dotPhase + 1) % 4;
+    const numEl = document.getElementById('wave-num');
+    if (numEl) numEl.textContent = 'REBOOTING' + '.'.repeat(_dotPhase);
+  }, 400);
+  // Brief glitch surges during reboot
+  setTimeout(() => triggerGlitchSurge(0.2, 8), 300);
+  setTimeout(() => triggerGlitchSurge(0.15, 6), 700);
+  // Sound: low digital hum
+  playSound(80, 0.1, 'sine', 0.3); playSound(120, 0.08, 'sine', 0.25);
+  // After 1.5s, enter Shell
+  setTimeout(() => {
+    clearInterval(_dotInt);
+    if (wa) wa.style.opacity = '0';
+    window._deathBeatPlaying = false;
+    enterShell(true);
   }, 1500);
 }
 
