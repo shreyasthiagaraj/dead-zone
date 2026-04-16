@@ -1369,6 +1369,19 @@ const UPGRADE_POOL = [
   { id:'extended_uptime', name:'EXTENDED UPTIME', rarity:'common', max:3, icon:'⏱', color:'#0ff',
     desc:'+2s beacon lifetime per level',
     flavor:'overclocked runtime. it just keeps going.' },
+  // Beacon element cards — mutually exclusive, explicitly set beacon/mine element
+  { id:'beacon_thermal', name:'THERMAL BEACON', rarity:'rare', max:1, icon:'🔥', color:'#f80',
+    desc:'Beacon/mine applies Overheat. Turret fires thermal rounds. Replaces other beacon elements',
+    flavor:'overheating the local grid.' },
+  { id:'beacon_cryo', name:'CRYO BEACON', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
+    desc:'Beacon/mine applies Chill. Turret fires cryo rounds. Replaces other beacon elements',
+    flavor:'flash-freezing the perimeter.' },
+  { id:'beacon_arc', name:'ARC BEACON', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
+    desc:'Beacon/mine applies Charged. Turret fires arc rounds. Replaces other beacon elements',
+    flavor:'electrified killzone.' },
+  { id:'beacon_corrupt', name:'CORRUPT BEACON', rarity:'rare', max:1, icon:'☣', color:'#a4f',
+    desc:'Beacon/mine applies Corrupt. Turret fires viral rounds. Replaces other beacon elements',
+    flavor:'infection spreader deployed.' },
   // ---- UTILITY (common) ----
   { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:3, icon:'»', color:'#0ff',
     desc:'+8% move speed per level', flavor:'motor daemons unclipped' },
@@ -1406,7 +1419,7 @@ function rebuildRunMods() {
     synergyStormDrive: false, synergyFaultCascade: false, synergyShatterWave: false,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
-    trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0,
+    trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, beaconElement: null,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -1470,6 +1483,10 @@ function rebuildRunMods() {
       case 'gravity_well': m.gravityWell += n; break;
       case 'hazard_zone':  m.hazardZone  += n; break;
       case 'extended_uptime': m.extendedUptime += n; break;
+      case 'beacon_thermal': m.beaconElement = 'fire'; break;
+      case 'beacon_cryo':    m.beaconElement = 'ice'; break;
+      case 'beacon_arc':     m.beaconElement = 'chain'; break;
+      case 'beacon_corrupt': m.beaconElement = 'corrupt'; break;
     }
   }
   // Compute damage/fire rate from generic weapon cards
@@ -1858,6 +1875,11 @@ function buyShopCard(upgradeId) {
   const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake'];
   if (_dashTrailIds.includes(upgradeId)) {
     for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
+  }
+  // Beacon element cards are mutually exclusive
+  const _beaconElemIds = ['beacon_thermal', 'beacon_cryo', 'beacon_arc', 'beacon_corrupt'];
+  if (_beaconElemIds.includes(upgradeId)) {
+    for (const tid of _beaconElemIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
@@ -7042,13 +7064,9 @@ function deployBeacon() {
   if (lp._beaconCooldown > 0) return;
   if (activeBeacon) return; // one at a time
   lp._beaconCooldown = BEACON_COOLDOWN;
-  // Determine class flavor
+  // Beacon element: only from dedicated beacon element cards (not inherited)
   const _m = runMods || {};
-  let classId = null;
-  if (_m.thermalRoundsLv > 0 || _m.burnoutWake > 0) classId = 'fire';
-  else if (_m.cryoRoundsLv > 0 || _m.cryoWake > 0) classId = 'ice';
-  else if (_m.arcRoundsLv > 0 || _m.staticWake > 0) classId = 'chain';
-  else if (_m.viralPayloadLv > 0 || _m.glitchWake > 0) classId = 'corrupt';
+  const classId = _m.beaconElement || null;
   const _beaconDur = BEACON_DURATION + (_m.extendedUptime || 0) * 120; // +2s per level
   activeBeacon = { x: lp.x, y: lp.y, timer: _beaconDur, maxTimer: _beaconDur, angle: 0, fireCd: 0, classId, _armTimer: 60 };
   // Deploy VFX: drop slam
