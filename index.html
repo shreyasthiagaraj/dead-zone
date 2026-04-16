@@ -7429,10 +7429,23 @@ function triggerShockwaveDash(lp) {
         const dx = z.x - lp.x, dy = z.y - lp.y, d = Math.sqrt(dx*dx+dy*dy);
         if (d < radius + z.radius && d > 0.1) {
           const closeness = 1 - d / (radius + z.radius);
-          const push = 6 * closeness;
+          const push = 8 + 14 * closeness;
           z.vx += (dx/d) * push; z.vy += (dy/d) * push;
-          z.staggerTimer = Math.max(z.staggerTimer || 0, 15);
+          z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
           damageZombie(z, Math.floor(10 * closeness), (dx/d)*2, (dy/d)*2, true);
+        }
+      }
+      // Destroy enemy projectiles within shockwave radius
+      for (let _pi = bullets.length - 1; _pi >= 0; _pi--) {
+        const _zb = bullets[_pi];
+        if (!_zb || _zb.owner !== 'zombie') continue;
+        const _zdx = _zb.x - lp.x, _zdy = _zb.y - lp.y;
+        if (_zdx*_zdx + _zdy*_zdy < radius*radius) {
+          for (let _si = 0; _si < 5; _si++) {
+            const _sa = Math.random() * Math.PI * 2, _ss = 2 + Math.random() * 3;
+            particles.push({x:_zb.x,y:_zb.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:12,maxLife:12,size:2+Math.random(),color:_zb.color||'#4af',type:'spark'});
+          }
+          bullets.splice(_pi, 1);
         }
       }
     }
@@ -7527,6 +7540,21 @@ function triggerShockwaveDash(lp) {
   // ---- KNOCKBACK + DAMAGE (matches experimental blast values) ----
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = radius * radius;
+  // Destroy enemy projectiles within shockwave radius (upgraded — bigger area)
+  if (isHost) {
+    for (let _pi = bullets.length - 1; _pi >= 0; _pi--) {
+      const _zb = bullets[_pi];
+      if (!_zb || _zb.owner !== 'zombie') continue;
+      const _zdx = _zb.x - lp.x, _zdy = _zb.y - lp.y;
+      if (_zdx*_zdx + _zdy*_zdy < r2) {
+        for (let _si = 0; _si < 7; _si++) {
+          const _sa = Math.random() * Math.PI * 2, _ss = 2 + Math.random() * 4;
+          particles.push({x:_zb.x,y:_zb.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:14,maxLife:14,size:2+Math.random()*2,color:_zb.color||c1,type:'spark'});
+        }
+        bullets.splice(_pi, 1);
+      }
+    }
+  }
   const _hitZombies = []; // track for lightning chain arcs
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
@@ -9673,6 +9701,40 @@ function update() {
         playHitSound();
         b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}
       }}
+    }
+  }
+
+  // Player bullets intercept enemy projectiles (host only — authoritative)
+  if (isHost) {
+    for (let _bi = bullets.length - 1; _bi >= 0; _bi--) {
+      const _pb = bullets[_bi];
+      if (!_pb || _pb.owner !== 'player' || _pb.life <= 0) continue;
+      for (let _zi = bullets.length - 1; _zi >= 0; _zi--) {
+        if (_zi === _bi) continue;
+        const _zb = bullets[_zi];
+        if (!_zb || _zb.owner !== 'zombie') continue;
+        const _pdx = _zb.x - _pb.x, _pdy = _zb.y - _pb.y;
+        const _prad = (_zb.size || 4) + (_pb.size || 4) + 2;
+        if (_pdx*_pdx + _pdy*_pdy < _prad*_prad) {
+          // Spark burst at midpoint
+          const _mx = (_zb.x + _pb.x) * 0.5, _my = (_zb.y + _pb.y) * 0.5;
+          for (let _si = 0; _si < 6; _si++) {
+            const _sa = Math.random() * Math.PI * 2, _ss = 2 + Math.random() * 3;
+            particles.push({x:_mx,y:_my,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:10,maxLife:10,size:2+Math.random(),color:_zb.color||'#fff',type:'spark'});
+          }
+          playSound(780, 0.03, 'sine', 0.06);
+          // Destroy zombie projectile
+          bullets.splice(_zi, 1);
+          if (_zi < _bi) _bi--;
+          // Consume one pierce charge on the player bullet
+          _pb.pierced = (_pb.pierced || 0) + 1;
+          if (_pb.pierced > (_pb.pierce || 0)) {
+            const _npbi = bullets.indexOf(_pb);
+            if (_npbi >= 0) bullets.splice(_npbi, 1);
+            break;
+          }
+        }
+      }
     }
   }
 
