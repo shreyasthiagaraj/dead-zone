@@ -2408,9 +2408,17 @@ function spawnDescentSection(idx) {
   descentGateOpen = false;
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const cx = (marginX + DESCENT_WIDTH / 2) * CELL_SIZE;
-  // Spawn enemies spread across the section
+  // Spawn enemies spread across the section (cap ranged types)
+  const _dRangedTypes = new Set(['spitter', 'mini', 'sniper']);
+  let _dRangedCount = 0;
+  const _dMaxRanged = idx < 8 ? 1 : 2;
   for (let ei = 0; ei < sec.enemyCount; ei++) {
-    const tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    let tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    if (_dRangedTypes.has(tk) && _dRangedCount >= _dMaxRanged) {
+      const meleeTypes = sec.types.filter(t2 => !_dRangedTypes.has(t2));
+      if (meleeTypes.length > 0) tk = meleeTypes[Math.floor(Math.random() * meleeTypes.length)];
+    }
+    if (_dRangedTypes.has(tk)) _dRangedCount++;
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     const ex = (marginX + 2 + Math.random() * (DESCENT_WIDTH - 4)) * CELL_SIZE;
     const ey = sec.y + (0.3 + Math.random() * 0.5) * sec.height;
@@ -2791,8 +2799,19 @@ function spawnTrenchWave(idx, waveIdx) {
   if (sec.modifier && sec.modifier.id === 'doubletime') hpScale *= 0.6;
   // WARDEN'S GAZE modifier: enemies 20% faster
   if (sec.modifier && sec.modifier.id === 'warden') speedBoost += 0.4;
+  // Cap ranged enemies per wave: max 1 early, max 2 late. Prevents projectile spam
+  // since the player can't move and shoot simultaneously.
+  const _rangedTypes = new Set(['spitter', 'mini', 'sniper']);
+  let _rangedCount = 0;
+  const _maxRanged = idx < 8 ? 1 : 2;
   for (let ei = 0; ei < enemyCount; ei++) {
-    const tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    let tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    // If we've hit the ranged cap, reroll to a melee type
+    if (_rangedTypes.has(tk) && _rangedCount >= _maxRanged) {
+      const meleeTypes = sec.types.filter(t => !_rangedTypes.has(t));
+      if (meleeTypes.length > 0) tk = meleeTypes[Math.floor(Math.random() * meleeTypes.length)];
+    }
+    if (_rangedTypes.has(tk)) _rangedCount++;
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     // Pick a spawn position that's walkable (not inside an obstacle/pillar)
     let ex, ey, _spawnAttempts = 0;
@@ -3904,11 +3923,11 @@ const ZOMBIE_TYPES = {
   normal:   { hp: 180, speed: 2.6, radius: 13, color: '#2f8', damage: 12, score: 100 }, // shambler — neon green
   fast:     { hp: 110, speed: 2.8, radius: 12, color: '#ff0', damage: 15, score: 150, charger: true }, // sprinter — neon yellow
   tank:     { hp: 500, speed: 1.2, radius: 20, color: '#0fa', damage: 25, score: 300, groundPound: true }, // bruiser — neon teal
-  spitter:  { hp: 140, speed: 1.7, radius: 12, color: '#a4f', damage: 10, score: 200, ranged: true, fireRate: 2000, spreadShot: true }, // neon purple
+  spitter:  { hp: 140, speed: 1.7, radius: 12, color: '#a4f', damage: 10, score: 200, ranged: true, fireRate: 2800, spreadShot: true }, // neon purple — slower fire rate for single-stick controls
   exploder: { hp: 100, speed: 2.0, radius: 13, color: '#f42', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 80, bomber: true, fireRate: 3000 }, // neon red-orange
   boss:     { hp: 2200, speed: 1.8, radius: 32, color: '#f0f', damage: 40, score: 500, summoner: true, fireRate: 200 }, // hot magenta — admin process
   splitter: { hp: 200, speed: 1.5, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
-  mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3000 }, // neon orange
+  mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3500 }, // neon orange — slower for single-stick
   // Beam Array — perches at walls, sweeps a laser beam across the room
   beam:     { hp: 250, speed: 3.5, radius: 20, color: '#f44', damage: 6, score: 300, beamArray: true },
   // Legacy compat
