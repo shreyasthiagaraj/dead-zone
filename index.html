@@ -1225,19 +1225,19 @@ function updateStreak() {}
 const UPGRADE_POOL = [
   // ---- CLASS APPLICATION (common, max 3) ----
   { id:'thermal_rounds', name:'THERMAL ROUNDS', rarity:'common', max:3, icon:'🔥', color:'#f80',
-    desc:'Lv1: shots apply Overheat. Lv2: Overheated explode on death. Lv3: explosions spread Overheat',
+    desc:'+5% dmg/lv. Lv1: shots apply Overheat. Lv2: Overheated explode on death. Lv3: explosions spread Overheat',
     flavor:'thermal throttle exploit — they cook from the inside' },
   { id:'cryo_rounds', name:'CRYO ROUNDS', rarity:'common', max:3, icon:'🧊', color:'#8ef',
-    desc:'Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
+    desc:'+5% dmg/lv. Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
     flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'Lv1: shots can apply Charged. Lv2: Charged targets chain more. Lv3: Charged discharge on death',
+    desc:'+5% dmg/lv. Lv1: shots apply Charged (stuns 2s). Lv2: bullets chain to 3 enemies, all Charged. Lv3: Charged discharge on death',
     flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:3, icon:'💨', color:'#cef',
-    desc:'Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
+    desc:'+5% dmg/lv. Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
     flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL PAYLOAD', rarity:'common', max:3, icon:'☣', color:'#a4f',
-    desc:'Lv1: shots apply Corrupt. Lv2: Compromised take +25% more. Lv3: Compromised spread on death',
+    desc:'+5% dmg/lv. Lv1: shots apply Corrupt. Lv2: Compromised take +25% more. Lv3: Compromised spread on death',
     flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 2) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:2, icon:'✸', color:'#f80',
@@ -1246,8 +1246,8 @@ const UPGRADE_POOL = [
   { id:'cold_snap', name:'COLD SNAP', rarity:'rare', max:2, icon:'❆', color:'#8ef',
     desc:'Lv1: Chill stacks +50% faster. Lv2: Frozen duration +40%',
     flavor:'deep freeze. nothing moves.', prereqs:['cryo_rounds|cryo_wake'] },
-  { id:'static_chain', name:'STATIC CHAIN', rarity:'rare', max:3, icon:'⚡', color:'#4ff',
-    desc:'Lv1: Arc procs jump to 1 nearby. Lv2: +1 jump. Lv3: +range',
+  { id:'static_chain', name:'STATIC CHAIN', rarity:'rare', max:2, icon:'⚡', color:'#4ff',
+    desc:'Lv1: all lightning effects chain to +1 nearby enemy. Lv2: +2 chains + longer reach',
     flavor:'current finds the path of least resistance.', prereqs:['arc_rounds|static_wake'] },
   { id:'vector_snap', name:'VECTOR SNAP', rarity:'rare', max:2, icon:'◈', color:'#cef',
     desc:'Lv1: +30% dmg to Exposed enemies. Lv2: +50%',
@@ -1493,6 +1493,8 @@ function rebuildRunMods() {
   if (m.heavyCaliber > 0) { m.damageMult += m.heavyCaliber >= 2 ? 0.80 : 0.60; m.fireRateMult -= m.heavyCaliber >= 2 ? 0.30 : 0.30; m.statusForce = 1.5; }
   if (m.rapidCycle > 0) { m.fireRateMult += m.rapidCycle >= 2 ? 0.40 : 0.25; }
   if (m.piercingShot > 0) { m.pierceAdd += m.piercingShot >= 2 ? 2 : 1; }
+  // Elemental rounds: +5% base damage per level (stacks across classes)
+  m.damageMult += 0.05 * (m.thermalRoundsLv + m.cryoRoundsLv + m.arcRoundsLv + m.pulseShotLv + m.viralPayloadLv);
   // Dominant class for bullet tinting
   // Dominant class for bullet tinting — only count ROUNDS cards, not wake/dash cards
   // (dash cards shouldn't change bullet color — that's confusing)
@@ -3196,7 +3198,10 @@ function applyChill(z, stacks, force) {
 function applyCharged(z) {
   if (!isHost) return;
   z._charged = true;
-  z._chargedTimer = Math.max(z._chargedTimer || 0, 180); // 3s
+  z._chargedTimer = Math.max(z._chargedTimer || 0, 180); // 3s conduit mark
+  // Lightning stun: 2s hard stop + stagger
+  z._shocked = Math.max(z._shocked || 0, 120);
+  z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
   // VFX: brief electric spark
   for(let i=0;i<2;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius,y:z.y+Math.sin(a)*z.radius,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
 }
@@ -7391,11 +7396,25 @@ function applyDashTrailEffects(lp) {
       applyChill(z, 1 + _m.cryoWake, 1);
       for(let i=0;i<4;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*0.8,vy:Math.sin(a)*0.8,life:20,maxLife:20,size:2+Math.random(),color:'#8ef',type:'spark'});}
     }
-    // STATIC WAKE — apply Charged + zap
+    // STATIC WAKE — apply Charged + zap (chains with Static Chain card)
     if (hasStatic) {
       applyCharged(z);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
       particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+      // Static Chain: wake zaps chain to nearby
+      if (_m.staticChain > 0) {
+        const maxJ = _m.staticChain;
+        const _swR2 = 22500 + (_m.staticChain >= 2 ? 10000 : 0); // 150px, +~50px at Lv2
+        let lastZ = z; const chainHit = new Set([z.zid]);
+        for (let ci = 0; ci < maxJ; ci++) {
+          let bD2 = _swR2, bZ = null;
+          for (const oz of zombies) { if (chainHit.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+          if (!bZ) break;
+          applyCharged(bZ);
+          particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+          chainHit.add(bZ.zid); hitSet.add(bZ.zid); lastZ = bZ;
+        }
+      }
     }
     // GLITCH WAKE — apply Corrupt
     if (hasGlitch) {
@@ -9031,7 +9050,7 @@ function update() {
           playSound(600, 0.1, 'square', 0.06);
           screenShake.intensity = Math.max(screenShake.intensity, 4);
           // Chain into Charged enemies
-          if (isHost) { const maxJ=_rm.dischargeBurst>=2?4:2; let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); for(let j=0;j<maxJ;j++){let bD2=28900,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0);particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
+          if (isHost) { const maxJ=(_rm.dischargeBurst>=2?4:2)+(_rm.staticChain||0); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0);applyCharged(bZ);particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
         }
         // Shockwave Lv3 / Impulse Wave Lv3: enemies hit become Exposed
         if ((_rm.shockwave >= 3 || _rm.impulseWave >= 3) && isHost) {
@@ -9568,26 +9587,27 @@ function update() {
                       const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
                       if (Math.random() < ch) applyChill(z, 1, _sf);
                     }
-                    // ARC ROUNDS: apply Charged + chain
+                    // ARC ROUNDS: apply Charged (stuns 2s); Lv2+ bullets chain to 3 enemies
                     if (_m.arcRoundsLv > 0) {
                       let ch = 0.15 + 0.10 * _m.arcRoundsLv; // 25%/35%/45%
                       if (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ch = Math.min(1, ch + (_m.overchargeDash >= 2 ? 0.5 : 0.3));
                       if (Math.random() < ch) {
                         applyCharged(z);
-                        // Static Chain: arc jumps to nearby enemies
-                        if (_m.staticChain > 0) {
-                          const maxJ = Math.min(4, _m.staticChain);
+                        // Lv2+: bullet chains to 3 nearby enemies, all Charged.
+                        // Static Chain adds +N chains on top, and extends chain range.
+                        if (_m.arcRoundsLv >= 2) {
+                          const baseJumps = 3;
+                          const bonusJumps = _m.staticChain || 0;
+                          const maxJ = baseJumps + bonusJumps;
                           let lastZ = z; const hitS = new Set([z.zid]);
-                          let _chainR2 = 28900; // 170px
+                          let _chainR2 = 28900 + (_m.staticChain >= 2 ? 14000 : 0); // 170px, +~50px at Lv2 Static Chain
                           if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
                           if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
                           for (let ci = 0; ci < maxJ; ci++) {
                             let bD2 = _chainR2, bZ = null;
-                            for (const oz of zombies) { if (hitS.has(oz.zid)) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+                            for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
                             if (!bZ) break;
-                            // Prefer Charged targets (chain more reliably)
-                            if (_m.arcRoundsLv >= 2 && bZ._charged) _dmg = Math.floor(_dmg * 1.15);
-                            damageZombie(bZ, Math.floor(_dmg * 0.35), 0, 0);
+                            damageZombie(bZ, Math.floor(_dmg * 0.4), 0, 0);
                             applyCharged(bZ);
                             particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
                             hitS.add(bZ.zid); lastZ = bZ;
