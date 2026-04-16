@@ -8887,52 +8887,77 @@ function update() {
       }
       // Per-frame element trail particles — OVER THE TOP wake visuals
       const _ddx = lp.dashDirX || 0, _ddy = lp.dashDirY || 0;
+      // Perpendicular direction for RAIL MARKERS showing exact effect bounds (DASH_TRAIL_RADIUS = 60px)
+      const _perpA2 = Math.atan2(_ddy, _ddx) + Math.PI/2;
+      const _perpRX = Math.cos(_perpA2), _perpRY = Math.sin(_perpA2);
+      const _railR = 60; // DASH_TRAIL_RADIUS — the actual effect boundary
+      const _leftX = lp.x + _perpRX * _railR, _leftY = lp.y + _perpRY * _railR;
+      const _rightX = lp.x - _perpRX * _railR, _rightY = lp.y - _perpRY * _railR;
       if (_mods.burnoutWake > 0) {
-        // BURNOUT WAKE: massive fireball trail — flames shooting sideways + upward
-        for (let fi = 0; fi < 5; fi++) {
-          const perpA = Math.atan2(_ddy, _ddx) + Math.PI/2;
-          const side = (Math.random()-0.5) * 30; // spread wide to the sides
-          particles.push({ x: lp.x + Math.cos(perpA)*side, y: lp.y + Math.sin(perpA)*side,
-            vx: Math.cos(perpA)*side*0.1 + (Math.random()-0.5)*3, vy: -3 - Math.random()*3,
+        // BURNOUT WAKE: central flames + rail markers at boundary
+        for (let fi = 0; fi < 3; fi++) {
+          const side = (Math.random()-0.5) * 30;
+          particles.push({ x: lp.x + _perpRX*side, y: lp.y + _perpRY*side,
+            vx: _perpRX*side*0.1 + (Math.random()-0.5)*3, vy: -3 - Math.random()*3,
             life: 22, maxLife: 22, size: 5 + Math.random()*5,
             color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
         }
+        // RAIL MARKERS: flaming tick marks at ±60px showing exact bounds
+        for (const [rx, ry] of [[_leftX,_leftY],[_rightX,_rightY]]) {
+          particles.push({ x: rx, y: ry, vx: (Math.random()-0.5)*1, vy: -2-Math.random()*2,
+            life: 20, maxLife: 20, size: 4+Math.random()*2, color: '#f80', type: 'explosion' });
+        }
         // Fire ground trail
         if (gameTime%2===0) decals.push({x:lp.x+(Math.random()-0.5)*10,y:lp.y+(Math.random()-0.5)*10,size:12+Math.random()*8,alpha:0.3,color:'#420'});
+        // Scorched boundary decals on rails
+        if (gameTime%3===0) { decals.push({x:_leftX,y:_leftY,size:8,alpha:0.35,color:'#420'}); decals.push({x:_rightX,y:_rightY,size:8,alpha:0.35,color:'#420'}); }
       }
       if (_mods.cryoWake > 0) {
-        // CRYO WAKE: ice crystal spray + frost mist billowing outward
-        for (let ci = 0; ci < 4; ci++) {
-          const perpA = Math.atan2(_ddy, _ddx) + Math.PI/2;
+        // CRYO WAKE: central frost + rail markers
+        for (let ci = 0; ci < 3; ci++) {
           const side = (Math.random()-0.5) * 25;
-          particles.push({ x: lp.x + Math.cos(perpA)*side, y: lp.y + Math.sin(perpA)*side,
-            vx: Math.cos(perpA)*side*0.08 + (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2,
+          particles.push({ x: lp.x + _perpRX*side, y: lp.y + _perpRY*side,
+            vx: _perpRX*side*0.08 + (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2,
             life: 24, maxLife: 24, size: 3 + Math.random()*4,
             color: Math.random()>0.3 ? '#8ef' : '#cff', type: 'spark' });
         }
+        // RAIL MARKERS: ice crystals at ±60px
+        for (const [rx, ry] of [[_leftX,_leftY],[_rightX,_rightY]]) {
+          particles.push({ x: rx, y: ry, vx: (Math.random()-0.5)*0.6, vy: (Math.random()-0.5)*0.6,
+            life: 26, maxLife: 26, size: 4+Math.random()*2, color: '#cff', type: 'spark' });
+        }
         // Frost ground mist
         if (gameTime%2===0) particles.push({x:lp.x+(Math.random()-0.5)*16,y:lp.y+(Math.random()-0.5)*16,vx:(Math.random()-0.5)*0.5,vy:(Math.random()-0.5)*0.5,life:40,maxLife:40,size:8+Math.random()*6,color:'#8ef2',type:'smoke'});
+        // Frosted boundary decals on rails
+        if (gameTime%3===0) { decals.push({x:_leftX,y:_leftY,size:8,alpha:0.3,color:'#245'}); decals.push({x:_rightX,y:_rightY,size:8,alpha:0.3,color:'#245'}); }
       }
       if (_mods.staticWake > 0) {
-        // STATIC WAKE: crackling lightning bolts arcing outward from trail
-        for (let li = 0; li < 3; li++) {
+        // STATIC WAKE (toned down): 2 shorter bolts + rail zap
+        for (let li = 0; li < 2; li++) {
           const _la = Math.random() * Math.PI * 2;
-          const _lr = 20 + Math.random() * 30;
-          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+          const _lr = 12 + Math.random() * 18;
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10,
             size: 1, color: Math.random()>0.3?'#4ff':'#fff', type: 'lightning',
             tx: lp.x + Math.cos(_la)*_lr, ty: lp.y + Math.sin(_la)*_lr });
         }
-        // Electric sparks shedding off
-        for (let si = 0; si < 2; si++) {
-          const sa = Math.random()*Math.PI*2;
-          particles.push({x:lp.x+Math.cos(sa)*10,y:lp.y+Math.sin(sa)*10,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:8,maxLife:8,size:2+Math.random()*2,color:'#4ff',type:'spark'});
+        // RAIL MARKERS: lightning bolts from center to each rail — shows clear bounds
+        if (gameTime%2===0) {
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1, color: '#4ff', type: 'lightning', tx: _leftX, ty: _leftY });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1, color: '#4ff', type: 'lightning', tx: _rightX, ty: _rightY });
+          particles.push({x:_leftX,y:_leftY,vx:0,vy:0,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});
+          particles.push({x:_rightX,y:_rightY,vx:0,vy:0,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});
         }
       }
       if (_mods.glitchWake > 0) {
-        // GLITCH WAKE: purple corruption rectangles + digital noise
-        for (let gi = 0; gi < 3; gi++) {
+        // GLITCH WAKE: purple corruption + rail markers
+        for (let gi = 0; gi < 2; gi++) {
           const ga = Math.random()*Math.PI*2, gr = 8+Math.random()*16;
           particles.push({x:lp.x+Math.cos(ga)*gr,y:lp.y+Math.sin(ga)*gr,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:16,maxLife:16,size:3+Math.random()*4,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});
+        }
+        // RAIL MARKERS: glitch blocks at ±60px
+        for (const [rx, ry] of [[_leftX,_leftY],[_rightX,_rightY]]) {
+          particles.push({ x: rx, y: ry, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2,
+            life: 18, maxLife: 18, size: 4+Math.random()*2, color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
         }
       }
       // Element trails: apply fire/ice/chain/wind effects to any zombie within the dash
