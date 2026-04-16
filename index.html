@@ -7191,7 +7191,7 @@ function updateBeacon() {
         life:18, maxLife:18, flame:false, explosive:false, explosionRadius:0,
         tracer:false, chain:false, chainRange:0, chainCount:0, laserGlow:false, grenade:false,
         owner:'player', ownerId:getLocalPlayer()?.id, trail:[], crit:false,
-        _element:null, _homing:false, _bouncing:0, _angVel:0, _beaconBullet:true });
+        _element:null, _homing:false, _bouncing:0, _angVel:0, _beaconBullet:true, _beaconClass:b.classId });
       for(let i=0;i<3;i++){particles.push({x:b.x+Math.cos(a)*14,y:b.y+Math.sin(a)*14,vx:Math.cos(a)*3+(Math.random()-0.5)*2,vy:Math.sin(a)*3+(Math.random()-0.5)*2,life:8,maxLife:8,size:2,color:bColor,type:'spark'});}
     }
   }
@@ -7417,12 +7417,12 @@ function triggerShockwaveDash(lp) {
   // Baseline mini-shockwave on every dash. Shockwave card upgrades to full blast.
   // Impulse Wave = even larger Pulse-flavored shockwave.
   const iwLv = _mods.impulseWave || 0;
-  const BASE_RADIUS = 45;
+  const BASE_RADIUS = 75;
   const effectiveLv = Math.max(lv, iwLv); // best shockwave level
   const SHOCKWAVE_RADIUS = effectiveLv > 0 ? (120 + effectiveLv * 30) : BASE_RADIUS;
   const radius = SHOCKWAVE_RADIUS;
-  if (lv <= 0) {
-    // Mini shockwave: knockback + stagger, small damage, visible VFX
+  if (lv <= 0 && iwLv <= 0) {
+    // Mini shockwave — scaled-down version of the full card (half radius, fewer particles)
     if (isHost) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
@@ -7432,7 +7432,7 @@ function triggerShockwaveDash(lp) {
           const push = 8 + 14 * closeness;
           z.vx += (dx/d) * push; z.vy += (dy/d) * push;
           z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
-          damageZombie(z, Math.floor(10 * closeness), (dx/d)*2, (dy/d)*2, true);
+          damageZombie(z, Math.floor(15 * closeness), (dx/d)*2, (dy/d)*2, true);
         }
       }
       // Destroy enemy projectiles within shockwave radius
@@ -7449,10 +7449,31 @@ function triggerShockwaveDash(lp) {
         }
       }
     }
-    // Expanding ring of particles
-    for (let i = 0; i < 16; i++) { const a = (i/16)*Math.PI*2; particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:12,maxLife:12,size:2.5,color:Math.random()>0.5?'#4af':'#8cf',type:'spark'}); }
-    screenShake.intensity = Math.max(screenShake.intensity, 3);
-    playSound(300, 0.04, 'sine', 0.08);
+    // ---- RING 1: 18 outward particles (scaled-down from card's 32) ----
+    for (let i = 0; i < 18; i++) {
+      const a = (Math.PI * 2 * i) / 18;
+      particles.push({ x: lp.x + Math.cos(a)*10, y: lp.y + Math.sin(a)*10,
+        vx: Math.cos(a)*7, vy: Math.sin(a)*7,
+        life: 18, maxLife: 18, size: 3.5, color: '#4af', type: 'spark' });
+    }
+    // ---- RING 2: 10 slower inner particles ----
+    for (let i = 0; i < 10; i++) {
+      const a = (Math.PI * 2 * i) / 10;
+      particles.push({ x: lp.x + Math.cos(a)*6, y: lp.y + Math.sin(a)*6,
+        vx: Math.cos(a)*4, vy: Math.sin(a)*4,
+        life: 14, maxLife: 14, size: 2.8, color: '#8cf', type: 'spark' });
+    }
+    // ---- GROUND DECALS: 5 around + 1 small center ----
+    for (let i = 0; i < 5; i++) {
+      const da = (Math.PI * 2 * i) / 5;
+      const dd = 20 + Math.random() * 25;
+      decals.push({ x: lp.x + Math.cos(da)*dd, y: lp.y + Math.sin(da)*dd,
+        size: 6 + Math.random()*8, alpha: 0.3, color: '#223' });
+    }
+    decals.push({ x: lp.x, y: lp.y, size: 35 + Math.random()*10, alpha: 0.22, color: '#223' });
+    screenShake.intensity = Math.max(screenShake.intensity, 5);
+    playSfx('blast_default', 0.2) || playSound(180, 0.1, 'sine', 0.12);
+    playSound(90, 0.15, 'square', 0.06);
     return;
   }
   // Determine dominant element for VFX
@@ -9464,7 +9485,7 @@ function update() {
                   const _m = runMods || {};
                   const _isLocal = b.ownerId === getLocalPlayer()?.id;
                   const _lp3 = getLocalPlayer();
-                  if (_isLocal) {
+                  if (_isLocal && !b._beaconBullet) {
                     // -- FROZEN: 2x damage but stay frozen (shatter only on death) --
                     if (z._frozen || z._frozenTimer > 0) {
                       _dmg = Math.floor(_dmg * 2);
@@ -9499,7 +9520,15 @@ function update() {
                   if (_isLocal && b.crit) {
                     floatingTexts.push({x:z.x+(Math.random()-0.5)*16,y:z.y-z.radius-4,text:Math.floor(_dmg)+'',color:'#f0f',vy:-1.4,life:28,maxLife:28,_dmgNum:true,_crit:true});
                   }
-                  if (_isLocal) {
+                  if (_isLocal && b._beaconBullet) {
+                    // ---- BEACON TURRET BULLETS: use beacon's own classId only ----
+                    const _bc = b._beaconClass;
+                    if (_bc === 'fire') applyOverheat(z, Math.floor(_dmg * 0.2), 1.2);
+                    else if (_bc === 'ice') applyChill(z, 1, 1.2);
+                    else if (_bc === 'chain') applyCharged(z);
+                    else if (_bc === 'corrupt') applyCorrupt(z, 1);
+                    runStats.shotsHit++; runStats.damageDealt += _dmg;
+                  } else if (_isLocal) {
                     // ---- CLASS PROCS ----
                     const _sf = _m.statusForce || 1;
                     // THERMAL ROUNDS: apply Overheat
