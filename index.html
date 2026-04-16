@@ -8722,8 +8722,8 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     else if(z._shocked>0) playSfx('zap',0.15)||playHitSound();
     else playHitSound();
   }
-  // Damage number popup
-  if(damage>=1) addFloatingText(z.x+(Math.random()-0.5)*16, z.y-z.radius-8, Math.floor(damage)+'', damage>=50?'#f44':damage>=20?'#fa0':'#fff');
+  // Damage number popup — combines rapid hits on same zombie into a single pulsing label
+  if(damage>=1) addDamageNumber(z, damage, false);
 }
 function damagePlayerObj(p,damage) {
   if(p.invincible>0) return;
@@ -8769,6 +8769,32 @@ function damagePlayerObj(p,damage) {
   }
 }
 function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,color,vy:-1.5,life:40,maxLife:40});}
+// Accumulating damage label — combines rapid hits on the same zombie into a single pulsing number.
+function addDamageNumber(z, dmg, isCrit) {
+  if (!z || dmg < 1) return;
+  const ex = z._dmgLabel;
+  if (ex && ex.life > 0 && ex._dmgNum) {
+    ex._dmgTotal = (ex._dmgTotal || 0) + dmg;
+    if (isCrit) ex._crit = true;
+    ex.text = Math.floor(ex._dmgTotal) + '';
+    const tot = ex._dmgTotal;
+    ex.color = ex._crit ? '#f0f' : (tot >= 100 ? '#f44' : tot >= 40 ? '#fa0' : '#fff');
+    // Extend life so label persists while combo continues
+    ex.life = Math.max(ex.life, 30);
+    ex.maxLife = Math.max(ex.maxLife, 30);
+    ex._pulse = 10;
+    return;
+  }
+  const label = {
+    x: z.x + (Math.random()-0.5)*10, y: z.y - z.radius - 8,
+    text: Math.floor(dmg) + '',
+    color: isCrit ? '#f0f' : (dmg >= 100 ? '#f44' : dmg >= 40 ? '#fa0' : '#fff'),
+    vy: -1.0, life: 30, maxLife: 30,
+    _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 10,
+  };
+  floatingTexts.push(label);
+  z._dmgLabel = label;
+}
 
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
 function dist(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);}
@@ -9563,8 +9589,10 @@ function update() {
                     }
                   }
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
-                  if (_isLocal && b.crit) {
-                    floatingTexts.push({x:z.x+(Math.random()-0.5)*16,y:z.y-z.radius-4,text:Math.floor(_dmg)+'',color:'#f0f',vy:-1.4,life:28,maxLife:28,_dmgNum:true,_crit:true});
+                  if (_isLocal && b.crit && z._dmgLabel && z._dmgLabel.life > 0) {
+                    z._dmgLabel._crit = true;
+                    z._dmgLabel.color = '#f0f';
+                    z._dmgLabel._pulse = 12;
                   }
                   if (_isLocal && b._beaconBullet) {
                     // ---- BEACON TURRET BULLETS: use beacon's own classId only ----
@@ -12653,9 +12681,17 @@ function render() {
     ctx.shadowColor = ft.color;
     // Damage numbers: bigger for crits, smaller/subtler otherwise
     if (ft._dmgNum) {
-      ctx.shadowBlur = ft._crit ? 10 : 5;
+      // Pulse scale — peaks when _pulse resets, eases down
+      let _dmgScale = 1;
+      if (ft._pulse > 0) {
+        const _pt = ft._pulse / 10;
+        _dmgScale = 1 + _pt * 0.5; // 1.0 → 1.5 peak
+        ft._pulse--;
+      }
+      const _baseSize = ft._crit ? 18 : 13;
+      ctx.shadowBlur = (ft._crit ? 10 : 5) + (ft._pulse > 0 ? 6 : 0);
       ctx.fillStyle = ft.color;
-      ctx.font = ft._crit ? 'bold 18px monospace' : 'bold 12px monospace';
+      ctx.font = 'bold ' + Math.round(_baseSize * _dmgScale) + 'px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
     } else {
