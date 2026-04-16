@@ -10613,14 +10613,43 @@ function update() {
   const _camTarget = (lp._firing || shootButtonHeld) ? 0.30 : 0.08;
   window._camLerp = lerp(window._camLerp || 0.08, _camTarget, 0.04); // smooth transition between speeds
   camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,window._camLerp);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,window._camLerp);
-  // Clamp camera to arena bounds — when the player is near an edge, stop panning past
-  // the playable area so the screen always shows useful world instead of empty void.
+  // Clamp camera to playable region, with some wiggle room past the edge so the
+  // player doesn't end up glued to the far side of the screen. Without wiggle the
+  // camera hard-stops at the wall and the player slides off-center; with wiggle
+  // the camera is allowed to drift a bit into the void past the edge.
   {
     const _hw = canvas.width / 2, _hh = canvas.height / 2;
-    if (ARENA_W > canvas.width)  camera.x = Math.max(_hw, Math.min(ARENA_W - _hw, camera.x));
-    else                          camera.x = ARENA_W / 2;
-    if (ARENA_H > canvas.height) camera.y = Math.max(_hh, Math.min(ARENA_H - _hh, camera.y));
-    else                          camera.y = ARENA_H / 2;
+    const _wiggleX = canvas.width * 0.18;  // up to ~18% of screen may show past edge
+    const _wiggleY = canvas.height * 0.18;
+    // Figure out the playable bounds for this mode (where the player can actually go)
+    let _minX = 0, _maxX = ARENA_W, _minY = 0, _maxY = ARENA_H;
+    if (gameMode === 'descent') {
+      // Vertical column of DESCENT_WIDTH cells centered in a wider arena
+      const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
+      _minX = _mx * CELL_SIZE;
+      _maxX = (_mx + DESCENT_WIDTH) * CELL_SIZE;
+    } else if (gameMode === 'trench') {
+      // Horizontal corridor of TRENCH_HEIGHT cells tall
+      _minY = 0;
+      _maxY = TRENCH_HEIGHT * CELL_SIZE;
+    }
+    const _regionW = _maxX - _minX, _regionH = _maxY - _minY;
+    // X clamp (with wiggle)
+    if (_regionW + _wiggleX * 2 > canvas.width) {
+      const _lo = _minX + _hw - _wiggleX;
+      const _hi = _maxX - _hw + _wiggleX;
+      camera.x = Math.max(_lo, Math.min(_hi, camera.x));
+    } else {
+      camera.x = (_minX + _maxX) / 2;
+    }
+    // Y clamp (with wiggle)
+    if (_regionH + _wiggleY * 2 > canvas.height) {
+      const _lo = _minY + _hh - _wiggleY;
+      const _hi = _maxY - _hh + _wiggleY;
+      camera.y = Math.max(_lo, Math.min(_hi, camera.y));
+    } else {
+      camera.y = (_minY + _maxY) / 2;
+    }
   }
 
   if(screenShake.intensity>0.1){screenShake.x=(Math.random()-0.5)*screenShake.intensity*2;screenShake.y=(Math.random()-0.5)*screenShake.intensity*2;screenShake.intensity*=screenShake.decay;}else{screenShake.x=0;screenShake.y=0;screenShake.intensity=0;}
