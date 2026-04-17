@@ -1231,13 +1231,13 @@ const UPGRADE_POOL = [
     desc:'+5% dmg/lv. Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
     flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'+5% dmg/lv. Lv1: shots apply Charged (stuns 1s). Lv2: bullets chain to 3 enemies, all Charged. Lv3: Charged discharge on death',
+    desc:'+5% dmg/lv. Lv1: shots apply Charged; next hit on Charged chains to 1 enemy. Lv2: +1 chain, chain targets also Charged. Lv3: Charged discharge on death',
     flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:3, icon:'💨', color:'#cef',
     desc:'+5% dmg/lv. Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
     flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL PAYLOAD', rarity:'common', max:3, icon:'☣', color:'#a4f',
-    desc:'+5% dmg/lv. Lv1: shots apply Corrupt. Lv2: Compromised take +25% more. Lv3: Compromised spread on death',
+    desc:'+5% dmg/lv. Each Corrupt stack: +8% vuln (max 5). Lv1: apply stack (35%). Lv2: +2 stacks/proc (50%). Lv3: hits on Compromised spread stacks',
     flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 2) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:2, icon:'✸', color:'#f80',
@@ -1250,8 +1250,8 @@ const UPGRADE_POOL = [
     desc:'Lv1: all lightning effects chain to +1 nearby enemy. Lv2: +2 chains + longer reach',
     flavor:'current finds the path of least resistance.', prereqs:['arc_rounds|static_wake'] },
   { id:'vector_snap', name:'VECTOR SNAP', rarity:'rare', max:2, icon:'◈', color:'#cef',
-    desc:'Lv1: +30% dmg to Exposed enemies. Lv2: +50%',
-    flavor:'hit them while they are vulnerable.', prereqs:['pulse_shot|impulse_wave'] },
+    desc:'Lv1: +50% Pulse knockback & stagger, +8 slam dmg. Lv2: +100% knockback, +16 slam dmg',
+    flavor:'harder hits. longer falls.', prereqs:['pulse_shot|impulse_wave'] },
   { id:'compromised_core', name:'COMPROMISED CORE', rarity:'rare', max:2, icon:'☣', color:'#a4f',
     desc:'Lv1: Corrupt threshold 4 instead of 5. Lv2: Compromised lasts +50%',
     flavor:'weaker firewalls. faster collapse.', prereqs:['viral_payload|glitch_wake'] },
@@ -1303,7 +1303,7 @@ const UPGRADE_POOL = [
     desc:'Lv1: dash trail zaps nearby, applies Charged. Lv2: more consistent. Replaces other wakes',
     flavor:'current flows in your wake.' },
   { id:'overcharge_dash', name:'OVERCHARGE DASH', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'Lv1: Arc proc +30% for 1.5s after dash. Lv2: longer. Lv3: first chain +bonus dmg',
+    desc:'Lv1: Arc chains +1 extra enemy after dash. Lv2: +2 extra chains. Lv3: first chain post-dash +50% dmg',
     flavor:'the dash charges your capacitors.', prereqs:['arc_rounds|static_wake'] },
   { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:2, icon:'⚡', color:'#4ff',
     desc:'Lv1: dash endpoint releases Arc into Charged enemies. Lv2: +jump count',
@@ -3285,9 +3285,8 @@ function applyCharged(z) {
   if (!isHost) return;
   z._charged = true;
   z._chargedTimer = Math.max(z._chargedTimer || 0, 180); // 3s conduit mark
-  // Lightning stun: 1s hard stop + stagger
-  z._shocked = Math.max(z._shocked || 0, 60);
-  z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+  // Tiny stagger (not a stun) — the chain on subsequent hits is the real payoff
+  z.staggerTimer = Math.max(z.staggerTimer || 0, 6);
   // VFX: brief electric spark
   for(let i=0;i<2;i++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius,y:z.y+Math.sin(a)*z.radius,vx:Math.cos(a)*2,vy:Math.sin(a)*2,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
 }
@@ -3302,12 +3301,13 @@ function applyCorrupt(z, stacks) {
   if (!isHost) return;
   const m = runMods || {};
   const threshold = m.compromisedCore > 0 ? 4 : 5;
-  z._corrupt = (z._corrupt || 0) + (stacks || 1);
+  // Stacks cap at 5 — each stack = +8% damage taken (applied in damageZombie)
+  z._corrupt = Math.min(5, (z._corrupt || 0) + (stacks || 1));
   if (z._corrupt >= threshold && !z._compromised) {
     z._compromised = true;
     const dur = m.compromisedCore >= 2 ? 450 : 300; // 7.5s or 5s
     z._compromisedTimer = dur;
-    z._corrupt = 0;
+    // Stacks PERSIST through Compromised — vuln stays. Reset happens when Compromised timer expires.
     addFloatingText(z.x, z.y - z.radius - 12, 'COMPROMISED', '#a4f');
     for(let i=0;i<14;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x+Math.cos(a)*8,y:z.y+Math.sin(a)*8,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}
     screenShake.intensity = Math.max(screenShake.intensity, 4);
@@ -3386,18 +3386,9 @@ function applyElementOnHit(z, damage, srcX, srcY) {
   }
 }
 
-// Corrupt status: stacks build to Compromised threshold
-function _applyCorruptStack(z) {
-  z._corruptStacks = (z._corruptStacks || 0) + 1;
-  if (z._corruptStacks >= 5 && !z._compromised) {
-    z._compromised = true; z._compromisedTimer = 300; z._corruptStacks = 0;
-    addFloatingText(z.x, z.y - z.radius - 12, 'COMPROMISED', '#a4f');
-    for(let ci=0;ci<10;ci++){const ca=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(ca)*8,y:z.y+Math.sin(ca)*8,vx:Math.cos(ca)*3,vy:Math.sin(ca)*3,life:16,maxLife:16,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
-    screenShake.intensity = Math.max(screenShake.intensity, 3);
-  }
-  // Corrupt particle on each stack application
-  particles.push({x:z.x+(Math.random()-0.5)*12,y:z.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*2,vy:-1.5,life:14,maxLife:14,size:2+Math.random()*2,color:'#a4f',type:'spark'});
-}
+// Legacy bridge: the old activeElement pickup system called this.
+// Redirect to applyCorrupt so the unified stacks/vuln model applies.
+function _applyCorruptStack(z) { applyCorrupt(z, 1); }
 
 let _weaponLastFired = 0, _weaponMuzzleFlash = 0;
 function trackWeaponKill(){} // legacy stub
@@ -8741,11 +8732,8 @@ function dropZombieLoot(z) {
     if (mods.arcRoundsLv >= 3 && z._charged) {
       for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const d=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(d<120){damageZombie(oz,25,0,0);applyCharged(oz);particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:oz.x,ty:oz.y});}}
     }
-    // VIRAL PAYLOAD Lv3: Compromised spread Corrupt on death
-    if (mods.viralPayloadLv >= 3 && z._compromised) {
-      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<80*80)applyCorrupt(oz,2);}
-      for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
-    }
+    // (Lv3 Viral death-spread removed — base Compromised death-spread above handles this now.
+    //  Lv3 now spreads stacks on hit-to-Compromised — see bullet hit path.)
     // CONCUSSIVE BLAST synergy: Exposed + Overheated → AoE explosion on death
     if (mods.synergyConcussiveBlast && z._exposed && (z._overheat > 0 || z._burning > 0)) {
       createExplosion(z.x, z.y, 100, 60, 'player');
@@ -8813,6 +8801,8 @@ function createExplosion(x,y,radius,damage,source='player') {
   for(let i=0;i<10;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*3;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*30,maxLife:60,size:5+Math.random()*6,color:'#555',type:'smoke'});}
 }
 function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
+  // CORRUPT VULNERABILITY: each stack = +8% damage taken, caps at 5 (+40%). Applies to all sources.
+  if (z._corrupt > 0) damage = Math.floor(damage * (1 + 0.08 * Math.min(z._corrupt, 5)));
   // Late-game armor: enemies in section 15+ resist 15% of damage
   if (z._armor && z._armor < 1) damage = Math.floor(damage * z._armor);
   const prevHp=z.hp;
@@ -8849,7 +8839,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if(z.hp>0&&z.hp<z.maxHp*0.4) z._bleeding=true;
   if(!silent){
     if(z._frozenTimer>0) playSfx('ice_hit',0.25)||playHitSound();
-    else if(z._shocked>0) playSfx('zap',0.15)||playHitSound();
+    else if(z._shocked>0||z._charged) playSfx('zap',0.15)||playHitSound();
     else playHitSound();
   }
   // Damage number popup — combines rapid hits on same zombie into a single pulsing label
@@ -9518,9 +9508,9 @@ function update() {
       for(let bi=0;bi<12;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*20,y:lp.y+Math.sin(ba)*20,vx:Math.cos(ba)*2,vy:-2,life:16,maxLife:16,size:3,color:'#ff4',type:'spark'});}
       screenShake.intensity=Math.max(screenShake.intensity,4);
     }
-    // Compromised timer decay on all zombies
+    // Compromised timer decay on all zombies — stacks reset when Compromised expires (vuln ends)
     for (const _cz of zombies) {
-      if (_cz._compromised && _cz._compromisedTimer > 0) { _cz._compromisedTimer--; if (_cz._compromisedTimer <= 0) _cz._compromised = false; }
+      if (_cz._compromised && _cz._compromisedTimer > 0) { _cz._compromisedTimer--; if (_cz._compromisedTimer <= 0) { _cz._compromised = false; _cz._corrupt = 0; } }
     }
     // Siphon bank drain: 1 HP per 3 frames (~20 HP/sec)
     if (gameTime % 3 === 0 && lp._siphonBank > 0 && lp.hp < lp.maxHp) {
@@ -9727,10 +9717,8 @@ function update() {
                       // Ice crack VFX (not a shatter — they stay frozen)
                       for(let si=0;si<6;si++){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*6,y:z.y+Math.sin(sa)*6,vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:12,maxLife:12,size:2+Math.random()*2,color:'#aef',type:'spark'});}
                     }
-                    // -- EXPOSED: +30% damage --
-                    if (z._exposed) { _dmg = Math.floor(_dmg * (1 + 0.3 * Math.max(1, _m.vectorSnap))); }
-                    // -- COMPROMISED: +50% damage --
-                    if (z._compromised) { _dmg = Math.floor(_dmg * 1.5); }
+                    // (Exposed no longer amps damage — it enables slam on wall impact. See zombie movement.)
+                    // (Compromised no longer amps damage — vuln comes from Corrupt stacks in damageZombie.)
                     // (MARK removed — beacon branch)
                     // -- CRIT WINDOWS (conditional only, no global crit stat) --
                     if (!b.crit) {
@@ -9781,50 +9769,59 @@ function update() {
                       const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
                       if (Math.random() < ch) applyChill(z, 1, _sf);
                     }
-                    // ARC ROUNDS: apply Charged (stuns 2s); Lv2+ bullets chain to 3 enemies
+                    // ARC ROUNDS: Conduit — Charged on hit, hitting an already-Charged enemy chains.
+                    // Lv2+: chain targets also become Charged (network spread).
                     if (_m.arcRoundsLv > 0) {
-                      let ch = 0.15 + 0.10 * _m.arcRoundsLv; // 25%/35%/45%
-                      if (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ch = Math.min(1, ch + (_m.overchargeDash >= 2 ? 0.5 : 0.3));
-                      if (Math.random() < ch) {
-                        applyCharged(z);
-                        // Lv2+: bullet chains to 3 nearby enemies, all Charged.
-                        // Static Chain adds +N chains on top, and extends chain range.
-                        if (_m.arcRoundsLv >= 2) {
-                          const baseJumps = 3;
-                          const bonusJumps = _m.staticChain || 0;
-                          const maxJ = baseJumps + bonusJumps;
-                          let lastZ = z; const hitS = new Set([z.zid]);
-                          let _chainR2 = 28900 + (_m.staticChain >= 2 ? 14000 : 0); // 170px, +~50px at Lv2 Static Chain
-                          if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
-                          if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
-                          for (let ci = 0; ci < maxJ; ci++) {
-                            let bD2 = _chainR2, bZ = null;
-                            for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
-                            if (!bZ) break;
-                            damageZombie(bZ, Math.floor(_dmg * 0.4), 0, 0);
-                            applyCharged(bZ);
-                            particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
-                            hitS.add(bZ.zid); lastZ = bZ;
-                          }
+                      const wasCharged = z._charged;
+                      applyCharged(z);
+                      if (wasCharged) {
+                        const baseJumps = _m.arcRoundsLv; // Lv1=1, Lv2=2, Lv3=3
+                        const bonusJumps = _m.staticChain || 0;
+                        const postDashBonus = (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ? (_m.overchargeDash >= 2 ? 2 : 1) : 0;
+                        const maxJ = baseJumps + bonusJumps + postDashBonus;
+                        let _chainR2 = 28900 + (_m.staticChain >= 2 ? 14000 : 0); // 170px, +~50px at Lv2 Static Chain
+                        if (_m.arcRoundsLv >= 2) _chainR2 += 8000; // Lv2+ longer reach
+                        if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
+                        if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
+                        let lastZ = z; const hitS = new Set([z.zid]);
+                        for (let ci = 0; ci < maxJ; ci++) {
+                          let bD2 = _chainR2, bZ = null;
+                          for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+                          if (!bZ) break;
+                          let chainDmg = Math.floor(_dmg * 0.4);
+                          if (ci === 0 && _m.overchargeDash >= 3 && _lp3 && _lp3._postDashTimer > 0) chainDmg = Math.floor(chainDmg * 1.5);
+                          damageZombie(bZ, chainDmg, 0, 0);
+                          if (_m.arcRoundsLv >= 2) applyCharged(bZ); // Lv2+ network spread
+                          particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+                          hitS.add(bZ.zid); lastZ = bZ;
                         }
                       }
                     }
-                    // PULSE SHOT: apply Exposed + knockback
+                    // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
+                    // Vector Snap rare card scales knockback force + stagger (no damage amp).
                     if (_m.pulseShotLv > 0) {
                       applyExposed(z);
-                      const pushF = 2 + _m.pulseShotLv;
+                      const vsMult = 1 + 0.5 * (_m.vectorSnap || 0); // Lv1=+50%, Lv2=+100% knockback
+                      const pushF = (2 + _m.pulseShotLv) * vsMult;
                       z.vx += Math.cos(a) * pushF; z.vy += Math.sin(a) * pushF;
-                      z.staggerTimer = Math.max(z.staggerTimer || 0, 10);
+                      const stag = 10 + (_m.vectorSnap || 0) * 10;
+                      z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
                       // Lv3: hits on Exposed create mini impact pulse
                       if (_m.pulseShotLv >= 3 && z._exposed) {
                         for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const pd = Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2); if (pd < 60) { damageZombie(oz, Math.floor(_dmg * 0.2), 0, 0); oz.staggerTimer = Math.max(oz.staggerTimer||0, 6); } }
                         for(let pi=0;pi<6;pi++){const pa=(pi/6)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:10,maxLife:10,size:2,color:'#cef',type:'spark'});}
                       }
                     }
-                    // VIRAL PAYLOAD: apply Corrupt
+                    // VIRAL PAYLOAD: apply Corrupt stacks. Lv2+ applies 2 stacks; Lv3 spreads to neighbors on Compromised hit.
                     if (_m.viralPayloadLv > 0) {
-                      const ch = 0.20 + 0.15 * _m.viralPayloadLv;
-                      if (Math.random() < ch) applyCorrupt(z, 1);
+                      const ch = 0.20 + 0.15 * _m.viralPayloadLv; // 35%/50%/65%
+                      if (Math.random() < ch) {
+                        const stacks = _m.viralPayloadLv >= 2 ? 2 : 1;
+                        applyCorrupt(z, stacks);
+                        if (_m.viralPayloadLv >= 3 && z._compromised) {
+                          for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx = oz.x-z.x, dy = oz.y-z.y; if (dx*dx + dy*dy < 4900) applyCorrupt(oz, 1); }
+                        }
+                      }
                     }
                     // ---- SYNERGY EFFECTS ----
                     // Overload: Overheated + Charged → arc discharge burst
@@ -10077,8 +10074,9 @@ function update() {
       if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(gameTime%4===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
       // EXPOSED: tick down vulnerability mark
       if(z._exposed&&z._exposedTimer>0){z._exposedTimer--;if(z._exposedTimer<=0)z._exposed=false;}
+      if(z._slamCooldown>0)z._slamCooldown--;
       // COMPROMISED: tick down, emit glitch particles
-      if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0)z._compromised=false;if(gameTime%5===0)particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
+      if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0){z._compromised=false;z._corrupt=0;}if(gameTime%5===0)particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
       // Corrupt stacks (not yet Compromised): shed purple particles so status is visible
       else if((z._corruptStacks||0)+(z._corrupt||0)>0&&gameTime%8===0){const _csi=Math.max(z._corruptStacks||0,z._corrupt||0);for(let _cp=0;_cp<_csi;_cp++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius*0.8,y:z.y+Math.sin(a)*z.radius*0.8,vx:Math.cos(a)*0.5+(Math.random()-0.5),vy:-0.8-Math.random()*0.5,life:14,maxLife:14,size:1.5+Math.random()*1.5,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.7;z.vy*=0.7;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(gameTime%4===0)particles.push({x:z.x+(Math.random()-0.5)*8,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:2,color:'#ff8',type:'spark'});continue;}
@@ -10469,6 +10467,15 @@ function update() {
       if (z.aware && (z.vx*z.vx + z.vy*z.vy) > 0.5) {
         const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
         const _wanted2 = z.vx * z.vx + z.vy * z.vy;
+        // PULSE SLAM: Exposed enemies take damage when knocked into walls at speed.
+        // Trigger when movement was blocked and the enemy was moving fast (knockback, not idle).
+        if (isHost && z._exposed && !z._slamCooldown && _wanted2 > 9 && _moved2 < _wanted2 * 0.5) {
+          const slamDmg = 12 + (runMods?.vectorSnap || 0) * 8;
+          damageZombie(z, slamDmg, 0, 0);
+          addFloatingText(z.x, z.y - z.radius - 8, 'SLAM', '#cef');
+          for (let si=0;si<6;si++){const sa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*3+(Math.random()-0.5)*2,vy:Math.sin(sa)*3+(Math.random()-0.5)*2,life:12,maxLife:12,size:2+Math.random()*2,color:'#cef',type:'spark'});}
+          z._slamCooldown = 20;
+        }
         if (_moved2 < _wanted2 * 0.04) {
           z._wallStuck = (z._wallStuck || 0) + 1;
           if (z._wallStuck > 2) {
@@ -10805,13 +10812,13 @@ function update() {
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0,powerUp:p.id===myId?(activePowerUp?activePowerUp.id:null):(p._remotePowerUp||null),dashCooldown:p.dashCooldown||0 }));
     // Pack per-zombie status flags into a small bitfield to keep the broadcast tight.
-    // bit 0 = invader (horde), 1 = burning, 2 = frozen/slow, 3 = shocked, 4 = spawning (trench)
+    // bit 0 = invader (horde), 1 = burning, 2 = frozen/slow, 3 = shocked OR charged, 4 = spawning (trench)
     const zs = zombies.map(z => {
       let fl = 0;
       if (z._invader) fl |= 1;
       if (z._burning > 0) fl |= 2;
       if (z._frozenTimer > 0 || z._slowTimer > 0) fl |= 4;
-      if (z._shocked > 0) fl |= 8;
+      if (z._shocked > 0 || z._charged) fl |= 8;
       if (z._spawnAnim > 0) fl |= 16;
       return { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl };
     });
@@ -10994,7 +11001,9 @@ function applyHostState(msg) {
       if ((_fl & 2) && (oz._burnTimer || 0) <= 0) oz._burnTimer = 60; // trigger visual fire particles
       else if (!(_fl & 2)) oz._burnTimer = 0;
       if (_fl & 4) { oz._slowTimer = Math.max(oz._slowTimer || 0, 10); }
+      // bit 8 = electric (shocked OR charged) — keep both flags aligned on non-host for VFX
       oz._shocked = (_fl & 8) ? Math.max(oz._shocked || 0, 10) : 0;
+      oz._charged = (_fl & 8) ? true : false;
       if (_fl & 16) { if (!oz._spawnAnim) { oz._spawnAnim = 30; oz._spawnAnimMax = 30; } }
       else oz._spawnAnim = 0;
       updatedZombies.push(oz);
@@ -11006,7 +11015,7 @@ function applyHostState(msg) {
       fresh._invader = (_fl & 1) !== 0;
       if (_fl & 2) { fresh._burning = 10; fresh._burnTimer = 60; }
       if (_fl & 4) fresh._slowTimer = 10;
-      if (_fl & 8) fresh._shocked = 10;
+      if (_fl & 8) { fresh._shocked = 10; fresh._charged = true; }
       if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
       updatedZombies.push(fresh);
     }
