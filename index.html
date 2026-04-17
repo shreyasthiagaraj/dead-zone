@@ -1216,7 +1216,7 @@ const UPGRADE_POOL = [
     desc:'+15% dmg/lv. Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
     flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'+15% dmg/lv. Lv1: shots chain to 1 enemy + apply Charged. Lv2: +1 chain, chain targets also Charged (network spread). Lv3: Charged discharge on death',
+    desc:'+15% dmg/lv. Shots apply Charged. Any hit on Charged chains to nearby enemies (Lv1:+1, Lv2:+2, Lv3:+3). Lv2: chain targets also Charged. Lv3: discharge on death',
     flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:3, icon:'💨', color:'#cef',
     desc:'+15% dmg/lv. Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
@@ -1241,7 +1241,7 @@ const UPGRADE_POOL = [
     desc:'Lv1: Corrupt threshold 4 instead of 5. Lv2: Compromised lasts +50%',
     flavor:'weaker firewalls. faster collapse.', prereqs:['viral_payload|glitch_wake'] },
   // ---- GENERIC WEAPON (common, max 2) ----
-  { id:'wide_spread', name:'WIDE SPREAD', rarity:'common', max:2, icon:'⫸', color:'#fa0',
+  { id:'wide_spread', name:'WIDE SPREAD', rarity:'epic', max:2, icon:'⫸', color:'#fa0',
     desc:'Lv1: +2 projectiles, wider cone (70% dmg each). Lv2: 80% dmg each',
     flavor:'spray protocol. cover the room.' },
   { id:'piercing_shot', name:'PIERCING SHOT', rarity:'common', max:2, icon:'➟', color:'#0cf',
@@ -1288,8 +1288,8 @@ const UPGRADE_POOL = [
     desc:'Lv1: dash trail zaps nearby, applies Charged. Lv2: more consistent. Replaces other wakes',
     flavor:'current flows in your wake.' },
   { id:'overcharge_dash', name:'OVERCHARGE DASH', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'Lv1: Arc chains +1 extra enemy after dash. Lv2: +2 extra chains. Lv3: first chain post-dash +50% dmg',
-    flavor:'the dash charges your capacitors.', prereqs:['arc_rounds|static_wake'] },
+    desc:'Dash detonates Charged enemies in your path (+40 dmg + arc to 2). Lv2: +20 dmg, bigger radius. Lv3: detonated chains spread Charged',
+    flavor:'the dash arcs through every live node.', prereqs:['arc_rounds|static_wake'] },
   { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:2, icon:'⚡', color:'#4ff',
     desc:'Lv1: dash endpoint releases Arc into Charged enemies. Lv2: +jump count',
     flavor:'endpoint discharge. arcs fly.', prereqs:['arc_rounds|static_wake'] },
@@ -7520,9 +7520,12 @@ function applyDashTrailEffects(lp) {
   const hasStatic  = _m.staticWake > 0;
   const hasGlitch  = _m.glitchWake > 0;
   const hasKinetic = _m.kineticWake > 0;
-  if (!hasBurnout && !hasCryo && !hasStatic && !hasGlitch && !hasKinetic) return;
+  const hasOvercharge = _m.overchargeDash > 0;
+  if (!hasBurnout && !hasCryo && !hasStatic && !hasGlitch && !hasKinetic && !hasOvercharge) return;
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
-  const r2 = DASH_TRAIL_RADIUS * DASH_TRAIL_RADIUS;
+  // Overcharge gets an expanded detection radius at Lv2+ so the detonation feels impactful.
+  const r = hasOvercharge && _m.overchargeDash >= 2 ? 80 : DASH_TRAIL_RADIUS;
+  const r2 = r * r;
   for (const z of zombies) {
     if (!z || z.hp <= 0 || hitSet.has(z.zid)) continue;
     const dx = z.x - lp.x, dy = z.y - lp.y;
@@ -7571,6 +7574,29 @@ function applyDashTrailEffects(lp) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 15 + _m.kineticWake * 5);
       applyExposed(z);
       for(let ki=0;ki<4;ki++){const ka=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(ka)*3,vy:Math.sin(ka)*3,life:12,maxLife:12,size:2+Math.random(),color:Math.random()>0.4?'#cef':'#fff',type:'spark'});}
+    }
+    // OVERCHARGE DASH — detonate Charged enemies the dash passes through
+    // Lv1: +40 dmg + arc to 2 nearby. Lv2: +20 dmg, bigger radius. Lv3: chain targets also become Charged.
+    if (hasOvercharge && z._charged) {
+      const odLv = _m.overchargeDash;
+      const detonateDmg = 40 + (odLv - 1) * 20;
+      damageZombie(z, detonateDmg, 0, 0);
+      for (let di = 0; di < 10; di++) { const da = Math.random() * Math.PI * 2, ds = 3 + Math.random() * 4; particles.push({x:z.x,y:z.y,vx:Math.cos(da)*ds,vy:Math.sin(da)*ds,life:16,maxLife:16,size:3+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'}); }
+      screenShake.intensity = Math.max(screenShake.intensity, 3);
+      const detChainCount = 2 + (odLv >= 3 ? 1 : 0);
+      const detChainR2 = odLv >= 2 ? 40000 : 25000; // 200px / 158px
+      let lastZ = z; const detHit = new Set([z.zid]);
+      for (let dci = 0; dci < detChainCount; dci++) {
+        let bD2 = detChainR2, bZ = null;
+        for (const oz of zombies) { if (detHit.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+        if (!bZ) break;
+        damageZombie(bZ, Math.floor(detonateDmg * 0.6), 0, 0);
+        if (odLv >= 3) applyCharged(bZ);
+        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:18,maxLife:18,size:2,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:bZ.x,ty:bZ.y});
+        detHit.add(bZ.zid); lastZ = bZ;
+      }
+      playSfx('zap', 0.25);
     }
   }
 }
@@ -9868,37 +9894,9 @@ function update() {
                       const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
                       if (Math.random() < ch) applyChill(z, 1, _sf);
                     }
-                    // ARC ROUNDS: every hit chains to N nearby enemies + applies Charged.
-                    // Lv2+: chain targets ALSO become Charged (network spread).
-                    if (_m.arcRoundsLv > 0) {
-                      applyCharged(z);
-                      const baseJumps = _m.arcRoundsLv; // Lv1=1, Lv2=2, Lv3=3
-                      const bonusJumps = _m.staticChain || 0;
-                      const postDashBonus = (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ? (_m.overchargeDash >= 2 ? 2 : 1) : 0;
-                      const maxJ = baseJumps + bonusJumps + postDashBonus;
-                      let _chainR2 = 40000 + (_m.staticChain >= 2 ? 20000 : 0); // 200px, +60px at Lv2 Static Chain
-                      if (_m.arcRoundsLv >= 2) _chainR2 += 10000; // Lv2+ longer reach
-                      if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
-                      if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
-                      let lastZ = z; const hitS = new Set([z.zid]);
-                      let _chainedAny = false;
-                      for (let ci = 0; ci < maxJ; ci++) {
-                        let bD2 = _chainR2, bZ = null;
-                        for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
-                        if (!bZ) break;
-                        _chainedAny = true;
-                        let chainDmg = Math.floor(_dmg * 0.4);
-                        if (ci === 0 && _m.overchargeDash >= 3 && _lp3 && _lp3._postDashTimer > 0) chainDmg = Math.floor(chainDmg * 1.5);
-                        damageZombie(bZ, chainDmg, 0, 0);
-                        if (_m.arcRoundsLv >= 2) applyCharged(bZ); // Lv2+ network spread
-                        // VFX: bright lightning bolt + secondary white bolt + sparks at target
-                        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:18,maxLife:18,size:2,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
-                        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:bZ.x,ty:bZ.y});
-                        for(let li=0;li<4;li++){const la=Math.random()*Math.PI*2;particles.push({x:bZ.x+Math.cos(la)*6,y:bZ.y+Math.sin(la)*6,vx:Math.cos(la)*3,vy:Math.sin(la)*3,life:10,maxLife:10,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
-                        hitS.add(bZ.zid); lastZ = bZ;
-                      }
-                      if (_chainedAny) playSfx('zap', 0.15);
-                    }
+                    // ARC ROUNDS: applies Charged on hit. Chain fires in the universal block below.
+                    // Charged is the conduit — any bullet hitting a Charged enemy discharges a chain.
+                    if (_m.arcRoundsLv > 0) applyCharged(z);
                     // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
                     // Vector Snap rare card scales knockback force + stagger (no damage amp).
                     if (_m.pulseShotLv > 0) {
@@ -9956,6 +9954,34 @@ function update() {
                       screenShake.intensity=Math.max(screenShake.intensity,6);
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
+                  }
+                  // UNIVERSAL CHAIN: any bullet hitting a Charged enemy discharges a chain arc to nearby enemies.
+                  // Works for all classes of rounds, beacon bullets, even base pistol shots.
+                  if (_isLocal && z._charged) {
+                    const arcLv = _m.arcRoundsLv || 0;
+                    const baseJumps = Math.max(1, arcLv); // 1 baseline, 2 @ Lv2, 3 @ Lv3
+                    const bonusJumps = _m.staticChain || 0;
+                    const maxJ = baseJumps + bonusJumps;
+                    let _chainR2 = 40000 + (_m.staticChain >= 2 ? 20000 : 0); // 200px base, +70px at Lv2 Static Chain
+                    if (arcLv >= 2) _chainR2 += 10000;
+                    if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
+                    if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
+                    let lastZ = z; const hitS = new Set([z.zid]);
+                    let _chainedAny = false;
+                    for (let ci = 0; ci < maxJ; ci++) {
+                      let bD2 = _chainR2, bZ = null;
+                      for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+                      if (!bZ) break;
+                      _chainedAny = true;
+                      const chainDmg = Math.floor(_dmg * 0.4);
+                      damageZombie(bZ, chainDmg, 0, 0);
+                      if (arcLv >= 2) applyCharged(bZ); // Lv2+ network spread
+                      particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:18,maxLife:18,size:2,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+                      particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:bZ.x,ty:bZ.y});
+                      for(let li=0;li<4;li++){const la=Math.random()*Math.PI*2;particles.push({x:bZ.x+Math.cos(la)*6,y:bZ.y+Math.sin(la)*6,vx:Math.cos(la)*3,vy:Math.sin(la)*3,life:10,maxLife:10,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
+                      hitS.add(bZ.zid); lastZ = bZ;
+                    }
+                    if (_chainedAny) playSfx('zap', 0.15);
                   }
                   // Apply element effects from modifier system
                   if(b._element)applyElementOnHit(z,b.damage,b.x,b.y);
