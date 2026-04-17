@@ -1315,6 +1315,9 @@ const UPGRADE_POOL = [
   { id:'slipstream', name:'SLIPSTREAM', rarity:'rare', max:2, icon:'»', color:'#0ff',
     desc:'Lv1: +25% move speed for 1.5s after dash. Lv2: +fire rate bonus too',
     flavor:'momentum carries forward.', prereqs:['pulse_shot|impulse_wave'] },
+  { id:'kinetic_wake', name:'KINETIC WAKE', rarity:'common', max:2, icon:'💨', color:'#cef',
+    desc:'Lv1: dash trail pushes enemies aside + applies Exposed. Lv2: stronger push. Replaces other wakes',
+    flavor:'the air bends around you.' },
   // ---- DASH: CORRUPT ----
   { id:'glitch_wake', name:'GLITCH WAKE', rarity:'common', max:2, icon:'☣', color:'#a4f',
     desc:'Lv1: dash trail applies Corrupt stacks. Lv2: lingers as glitch zone. Replaces other wakes',
@@ -1339,6 +1342,15 @@ const UPGRADE_POOL = [
   { id:'shatterpoint', name:'SHATTERPOINT', rarity:'rare', max:2, icon:'❄', color:'#8ef',
     desc:'Lv1: shots vs Frozen: guaranteed crit. Lv2: +bonus shatter damage',
     flavor:'the fracture point. one clean hit.', prereqs:['cryo_rounds|freeze_pulse'] },
+  { id:'meltdown', name:'MELTDOWN', rarity:'rare', max:2, icon:'🔥', color:'#f80',
+    desc:'Lv1: shots vs Overheated: +25% crit chance. Lv2: +40%',
+    flavor:'thermal runaway. the core gives out.', prereqs:['thermal_rounds|burnout_wake'] },
+  { id:'surge_break', name:'SURGE BREAK', rarity:'rare', max:2, icon:'⚡', color:'#4ff',
+    desc:'Lv1: shots vs Charged: +25% crit chance. Lv2: +40%',
+    flavor:'overloaded circuits spark and fail.', prereqs:['arc_rounds|static_wake'] },
+  { id:'kill_switch', name:'KILL SWITCH', rarity:'rare', max:2, icon:'☣', color:'#a4f',
+    desc:'Lv1: shots vs Compromised: +25% crit chance. Lv2: +40%',
+    flavor:'execute the corrupted process.', prereqs:['viral_payload|glitch_wake'] },
   // ---- SYNERGY (epic, max 1, require 2 classes) ----
   { id:'syn_overload', name:'OVERLOAD', rarity:'epic', max:1, icon:'⚡', color:'#fa4',
     desc:'Overheated+Charged enemies discharge Arc burst when hit',
@@ -1359,6 +1371,18 @@ const UPGRADE_POOL = [
   { id:'syn_shatter_wave', name:'SHATTER WAVE', rarity:'epic', max:1, icon:'❄', color:'#aef',
     desc:'Dash shockwave shatters low-HP Frozen enemies. Bonus dmg to Chilled',
     flavor:'ice cracks under force.', prereqs:['cryo_rounds|cryo_wake','pulse_shot|impulse_wave'] },
+  { id:'syn_concussive_blast', name:'CONCUSSIVE BLAST', rarity:'epic', max:1, icon:'💥', color:'#fa4',
+    desc:'Exposed+Overheated enemies explode on death for massive AoE',
+    flavor:'heat under pressure. the blast clears the room.', prereqs:['thermal_rounds|burnout_wake','pulse_shot|impulse_wave'] },
+  { id:'syn_core_breach', name:'CORE BREACH', rarity:'epic', max:1, icon:'☢', color:'#f64',
+    desc:'Compromised+Overheated enemies erupt on death, spreading Corrupt to nearby',
+    flavor:'meltdown meets malware. nothing survives.', prereqs:['thermal_rounds|burnout_wake','viral_payload|glitch_wake'] },
+  { id:'syn_system_crash', name:'SYSTEM CRASH', rarity:'epic', max:1, icon:'💀', color:'#8af',
+    desc:'Hitting Compromised+Frozen enemies shatters them instantly regardless of HP',
+    flavor:'frozen and corrupted. total system failure.', prereqs:['cryo_rounds|cryo_wake','viral_payload|glitch_wake'] },
+  { id:'syn_error_cascade', name:'ERROR CASCADE', rarity:'epic', max:1, icon:'⚠', color:'#c8f',
+    desc:'Exposed+Compromised enemies take 2.5x damage from all sources',
+    flavor:'every vulnerability stacks. every error compounds.', prereqs:['pulse_shot|impulse_wave','viral_payload|glitch_wake'] },
   // ---- BEACON MODS (modify what the beacon does) ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:2, icon:'💣', color:'#fa0',
     desc:'Lv1: beacon detonates when enemies reach it (80px, 50 dmg). Lv2: 100px, 80 dmg',
@@ -1411,15 +1435,16 @@ function rebuildRunMods() {
     burnoutWake: 0, flashpoint: 0,
     cryoWake: 0, freezePulse: 0, shatterStep: 0,
     staticWake: 0, overchargeDash: 0, dischargeBurst: 0,
-    impulseWave: 0, slipstream: 0,
+    impulseWave: 0, slipstream: 0, kineticWake: 0,
     glitchWake: 0, fatalException: 0,
     // Sustain
     recoveryLoop: 0, emergencyBuffer: 0, failSafe: false,
     // Crit windows
-    precisionBreach: 0, shatterpoint: 0,
+    precisionBreach: 0, shatterpoint: 0, meltdown: 0, surgeBreak: 0, killSwitch: 0,
     // Synergies (boolean)
     synergyOverload: false, synergyThermalShock: false, synergyConductiveFreeze: false,
     synergyStormDrive: false, synergyFaultCascade: false, synergyShatterWave: false,
+    synergyConcussiveBlast: false, synergyCoreBreach: false, synergySystemCrash: false, synergyErrorCascade: false,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, beaconElement: null,
@@ -1462,6 +1487,7 @@ function rebuildRunMods() {
       case 'discharge_burst': m.dischargeBurst  += n; break;
       case 'impulse_wave':    m.impulseWave     += n; break;
       case 'slipstream':      m.slipstream      += n; break;
+      case 'kinetic_wake':   m.kineticWake     += n; break;
       case 'glitch_wake':     m.glitchWake      += n; break;
       case 'fatal_exception': m.fatalException  += n; break;
       // Sustain
@@ -1471,6 +1497,9 @@ function rebuildRunMods() {
       // Crit windows
       case 'precision_breach': m.precisionBreach += n; break;
       case 'shatterpoint':     m.shatterpoint   += n; break;
+      case 'meltdown':         m.meltdown       += n; break;
+      case 'surge_break':      m.surgeBreak     += n; break;
+      case 'kill_switch':      m.killSwitch     += n; break;
       // Synergies
       case 'syn_overload':       m.synergyOverload = true; break;
       case 'syn_thermal_shock':  m.synergyThermalShock = true; break;
@@ -1478,6 +1507,10 @@ function rebuildRunMods() {
       case 'syn_storm_drive':    m.synergyStormDrive = true; break;
       case 'syn_fault_cascade':  m.synergyFaultCascade = true; break;
       case 'syn_shatter_wave':   m.synergyShatterWave = true; break;
+      case 'syn_concussive_blast': m.synergyConcussiveBlast = true; break;
+      case 'syn_core_breach':      m.synergyCoreBreach = true; break;
+      case 'syn_system_crash':     m.synergySystemCrash = true; break;
+      case 'syn_error_cascade':    m.synergyErrorCascade = true; break;
       // Utility
       case 'swift':   m.moveSpeedMult    += 0.08 * n; break;
       case 'magnet':  m.magnetRadiusMult += 0.40 * n; break;
@@ -1609,6 +1642,21 @@ function _meetsPrereqs(u) {
 }
 // Draft N unique shop cards. Weighted by rarity, filtered by unlock tier and by max stack.
 let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare guarantee
+// Card-to-class mapping for affinity weighting
+const _CARD_CLASS_MAP = {};
+{
+  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','freeze_pulse','shatter_step','beacon_cryo','shatterpoint'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break'];
+  const _pulse = ['pulse_shot','vector_snap','impulse_wave','slipstream','kinetic_wake','precision_breach'];
+  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch'];
+  for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
+  for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
+  for (const id of _arc)     _CARD_CLASS_MAP[id] = 'arc';
+  for (const id of _pulse)   _CARD_CLASS_MAP[id] = 'pulse';
+  for (const id of _corrupt) _CARD_CLASS_MAP[id] = 'corrupt';
+}
+
 function draftShopCards(n) {
   n = n || 4;
   _shopVisitCount++;
@@ -1629,6 +1677,35 @@ function draftShopCards(n) {
       const r = rarePool[Math.floor(Math.random() * rarePool.length)];
       picks.push(r);
       attempted.add(r.id);
+    }
+  }
+  // ---- CLASS AFFINITY WEIGHTING ----
+  // Count owned cards per class. If the player has committed to a class, ~50% chance
+  // one of the offered cards comes from that class. Encourages build convergence.
+  {
+    const classCounts = { thermal: 0, cryo: 0, arc: 0, pulse: 0, corrupt: 0 };
+    for (const id in runUpgrades) {
+      const cls = _CARD_CLASS_MAP[id];
+      if (cls) classCounts[cls] += runUpgrades[id];
+    }
+    let bestClass = null, bestCount = 0;
+    for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; bestClass = cls; } }
+    // Only weight if player has bought 2+ cards in a class
+    if (bestClass && bestCount >= 2 && Math.random() < 0.50) {
+      const classPool = UPGRADE_POOL.filter(u =>
+        _CARD_CLASS_MAP[u.id] === bestClass &&
+        !attempted.has(u.id) &&
+        (runUpgrades[u.id] || 0) < u.max &&
+        _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
+      );
+      if (classPool.length > 0) {
+        const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
+        let roll = Math.random() * totalW;
+        let chosen = classPool[0];
+        for (const u of classPool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
+        picks.push(chosen);
+        attempted.add(chosen.id);
+      }
     }
   }
   while (picks.length < n && safety-- > 0) {
@@ -1814,7 +1891,7 @@ function _renderShopCards() {
     const _rarityBg = u.rarity === 'legendary' ? 'rgba(255,255,0,0.15)' : u.rarity === 'epic' ? 'rgba(168,136,255,0.15)' : u.rarity === 'rare' ? 'rgba(0,204,255,0.15)' : 'rgba(100,130,160,0.1)';
     // Replaces info
     let _replacesHtml = '';
-    const _dtIds = ['burnout_wake','cryo_wake','static_wake','glitch_wake'];
+    const _dtIds = ['burnout_wake','cryo_wake','static_wake','glitch_wake','kinetic_wake'];
     if (_dtIds.includes(u.id)) {
       const _curTrail = _dtIds.find(tid => tid !== u.id && (runUpgrades[tid] || 0) > 0);
       if (_curTrail) { const _curDef = _UPGRADE_BY_ID[_curTrail]; _replacesHtml = `<div style="font-size:8px;letter-spacing:1px;color:#f80;text-align:center">REPLACES: ${_curDef ? _curDef.name : _curTrail}</div>`; }
@@ -1881,7 +1958,7 @@ function buyShopCard(upgradeId) {
     localStorage.setItem('necrowave_bits_spent', String(prevSpent + cost));
   } catch (e) {}
   // Apply the upgrade. Dash trail mods are mutually exclusive — buying one replaces the other.
-  const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake'];
+  const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake', 'kinetic_wake'];
   if (_dashTrailIds.includes(upgradeId)) {
     for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
@@ -7409,7 +7486,8 @@ function applyDashTrailEffects(lp) {
   const hasCryo    = _m.cryoWake > 0;
   const hasStatic  = _m.staticWake > 0;
   const hasGlitch  = _m.glitchWake > 0;
-  if (!hasBurnout && !hasCryo && !hasStatic && !hasGlitch) return;
+  const hasKinetic = _m.kineticWake > 0;
+  if (!hasBurnout && !hasCryo && !hasStatic && !hasGlitch && !hasKinetic) return;
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const r2 = DASH_TRAIL_RADIUS * DASH_TRAIL_RADIUS;
   for (const z of zombies) {
@@ -7451,6 +7529,15 @@ function applyDashTrailEffects(lp) {
     if (hasGlitch) {
       applyCorrupt(z, 1 + _m.glitchWake);
       particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*2,vy:-1.5,life:14,maxLife:14,size:2+Math.random()*2,color:'#a4f',type:'spark'});
+    }
+    // KINETIC WAKE — push enemies aside + apply Exposed
+    if (hasKinetic) {
+      const d = Math.sqrt(dx*dx+dy*dy) || 1;
+      const pushF = 6 + _m.kineticWake * 4;
+      z.vx += (dx/d) * pushF; z.vy += (dy/d) * pushF;
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 15 + _m.kineticWake * 5);
+      applyExposed(z);
+      for(let ki=0;ki<4;ki++){const ka=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(ka)*3,vy:Math.sin(ka)*3,life:12,maxLife:12,size:2+Math.random(),color:Math.random()>0.4?'#cef':'#fff',type:'spark'});}
     }
   }
 }
@@ -8659,6 +8746,18 @@ function dropZombieLoot(z) {
       for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<80*80)applyCorrupt(oz,2);}
       for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
     }
+    // CONCUSSIVE BLAST synergy: Exposed + Overheated → AoE explosion on death
+    if (mods.synergyConcussiveBlast && z._exposed && (z._overheat > 0 || z._burning > 0)) {
+      createExplosion(z.x, z.y, 100, 60, 'player');
+      for(let i=0;i<16;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#cef',type:'explosion'});}
+      screenShake.intensity=Math.max(screenShake.intensity,8);
+    }
+    // CORE BREACH synergy: Compromised + Overheated → eruption spreads Corrupt
+    if (mods.synergyCoreBreach && z._compromised && (z._overheat > 0 || z._burning > 0)) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<90*90){damageZombie(oz,40,0,0);applyCorrupt(oz,2);}}
+      for(let i=0;i<18;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:3+Math.random()*4,color:Math.random()>0.3?'#f64':'#a4f',type:'explosion'});}
+      screenShake.intensity=Math.max(screenShake.intensity,7);
+    }
   }
   // Siege mode: no enemy health drops — all items come from scheduled spawns
   if (gameMode === 'siege') return;
@@ -8931,7 +9030,7 @@ function update() {
       // No element: default cyan/magenta glitch. With element: fully themed.
       const _perpX = -(lp.dashDirY || 0), _perpY = (lp.dashDirX || 1);
       const _split = 4 + Math.random() * 2;
-      const _hasDashEl = _mods.burnoutWake > 0 || _mods.cryoWake > 0 || _mods.staticWake > 0 || _mods.impulseWave > 0;
+      const _hasDashEl = _mods.burnoutWake > 0 || _mods.cryoWake > 0 || _mods.staticWake > 0 || _mods.impulseWave > 0 || _mods.kineticWake > 0;
       // Pick ghost colors based on element (default: cyan/magenta chromatic)
       let _ghostA = '#0ff', _ghostB = '#f0f', _sparkColor = '#fff', _glitchColor1 = '#0ff', _glitchColor2 = '#f0f';
       if (_trailColor === '#f80')  { _ghostA = '#f80'; _ghostB = '#fa0'; _sparkColor = '#ff0'; _glitchColor1 = '#f80'; _glitchColor2 = '#f40'; } // fire
@@ -9041,6 +9140,19 @@ function update() {
             life: 18, maxLife: 18, size: 4+Math.random()*2, color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
         }
       }
+      if (_mods.kineticWake > 0) {
+        // KINETIC WAKE: wind gust particles + rail markers
+        for (let wi = 0; wi < 3; wi++) {
+          const side = (Math.random()-0.5) * 30;
+          particles.push({ x: lp.x + _perpRX*side, y: lp.y + _perpRY*side,
+            vx: _perpRX*side*0.15 + (Math.random()-0.5)*2, vy: _perpRY*side*0.15 + (Math.random()-0.5)*2,
+            life: 18, maxLife: 18, size: 3 + Math.random()*3, color: Math.random()>0.3?'#cef':'#fff', type: 'spark' });
+        }
+        for (const [rx, ry] of [[_leftX,_leftY],[_rightX,_rightY]]) {
+          particles.push({ x: rx, y: ry, vx: (Math.random()-0.5)*1, vy: (Math.random()-0.5)*1,
+            life: 20, maxLife: 20, size: 3+Math.random()*2, color: '#cef', type: 'spark' });
+        }
+      }
       // Element trails: apply fire/ice/chain/wind effects to any zombie within the dash
       // radius this frame. Per-dash hit set prevents double-procs.
       applyDashTrailEffects(lp);
@@ -9116,6 +9228,23 @@ function update() {
         if ((_rm.shockwave >= 3 || _rm.impulseWave >= 3) && isHost) {
           const _swR = 120 + Math.max(_rm.shockwave||0, _rm.impulseWave||0) * 30;
           for (const ez of zombies) { if (ez.hp <= 0) continue; const ed = Math.sqrt((ez.x-lp.x)**2+(ez.y-lp.y)**2); if (ed < _swR) applyExposed(ez); }
+        }
+        // Shatter Wave synergy: dash shockwave shatters low-HP Frozen, bonus dmg to Chilled
+        if (_rm.synergyShatterWave && isHost) {
+          const _swR2 = 120 + Math.max(_rm.shockwave||0, _rm.impulseWave||0) * 30;
+          for (const sz of zombies) {
+            if (sz.hp <= 0) continue;
+            const sd = Math.sqrt((sz.x-lp.x)**2+(sz.y-lp.y)**2);
+            if (sd > _swR2) continue;
+            if ((sz._frozen || sz._frozenTimer > 0) && sz.hp < sz.maxHp * 0.4) {
+              damageZombie(sz, sz.hp + 1, 0, 0); // instant kill
+              addFloatingText(sz.x, sz.y - sz.radius - 12, 'SHATTER', '#aef');
+              for(let si=0;si<20;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:sz.x,y:sz.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:24,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});}
+              screenShake.intensity=Math.max(screenShake.intensity,6);
+            } else if (sz._chill > 0) {
+              damageZombie(sz, Math.floor(sz.maxHp * 0.15), 0, 0);
+            }
+          }
         }
       }
     }
@@ -9608,6 +9737,9 @@ function update() {
                       let _critChance = 0;
                       if (z._exposed && _m.precisionBreach > 0) _critChance += _m.precisionBreach >= 2 ? 0.40 : 0.25;
                       if ((z._frozen || z._frozenTimer > 0) && _m.shatterpoint > 0) _critChance = 1.0; // guaranteed
+                      if (z._overheat > 0 && _m.meltdown > 0) _critChance += _m.meltdown >= 2 ? 0.40 : 0.25;
+                      if (z._charged && _m.surgeBreak > 0) _critChance += _m.surgeBreak >= 2 ? 0.40 : 0.25;
+                      if (z._compromised && _m.killSwitch > 0) _critChance += _m.killSwitch >= 2 ? 0.40 : 0.25;
                       if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorRound >= 3) _critChance += 0.30;
                       if (_critChance > 0 && Math.random() < _critChance) { _dmg = Math.floor(_dmg * 2); b.crit = true; }
                     }
@@ -9711,6 +9843,18 @@ function update() {
                     if (_m.synergyFaultCascade && z._compromised) {
                       for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(_dmg*0.25),0,0);applyCharged(oz);}}
                       particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:5,color:'#84f',type:'spark'});
+                    }
+                    // Error Cascade: Exposed + Compromised = 2.5x damage
+                    if (_m.synergyErrorCascade && z._exposed && z._compromised) {
+                      _dmg = Math.floor(_dmg * 2.5);
+                      for(let ei=0;ei<6;ei++){const ea=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(ea)*4,vy:Math.sin(ea)*4,life:12,maxLife:12,size:3,color:Math.random()>0.5?'#a4f':'#cef',type:'spark'});}
+                    }
+                    // System Crash: Compromised + Frozen = instant shatter (kill)
+                    if (_m.synergySystemCrash && z._compromised && (z._frozen || z._frozenTimer > 0) && z.hp > 0) {
+                      damageZombie(z, z.hp + 1, 0, 0);
+                      addFloatingText(z.x, z.y - z.radius - 14, 'SYSTEM CRASH', '#8af');
+                      for(let si=0;si<20;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.4?'#aef':'#a4f',type:'spark'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,6);
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
                   }
