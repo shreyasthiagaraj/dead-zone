@@ -160,3 +160,65 @@ Core idea: multiplayer is free (growth engine), single player is the deep paid e
 3. 2-3 unlockable characters
 4. Paywall: free = horde mode, paid = campaign + progression
 5. Daily seeded run with leaderboard
+
+---
+
+# Data Cache — Consumable Item System
+
+Single inventory slot displayed bottom-right as a glowing hex chip icon (a data packet you're carrying). Tap to consume. One item held at a time — no inventory management, mobile-friendly.
+
+## Why One Slot Works
+- No UI bloat — one icon, one tap, done
+- Forces a choice: "do I use this now or save it?"
+- Monetization is cleaner with scarcity — one slot means every item feels precious
+- Upgradeable to 2 slots via meta-progression (Crypt node: "EXPANDED CACHE")
+
+## Item Sourcing
+- **Mod terminal**: occasionally appears as a 4th card option (can't buy a mod AND an item)
+- **Rare enemy drops**: elites/bosses have a chance to drop one
+- **Between-section reward**: after clearing a tough wave, a cache chip spawns
+- **Premium store**: buy a specific item directly (cores currency)
+
+## Item Pool
+
+### Sustain
+- **REPAIR KIT** — Restore 40% HP instantly. The bread-and-butter panic item.
+- **BARRIER SHARD** — Gain 40 barrier that decays normally. Preemptive defense before a hard room.
+- **SECOND WIND** — Auto-revive on death with 25% HP (consumed automatically). Insurance policy.
+
+### Offensive
+- **OVERCLOCK** — 5 seconds of 2x fire rate + 1.5x move speed. Pop it for a burst phase.
+- **EMP PULSE** — All enemies on screen get Charged (stunned 1s) + projectiles cleared. Panic button with tactical use.
+- **VIRAL BOMB** — Throwable: AoE that applies 3 Corrupt stacks to everything in radius. Setup for a Compromised chain.
+
+### Utility
+- **PHASE SHIFT** — 3 seconds of invulnerability + ghosted movement (pass through enemies). Escape tool.
+- **RESTOCK** — Instantly resets dash cooldown + beacon cooldown. Lets you double-dash or re-deploy.
+- **SCANNER PULSE** — Reveals the full section map + highlights all enemies for 8 seconds. Scouting before commitment.
+
+### High-Value / Premium
+- **REROLL CHIP** — Reroll the mod terminal's 3 cards. Doesn't cost bits, just the chip. Huge for build-crafting.
+- **GOLDEN COMPILE** — Next mod terminal purchase is free (0 bits). Rare, valuable, great premium item.
+
+## Monetization Angles
+1. **Starter pack** ($2-3): 3 Repair Kits + 1 Reroll Chip + permanent cache slot unlock
+2. **Item crates**: spend cores for a random item (weighted by rarity). Earnable slowly through play.
+3. **Pre-run loadout**: before starting, pick one item to carry in. Free players get Repair Kit; premium currency unlocks the full menu.
+4. **Ad-for-item**: watch an ad between sections to receive a random item. Capped at 1 per run.
+
+## UI Concept
+- Empty slot: dim outline, "EMPTY" text
+- Holding item: chip pulses with rarity color (common=cyan, rare=magenta, epic=gold)
+- On use: chip shatters into particles, brief cooldown ring prevents double-tap
+- Item name appears as floating text on pickup: "REPAIR KIT ACQUIRED"
+- Desktop keybind: Q or 1
+
+## Ship Order
+- **V1**: Repair Kit + Barrier Shard + EMP Pulse. Three items, one slot, drops from elites and mod terminal. No monetization — prove the mechanic is fun.
+- **V2**: Add Overclock + Phase Shift + Reroll Chip. Introduce cores purchase for items.
+- **V3**: Pre-run loadout picker, ad-for-item, starter pack.
+
+## Open Questions
+- One slot or two? One is cleaner but two lets players combo (Barrier Shard → Overclock → dive in).
+- Auto-use items (Second Wind) vs tap-to-use only? Auto-use is more forgiving but less skill-expressive.
+- Should items persist between sections or expire? Persisting rewards hoarding; expiring rewards aggressive use.
