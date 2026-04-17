@@ -1210,19 +1210,19 @@ function updateStreak() {}
 const UPGRADE_POOL = [
   // ---- CLASS APPLICATION (common, max 3) ----
   { id:'thermal_rounds', name:'THERMAL ROUNDS', rarity:'common', max:3, icon:'🔥', color:'#f80',
-    desc:'+5% dmg/lv. Lv1: shots apply Overheat. Lv2: Overheated explode on death. Lv3: explosions spread Overheat',
+    desc:'+15% dmg/lv. Lv1: shots apply Overheat. Lv2: Overheated explode on death. Lv3: explosions spread Overheat',
     flavor:'thermal throttle exploit — they cook from the inside' },
   { id:'cryo_rounds', name:'CRYO ROUNDS', rarity:'common', max:3, icon:'🧊', color:'#8ef',
-    desc:'+5% dmg/lv. Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
+    desc:'+15% dmg/lv. Lv1: shots apply Chill. Lv2: Chill→Frozen threshold reduced. Lv3: Frozen shatter on kill',
     flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:3, icon:'⚡', color:'#4ff',
-    desc:'+5% dmg/lv. Lv1: shots apply Charged; next hit on Charged chains to 1 enemy. Lv2: +1 chain, chain targets also Charged. Lv3: Charged discharge on death',
+    desc:'+15% dmg/lv. Lv1: shots chain to 1 enemy + apply Charged. Lv2: +1 chain, chain targets also Charged (network spread). Lv3: Charged discharge on death',
     flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:3, icon:'💨', color:'#cef',
-    desc:'+5% dmg/lv. Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
+    desc:'+15% dmg/lv. Lv1: shots apply knockback + Exposed. Lv2: stronger knockback. Lv3: Exposed hits create mini pulse',
     flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL PAYLOAD', rarity:'common', max:3, icon:'☣', color:'#a4f',
-    desc:'+5% dmg/lv. Each Corrupt stack: +8% vuln (max 5). Lv1: apply stack (35%). Lv2: +2 stacks/proc (50%). Lv3: hits on Compromised spread stacks',
+    desc:'+15% dmg/lv. Each Corrupt stack: +8% vuln (max 5). Lv1: apply stack (35%). Lv2: +2 stacks/proc (50%). Lv3: hits on Compromised spread stacks',
     flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 2) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:2, icon:'✸', color:'#f80',
@@ -1515,8 +1515,8 @@ function rebuildRunMods() {
   if (m.heavyCaliber > 0) { m.damageMult += m.heavyCaliber >= 2 ? 0.80 : 0.60; m.fireRateMult -= m.heavyCaliber >= 2 ? 0.30 : 0.30; m.statusForce = 1.5; }
   if (m.rapidCycle > 0) { m.fireRateMult += m.rapidCycle >= 2 ? 0.40 : 0.25; }
   if (m.piercingShot > 0) { m.pierceAdd += m.piercingShot >= 2 ? 2 : 1; }
-  // Elemental rounds: +5% base damage per level (stacks across classes)
-  m.damageMult += 0.05 * (m.thermalRoundsLv + m.cryoRoundsLv + m.arcRoundsLv + m.pulseShotLv + m.viralPayloadLv);
+  // Elemental rounds: +15% base damage per level (stacks across classes)
+  m.damageMult += 0.15 * (m.thermalRoundsLv + m.cryoRoundsLv + m.arcRoundsLv + m.pulseShotLv + m.viralPayloadLv);
   // Dominant class for bullet tinting
   // Dominant class for bullet tinting — only count ROUNDS cards, not wake/dash cards
   // (dash cards shouldn't change bullet color — that's confusing)
@@ -9790,32 +9790,29 @@ function update() {
                       const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
                       if (Math.random() < ch) applyChill(z, 1, _sf);
                     }
-                    // ARC ROUNDS: Conduit — Charged on hit, hitting an already-Charged enemy chains.
-                    // Lv2+: chain targets also become Charged (network spread).
+                    // ARC ROUNDS: every hit chains to N nearby enemies + applies Charged.
+                    // Lv2+: chain targets ALSO become Charged (network spread).
                     if (_m.arcRoundsLv > 0) {
-                      const wasCharged = z._charged;
                       applyCharged(z);
-                      if (wasCharged) {
-                        const baseJumps = _m.arcRoundsLv; // Lv1=1, Lv2=2, Lv3=3
-                        const bonusJumps = _m.staticChain || 0;
-                        const postDashBonus = (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ? (_m.overchargeDash >= 2 ? 2 : 1) : 0;
-                        const maxJ = baseJumps + bonusJumps + postDashBonus;
-                        let _chainR2 = 28900 + (_m.staticChain >= 2 ? 14000 : 0); // 170px, +~50px at Lv2 Static Chain
-                        if (_m.arcRoundsLv >= 2) _chainR2 += 8000; // Lv2+ longer reach
-                        if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
-                        if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
-                        let lastZ = z; const hitS = new Set([z.zid]);
-                        for (let ci = 0; ci < maxJ; ci++) {
-                          let bD2 = _chainR2, bZ = null;
-                          for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
-                          if (!bZ) break;
-                          let chainDmg = Math.floor(_dmg * 0.4);
-                          if (ci === 0 && _m.overchargeDash >= 3 && _lp3 && _lp3._postDashTimer > 0) chainDmg = Math.floor(chainDmg * 1.5);
-                          damageZombie(bZ, chainDmg, 0, 0);
-                          if (_m.arcRoundsLv >= 2) applyCharged(bZ); // Lv2+ network spread
-                          particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
-                          hitS.add(bZ.zid); lastZ = bZ;
-                        }
+                      const baseJumps = _m.arcRoundsLv; // Lv1=1, Lv2=2, Lv3=3
+                      const bonusJumps = _m.staticChain || 0;
+                      const postDashBonus = (_lp3 && _lp3._postDashTimer > 0 && _m.overchargeDash > 0) ? (_m.overchargeDash >= 2 ? 2 : 1) : 0;
+                      const maxJ = baseJumps + bonusJumps + postDashBonus;
+                      let _chainR2 = 28900 + (_m.staticChain >= 2 ? 14000 : 0); // 170px, +~50px at Lv2 Static Chain
+                      if (_m.arcRoundsLv >= 2) _chainR2 += 8000; // Lv2+ longer reach
+                      if (_m.synergyConductiveFreeze && (z._chill > 0 || z._frozen)) _chainR2 *= 4;
+                      if (_m.synergyStormDrive && _lp3 && _lp3._postDashTimer > 0) _chainR2 = Math.floor(_chainR2 * 3.24);
+                      let lastZ = z; const hitS = new Set([z.zid]);
+                      for (let ci = 0; ci < maxJ; ci++) {
+                        let bD2 = _chainR2, bZ = null;
+                        for (const oz of zombies) { if (hitS.has(oz.zid) || oz.hp <= 0) continue; const dx2 = (oz.x-lastZ.x)**2+(oz.y-lastZ.y)**2; if (dx2 < bD2) { bD2 = dx2; bZ = oz; } }
+                        if (!bZ) break;
+                        let chainDmg = Math.floor(_dmg * 0.4);
+                        if (ci === 0 && _m.overchargeDash >= 3 && _lp3 && _lp3._postDashTimer > 0) chainDmg = Math.floor(chainDmg * 1.5);
+                        damageZombie(bZ, chainDmg, 0, 0);
+                        if (_m.arcRoundsLv >= 2) applyCharged(bZ); // Lv2+ network spread
+                        particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});
+                        hitS.add(bZ.zid); lastZ = bZ;
                       }
                     }
                     // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
