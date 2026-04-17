@@ -1272,6 +1272,9 @@ const UPGRADE_POOL = [
   { id:'shockwave', name:'SHOCKWAVE', rarity:'common', max:3, icon:'◈', color:'#4af',
     desc:'Lv1: dash endpoint burst. Lv2: bigger radius+force. Lv3: enemies hit become Exposed',
     flavor:'deceleration releases stored kinetic.' },
+  { id:'extra_charge', name:'EXTRA CHARGE', rarity:'rare', max:1, icon:'⊕', color:'#0ff',
+    desc:'+1 dash charge. Dash twice before cooldown.',
+    flavor:'buffer overflow. two cycles in one clock.' },
   { id:'shield_dash', name:'SHIELD DASH', rarity:'rare', max:2, icon:'🛡', color:'#4ff',
     desc:'Lv1: gain 15 barrier after dash. Lv2: 25 barrier, longer duration',
     flavor:'momentum converted to defense.' },
@@ -1404,7 +1407,7 @@ function rebuildRunMods() {
     // Generic weapon
     wideSpread: 0, piercingShot: 0, rapidCycle: 0, heavyCaliber: 0,
     // Dash cards
-    shockwave: 0, shieldDash: 0, predatorRound: 0,
+    shockwave: 0, extraCharge: 0, shieldDash: 0, predatorRound: 0,
     burnoutWake: 0, flashpoint: 0,
     cryoWake: 0, freezePulse: 0, shatterStep: 0,
     staticWake: 0, overchargeDash: 0, dischargeBurst: 0,
@@ -1446,6 +1449,7 @@ function rebuildRunMods() {
       case 'heavy_caliber':   m.heavyCaliber  += n; break;
       // Dash
       case 'shockwave':       m.shockwave       += n; break;
+      case 'extra_charge':   m.extraCharge     += n; break;
       case 'shield_dash':     m.shieldDash      += n; break;
       case 'predator_round':  m.predatorRound   += n; break;
       case 'burnout_wake':    m.burnoutWake     += n; break;
@@ -3780,7 +3784,7 @@ function createPlayerObj(id, name, color, x, y) {
     id, name, color, x, y, vx: 0, vy: 0, angle: 0,
     hp: baseHp, maxHp: baseHp, speed: baseSpeed,
     weapons: [createWeapon('pistol')], currentWeapon: 0,
-    dashCooldown: 0, dashTimer: 0, dashAngle: 0, _beaconCooldown: 0,
+    dashCooldown: 0, dashTimer: 0, dashAngle: 0, _dashCharges: 1, _dashChargesMax: 1, _beaconCooldown: 0,
     invincible: 0, damageFlash: 0, alive: true,
     burstLeft: 0, burstTimer: 0,
     moveAngle: 0,
@@ -7262,8 +7266,14 @@ function _beaconExpire(b) {
 function dash() {
   if (gameState === 'shell') return; // no dash in the Shell
   const lp = getLocalPlayer();
-  if (!lp || !lp.alive || lp.dashCooldown > 0) return;
+  if (!lp || !lp.alive) return;
   const _mods = runMods || {};
+  // Charge system: Extra Charge card adds +1 max charge
+  lp._dashChargesMax = 1 + (_mods.extraCharge || 0);
+  if (lp._dashCharges === undefined) lp._dashCharges = lp._dashChargesMax;
+  if (lp._dashCharges <= 0) return; // no charges available
+  lp._dashCharges--;
+  // Start recharge timer — ticks per charge independently
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
   runStats.shockwavesUsed++;
   // Direction: current movement direction if moving, else aim/facing angle.
@@ -9292,7 +9302,7 @@ function update() {
     else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
-    if(lp.dashCooldown>0)lp.dashCooldown-=16.67;if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
+    if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=Math.min((lp._dashCharges||0)+1,lp._dashChargesMax||1);if(lp._dashCharges<(lp._dashChargesMax||1))lp.dashCooldown=DASH_COOLDOWN;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
     // Beacon cooldown + update
     if(lp._beaconCooldown>0)lp._beaconCooldown--;
     updateBeacon();
@@ -10957,8 +10967,8 @@ function updateHUD() {
   // Blast cooldown indicator
   const db=document.getElementById('btn-dash');
   if (db) {
-    if (lp.dashCooldown > 0) {
-      // Translucent while recharging — not interactable until ready
+    if ((lp._dashCharges || 0) <= 0) {
+      // No charges — translucent while recharging
       db.className = 'mobile-btn dash-cooldown';
       db.style.opacity = '0.25';
     } else {
@@ -12618,7 +12628,7 @@ function render() {
     }
 
     // Dash cooldown (desktop only, local player only)
-    if(p===getLocalPlayer()&&p.dashCooldown>0&&!isMobile){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
+    if(p===getLocalPlayer()&&!isMobile){const _maxC=p._dashChargesMax||1,_curC=p._dashCharges||0;if(_curC<_maxC){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}if(_maxC>1){for(let _ci=0;_ci<_maxC;_ci++){const _ca=-Math.PI/2+(_ci/_maxC)*Math.PI*2;const _cx=p.x+Math.cos(_ca)*(PLAYER_RADIUS+10),_cy=p.y+Math.sin(_ca)*(PLAYER_RADIUS+10);ctx.fillStyle=_ci<_curC?'#0ff':'#444';ctx.beginPath();ctx.arc(_cx,_cy,2.5,0,Math.PI*2);ctx.fill();}}}
     if(p===getLocalPlayer()&&p._beaconCooldown>0&&!isMobile){const pct=1-p._beaconCooldown/BEACON_COOLDOWN;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+10,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
     // Shield force field — glowing circle
     if(playerHasPowerUp(p,'shield')){
