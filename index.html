@@ -4771,6 +4771,73 @@ function raycastToWall(ax, ay, angle, maxDist) {
   return maxDist;
 }
 
+// Dynamic zombie shadows: 2D shadow volumes cast from each player's flashlight.
+// Drawn on the main canvas after the light compositing so shadows appear as dark patches
+// in lit areas. Wall-clipped via raycastToWall. Culls offscreen zombies and zombies outside
+// the flashlight cone (with a small ambient radius for close-range shadows).
+const SHADOW_MAX_LEN = 320;
+const SHADOW_CONE_HALF = 1.0;   // ~57° each side of flashlight angle
+const SHADOW_AMBIENT_R = 150;   // always shadow if zombie is within this radius of the player
+function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
+  const ox = -camX + canvas.width/2 + shakeX;
+  const oy = -camY + canvas.height/2 + shakeY;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  for (const lp of players) {
+    if (!lp || !lp.alive || !isFinite(lp.x) || !isFinite(lp.y)) continue;
+    const lightX = lp.x, lightY = lp.y;
+    const lightAng = lp.angle || 0;
+    const flashR2 = flashR * flashR;
+    for (const z of zombies) {
+      if (!z || z.hp <= 0) continue;
+      // Onscreen cull
+      const sx = z.x + ox, sy = z.y + oy;
+      if (sx < -120 || sx > canvas.width + 120 || sy < -120 || sy > canvas.height + 120) continue;
+      const dx = z.x - lightX, dy = z.y - lightY;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < (z.radius + 2) * (z.radius + 2)) continue;
+      if (d2 > flashR2) continue;
+      const d = Math.sqrt(d2);
+      // Cone check — allow close-range shadows from ambient glow
+      const ang = Math.atan2(dy, dx);
+      let angDiff = ang - lightAng;
+      while (angDiff > Math.PI) angDiff -= Math.PI * 2;
+      while (angDiff < -Math.PI) angDiff += Math.PI * 2;
+      if (d > SHADOW_AMBIENT_R && Math.abs(angDiff) > SHADOW_CONE_HALF) continue;
+      // Tangent angles from light to zombie circle
+      const halfAng = Math.asin(z.radius / d);
+      const rayA1 = ang - halfAng, rayA2 = ang + halfAng;
+      // Clamp shadow length against walls
+      const maxLen = d + SHADOW_MAX_LEN;
+      const wallD1 = raycastToWall(lightX, lightY, rayA1, maxLen);
+      const wallD2 = raycastToWall(lightX, lightY, rayA2, maxLen);
+      const len1 = Math.min(wallD1, maxLen);
+      const len2 = Math.min(wallD2, maxLen);
+      if (len1 <= d + 2 || len2 <= d + 2) continue; // wall blocks shadow entirely
+      // Tangent points on the zombie silhouette (near edge of shadow)
+      const tanR = Math.sqrt(d2 - z.radius * z.radius);
+      const tx1 = lightX + Math.cos(rayA1) * tanR;
+      const ty1 = lightY + Math.sin(rayA1) * tanR;
+      const tx2 = lightX + Math.cos(rayA2) * tanR;
+      const ty2 = lightY + Math.sin(rayA2) * tanR;
+      // Far ends of shadow rays
+      const fx1 = lightX + Math.cos(rayA1) * len1;
+      const fy1 = lightY + Math.sin(rayA1) * len1;
+      const fx2 = lightX + Math.cos(rayA2) * len2;
+      const fy2 = lightY + Math.sin(rayA2) * len2;
+      ctx.beginPath();
+      ctx.moveTo(tx1 + ox, ty1 + oy);
+      ctx.lineTo(fx1 + ox, fy1 + oy);
+      ctx.lineTo(fx2 + ox, fy2 + oy);
+      ctx.lineTo(tx2 + ox, ty2 + oy);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
 const GL_ATTRS = { alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false };
@@ -13138,6 +13205,8 @@ function render() {
       ctx.globalAlpha = 0.18;
       ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
+      // ---- DYNAMIC SHADOWS: zombies cast 2D shadow volumes in player flashlights ----
+      drawZombieShadows(camera.x, camera.y, screenShake.x, screenShake.y, spotRadius);
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
         lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
