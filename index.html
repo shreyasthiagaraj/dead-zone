@@ -9974,9 +9974,27 @@ function update() {
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Smooth angle lerp — fast lock when targeting, gentle turn otherwise
-      const _aimLerp = _autoAimTarget ? 0.25 : 0.08;
-      _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, _aimLerp);
+      // Angle: instant when moving normally, lerp only when locked on or transitioning out
+      if (_autoAimTarget) {
+        // Locked on target: fast lerp to track
+        _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.25);
+      } else if (shootButtonHeld) {
+        // Shooting but no target: instant to movement direction
+        _autoAimAngle = _desiredAngle;
+      } else if (lp._wasAutoAiming) {
+        // Just released shoot — quick lerp transition back to movement
+        _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.20);
+        // Clear transition flag once close enough
+        let _relDiff = _desiredAngle - _autoAimAngle;
+        while (_relDiff > Math.PI) _relDiff -= Math.PI*2;
+        while (_relDiff < -Math.PI) _relDiff += Math.PI*2;
+        if (Math.abs(_relDiff) < 0.05) lp._wasAutoAiming = false;
+      } else {
+        // Normal movement: instant
+        _autoAimAngle = _desiredAngle;
+      }
+      // Track whether we were aiming (for release transition)
+      if (_autoAimTarget) lp._wasAutoAiming = true;
       lp.angle = _autoAimAngle;
     }
     // Gamepad left stick — additive with keyboard
@@ -11862,19 +11880,22 @@ function update() {
   let camTarget = lp;
   if (!lp.alive) { const alive = players.find(p => p.alive); if (alive) camTarget = alive; }
   // Aim-based camera offset: player sits at ~30% screen width when aiming sideways
-  // Suppress for first 30 frames after section start to prevent jarring pan
+  // Camera aim-ahead offset: only when auto-aiming at a target
   if (window._camSettleFrames > 0) { window._camSettleFrames--; cameraOffset.x = 0; cameraOffset.y = 0; }
-  else {
-    const aimOffsetMax = canvas.width * 0.22;
+  else if (isMobile && _autoAimTarget) {
+    // Shooting at target: offset camera toward it
+    const aimOffsetMax = canvas.width * 0.15;
     const aimCosA = Math.cos(camTarget.angle), aimSinA = Math.sin(camTarget.angle);
-    const targetOffX = aimCosA * aimOffsetMax;
-    const targetOffY = aimSinA * aimOffsetMax * 0.5;
-    cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.012);
-    cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.012);
+    cameraOffset.x = lerp(cameraOffset.x, aimCosA * aimOffsetMax, 0.08);
+    cameraOffset.y = lerp(cameraOffset.y, aimSinA * aimOffsetMax * 0.5, 0.08);
+  } else {
+    // Not aiming: quickly zero out any offset
+    cameraOffset.x = lerp(cameraOffset.x, 0, 0.15);
+    cameraOffset.y = lerp(cameraOffset.y, 0, 0.15);
   }
-  // Camera lerp: constant speed. Fast enough to feel responsive, smooth enough to not jar.
-  const _camLerpSpeed = 0.12;
-  camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,_camLerpSpeed);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,_camLerpSpeed);
+  // Camera position: snap to player. Only lerp when there's a residual offset transitioning out.
+  camera.x = camTarget.x + cameraOffset.x;
+  camera.y = camTarget.y + cameraOffset.y;
   // Clamp camera to playable region, with some wiggle room past the edge so the
   // player doesn't end up glued to the far side of the screen. Without wiggle the
   // camera hard-stops at the wall and the player slides off-center; with wiggle
