@@ -4036,8 +4036,8 @@ let shootButtonHeld = false; // when true, auto-aim engages
 // Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
 
 // Ranges are screen-relative (computed from canvas size at runtime)
-function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 1.0; }
-function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 1.35; }
+function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 0.5; }
+function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 0.7; }
 const AA_PANIC_RADIUS = 60;        // emergency override distance
 const AA_RETARGET_INTERVAL = 1;    // retarget every frame — always track closest
 const AA_SWITCH_THRESHOLD = 0;     // no threshold — switch immediately
@@ -4059,6 +4059,8 @@ function _aaScoreEnemy(z, lp) {
   const d = Math.sqrt(dx*dx + dy*dy);
   const hardR = _aaHardLockRange(), fallR = _aaFallbackRange();
   if (d > fallR) return -999;
+  // Reject enemies behind walls/obstacles
+  if (!hasLineOfSight(lp.x, lp.y, z.x, z.y)) return -999;
 
   let score = 0;
 
@@ -14188,77 +14190,41 @@ function render() {
   }
   ctx.globalAlpha=1;
 
-  // ---- AUTO-AIM RETICLES (3-tier: gray=detected, yellow=in fire range, red=being fired on) ----
-  if (isMobile && gameState === 'playing') {
-    const _aaLp = getLocalPlayer();
-    if (_aaLp && _aaLp.alive) {
-      const _aaDetR = _aaFallbackRange(), _aaDetR2 = _aaDetR * _aaDetR;
-      const _aaFireR = _aaHardLockRange(), _aaFireR2 = _aaFireR * _aaFireR;
-      const _aaT = performance.now();
-      for (const z of zombies) {
-        if (!z || z.hp <= 0) continue;
-        const _aaDx = z.x - _aaLp.x, _aaDy = z.y - _aaLp.y;
-        const _aaD2 = _aaDx*_aaDx + _aaDy*_aaDy;
-        if (_aaD2 > _aaDetR2) continue;
-        const inFireRange = _aaD2 <= _aaFireR2;
-        const isActive = _autoAimTarget === z && shootButtonHeld;
-        // Three tiers: gray=detected, yellow=fire range, red=being fired on
-        let _rColor, _rAlpha, _rGlow, _rWidth, _rSpeed;
-        if (isActive) {
-          _rColor = '#f44'; _rAlpha = 0.9; _rGlow = 16; _rWidth = 2.5; _rSpeed = 0.005;
-        } else if (inFireRange) {
-          _rColor = '#ff0'; _rAlpha = 0.6; _rGlow = 8; _rWidth = 2; _rSpeed = 0.003;
-        } else {
-          // GRAY — must be clearly visible: bright enough to see through fog
-          _rColor = '#bbb'; _rAlpha = 0.5; _rGlow = 4; _rWidth = 1.5; _rSpeed = 0.0015;
-        }
-        const _rSize = z.radius + (isActive ? 14 : inFireRange ? 10 : 8);
-        const _rot = _aaT * _rSpeed;
-        const _pulse = isActive ? (1.0 + Math.sin(_aaT * 0.012) * 0.15) : 1.0;
-        ctx.save();
-        ctx.translate(z.x, z.y);
-        ctx.globalAlpha = _rAlpha;
-        ctx.strokeStyle = _rColor;
-        ctx.shadowColor = _rColor; ctx.shadowBlur = _rGlow;
-        ctx.lineWidth = _rWidth;
-        // Four rotating corner brackets
-        for (let ci = 0; ci < 4; ci++) {
-          const ca = _rot + (ci / 4) * Math.PI * 2;
-          const r = _rSize * _pulse;
-          const bLen = r * 0.45;
-          ctx.save(); ctx.rotate(ca);
-          ctx.beginPath();
-          ctx.moveTo(r, -bLen); ctx.lineTo(r, 0); ctx.lineTo(r - bLen * 0.4, 0);
-          ctx.stroke();
-          ctx.restore();
-        }
-        // Active target (red): inner crosshair + pulsing dot
-        if (isActive) {
-          ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
-          const ch = _rSize * 0.35;
-          ctx.beginPath();
-          ctx.moveTo(-ch, 0); ctx.lineTo(ch, 0);
-          ctx.moveTo(0, -ch); ctx.lineTo(0, ch);
-          ctx.stroke();
-          ctx.globalAlpha = 0.9; ctx.fillStyle = '#f44';
-          ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
-        }
-        // Yellow in-range: center dot
-        else if (inFireRange) {
-          ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff0';
-          ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
-        }
-        // Gray detected: diamond marker so it reads differently from yellow/red
-        else {
-          ctx.globalAlpha = 0.4; ctx.fillStyle = '#bbb';
-          ctx.save(); ctx.rotate(_rot * 2);
-          ctx.beginPath(); ctx.moveTo(0,-3); ctx.lineTo(3,0); ctx.lineTo(0,3); ctx.lineTo(-3,0); ctx.closePath();
-          ctx.fill(); ctx.restore();
-        }
-        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-        ctx.restore();
-      }
+  // ---- AUTO-AIM RETICLE — only on the active target ----
+  if (isMobile && gameState === 'playing' && _autoAimTarget && _autoAimTarget.hp > 0 && shootButtonHeld) {
+    const z = _autoAimTarget;
+    const _aaT = performance.now();
+    const _rSize = z.radius + 14;
+    const _rot = _aaT * 0.005;
+    const _pulse = 1.0 + Math.sin(_aaT * 0.012) * 0.15;
+    ctx.save();
+    ctx.translate(z.x, z.y);
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = '#f44';
+    ctx.shadowColor = '#f44'; ctx.shadowBlur = 16;
+    ctx.lineWidth = 2.5;
+    // Four rotating corner brackets
+    for (let ci = 0; ci < 4; ci++) {
+      const ca = _rot + (ci / 4) * Math.PI * 2;
+      const r = _rSize * _pulse;
+      const bLen = r * 0.45;
+      ctx.save(); ctx.rotate(ca);
+      ctx.beginPath();
+      ctx.moveTo(r, -bLen); ctx.lineTo(r, 0); ctx.lineTo(r - bLen * 0.4, 0);
+      ctx.stroke();
+      ctx.restore();
     }
+    // Inner crosshair + pulsing dot
+    ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
+    const ch = _rSize * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(-ch, 0); ctx.lineTo(ch, 0);
+    ctx.moveTo(0, -ch); ctx.lineTo(0, ch);
+    ctx.stroke();
+    ctx.globalAlpha = 0.9; ctx.fillStyle = '#f44';
+    ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   // Floating texts
