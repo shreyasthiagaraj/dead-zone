@@ -222,3 +222,66 @@ Single inventory slot displayed bottom-right as a glowing hex chip icon (a data 
 - One slot or two? One is cleaner but two lets players combo (Barrier Shard → Overclock → dive in).
 - Auto-use items (Second Wind) vs tap-to-use only? Auto-use is more forgiving but less skill-expressive.
 - Should items persist between sections or expire? Persisting rewards hoarding; expiring rewards aggressive use.
+
+---
+
+# Special Weapon Alternatives
+
+The special button (currently Beacon) can be swapped for a different ability. Player picks their special in The Shell before starting a run.
+
+## 1. BEACON (current default)
+Deploy a turret at your feet. Auto-fires at nearby enemies. Moddable via cards (Trap Mine, Gravity Well, Hazard Zone, element cards). Set-and-forget support fire.
+
+## 2. PULSE NOVA (radial burst)
+Short-range radial blast centered on the player. ~3s cooldown.
+- **Base**: AoE knockback + damage around the player. Clears projectiles in radius.
+- **Fantasy**: "They're too close — push them ALL back." Stand-your-ground defense.
+- **Element scaling**: Inherits dominant class. Thermal nova = Overheat ring. Cryo = freeze pulse. Arc = chain stun outward. Pulse = massive knockback + Exposed. Corrupt = corruption zone.
+- **Card ideas**: Wider radius, reduced cooldown, lingering zone after burst, double-tap chain nova, lifesteal-on-nova.
+
+## 3. DISCHARGE (short-range cone spray / flamethrower)
+Hold special to project a wide cone of energy (~80px range, ~90° angle). Sustained while held, drains a charge bar (2s max). ~5s recharge.
+- **Fantasy**: "Come closer, I dare you." Close-range devastation.
+- **Element scaling**: Visual and effect change based on dominant class:
+  - Thermal: fire stream (classic flamethrower), rapid Overheat stacking
+  - Cryo: frost breath / ice spray, rapid Chill stacking, freezes clusters
+  - Arc: lightning fan / Tesla coil arc, chain-stun spreading through cone
+  - Pulse: concussion wave / wind blast, massive knockback wall + Exposed
+  - Corrupt: glitch beam / corruption spray, rapid Corrupt stacking
+  - No class: raw energy spray (cyan), light damage + stagger
+- **Card ideas**: Wider angle (90°→140°), extended tank (3s), condensed beam (narrow+long), afterburn DOT, walk-and-spray (50% speed while firing), overcharge (final 0.5s = 3x dmg), dual element (alternates between two classes).
+
+## 4. PAYLOAD (grenade launcher)
+Lob a grenade in movement direction. Arcs, bounces once, detonates on second impact or after 1.5s. ~4s cooldown.
+- **Fantasy**: "I'm controlling WHERE damage happens." Indirect fire around corners and into clusters.
+- **Element scaling**: Grenade detonation applies dominant class status in AoE.
+- **Card ideas**: Cluster grenade (splits into 3), sticky grenade (attaches to enemy), element grenades (fire puddle, freeze radius, chain lightning, corruption zone), impact detonation (no bounce), bigger blast radius, rapid payload (2 charges).
+
+## 5. DEADSHOT (sniper / charged shot)
+Charge a powerful long-range piercing shot. Hold special to charge (0.5-1.5s), release to fire. Full charge = massive damage + screen-width pierce. ~6s cooldown.
+- **Fantasy**: "Every other shot is spray. This is the ONE shot that matters."
+- **Element scaling**: Full-charge shot applies heavy class status (3x normal application).
+- **Card ideas**: Railgun (pierces ALL enemies in line), explosive round (AoE at hit point), tracer round (marks target, bullets home toward it 3s), quick draw (half charge time), overcharge (hold past max for 2x dmg, self-damage if too long), headshot protocol (crit scales with charge time).
+
+## 6. RECALL ANCHOR (teleport back) — SHELVED
+Beacon becomes a recall point. Tap again to teleport back with trail damage. Code exists but removed from card pool — dash already covers the escape fantasy. Would need larger arenas or chokepoint mechanics to justify.
+
+## 7. ROCKET / MISSILE (fire-and-forget homing)
+Auto-targets highest-HP enemy. Wobbly arc flight, explodes on contact. ~7s cooldown.
+- **Fantasy**: Anti-elite skip button.
+- **Card ideas**: Multi-lock (3 missiles), seeker swarm (6 tiny), element warhead, EMP missile (mass-stun, no damage).
+
+## 8. LASER BEAM (sustained line)
+Hold to fire continuous beam in facing direction. Can't move while firing. 1.5s max. ~5s cooldown.
+- **Fantasy**: "Plant your feet and melt a line."
+- **Card ideas**: Sweeper (slow rotation), refraction (splits on first hit), element beam, overcharge ramp (1x→3x over duration).
+
+## 9. TETHER (chain to target)
+Auto-locks nearest enemy, deals DOT, slows 30%. Breaks at distance or 3s. ~5s cooldown.
+- **Fantasy**: "Lock down the dangerous one while kiting."
+- **Card ideas**: Multi-tether, element tether, pull enemies toward you, damage transfer between linked enemies.
+
+## Recommended ship order
+1. Beacon (exists), Pulse Nova, Discharge — cover deploy/defense/offense
+2. Payload, Deadshot — add indirect fire and precision
+3. Others as unlockables or character-specific
