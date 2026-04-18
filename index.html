@@ -4128,8 +4128,23 @@ function _aaSelectTarget(lp) {
     const s = _aaScoreEnemy(z, lp);
     if (s > bestScore) { bestScore = s; bestZ = z; }
   }
+  // Also target barrels (not shop chests) and spawners
+  for (const br of barrels) {
+    if (!br || br.hp <= 0 || br._shopChest || br._chest || br._strideChest) continue;
+    const s = _aaScoreEnemy(br, lp);
+    if (s > bestScore) { bestScore = s; bestZ = br; }
+  }
+  // Spawner hazards in current trench section
+  if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].hazards) {
+    for (const h of trenchSections[trenchSection].hazards) {
+      if (!h || !h.alive || h.type !== 'spawner') continue;
+      const s = _aaScoreEnemy(h, lp);
+      if (s > bestScore) { bestScore = s; bestZ = h; }
+    }
+  }
   // Threshold check: only switch if significantly better
-  if (_autoAimTarget && _autoAimTarget.hp > 0 && bestZ !== _autoAimTarget) {
+  const _curAlive = _autoAimTarget && ((_autoAimTarget.hp > 0 || _autoAimTarget.alive) || _autoAimTarget.alive);
+  if (_curAlive && bestZ !== _autoAimTarget) {
     const currentScore = _aaScoreEnemy(_autoAimTarget, lp);
     let threshold = AA_SWITCH_THRESHOLD;
     // Extra threshold if new target is behind player by >120°
@@ -7530,7 +7545,7 @@ function fireWeaponForPlayer(p) {
     const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.18) : 0;
     let sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
     // Bullet magnetism: if auto-aim has a target, nudge bullet angle toward it
-    if (isMobile && _autoAimTarget && _autoAimTarget.hp > 0) {
+    if (isMobile && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
       const _magDx = _autoAimTarget.x - p.x, _magDy = _autoAimTarget.y - p.y;
       const _magA = Math.atan2(_magDy, _magDx);
       let _magDiff = _magA - (p.angle + sp);
@@ -10016,7 +10031,7 @@ function update() {
           _autoAimRetargetTimer = AA_RETARGET_INTERVAL;
           _autoAimTarget = _aaSelectTarget(lp);
         }
-        if (_autoAimTarget && _autoAimTarget.hp > 0) {
+        if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
           _autoAimTarget = null;
@@ -10052,11 +10067,11 @@ function update() {
     }
     {
       let moveSpeed=lp.speed;
-      // Power-up speed boosts
-      if (hasPowerUp('ghost')) moveSpeed *= 1.5;
-      if (hasPowerUp('frenzy')) moveSpeed *= 2;
+      // (ghost/frenzy speed boosts removed — auto-aim rebalance)
       // Slipstream: speed boost after dash
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
+      // Shooting slows movement — forces strategic shoot/move decisions
+      if (isMobile && shootButtonHeld && _autoAimTarget) moveSpeed *= 0.4;
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -14191,10 +14206,10 @@ function render() {
   ctx.globalAlpha=1;
 
   // ---- AUTO-AIM RETICLE — only on the active target ----
-  if (isMobile && gameState === 'playing' && _autoAimTarget && _autoAimTarget.hp > 0 && shootButtonHeld) {
+  if (isMobile && gameState === 'playing' && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive) && shootButtonHeld) {
     const z = _autoAimTarget;
     const _aaT = performance.now();
-    const _rSize = z.radius + 14;
+    const _rSize = (z.radius || 14) + 14;
     const _rot = _aaT * 0.005;
     const _pulse = 1.0 + Math.sin(_aaT * 0.012) * 0.15;
     ctx.save();
