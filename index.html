@@ -4029,7 +4029,57 @@ const keys = {};
 let mouse = { x: 0, y: 0, down: false, worldX: 0, worldY: 0 };
 let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0 };
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
-let shootButtonHeld = false; // when true, left joystick aims instead of moving
+let shootButtonHeld = false; // when true, auto-aim engages
+
+// ---- AUTO-AIM SYSTEM ----
+// Player always moves with left thumb, always fires with right thumb.
+// No manual precision aiming. System auto-locks the best target.
+const AUTO_AIM_RANGE = 300;       // max targeting distance
+const AUTO_AIM_STICKY = 0.85;     // bias to keep current target (0-1, higher = stickier)
+let _autoAimTarget = null;        // current locked zombie ref
+let _autoAimDragX = 0;            // thumb-drag bias X (screen space)
+let _autoAimDragY = 0;            // thumb-drag bias Y (screen space)
+let _autoAimTouchId = null;       // track which touch is on the shoot button
+let _autoAimTouchStartX = 0;
+let _autoAimTouchStartY = 0;
+
+function findAutoAimTarget(lp) {
+  if (!lp || !lp.alive) return null;
+  const r2 = AUTO_AIM_RANGE * AUTO_AIM_RANGE;
+  let bestZ = null, bestScore = -Infinity;
+  const hasDrag = Math.abs(_autoAimDragX) > 15 || Math.abs(_autoAimDragY) > 15;
+  // Normalize drag direction in world space
+  let dragAngle = 0;
+  if (hasDrag) dragAngle = Math.atan2(_autoAimDragY, _autoAimDragX);
+  for (const z of zombies) {
+    if (!z || z.hp <= 0) continue;
+    const dx = z.x - lp.x, dy = z.y - lp.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 > r2 || d2 < 1) continue;
+    const d = Math.sqrt(d2);
+    // Base score: closer = better (1.0 at player, 0.0 at max range)
+    let score = 1.0 - d / AUTO_AIM_RANGE;
+    // Facing bias: prefer enemies roughly in front of the player
+    const angleToZ = Math.atan2(dy, dx);
+    let angleDiff = angleToZ - lp.angle;
+    while (angleDiff > Math.PI) angleDiff -= Math.PI*2;
+    while (angleDiff < -Math.PI) angleDiff += Math.PI*2;
+    score += (1.0 - Math.abs(angleDiff) / Math.PI) * 0.3;
+    // Sticky: if this was our previous target, boost score
+    if (_autoAimTarget === z) score += AUTO_AIM_STICKY;
+    // Drag bias: if player is dragging thumb, prefer enemies in that direction
+    if (hasDrag) {
+      let dragDiff = angleToZ - dragAngle;
+      while (dragDiff > Math.PI) dragDiff -= Math.PI*2;
+      while (dragDiff < -Math.PI) dragDiff += Math.PI*2;
+      score += (1.0 - Math.abs(dragDiff) / Math.PI) * 1.5; // strong bias
+    }
+    // Low HP priority: slightly prefer wounded enemies (finish them off)
+    score += (1.0 - z.hp / z.maxHp) * 0.15;
+    if (score > bestScore) { bestScore = score; bestZ = z; }
+  }
+  return bestZ;
+}
 
 // ---- CAMERA ----
 let camera = { x: 0, y: 0 };
@@ -6602,10 +6652,36 @@ document.getElementById('btn-mark').addEventListener('touchstart', (e) => { e.pr
 document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); }, { passive: false });
 document.getElementById('btn-mark').addEventListener('mousedown', () => { activateSpecial(); });
 document.getElementById('btn-mark').addEventListener('mouseup', () => { if (selectedSpecial === 'deadshot') releaseDeadshot(); });
-// Shoot button: hold to fire, joystick becomes aim while held
-document.getElementById('btn-shoot').addEventListener('touchstart', (e) => { e.preventDefault(); shootButtonHeld = true; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing'); }, { passive: false });
-document.getElementById('btn-shoot').addEventListener('touchend', (e) => { e.preventDefault(); shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); }, { passive: false });
-document.getElementById('btn-shoot').addEventListener('touchcancel', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing'); });
+// Shoot button: hold to auto-aim + fire, drag to bias target selection
+document.getElementById('btn-shoot').addEventListener('touchstart', (e) => {
+  e.preventDefault(); shootButtonHeld = true;
+  const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.add('firing');
+  if (e.changedTouches[0]) {
+    _autoAimTouchId = e.changedTouches[0].identifier;
+    _autoAimTouchStartX = e.changedTouches[0].clientX;
+    _autoAimTouchStartY = e.changedTouches[0].clientY;
+    _autoAimDragX = 0; _autoAimDragY = 0;
+  }
+}, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (t.identifier === _autoAimTouchId) {
+      _autoAimDragX = t.clientX - _autoAimTouchStartX;
+      _autoAimDragY = t.clientY - _autoAimTouchStartY;
+    }
+  }
+}, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchend', (e) => {
+  e.preventDefault(); shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false;
+  _autoAimDragX = 0; _autoAimDragY = 0; _autoAimTouchId = null;
+  const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing');
+}, { passive: false });
+document.getElementById('btn-shoot').addEventListener('touchcancel', () => {
+  shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false;
+  _autoAimDragX = 0; _autoAimDragY = 0; _autoAimTouchId = null;
+  const sb=document.getElementById('btn-shoot'); if(sb) sb.classList.remove('firing');
+});
 document.getElementById('btn-shoot').addEventListener('mousedown', () => { shootButtonHeld = true; rightJoystick.firing = true; rightJoystick.aiming = true; });
 document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootButtonHeld = false; rightJoystick.firing = false; rightJoystick.aiming = false; });
 // Repair button — hold to fix the wall
@@ -9840,24 +9916,30 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: single joystick. Shoot button toggles between move mode and aim mode.
+    // Mobile: AUTO-AIM system. Left thumb ALWAYS moves. Right thumb fires with auto-lock.
     if (isMobile) {
+      // Left joystick ALWAYS controls movement (never hijacked for aiming)
+      if (leftJoystick.active) {
+        dx = leftJoystick.nx; dy = leftJoystick.ny;
+      }
       if (shootButtonHeld) {
-        // SHOOT HELD: always fire. Joystick aims if active, otherwise fire in current direction.
+        // SHOOTING: auto-aim at best target, keep moving
         rightJoystick.aiming = true; rightJoystick.firing = true;
-        if (leftJoystick.active) {
-          const aimMag = Math.sqrt(leftJoystick.nx*leftJoystick.nx + leftJoystick.ny*leftJoystick.ny);
-          if (aimMag > 0.15) lp.angle = Math.atan2(leftJoystick.ny, leftJoystick.nx);
+        _autoAimTarget = findAutoAimTarget(lp);
+        if (_autoAimTarget && _autoAimTarget.hp > 0) {
+          lp.angle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         }
-        // dx/dy stay 0 — no movement while shooting
-      } else {
-        // NOT SHOOTING: joystick moves, player faces movement direction
-        rightJoystick.aiming = false; rightJoystick.firing = false;
-        if (leftJoystick.active) {
-          dx = leftJoystick.nx; dy = leftJoystick.ny;
+        // If no target in range, face movement direction (or keep last angle)
+        else {
           const moveMag = Math.sqrt(dx*dx+dy*dy);
           if (moveMag > 0.2) lp.angle = Math.atan2(dy, dx);
         }
+      } else {
+        // NOT SHOOTING: face movement direction, clear target
+        rightJoystick.aiming = false; rightJoystick.firing = false;
+        _autoAimTarget = null;
+        const moveMag = Math.sqrt(dx*dx+dy*dy);
+        if (moveMag > 0.2) lp.angle = Math.atan2(dy, dx);
       }
     }
     // Gamepad left stick — additive with keyboard
@@ -14012,6 +14094,64 @@ function render() {
     }
   }
   ctx.globalAlpha=1;
+
+  // ---- AUTO-AIM RETICLES ----
+  // Show targeting reticles on all enemies in range. Active target is yellow; others are gray.
+  if (isMobile && gameState === 'playing') {
+    const _aaLp = getLocalPlayer();
+    if (_aaLp && _aaLp.alive) {
+      const _aaR2 = AUTO_AIM_RANGE * AUTO_AIM_RANGE;
+      const _aaT = performance.now();
+      for (const z of zombies) {
+        if (!z || z.hp <= 0) continue;
+        const _aaDx = z.x - _aaLp.x, _aaDy = z.y - _aaLp.y;
+        if (_aaDx*_aaDx + _aaDy*_aaDy > _aaR2) continue;
+        const isActive = _autoAimTarget === z && shootButtonHeld;
+        const _reticleColor = isActive ? '#ff0' : '#666';
+        const _reticleAlpha = isActive ? 0.8 : 0.25;
+        const _reticleSize = z.radius + (isActive ? 10 : 6);
+        const _rot = _aaT * (isActive ? 0.003 : 0.001);
+        const _pulse = isActive ? (1.0 + Math.sin(_aaT * 0.01) * 0.15) : 1.0;
+        ctx.save();
+        ctx.translate(z.x, z.y);
+        ctx.globalAlpha = _reticleAlpha;
+        ctx.strokeStyle = _reticleColor;
+        ctx.shadowColor = _reticleColor;
+        ctx.shadowBlur = isActive ? 10 : 0;
+        ctx.lineWidth = isActive ? 2 : 1;
+        // Four rotating corner brackets
+        for (let ci = 0; ci < 4; ci++) {
+          const ca = _rot + (ci / 4) * Math.PI * 2;
+          const r = _reticleSize * _pulse;
+          const bLen = r * 0.35;
+          ctx.save();
+          ctx.rotate(ca);
+          ctx.beginPath();
+          ctx.moveTo(r, -bLen);
+          ctx.lineTo(r, 0);
+          ctx.lineTo(r - bLen * 0.5, 0);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // Active target: inner crosshair + dot
+        if (isActive) {
+          ctx.globalAlpha = 0.5;
+          ctx.lineWidth = 1;
+          const ch = _reticleSize * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(-ch, 0); ctx.lineTo(ch, 0);
+          ctx.moveTo(0, -ch); ctx.lineTo(0, ch);
+          ctx.stroke();
+          ctx.globalAlpha = 0.7;
+          ctx.fillStyle = '#ff0';
+          ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    }
+  }
 
   // Floating texts
   for(const ft of floatingTexts){
