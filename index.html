@@ -3023,11 +3023,9 @@ function updateTrench() {
     }
   }
   if (sec.spawned && sectionZombies.length === 0 && !sec.cleared) {
-    // More waves to spawn? Trigger countdown instead of clearing.
+    // More waves to spawn? Start next wave immediately.
     if (sec.currentWave < sec.waves.length - 1) {
-      sec.waveSpawnTimer = 60; // ~1s breather between waves (reduced from 1.3s)
-      const cx = sec.x + TW / 2, cy = (TRENCH_HEIGHT / 2) * CELL_SIZE;
-      addFloatingText(cx, cy - 30, 'INCOMING...', '#ff8040');
+      sec.waveSpawnTimer = 5; // near-instant (~80ms, just enough for a frame gap)
       return;
     }
     // Don't clear if spawners are still alive — they must be destroyed too
@@ -3116,6 +3114,8 @@ function updateTrenchFade() {
         if (newSec) {
           trenchSection = newIdx;
           _trenchPrevSection = newIdx;
+          // Clear recall anchor on section transition
+          if (activeBeacon && activeBeacon._recall) { activeBeacon = null; }
           const spawnX = newSec.x + 2.5 * CELL_SIZE;
           const spawnY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
           for (const p of players) {
@@ -3185,6 +3185,8 @@ function updateDescent() {
       descentGateOpen = false;
       descentTopWall = sec.y + sec.height * 0.5;
       if (descentSections[descentSection]) spawnDescentSection(descentSection);
+      // Clear recall anchor on section transition (it's in the old section)
+      if (activeBeacon && activeBeacon._recall) { activeBeacon = null; }
       triggerGlitchSurge(0.4, 48);
     }
   }
@@ -7224,10 +7226,10 @@ function deployBeacon() {
   if (activeBeacon) return; // one at a time
   // Beacon element: only from dedicated beacon element cards (not inherited)
   // Trap Mine shortens the beacon cooldown — mines are single-use, so placements should rotate faster.
-  lp._beaconCooldown = _m.trapMine > 0 ? 240 : BEACON_COOLDOWN;
-  const classId = _m.beaconElement || null;
-  const _beaconDur = BEACON_DURATION + (_m.extendedUptime || 0) * 120; // +2s per level
   const _isRecall = _m.recallAnchor > 0;
+  lp._beaconCooldown = _isRecall ? 180 : (_m.trapMine > 0 ? 240 : BEACON_COOLDOWN); // recall: 3s cooldown
+  const classId = _m.beaconElement || null;
+  const _beaconDur = _isRecall ? 600 : (BEACON_DURATION + (_m.extendedUptime || 0) * 120); // recall: 10s
   activeBeacon = { x: lp.x, y: lp.y, timer: _beaconDur, maxTimer: _beaconDur, angle: 0, fireCd: 0, classId, _armTimer: 60, _recall: _isRecall };
   // Deploy VFX
   const _deployColor = _isRecall ? '#0ff' : '#0ff';
@@ -7330,7 +7332,7 @@ function _triggerRecall(lp, b) {
   addFloatingText(toX, toY - 20, 'RECALLED', '#0ff');
   // Clear beacon
   activeBeacon = null;
-  lp._beaconCooldown = BEACON_COOLDOWN;
+  lp._beaconCooldown = 180; // 3s cooldown after recall (shorter than normal beacon)
 }
 
 function updateBeacon() {
