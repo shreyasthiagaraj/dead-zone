@@ -1339,34 +1339,34 @@ const UPGRADE_POOL = [
   // ---- SYNERGY (epic, max 1, require 1 card from each of 2 classes) ----
   // Each synergy piggybacks one class's status onto another: "applying A also applies B."
   { id:'syn_flash_boil', name:'FLASH BOIL', rarity:'epic', max:1, icon:'♨', color:'#f84',
-    desc:'Applying Overheat to Chilled enemies triggers a steam burst (AoE dmg)',
+    desc:'Overheat on Chilled = steam burst. COMBO: Overheated+Frozen = massive AoE explosion',
     flavor:'fire meets ice. something breaks.', prereqs:['thermal_rounds|burnout_wake','cryo_rounds|cryo_wake'] },
   { id:'syn_live_wire', name:'LIVE WIRE', rarity:'epic', max:1, icon:'⚡', color:'#fa4',
-    desc:'Charged enemies also burn — Overheat DOT while stunned',
+    desc:'Charged enemies burn (DOT). COMBO: Overheated+Charged = arc discharge burst on hit',
     flavor:'the current carries heat.', prereqs:['thermal_rounds|burnout_wake','arc_rounds|static_wake'] },
   { id:'syn_heat_wave', name:'HEAT WAVE', rarity:'epic', max:1, icon:'🔥', color:'#fc8',
-    desc:'Exposed enemies take 2x Overheat damage',
+    desc:'Exposed = 2x Overheat damage. COMBO: Exposed+Overheated enemies explode on death',
     flavor:'vulnerability amplifies the burn.', prereqs:['thermal_rounds|burnout_wake','pulse_shot|impulse_wave'] },
   { id:'syn_viral_burn', name:'VIRAL BURN', rarity:'epic', max:1, icon:'☢', color:'#f64',
-    desc:'Compromised enemies passively burn (Overheat DOT while corrupted)',
+    desc:'Compromised enemies burn (DOT). COMBO: Compromised+Overheated erupt on death spreading Corrupt',
     flavor:'malware ignites the core.', prereqs:['thermal_rounds|burnout_wake','viral_payload|glitch_wake'] },
   { id:'syn_permafrost', name:'PERMAFROST CIRCUIT', rarity:'epic', max:1, icon:'❄', color:'#4ef',
-    desc:'Applying Charged also applies 2 Chill stacks — chain stun = chain freeze',
+    desc:'Charged = +2 Chill stacks. COMBO: Frozen+Charged = lightning shatter nova',
     flavor:'cold conductors. current freezes.', prereqs:['cryo_rounds|cryo_wake','arc_rounds|static_wake'] },
   { id:'syn_shatter_force', name:'SHATTER FORCE', rarity:'epic', max:1, icon:'💎', color:'#aef',
-    desc:'Exposed + Frozen enemies take 3x damage',
+    desc:'Exposed+Frozen = 3x damage. COMBO: killing Exposed+Frozen = ice explosion AoE',
     flavor:'vulnerable ice shatters easily.', prereqs:['cryo_rounds|cryo_wake','pulse_shot|impulse_wave'] },
   { id:'syn_frozen_corrupt', name:'FROZEN CORRUPTION', rarity:'epic', max:1, icon:'🧊', color:'#8af',
-    desc:'Corrupt stacks 2x on Chilled enemies',
+    desc:'Corrupt 2x on Chilled. COMBO: Compromised+Frozen = instant shatter kill',
     flavor:'cold systems corrupt faster.', prereqs:['cryo_rounds|cryo_wake','viral_payload|glitch_wake'] },
   { id:'syn_storm_surge', name:'STORM SURGE', rarity:'epic', max:1, icon:'💨', color:'#4af',
-    desc:'Applying Exposed also applies Charged — every Pulse proc stuns',
+    desc:'Exposed = also Charged. COMBO: Exposed+Charged = chain arc to 3 nearby',
     flavor:'the shockwave carries current.', prereqs:['arc_rounds|static_wake','pulse_shot|impulse_wave'] },
   { id:'syn_fault_line', name:'FAULT LINE', rarity:'epic', max:1, icon:'☣', color:'#84f',
-    desc:'Applying Corrupt also applies Charged — corruption stuns',
+    desc:'Corrupt = also Charged. COMBO: Compromised+Charged = arc pulse to nearby on hit',
     flavor:'corrupted systems spark and lock.', prereqs:['arc_rounds|static_wake','viral_payload|glitch_wake'] },
   { id:'syn_breach_protocol', name:'BREACH PROTOCOL', rarity:'epic', max:1, icon:'⚠', color:'#c8f',
-    desc:'Exposed + Compromised enemies take 2x damage from all sources',
+    desc:'Exposed+Compromised = 2x damage. COMBO: killing Exposed+Compromised = corruption wave',
     flavor:'every vulnerability compounds.', prereqs:['pulse_shot|impulse_wave','viral_payload|glitch_wake'] },
   // ---- BEACON MODS (modify what the beacon does) ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:2, icon:'💣', color:'#fa0',
@@ -8906,7 +8906,31 @@ function dropZombieLoot(z) {
     }
     // (Lv3 Viral death-spread removed — base Compromised death-spread above handles this now.
     //  Lv3 now spreads stacks on hit-to-Compromised — see bullet hit path.)
-    // (Synergy death effects now handled via status piggyback system in apply* functions)
+    // ---- SYNERGY COMBO DEATH EFFECTS ----
+    // HEAT WAVE combo: Exposed + Overheated → AoE explosion on death
+    if (mods.synHeatWave && z._exposed && (z._overheat > 0 || z._burning > 0)) {
+      createExplosion(z.x, z.y, 100, 60, 'player');
+      for(let i=0;i<16;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#cef',type:'explosion'});}
+      screenShake.intensity=Math.max(screenShake.intensity,8);
+    }
+    // VIRAL BURN combo: Compromised + Overheated → eruption spreads Corrupt
+    if (mods.synViralBurn && z._compromised && (z._overheat > 0 || z._burning > 0)) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<90*90){damageZombie(oz,40,0,0);applyCorrupt(oz,2);}}
+      for(let i=0;i<18;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:3+Math.random()*4,color:Math.random()>0.3?'#f64':'#a4f',type:'explosion'});}
+      screenShake.intensity=Math.max(screenShake.intensity,7);
+    }
+    // SHATTER FORCE combo: killing Exposed + Frozen → ice explosion AoE
+    if (mods.synShatterForce && z._exposed && (z._frozen || z._frozenTimer > 0)) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<80*80){damageZombie(oz,35,0,0);applyChill(oz,2);}}
+      for(let i=0;i<20;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#cef',type:'spark'});}
+      screenShake.intensity=Math.max(screenShake.intensity,6);
+    }
+    // BREACH PROTOCOL combo: killing Exposed + Compromised → corruption wave
+    if (mods.synBreachProtocol && z._exposed && z._compromised) {
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<100*100){applyCorrupt(oz,3);applyExposed(oz);}}
+      for(let i=0;i<14;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.5?'#a4f':'#cef',type:'spark'});}
+      screenShake.intensity=Math.max(screenShake.intensity,5);
+    }
   }
   // Siege mode: no enemy health drops — all items come from scheduled spawns
   if (gameMode === 'siege') return;
@@ -10002,16 +10026,53 @@ function update() {
                         }
                       }
                     }
-                    // ---- SYNERGY DAMAGE EFFECTS (piggybacked via status-apply functions above) ----
-                    // SHATTER FORCE: Exposed + Frozen = 3x damage
+                    // ---- SYNERGY EFFECTS: passive piggybacking (in apply* functions) + COMBO payoffs ----
+                    // SHATTER FORCE passive: Exposed + Frozen = 3x damage
                     if (_m.synShatterForce && z._exposed && (z._frozen || z._frozenTimer > 0)) {
                       _dmg = Math.floor(_dmg * 3);
                       for(let si=0;si<8;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:16,maxLife:16,size:3+Math.random()*2,color:Math.random()>0.4?'#aef':'#cef',type:'spark'});}
                     }
-                    // BREACH PROTOCOL: Exposed + Compromised = 2x damage
+                    // BREACH PROTOCOL passive: Exposed + Compromised = 2x damage
                     if (_m.synBreachProtocol && z._exposed && z._compromised) {
                       _dmg = Math.floor(_dmg * 2);
                       for(let ei=0;ei<5;ei++){const ea=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(ea)*3,vy:Math.sin(ea)*3,life:12,maxLife:12,size:3,color:Math.random()>0.5?'#a4f':'#cef',type:'spark'});}
+                    }
+                    // LIVE WIRE combo: Overheated + Charged → arc discharge burst
+                    if (_m.synLiveWire && z._overheat > 0 && z._charged) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(_dmg*0.4),0,0);}}
+                      for(let oi=0;oi<8;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*5,vy:Math.sin(oa)*5,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,5);
+                    }
+                    // FLASH BOIL combo: Overheated + Frozen → massive AoE explosion
+                    if (_m.synFlashBoil && z._overheat > 0 && (z._frozen || z._frozenTimer > 0)) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<100){damageZombie(oz,Math.floor(_dmg*0.6),0,0);}}
+                      for(let ti=0;ti<16;ti++){const ta=Math.random()*Math.PI*2,ts=4+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ta)*ts,vy:Math.sin(ta)*ts,life:20,maxLife:20,size:3+Math.random()*4,color:Math.random()>0.5?'#f84':'#aef',type:'explosion'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,8);
+                    }
+                    // PERMAFROST combo: Frozen + Charged → lightning shatter nova
+                    if (_m.synPermafrost && (z._frozen || z._frozenTimer > 0) && z._charged) {
+                      damageZombie(z, Math.floor(z.maxHp * 0.25), 0, 0);
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){applyCharged(oz);damageZombie(oz,20,0,0);}}
+                      for(let pi=0;pi<12;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:z.x+Math.cos(pa)*80,ty:z.y+Math.sin(pa)*80});}
+                      for(let si=0;si<16;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#4ff',type:'spark'});}
+                      z._frozen=false;z._frozenTimer=0;
+                      screenShake.intensity=Math.max(screenShake.intensity,7);
+                    }
+                    // STORM SURGE combo: Exposed + Charged → chain arc to 3 nearby
+                    if (_m.synStormSurge && z._exposed && z._charged) {
+                      let _ssLast=z;const _ssHit=new Set([z.zid]);for(let ci=0;ci<3;ci++){let bD2=22500,bZ=null;for(const oz of zombies){if(_ssHit.has(oz.zid)||oz.hp<=0)continue;const d2=(oz.x-_ssLast.x)**2+(oz.y-_ssLast.y)**2;if(d2<bD2){bD2=d2;bZ=oz;}}if(!bZ)break;damageZombie(bZ,Math.floor(_dmg*0.3),0,0);applyCharged(bZ);particles.push({x:_ssLast.x,y:_ssLast.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});_ssHit.add(bZ.zid);_ssLast=bZ;}
+                    }
+                    // FAULT LINE combo: Compromised + Charged → arc pulse to nearby on hit
+                    if (_m.synFaultLine && z._compromised && z._charged) {
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(_dmg*0.25),0,0);applyCharged(oz);}}
+                      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:5,color:'#84f',type:'spark'});
+                    }
+                    // FROZEN CORRUPTION combo: Compromised + Frozen → instant shatter kill
+                    if (_m.synFrozenCorrupt && z._compromised && (z._frozen || z._frozenTimer > 0) && z.hp > 0) {
+                      damageZombie(z, z.hp + 1, 0, 0);
+                      addFloatingText(z.x, z.y - z.radius - 14, 'SYSTEM CRASH', '#8af');
+                      for(let si=0;si<20;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.4?'#aef':'#a4f',type:'spark'});}
+                      screenShake.intensity=Math.max(screenShake.intensity,6);
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
                   }
