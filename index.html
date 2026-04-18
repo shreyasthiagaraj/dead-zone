@@ -9938,44 +9938,48 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: AUTO-AIM system. Left thumb ALWAYS moves. Right thumb fires with auto-lock.
-    // Flashlight smoothly tracks the closest detected enemy at all times.
+    // Mobile: AUTO-AIM system.
+    // Hold shoot = AIM MODE (flashlight locks targets, fires only when in yellow range).
+    // Release shoot = normal movement, no aiming.
     if (isMobile) {
       // Left joystick ALWAYS controls movement
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
-      // Always scan for detected enemy (flashlight tracking)
+      // Always scan for nearest detected enemy
       _autoAimDetect = findDetectTarget(lp);
 
-      // Determine desired aim angle
-      let _desiredAngle = _autoAimAngle; // default: hold current
-      if (shootButtonHeld) {
-        // SHOOTING: find fire target, aim at it
-        rightJoystick.aiming = true; rightJoystick.firing = true;
+      let _desiredAngle = _autoAimAngle;
+      if (shootButtonHeld && _autoAimDetect) {
+        // ---- AIM MODE: hold shoot with enemies nearby ----
+        // Flashlight locks toward the best detected/fire target.
+        // Only actually FIRES when a target is in fire range (yellow→red).
+        rightJoystick.aiming = true;
         _autoAimTarget = findFireTarget(lp);
         if (_autoAimTarget && _autoAimTarget.hp > 0) {
+          // In fire range — shoot at this target (red reticle)
+          rightJoystick.firing = true;
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
-        } else if (_autoAimDetect) {
-          // No fire target but detected enemy: aim toward it (flashlight)
-          _desiredAngle = Math.atan2(_autoAimDetect.y - lp.y, _autoAimDetect.x - lp.x);
         } else {
-          const moveMag = Math.sqrt(dx*dx+dy*dy);
-          if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
+          // No fire target — aim toward detected enemy (gray) but DON'T fire
+          rightJoystick.firing = false;
+          _desiredAngle = Math.atan2(_autoAimDetect.y - lp.y, _autoAimDetect.x - lp.x);
         }
-      } else {
-        // NOT SHOOTING: flashlight tracks detected enemy, or faces movement
+      } else if (shootButtonHeld) {
+        // Shoot held but NO enemies detected: not in aim mode, face movement
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
-        if (_autoAimDetect) {
-          _desiredAngle = Math.atan2(_autoAimDetect.y - lp.y, _autoAimDetect.x - lp.x);
-        } else {
-          const moveMag = Math.sqrt(dx*dx+dy*dy);
-          if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
-        }
+        const moveMag = Math.sqrt(dx*dx+dy*dy);
+        if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
+      } else {
+        // ---- NORMAL MODE: not shooting, move freely ----
+        rightJoystick.aiming = false; rightJoystick.firing = false;
+        _autoAimTarget = null;
+        const moveMag = Math.sqrt(dx*dx+dy*dy);
+        if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Smooth lerp — never snap. Faster when shooting (0.15), slower when scanning (0.06).
-      const _aimLerp = shootButtonHeld && _autoAimTarget ? 0.18 : 0.06;
+      // Smooth lerp — faster when locked on fire target, medium in aim mode, slow in normal
+      const _aimLerp = _autoAimTarget ? 0.20 : (shootButtonHeld && _autoAimDetect ? 0.10 : 0.06);
       _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, _aimLerp);
       lp.angle = _autoAimAngle;
     }
@@ -14146,50 +14150,58 @@ function render() {
         if (_aaD2 > _aaDetR2) continue;
         const inFireRange = _aaD2 <= _aaFireR2;
         const isActive = _autoAimTarget === z && shootButtonHeld;
-        // Three tiers
+        // Three tiers: gray=detected, yellow=fire range, red=being fired on
         let _rColor, _rAlpha, _rGlow, _rWidth, _rSpeed;
         if (isActive) {
-          _rColor = '#f44'; _rAlpha = 0.85; _rGlow = 14; _rWidth = 2.5; _rSpeed = 0.004;
+          _rColor = '#f44'; _rAlpha = 0.9; _rGlow = 16; _rWidth = 2.5; _rSpeed = 0.005;
         } else if (inFireRange) {
-          _rColor = '#ff0'; _rAlpha = 0.45; _rGlow = 6; _rWidth = 1.5; _rSpeed = 0.002;
+          _rColor = '#ff0'; _rAlpha = 0.6; _rGlow = 8; _rWidth = 2; _rSpeed = 0.003;
         } else {
-          _rColor = '#888'; _rAlpha = 0.18; _rGlow = 0; _rWidth = 1; _rSpeed = 0.001;
+          // GRAY — must be clearly visible: bright enough to see through fog
+          _rColor = '#bbb'; _rAlpha = 0.5; _rGlow = 4; _rWidth = 1.5; _rSpeed = 0.0015;
         }
-        const _rSize = z.radius + (isActive ? 12 : inFireRange ? 8 : 5);
+        const _rSize = z.radius + (isActive ? 14 : inFireRange ? 10 : 8);
         const _rot = _aaT * _rSpeed;
-        const _pulse = isActive ? (1.0 + Math.sin(_aaT * 0.012) * 0.12) : 1.0;
+        const _pulse = isActive ? (1.0 + Math.sin(_aaT * 0.012) * 0.15) : 1.0;
         ctx.save();
         ctx.translate(z.x, z.y);
         ctx.globalAlpha = _rAlpha;
         ctx.strokeStyle = _rColor;
-        if (_rGlow > 0) { ctx.shadowColor = _rColor; ctx.shadowBlur = _rGlow; }
+        ctx.shadowColor = _rColor; ctx.shadowBlur = _rGlow;
         ctx.lineWidth = _rWidth;
         // Four rotating corner brackets
         for (let ci = 0; ci < 4; ci++) {
           const ca = _rot + (ci / 4) * Math.PI * 2;
           const r = _rSize * _pulse;
-          const bLen = r * 0.4;
+          const bLen = r * 0.45;
           ctx.save(); ctx.rotate(ca);
           ctx.beginPath();
           ctx.moveTo(r, -bLen); ctx.lineTo(r, 0); ctx.lineTo(r - bLen * 0.4, 0);
           ctx.stroke();
           ctx.restore();
         }
-        // Active target: inner crosshair + pulsing dot
+        // Active target (red): inner crosshair + pulsing dot
         if (isActive) {
-          ctx.globalAlpha = 0.6; ctx.lineWidth = 1;
+          ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
           const ch = _rSize * 0.35;
           ctx.beginPath();
           ctx.moveTo(-ch, 0); ctx.lineTo(ch, 0);
           ctx.moveTo(0, -ch); ctx.lineTo(0, ch);
           ctx.stroke();
-          ctx.globalAlpha = 0.8; ctx.fillStyle = '#f44';
+          ctx.globalAlpha = 0.9; ctx.fillStyle = '#f44';
+          ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
+        }
+        // Yellow in-range: center dot
+        else if (inFireRange) {
+          ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff0';
           ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
         }
-        // Yellow in-range: subtle center dot
-        else if (inFireRange) {
-          ctx.globalAlpha = 0.35; ctx.fillStyle = '#ff0';
-          ctx.beginPath(); ctx.arc(0, 0, 1.5, 0, Math.PI*2); ctx.fill();
+        // Gray detected: diamond marker so it reads differently from yellow/red
+        else {
+          ctx.globalAlpha = 0.4; ctx.fillStyle = '#bbb';
+          ctx.save(); ctx.rotate(_rot * 2);
+          ctx.beginPath(); ctx.moveTo(0,-3); ctx.lineTo(3,0); ctx.lineTo(0,3); ctx.lineTo(-3,0); ctx.closePath();
+          ctx.fill(); ctx.restore();
         }
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
         ctx.restore();
