@@ -4031,29 +4031,119 @@ let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0,
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 let shootButtonHeld = false; // when true, auto-aim engages
 
-// ---- AUTO-AIM SYSTEM ----
-// Simple: always target the closest enemy. Player selects targets by moving toward them.
-const AA_RANGE = 600;              // max targeting range
-const AA_BULLET_MAGNETISM = 0.03;  // mild angle correction per bullet
+// ---- AUTO-TARGETING SYSTEM ----
+// Weighted score: distance + threat + facing + stickiness + drag bias + type + visibility.
+// Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
+
+// Ranges are screen-relative (computed from canvas size at runtime)
+function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 1.0; }
+function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 1.35; }
+const AA_PANIC_RADIUS = 60;        // emergency override distance
+const AA_RETARGET_INTERVAL = 6;    // frames between retarget (0.1s at 60fps)
+const AA_SWITCH_THRESHOLD = 15;    // new target must beat current by this much
+const AA_BEHIND_THRESHOLD = 20;    // extra threshold if new target is >120° behind
+const AA_BULLET_MAGNETISM = 0.03;  // mild angle correction per bullet toward target
 
 let _autoAimTarget = null;
+let _autoAimScore = 0;             // current target's score (for threshold comparison)
 let _autoAimAngle = 0;
+let _autoAimRetargetTimer = 0;
 let _autoAimDragX = 0;
 let _autoAimDragY = 0;
 let _autoAimTouchId = null;
 let _autoAimTouchStartX = 0;
 let _autoAimTouchStartY = 0;
 
-function _aaFindClosest(lp) {
+function _aaScoreEnemy(z, lp) {
+  const dx = z.x - lp.x, dy = z.y - lp.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  const hardR = _aaHardLockRange(), fallR = _aaFallbackRange();
+  if (d > fallR) return -999;
+
+  let score = 0;
+
+  // ---- Distance (0–150): closest enemy ALWAYS wins ----
+  score += Math.max(0, (1 - Math.min(d / hardR, 1))) * 150;
+
+  // ---- Threat (0–35): what is this enemy doing? ----
+  let threat = 0;
+  if (z.attackCooldown <= 0 && d < 80) threat += 25;       // actively attacking (melee range)
+  if (z.charger && z.speed > 2.5 && d < 200) threat += 20; // charging toward player
+  if (z._lastDamagedPlayer && gameTime - z._lastDamagedPlayer < 120) threat += 18; // recently hit player
+  if ((z.ranged || z.sniper || z.beamArray) && d < 300) threat += 15; // ranged with LOS
+  if (z.boss || z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') threat += 10; // elite
+  if (z.type === 'fast' || z.type === 'stalker') threat += 8; // fast flanker
+  score += Math.min(threat, 35);
+
+  // ---- Facing (0–20): prefer enemies in front of player ----
+  const angleToZ = Math.atan2(dy, dx);
+  let facingDiff = angleToZ - _autoAimAngle;
+  while (facingDiff > Math.PI) facingDiff -= Math.PI*2;
+  while (facingDiff < -Math.PI) facingDiff += Math.PI*2;
+  score += (1 - Math.abs(facingDiff) / Math.PI) * 20;
+
+  // ---- Stickiness (+18 if current target) ----
+  if (_autoAimTarget === z) score += 18;
+
+  // ---- Aim Bias (0–20): thumb drag direction ----
+  const hasDrag = Math.abs(_autoAimDragX) > 15 || Math.abs(_autoAimDragY) > 15;
+  if (hasDrag) {
+    const dragAngle = Math.atan2(_autoAimDragY, _autoAimDragX);
+    let dragDiff = angleToZ - dragAngle;
+    while (dragDiff > Math.PI) dragDiff -= Math.PI*2;
+    while (dragDiff < -Math.PI) dragDiff += Math.PI*2;
+    score += (1 - Math.abs(dragDiff) / Math.PI) * 20;
+  }
+
+  // ---- Type (0–12): prioritize dangerous enemy types ----
+  if (z.ranged || z.sniper || z.beamArray) score += 12;
+  else if (z.summoner || z.boss) score += 10;
+  else if (z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') score += 8;
+  else if (z.explodeOnDeath || z.bomber) score += 5;
+
+  // ---- Visibility (screen check) ----
+  const sx = z.x - camera.x + canvas.width/2;
+  const sy = z.y - camera.y + canvas.height/2;
+  const margin = 40;
+  if (sx >= -margin && sx <= canvas.width+margin && sy >= -margin && sy <= canvas.height+margin) {
+    score += 10; // on screen
+    if (sx < margin*2 || sx > canvas.width-margin*2 || sy < margin*2 || sy > canvas.height-margin*2) score -= 5; // near edge: net +5
+  } else {
+    score -= 12; // offscreen
+  }
+
+  // ---- Emergency: panic radius ----
+  if (d < AA_PANIC_RADIUS) score += 25;
+
+  return score;
+}
+
+function _aaSelectTarget(lp) {
   if (!lp || !lp.alive) return null;
-  const r2 = AA_RANGE * AA_RANGE;
-  let bestZ = null, bestD2 = Infinity;
+  let bestZ = null, bestScore = -Infinity;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
-    const dx = z.x - lp.x, dy = z.y - lp.y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < r2 && d2 < bestD2) { bestD2 = d2; bestZ = z; }
+    const s = _aaScoreEnemy(z, lp);
+    if (s > bestScore) { bestScore = s; bestZ = z; }
   }
+  // Threshold check: only switch if significantly better
+  if (_autoAimTarget && _autoAimTarget.hp > 0 && bestZ !== _autoAimTarget) {
+    const currentScore = _aaScoreEnemy(_autoAimTarget, lp);
+    let threshold = AA_SWITCH_THRESHOLD;
+    // Extra threshold if new target is behind player by >120°
+    if (bestZ) {
+      const dx = bestZ.x - lp.x, dy = bestZ.y - lp.y;
+      let behindDiff = Math.atan2(dy, dx) - _autoAimAngle;
+      while (behindDiff > Math.PI) behindDiff -= Math.PI*2;
+      while (behindDiff < -Math.PI) behindDiff += Math.PI*2;
+      if (Math.abs(behindDiff) > Math.PI * 2/3) threshold += AA_BEHIND_THRESHOLD;
+    }
+    if (bestScore < currentScore + threshold) {
+      _autoAimScore = currentScore;
+      return _autoAimTarget; // keep current
+    }
+  }
+  _autoAimScore = bestScore;
   return bestZ;
 }
 
@@ -4235,19 +4325,19 @@ const ZOMBIE_SPAWN_IDLE_MAX = 50;
 
 const ZOMBIE_TYPES = {
   // Core roster: fewer, stronger enemies with distinct behaviors
-  normal:   { hp: 180, speed: 3.2, radius: 13, color: '#2f8', damage: 12, score: 100 }, // shambler — neon green
-  fast:     { hp: 110, speed: 3.8, radius: 12, color: '#ff0', damage: 15, score: 150, charger: true }, // sprinter — neon yellow
-  tank:     { hp: 500, speed: 1.8, radius: 20, color: '#0fa', damage: 25, score: 300, groundPound: true }, // bruiser — neon teal
-  spitter:  { hp: 140, speed: 2.4, radius: 12, color: '#a4f', damage: 10, score: 200, ranged: true, fireRate: 2800, spreadShot: true }, // neon purple
-  exploder: { hp: 100, speed: 2.8, radius: 13, color: '#f42', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 80, bomber: true, fireRate: 3000 }, // neon red-orange
-  boss:     { hp: 2200, speed: 2.2, radius: 32, color: '#f0f', damage: 40, score: 500, summoner: true, fireRate: 200 }, // hot magenta — admin process
-  splitter: { hp: 200, speed: 2.2, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
-  mini:     { hp: 90,  speed: 2.6, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3500 }, // neon orange
+  normal:   { hp: 180, speed: 2.6, radius: 13, color: '#2f8', damage: 12, score: 100 }, // shambler — neon green
+  fast:     { hp: 110, speed: 2.8, radius: 12, color: '#ff0', damage: 15, score: 150, charger: true }, // sprinter — neon yellow
+  tank:     { hp: 500, speed: 1.2, radius: 20, color: '#0fa', damage: 25, score: 300, groundPound: true }, // bruiser — neon teal
+  spitter:  { hp: 140, speed: 1.7, radius: 12, color: '#a4f', damage: 10, score: 200, ranged: true, fireRate: 2800, spreadShot: true }, // neon purple — slower fire rate for single-stick controls
+  exploder: { hp: 100, speed: 2.0, radius: 13, color: '#f42', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 80, bomber: true, fireRate: 3000 }, // neon red-orange
+  boss:     { hp: 2200, speed: 1.8, radius: 32, color: '#f0f', damage: 40, score: 500, summoner: true, fireRate: 200 }, // hot magenta — admin process
+  splitter: { hp: 200, speed: 1.5, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
+  mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3500 }, // neon orange — slower for single-stick
   // Beam Array — perches at walls, sweeps a laser beam across the room
-  beam:     { hp: 250, speed: 4.0, radius: 20, color: '#f44', damage: 6, score: 300, beamArray: true },
+  beam:     { hp: 250, speed: 3.5, radius: 20, color: '#f44', damage: 6, score: 300, beamArray: true },
   // Legacy compat
-  brute:    { hp: 350, speed: 2.8, radius: 16, color: '#f80', damage: 20, score: 250 }, // neon orange
-  stalker:  { hp: 80,  speed: 3.0, radius: 11, color: '#08f', damage: 15, score: 200 }, // neon blue
+  brute:    { hp: 350, speed: 2.0, radius: 16, color: '#f80', damage: 20, score: 250 }, // neon orange
+  stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#08f', damage: 15, score: 200 }, // neon blue
 };
 
 // ---- AUDIO ENGINE ----
@@ -4992,12 +5082,14 @@ function raycastToWall(ax, ay, angle, maxDist) {
   return maxDist;
 }
 
-// ---- WEBGL LIGHTING — FULLY DISABLED for auto-aim branch ----
+// ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
-const GL_ATTRS = null;
-const gl = null;
+const GL_ATTRS = { alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false };
+const gl = lightCanvas.getContext('webgl', GL_ATTRS) || lightCanvas.getContext('experimental-webgl', GL_ATTRS);
 let glReady = false;
-const webglSupported = false;
+const webglSupported = (gl !== null);
+lightCanvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); glReady = false; });
+lightCanvas.addEventListener('webglcontextrestored', () => { initGL(); });
 
 // Shaders
 const LIGHT_VS = `
@@ -5315,8 +5407,8 @@ function renderLighting(lights, camX, camY) {
 
 let debugLighting = false;
 
-// Initial GL setup — DISABLED (lighting removed for auto-aim branch)
-// initGL();
+// Initial GL setup
+initGL();
 
 // ---- RESIZE ----
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; minimapCanvas.width = isMobile ? 90 : 130; minimapCanvas.height = isMobile ? 90 : 130; }
@@ -7176,7 +7268,7 @@ function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; hazeParticles = []; activeBeacon = null;
-  _autoAimTarget = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
+  _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
@@ -8233,7 +8325,7 @@ function dash() {
   lp._dashCharges--;
   lp._dashBuffer = false;
   // Auto-aim: dash breaks target lock. Reacquires after dash ends if shoot is still held.
-  _autoAimTarget = null;
+  _autoAimTarget = null; _autoAimRetargetTimer = 0;
   // Start recharge timer — ticks per charge independently
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
   runStats.shockwavesUsed++;
@@ -9909,14 +10001,19 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: AUTO-AIM — always target closest enemy.
+    // Mobile: AUTO-TARGETING system (weighted score, periodic retarget).
     if (isMobile) {
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
       let _desiredAngle = _autoAimAngle;
       if (shootButtonHeld) {
         rightJoystick.aiming = true; rightJoystick.firing = true;
-        _autoAimTarget = _aaFindClosest(lp);
+        // Retarget periodically (every 0.1s), not every frame
+        _autoAimRetargetTimer--;
+        if (_autoAimRetargetTimer <= 0 || !_autoAimTarget || _autoAimTarget.hp <= 0) {
+          _autoAimRetargetTimer = AA_RETARGET_INTERVAL;
+          _autoAimTarget = _aaSelectTarget(lp);
+        }
         if (_autoAimTarget && _autoAimTarget.hp > 0) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
@@ -9927,18 +10024,21 @@ function update() {
       } else {
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
+        _autoAimRetargetTimer = 0;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
+      // Angle: instant when moving, lerp when targeting, quick transition on release
       if (_autoAimTarget) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.25);
         lp._wasAutoAiming = true;
       } else if (lp._wasAutoAiming) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.20);
-        let _rd = _desiredAngle - _autoAimAngle;
-        while (_rd > Math.PI) _rd -= Math.PI*2; while (_rd < -Math.PI) _rd += Math.PI*2;
-        if (Math.abs(_rd) < 0.05) lp._wasAutoAiming = false;
+        let _relDiff = _desiredAngle - _autoAimAngle;
+        while (_relDiff > Math.PI) _relDiff -= Math.PI*2;
+        while (_relDiff < -Math.PI) _relDiff += Math.PI*2;
+        if (Math.abs(_relDiff) < 0.05) lp._wasAutoAiming = false;
       } else {
         _autoAimAngle = _desiredAngle;
       }
@@ -11827,8 +11927,49 @@ function update() {
   let camTarget = lp;
   if (!lp.alive) { const alive = players.find(p => p.alive); if (alive) camTarget = alive; }
   // Aim-based camera offset: player sits at ~30% screen width when aiming sideways
-  // Camera: direct snap to player
-  camera.x = camTarget.x; camera.y = camTarget.y;
+  // Camera: no special behavior — just follow the player directly
+  if (window._camSettleFrames > 0) { window._camSettleFrames--; }
+  cameraOffset.x = 0; cameraOffset.y = 0;
+  camera.x = camTarget.x;
+  camera.y = camTarget.y;
+  // Clamp camera to playable region, with some wiggle room past the edge so the
+  // player doesn't end up glued to the far side of the screen. Without wiggle the
+  // camera hard-stops at the wall and the player slides off-center; with wiggle
+  // the camera is allowed to drift a bit into the void past the edge.
+  {
+    const _hw = canvas.width / 2, _hh = canvas.height / 2;
+    const _wiggleX = canvas.width * 0.18;  // up to ~18% of screen may show past edge
+    const _wiggleY = canvas.height * 0.18;
+    // Figure out the playable bounds for this mode (where the player can actually go)
+    let _minX = 0, _maxX = ARENA_W, _minY = 0, _maxY = ARENA_H;
+    if (gameMode === 'descent') {
+      // Vertical column of DESCENT_WIDTH cells centered in a wider arena
+      const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
+      _minX = _mx * CELL_SIZE;
+      _maxX = (_mx + DESCENT_WIDTH) * CELL_SIZE;
+    } else if (gameMode === 'trench') {
+      // Horizontal corridor of TRENCH_HEIGHT cells tall
+      _minY = 0;
+      _maxY = TRENCH_HEIGHT * CELL_SIZE;
+    }
+    const _regionW = _maxX - _minX, _regionH = _maxY - _minY;
+    // X clamp (with wiggle)
+    if (_regionW + _wiggleX * 2 > canvas.width) {
+      const _lo = _minX + _hw - _wiggleX;
+      const _hi = _maxX - _hw + _wiggleX;
+      camera.x = Math.max(_lo, Math.min(_hi, camera.x));
+    } else {
+      camera.x = (_minX + _maxX) / 2;
+    }
+    // Y clamp (with wiggle)
+    if (_regionH + _wiggleY * 2 > canvas.height) {
+      const _lo = _minY + _hh - _wiggleY;
+      const _hi = _maxY - _hh + _wiggleY;
+      camera.y = Math.max(_lo, Math.min(_hi, camera.y));
+    } else {
+      camera.y = (_minY + _maxY) / 2;
+    }
+  }
 
   if(screenShake.intensity>0.1){screenShake.x=(Math.random()-0.5)*screenShake.intensity*2;screenShake.y=(Math.random()-0.5)*screenShake.intensity*2;screenShake.intensity*=screenShake.decay;}else{screenShake.x=0;screenShake.y=0;screenShake.intensity=0;}
 
@@ -12253,11 +12394,6 @@ function renderMenuBackground() {
 
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  // DEBUG: always show gameState + error at top of screen
-  ctx.fillStyle='#f00';ctx.font='bold 14px monospace';
-  ctx.fillText('ST:'+gameState+' MOB:'+isMobile+' LJ:'+leftJoystick.active+' SH:'+shootButtonHeld+' F:'+rightJoystick.firing,10,20);
-  if(_lastUpdateError)ctx.fillText('ERR:'+_lastUpdateError.substring(0,80),10,38);
-  else ctx.fillText('NO ERR',10,38);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
   if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell') { renderMenuBackground(); renderMinimap(); return; }
@@ -12276,12 +12412,7 @@ function render() {
       _playerNearestZombieDist = Math.sqrt(_best2);
     }
   }
-  // FORCE camera to player in render (debug — bypasses broken update camera)
-  {const _flp=getLocalPlayer();if(_flp&&gameState==='playing'){camera.x=_flp.x;camera.y=_flp.y;}}
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
-  // DEBUG: always draw — shows even if player is null
-  {const _dlp=getLocalPlayer();ctx.fillStyle='#f00';ctx.font='bold 16px monospace';
-  ctx.fillText('GS:'+gameState+' P:'+(_dlp?Math.round(_dlp.x)+','+Math.round(_dlp.y):'NULL')+' C:'+Math.round(camera.x)+','+Math.round(camera.y)+' Z:'+zombies.length+' PL:'+players.length,10,40);}
   ctx.save();ctx.translate(ox,oy);
 
   // Floor + walls with room themes
@@ -14061,17 +14192,24 @@ function render() {
   if (isMobile && gameState === 'playing') {
     const _aaLp = getLocalPlayer();
     if (_aaLp && _aaLp.alive) {
-      const _aaR2 = AA_RANGE * AA_RANGE;
+      const _aaDetR = _aaFallbackRange(), _aaDetR2 = _aaDetR * _aaDetR;
+      const _aaFireR = _aaHardLockRange(), _aaFireR2 = _aaFireR * _aaFireR;
       const _aaT = performance.now();
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
         const _aaDx = z.x - _aaLp.x, _aaDy = z.y - _aaLp.y;
-        if (_aaDx*_aaDx + _aaDy*_aaDy > _aaR2) continue;
+        const _aaD2 = _aaDx*_aaDx + _aaDy*_aaDy;
+        if (_aaD2 > _aaDetR2) continue;
+        const inFireRange = _aaD2 <= _aaFireR2;
         const isActive = _autoAimTarget === z && shootButtonHeld;
+        // Three tiers: gray=detected, yellow=fire range, red=being fired on
         let _rColor, _rAlpha, _rGlow, _rWidth, _rSpeed;
         if (isActive) {
           _rColor = '#f44'; _rAlpha = 0.9; _rGlow = 16; _rWidth = 2.5; _rSpeed = 0.005;
+        } else if (inFireRange) {
+          _rColor = '#ff0'; _rAlpha = 0.6; _rGlow = 8; _rWidth = 2; _rSpeed = 0.003;
         } else {
+          // GRAY — must be clearly visible: bright enough to see through fog
           _rColor = '#bbb'; _rAlpha = 0.5; _rGlow = 4; _rWidth = 1.5; _rSpeed = 0.0015;
         }
         const _rSize = z.radius + (isActive ? 14 : inFireRange ? 10 : 8);
@@ -14105,7 +14243,12 @@ function render() {
           ctx.globalAlpha = 0.9; ctx.fillStyle = '#f44';
           ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
         }
-        // Gray: small diamond center
+        // Yellow in-range: center dot
+        else if (inFireRange) {
+          ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff0';
+          ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
+        }
+        // Gray detected: diamond marker so it reads differently from yellow/red
         else {
           ctx.globalAlpha = 0.4; ctx.fillStyle = '#bbb';
           ctx.save(); ctx.rotate(_rot * 2);
@@ -14567,8 +14710,7 @@ function renderMinimap(){
 // ============================================================
 // GAME LOOP
 // ============================================================
-let _lastUpdateError = '';
-function gameLoop(){try{update();}catch(e){_lastUpdateError=e.message+' @'+((e.stack||'').split('\n')[1]||'').trim();console.error('UPDATE ERROR:',e);}try{render();}catch(e2){console.error('RENDER ERROR:',e2);}requestAnimationFrame(gameLoop);}
+function gameLoop(){try{update();}catch(e){console.error('UPDATE ERROR:',e);}render();requestAnimationFrame(gameLoop);}
 // Preload audio on page load so the very first user interaction can play music immediately.
 // AudioContext is created in suspended state (allowed without user gesture in modern browsers);
 // audio files decode in parallel so the music buffer is ready by the time the user clicks.
