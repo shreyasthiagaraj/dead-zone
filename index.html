@@ -4031,119 +4031,29 @@ let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0,
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 let shootButtonHeld = false; // when true, auto-aim engages
 
-// ---- AUTO-TARGETING SYSTEM ----
-// Weighted score: distance + threat + facing + stickiness + drag bias + type + visibility.
-// Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
-
-// Ranges are screen-relative (computed from canvas size at runtime)
-function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 1.0; }
-function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 1.35; }
-const AA_PANIC_RADIUS = 60;        // emergency override distance
-const AA_RETARGET_INTERVAL = 6;    // frames between retarget (0.1s at 60fps)
-const AA_SWITCH_THRESHOLD = 15;    // new target must beat current by this much
-const AA_BEHIND_THRESHOLD = 20;    // extra threshold if new target is >120° behind
-const AA_BULLET_MAGNETISM = 0.03;  // mild angle correction per bullet toward target
+// ---- AUTO-AIM SYSTEM ----
+// Simple: always target the closest enemy. Player selects targets by moving toward them.
+const AA_RANGE = 600;              // max targeting range
+const AA_BULLET_MAGNETISM = 0.03;  // mild angle correction per bullet
 
 let _autoAimTarget = null;
-let _autoAimScore = 0;             // current target's score (for threshold comparison)
 let _autoAimAngle = 0;
-let _autoAimRetargetTimer = 0;
 let _autoAimDragX = 0;
 let _autoAimDragY = 0;
 let _autoAimTouchId = null;
 let _autoAimTouchStartX = 0;
 let _autoAimTouchStartY = 0;
 
-function _aaScoreEnemy(z, lp) {
-  const dx = z.x - lp.x, dy = z.y - lp.y;
-  const d = Math.sqrt(dx*dx + dy*dy);
-  const hardR = _aaHardLockRange(), fallR = _aaFallbackRange();
-  if (d > fallR) return -999;
-
-  let score = 0;
-
-  // ---- Distance (0–60): closer = ALWAYS prioritized ----
-  score += Math.max(0, (1 - Math.min(d / hardR, 1))) * 60;
-
-  // ---- Threat (0–35): what is this enemy doing? ----
-  let threat = 0;
-  if (z.attackCooldown <= 0 && d < 80) threat += 25;       // actively attacking (melee range)
-  if (z.charger && z.speed > 2.5 && d < 200) threat += 20; // charging toward player
-  if (z._lastDamagedPlayer && gameTime - z._lastDamagedPlayer < 120) threat += 18; // recently hit player
-  if ((z.ranged || z.sniper || z.beamArray) && d < 300) threat += 15; // ranged with LOS
-  if (z.boss || z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') threat += 10; // elite
-  if (z.type === 'fast' || z.type === 'stalker') threat += 8; // fast flanker
-  score += Math.min(threat, 35);
-
-  // ---- Facing (0–20): prefer enemies in front of player ----
-  const angleToZ = Math.atan2(dy, dx);
-  let facingDiff = angleToZ - _autoAimAngle;
-  while (facingDiff > Math.PI) facingDiff -= Math.PI*2;
-  while (facingDiff < -Math.PI) facingDiff += Math.PI*2;
-  score += (1 - Math.abs(facingDiff) / Math.PI) * 20;
-
-  // ---- Stickiness (+18 if current target) ----
-  if (_autoAimTarget === z) score += 18;
-
-  // ---- Aim Bias (0–20): thumb drag direction ----
-  const hasDrag = Math.abs(_autoAimDragX) > 15 || Math.abs(_autoAimDragY) > 15;
-  if (hasDrag) {
-    const dragAngle = Math.atan2(_autoAimDragY, _autoAimDragX);
-    let dragDiff = angleToZ - dragAngle;
-    while (dragDiff > Math.PI) dragDiff -= Math.PI*2;
-    while (dragDiff < -Math.PI) dragDiff += Math.PI*2;
-    score += (1 - Math.abs(dragDiff) / Math.PI) * 20;
-  }
-
-  // ---- Type (0–12): prioritize dangerous enemy types ----
-  if (z.ranged || z.sniper || z.beamArray) score += 12;
-  else if (z.summoner || z.boss) score += 10;
-  else if (z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') score += 8;
-  else if (z.explodeOnDeath || z.bomber) score += 5;
-
-  // ---- Visibility (screen check) ----
-  const sx = z.x - camera.x + canvas.width/2;
-  const sy = z.y - camera.y + canvas.height/2;
-  const margin = 40;
-  if (sx >= -margin && sx <= canvas.width+margin && sy >= -margin && sy <= canvas.height+margin) {
-    score += 10; // on screen
-    if (sx < margin*2 || sx > canvas.width-margin*2 || sy < margin*2 || sy > canvas.height-margin*2) score -= 5; // near edge: net +5
-  } else {
-    score -= 12; // offscreen
-  }
-
-  // ---- Emergency: panic radius ----
-  if (d < AA_PANIC_RADIUS) score += 25;
-
-  return score;
-}
-
-function _aaSelectTarget(lp) {
+function _aaFindClosest(lp) {
   if (!lp || !lp.alive) return null;
-  let bestZ = null, bestScore = -Infinity;
+  const r2 = AA_RANGE * AA_RANGE;
+  let bestZ = null, bestD2 = Infinity;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
-    const s = _aaScoreEnemy(z, lp);
-    if (s > bestScore) { bestScore = s; bestZ = z; }
+    const dx = z.x - lp.x, dy = z.y - lp.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < r2 && d2 < bestD2) { bestD2 = d2; bestZ = z; }
   }
-  // Threshold check: only switch if significantly better
-  if (_autoAimTarget && _autoAimTarget.hp > 0 && bestZ !== _autoAimTarget) {
-    const currentScore = _aaScoreEnemy(_autoAimTarget, lp);
-    let threshold = AA_SWITCH_THRESHOLD;
-    // Extra threshold if new target is behind player by >120°
-    if (bestZ) {
-      const dx = bestZ.x - lp.x, dy = bestZ.y - lp.y;
-      let behindDiff = Math.atan2(dy, dx) - _autoAimAngle;
-      while (behindDiff > Math.PI) behindDiff -= Math.PI*2;
-      while (behindDiff < -Math.PI) behindDiff += Math.PI*2;
-      if (Math.abs(behindDiff) > Math.PI * 2/3) threshold += AA_BEHIND_THRESHOLD;
-    }
-    if (bestScore < currentScore + threshold) {
-      _autoAimScore = currentScore;
-      return _autoAimTarget; // keep current
-    }
-  }
-  _autoAimScore = bestScore;
   return bestZ;
 }
 
@@ -8325,7 +8235,7 @@ function dash() {
   lp._dashCharges--;
   lp._dashBuffer = false;
   // Auto-aim: dash breaks target lock. Reacquires after dash ends if shoot is still held.
-  _autoAimTarget = null; _autoAimRetargetTimer = 0;
+  _autoAimTarget = null;
   // Start recharge timer — ticks per charge independently
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
   runStats.shockwavesUsed++;
@@ -10001,19 +9911,14 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: AUTO-TARGETING system (weighted score, periodic retarget).
+    // Mobile: AUTO-AIM — always target closest enemy.
     if (isMobile) {
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
       let _desiredAngle = _autoAimAngle;
       if (shootButtonHeld) {
         rightJoystick.aiming = true; rightJoystick.firing = true;
-        // Retarget periodically (every 0.1s), not every frame
-        _autoAimRetargetTimer--;
-        if (_autoAimRetargetTimer <= 0 || !_autoAimTarget || _autoAimTarget.hp <= 0) {
-          _autoAimRetargetTimer = AA_RETARGET_INTERVAL;
-          _autoAimTarget = _aaSelectTarget(lp);
-        }
+        _autoAimTarget = _aaFindClosest(lp);
         if (_autoAimTarget && _autoAimTarget.hp > 0) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
@@ -10024,21 +9929,18 @@ function update() {
       } else {
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
-        _autoAimRetargetTimer = 0;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Angle: instant when moving, lerp when targeting, quick transition on release
       if (_autoAimTarget) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.25);
         lp._wasAutoAiming = true;
       } else if (lp._wasAutoAiming) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.20);
-        let _relDiff = _desiredAngle - _autoAimAngle;
-        while (_relDiff > Math.PI) _relDiff -= Math.PI*2;
-        while (_relDiff < -Math.PI) _relDiff += Math.PI*2;
-        if (Math.abs(_relDiff) < 0.05) lp._wasAutoAiming = false;
+        let _rd = _desiredAngle - _autoAimAngle;
+        while (_rd > Math.PI) _rd -= Math.PI*2; while (_rd < -Math.PI) _rd += Math.PI*2;
+        if (Math.abs(_rd) < 0.05) lp._wasAutoAiming = false;
       } else {
         _autoAimAngle = _desiredAngle;
       }
@@ -14192,24 +14094,17 @@ function render() {
   if (isMobile && gameState === 'playing') {
     const _aaLp = getLocalPlayer();
     if (_aaLp && _aaLp.alive) {
-      const _aaDetR = _aaFallbackRange(), _aaDetR2 = _aaDetR * _aaDetR;
-      const _aaFireR = _aaHardLockRange(), _aaFireR2 = _aaFireR * _aaFireR;
+      const _aaR2 = AA_RANGE * AA_RANGE;
       const _aaT = performance.now();
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
         const _aaDx = z.x - _aaLp.x, _aaDy = z.y - _aaLp.y;
-        const _aaD2 = _aaDx*_aaDx + _aaDy*_aaDy;
-        if (_aaD2 > _aaDetR2) continue;
-        const inFireRange = _aaD2 <= _aaFireR2;
+        if (_aaDx*_aaDx + _aaDy*_aaDy > _aaR2) continue;
         const isActive = _autoAimTarget === z && shootButtonHeld;
-        // Three tiers: gray=detected, yellow=fire range, red=being fired on
         let _rColor, _rAlpha, _rGlow, _rWidth, _rSpeed;
         if (isActive) {
           _rColor = '#f44'; _rAlpha = 0.9; _rGlow = 16; _rWidth = 2.5; _rSpeed = 0.005;
-        } else if (inFireRange) {
-          _rColor = '#ff0'; _rAlpha = 0.6; _rGlow = 8; _rWidth = 2; _rSpeed = 0.003;
         } else {
-          // GRAY — must be clearly visible: bright enough to see through fog
           _rColor = '#bbb'; _rAlpha = 0.5; _rGlow = 4; _rWidth = 1.5; _rSpeed = 0.0015;
         }
         const _rSize = z.radius + (isActive ? 14 : inFireRange ? 10 : 8);
@@ -14243,12 +14138,7 @@ function render() {
           ctx.globalAlpha = 0.9; ctx.fillStyle = '#f44';
           ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
         }
-        // Yellow in-range: center dot
-        else if (inFireRange) {
-          ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff0';
-          ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
-        }
-        // Gray detected: diamond marker so it reads differently from yellow/red
+        // Gray: small diamond center
         else {
           ctx.globalAlpha = 0.4; ctx.fillStyle = '#bbb';
           ctx.save(); ctx.rotate(_rot * 2);
