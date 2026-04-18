@@ -4031,70 +4031,122 @@ let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0,
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 let shootButtonHeld = false; // when true, auto-aim engages
 
-// ---- AUTO-AIM SYSTEM ----
-// Player always moves with left thumb, always fires with right thumb.
-// Three tiers: DETECT (gray reticle, flashlight tracks), FIRE (yellow, in attack range),
-// ACTIVE (red, currently being shot at).
-const AUTO_AIM_DETECT_RANGE = 400; // flashlight + gray reticles
-const AUTO_AIM_FIRE_RANGE = 160;   // yellow reticles + can fire on
-const AUTO_AIM_STICKY = 0.85;
-let _autoAimTarget = null;         // current fire target (red)
-let _autoAimDetect = null;         // closest detected enemy for flashlight (gray/yellow)
-let _autoAimAngle = 0;             // smoothed aim angle (lerps, never snaps)
+// ---- AUTO-TARGETING SYSTEM ----
+// Weighted score: distance + threat + facing + stickiness + drag bias + type + visibility.
+// Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
+
+// Ranges are screen-relative (computed from canvas size at runtime)
+function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 1.0; }
+function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 1.35; }
+const AA_PANIC_RADIUS = 60;        // emergency override distance
+const AA_RETARGET_INTERVAL = 6;    // frames between retarget (0.1s at 60fps)
+const AA_SWITCH_THRESHOLD = 15;    // new target must beat current by this much
+const AA_BEHIND_THRESHOLD = 20;    // extra threshold if new target is >120° behind
+const AA_BULLET_MAGNETISM = 0.03;  // mild angle correction per bullet toward target
+
+let _autoAimTarget = null;
+let _autoAimScore = 0;             // current target's score (for threshold comparison)
+let _autoAimAngle = 0;
+let _autoAimRetargetTimer = 0;
 let _autoAimDragX = 0;
 let _autoAimDragY = 0;
 let _autoAimTouchId = null;
 let _autoAimTouchStartX = 0;
 let _autoAimTouchStartY = 0;
 
-// Find the best fire target (within FIRE range). Drag bias applies here.
-function findFireTarget(lp) {
-  if (!lp || !lp.alive) return null;
-  const r2 = AUTO_AIM_FIRE_RANGE * AUTO_AIM_FIRE_RANGE;
-  let bestZ = null, bestScore = -Infinity;
+function _aaScoreEnemy(z, lp) {
+  const dx = z.x - lp.x, dy = z.y - lp.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  const hardR = _aaHardLockRange(), fallR = _aaFallbackRange();
+  if (d > fallR) return -999;
+
+  let score = 0;
+
+  // ---- Distance (0–35): closer = higher ----
+  score += Math.max(0, (1 - Math.min(d / hardR, 1))) * 35;
+
+  // ---- Threat (0–35): what is this enemy doing? ----
+  let threat = 0;
+  if (z.attackCooldown <= 0 && d < 80) threat += 25;       // actively attacking (melee range)
+  if (z.charger && z.speed > 2.5 && d < 200) threat += 20; // charging toward player
+  if (z._lastDamagedPlayer && gameTime - z._lastDamagedPlayer < 120) threat += 18; // recently hit player
+  if ((z.ranged || z.sniper || z.beamArray) && d < 300) threat += 15; // ranged with LOS
+  if (z.boss || z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') threat += 10; // elite
+  if (z.type === 'fast' || z.type === 'stalker') threat += 8; // fast flanker
+  score += Math.min(threat, 35);
+
+  // ---- Facing (0–20): prefer enemies in front of player ----
+  const angleToZ = Math.atan2(dy, dx);
+  let facingDiff = angleToZ - _autoAimAngle;
+  while (facingDiff > Math.PI) facingDiff -= Math.PI*2;
+  while (facingDiff < -Math.PI) facingDiff += Math.PI*2;
+  score += (1 - Math.abs(facingDiff) / Math.PI) * 20;
+
+  // ---- Stickiness (+18 if current target) ----
+  if (_autoAimTarget === z) score += 18;
+
+  // ---- Aim Bias (0–20): thumb drag direction ----
   const hasDrag = Math.abs(_autoAimDragX) > 15 || Math.abs(_autoAimDragY) > 15;
-  let dragAngle = 0;
-  if (hasDrag) dragAngle = Math.atan2(_autoAimDragY, _autoAimDragX);
-  for (const z of zombies) {
-    if (!z || z.hp <= 0) continue;
-    const dx = z.x - lp.x, dy = z.y - lp.y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 > r2 || d2 < 1) continue;
-    const d = Math.sqrt(d2);
-    let score = 1.0 - d / AUTO_AIM_FIRE_RANGE;
-    const angleToZ = Math.atan2(dy, dx);
-    let angleDiff = angleToZ - _autoAimAngle;
-    while (angleDiff > Math.PI) angleDiff -= Math.PI*2;
-    while (angleDiff < -Math.PI) angleDiff += Math.PI*2;
-    score += (1.0 - Math.abs(angleDiff) / Math.PI) * 0.3;
-    if (_autoAimTarget === z) score += AUTO_AIM_STICKY;
-    if (hasDrag) {
-      let dragDiff = angleToZ - dragAngle;
-      while (dragDiff > Math.PI) dragDiff -= Math.PI*2;
-      while (dragDiff < -Math.PI) dragDiff += Math.PI*2;
-      score += (1.0 - Math.abs(dragDiff) / Math.PI) * 1.5;
-    }
-    score += (1.0 - z.hp / z.maxHp) * 0.15;
-    if (score > bestScore) { bestScore = score; bestZ = z; }
+  if (hasDrag) {
+    const dragAngle = Math.atan2(_autoAimDragY, _autoAimDragX);
+    let dragDiff = angleToZ - dragAngle;
+    while (dragDiff > Math.PI) dragDiff -= Math.PI*2;
+    while (dragDiff < -Math.PI) dragDiff += Math.PI*2;
+    score += (1 - Math.abs(dragDiff) / Math.PI) * 20;
   }
-  return bestZ;
+
+  // ---- Type (0–12): prioritize dangerous enemy types ----
+  if (z.ranged || z.sniper || z.beamArray) score += 12;
+  else if (z.summoner || z.boss) score += 10;
+  else if (z.type === 'tank' || z.type === 'brute' || z.type === 'shielder') score += 8;
+  else if (z.explodeOnDeath || z.bomber) score += 5;
+
+  // ---- Visibility (screen check) ----
+  const sx = z.x - camera.x + canvas.width/2;
+  const sy = z.y - camera.y + canvas.height/2;
+  const margin = 40;
+  if (sx >= -margin && sx <= canvas.width+margin && sy >= -margin && sy <= canvas.height+margin) {
+    score += 10; // on screen
+    if (sx < margin*2 || sx > canvas.width-margin*2 || sy < margin*2 || sy > canvas.height-margin*2) score -= 5; // near edge: net +5
+  } else {
+    score -= 12; // offscreen
+  }
+
+  // ---- Emergency: panic radius ----
+  if (d < AA_PANIC_RADIUS) score += 25;
+
+  return score;
 }
 
-// Find the closest detected enemy (within DETECT range) for flashlight tracking.
-function findDetectTarget(lp) {
+function _aaSelectTarget(lp) {
   if (!lp || !lp.alive) return null;
-  const r2 = AUTO_AIM_DETECT_RANGE * AUTO_AIM_DETECT_RANGE;
-  let bestZ = null, bestD2 = Infinity;
+  let bestZ = null, bestScore = -Infinity;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
-    const dx = z.x - lp.x, dy = z.y - lp.y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < r2 && d2 < bestD2) { bestD2 = d2; bestZ = z; }
+    const s = _aaScoreEnemy(z, lp);
+    if (s > bestScore) { bestScore = s; bestZ = z; }
   }
+  // Threshold check: only switch if significantly better
+  if (_autoAimTarget && _autoAimTarget.hp > 0 && bestZ !== _autoAimTarget) {
+    const currentScore = _aaScoreEnemy(_autoAimTarget, lp);
+    let threshold = AA_SWITCH_THRESHOLD;
+    // Extra threshold if new target is behind player by >120°
+    if (bestZ) {
+      const dx = bestZ.x - lp.x, dy = bestZ.y - lp.y;
+      let behindDiff = Math.atan2(dy, dx) - _autoAimAngle;
+      while (behindDiff > Math.PI) behindDiff -= Math.PI*2;
+      while (behindDiff < -Math.PI) behindDiff += Math.PI*2;
+      if (Math.abs(behindDiff) > Math.PI * 2/3) threshold += AA_BEHIND_THRESHOLD;
+    }
+    if (bestScore < currentScore + threshold) {
+      _autoAimScore = currentScore;
+      return _autoAimTarget; // keep current
+    }
+  }
+  _autoAimScore = bestScore;
   return bestZ;
 }
 
-// Smooth angle lerp that handles wrapping correctly
 function lerpAngle(from, to, t) {
   let diff = to - from;
   while (diff > Math.PI) diff -= Math.PI*2;
@@ -7474,7 +7526,16 @@ function fireWeaponForPlayer(p) {
   for (let si = 0; si < shotCount; si++) {
     const _isWideExtra = si >= (isTriple ? 3 : 1);
     const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.18) : 0;
-    const sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
+    let sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
+    // Bullet magnetism: if auto-aim has a target, nudge bullet angle toward it
+    if (isMobile && _autoAimTarget && _autoAimTarget.hp > 0) {
+      const _magDx = _autoAimTarget.x - p.x, _magDy = _autoAimTarget.y - p.y;
+      const _magA = Math.atan2(_magDy, _magDx);
+      let _magDiff = _magA - (p.angle + sp);
+      while (_magDiff > Math.PI) _magDiff -= Math.PI*2;
+      while (_magDiff < -Math.PI) _magDiff += Math.PI*2;
+      sp += _magDiff * AA_BULLET_MAGNETISM;
+    }
     const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
     let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage;
     if (_isWideExtra) dmg = Math.floor(gun.damage * (gun.wideSpreadDmgMult || 0.7));
@@ -8263,6 +8324,8 @@ function dash() {
   if (lp._dashCharges <= 0) return; // no charges available
   lp._dashCharges--;
   lp._dashBuffer = false;
+  // Auto-aim: dash breaks target lock. Reacquires after dash ends if shoot is still held.
+  _autoAimTarget = null; _autoAimRetargetTimer = 0;
   // Start recharge timer — ticks per charge independently
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
   runStats.shockwavesUsed++;
@@ -9938,20 +10001,19 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: AUTO-AIM system.
-    // Hold shoot = always fire + lock onto target. Release = normal movement.
+    // Mobile: AUTO-TARGETING system (weighted score, periodic retarget).
     if (isMobile) {
-      // Left joystick ALWAYS controls movement
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
-
-      // Always scan for detected enemies (for reticle display)
-      _autoAimDetect = findDetectTarget(lp);
 
       let _desiredAngle = _autoAimAngle;
       if (shootButtonHeld) {
-        // ---- SHOOTING: always fire. Re-evaluate target each frame (closest wins). ----
         rightJoystick.aiming = true; rightJoystick.firing = true;
-        _autoAimTarget = findFireTarget(lp);
+        // Retarget periodically (every 0.1s), not every frame
+        _autoAimRetargetTimer--;
+        if (_autoAimRetargetTimer <= 0 || !_autoAimTarget || _autoAimTarget.hp <= 0) {
+          _autoAimRetargetTimer = AA_RETARGET_INTERVAL;
+          _autoAimTarget = _aaSelectTarget(lp);
+        }
         if (_autoAimTarget && _autoAimTarget.hp > 0) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
@@ -9960,34 +10022,26 @@ function update() {
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
         }
       } else {
-        // ---- NOT SHOOTING: normal movement, no lock-on ----
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
+        _autoAimRetargetTimer = 0;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Angle: instant when moving normally, lerp only when locked on or transitioning out
+      // Angle: instant when moving, lerp when targeting, quick transition on release
       if (_autoAimTarget) {
-        // Locked on target: fast lerp to track
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.25);
-      } else if (shootButtonHeld) {
-        // Shooting but no target: instant to movement direction
-        _autoAimAngle = _desiredAngle;
+        lp._wasAutoAiming = true;
       } else if (lp._wasAutoAiming) {
-        // Just released shoot — quick lerp transition back to movement
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.20);
-        // Clear transition flag once close enough
         let _relDiff = _desiredAngle - _autoAimAngle;
         while (_relDiff > Math.PI) _relDiff -= Math.PI*2;
         while (_relDiff < -Math.PI) _relDiff += Math.PI*2;
         if (Math.abs(_relDiff) < 0.05) lp._wasAutoAiming = false;
       } else {
-        // Normal movement: instant
         _autoAimAngle = _desiredAngle;
       }
-      // Track whether we were aiming (for release transition)
-      if (_autoAimTarget) lp._wasAutoAiming = true;
       lp.angle = _autoAimAngle;
     }
     // Gamepad left stick — additive with keyboard
@@ -14138,8 +14192,8 @@ function render() {
   if (isMobile && gameState === 'playing') {
     const _aaLp = getLocalPlayer();
     if (_aaLp && _aaLp.alive) {
-      const _aaDetR2 = AUTO_AIM_DETECT_RANGE * AUTO_AIM_DETECT_RANGE;
-      const _aaFireR2 = AUTO_AIM_FIRE_RANGE * AUTO_AIM_FIRE_RANGE;
+      const _aaDetR = _aaFallbackRange(), _aaDetR2 = _aaDetR * _aaDetR;
+      const _aaFireR = _aaHardLockRange(), _aaFireR2 = _aaFireR * _aaFireR;
       const _aaT = performance.now();
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
