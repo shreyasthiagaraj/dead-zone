@@ -4771,76 +4771,6 @@ function raycastToWall(ax, ay, angle, maxDist) {
   return maxDist;
 }
 
-// Dynamic zombie shadows: parallel-projection drop shadows from a virtual overhead sun.
-// Shadows always fall below-and-slightly-right of each enemy (classic top-down game look),
-// so enemies read as grounded. Wall-clipped via raycastToWall. Alpha scales with proximity
-// to the nearest flashlight so shadows only show where the scene is actually lit.
-const SUN_DIR_X = 0.18;                                               // slight right lean
-const SUN_DIR_Y = 1.0;                                                // primarily downward
-const _sunLen = Math.sqrt(SUN_DIR_X * SUN_DIR_X + SUN_DIR_Y * SUN_DIR_Y);
-const SUN_UX = SUN_DIR_X / _sunLen, SUN_UY = SUN_DIR_Y / _sunLen;     // unit sun direction
-const SUN_PERP_X = -SUN_UY, SUN_PERP_Y = SUN_UX;                      // perpendicular (silhouette)
-const SUN_ANGLE = Math.atan2(SUN_UY, SUN_UX);                         // for raycast
-function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
-  const ox = -camX + canvas.width/2 + shakeX;
-  const oy = -camY + canvas.height/2 + shakeY;
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  const flashR2 = flashR * flashR;
-  for (const z of zombies) {
-    if (!z || z.hp <= 0) continue;
-    // Onscreen cull
-    const sx = z.x + ox, sy = z.y + oy;
-    if (sx < -120 || sx > canvas.width + 120 || sy < -120 || sy > canvas.height + 120) continue;
-    // Alpha scales with distance to nearest flashlight — shadows only show where lit.
-    let minPD2 = Infinity;
-    for (const lp of players) {
-      if (!lp || !lp.alive || !isFinite(lp.x) || !isFinite(lp.y)) continue;
-      const pdx = z.x - lp.x, pdy = z.y - lp.y;
-      const pd2 = pdx * pdx + pdy * pdy;
-      if (pd2 < minPD2) minPD2 = pd2;
-    }
-    if (minPD2 > flashR2) continue;
-    const distFade = 1 - Math.sqrt(minPD2) / flashR;
-    const baseAlpha = 0.22 * Math.min(1, distFade * 1.6);
-    if (baseAlpha < 0.03) continue;
-    // Tangent points perpendicular to the sun direction (silhouette edges)
-    const tx1 = z.x + SUN_PERP_X * z.radius;
-    const ty1 = z.y + SUN_PERP_Y * z.radius;
-    const tx2 = z.x - SUN_PERP_X * z.radius;
-    const ty2 = z.y - SUN_PERP_Y * z.radius;
-    // Shadow length scales with enemy size — bigger enemies cast longer shadows
-    const shadowLen = Math.max(90, z.radius * 7);
-    // Wall-clip each ray in the sun direction
-    const wallD1 = raycastToWall(tx1, ty1, SUN_ANGLE, shadowLen);
-    const wallD2 = raycastToWall(tx2, ty2, SUN_ANGLE, shadowLen);
-    const len1 = Math.min(wallD1, shadowLen);
-    const len2 = Math.min(wallD2, shadowLen);
-    if (len1 < 4 && len2 < 4) continue;
-    const fx1 = tx1 + SUN_UX * len1;
-    const fy1 = ty1 + SUN_UY * len1;
-    const fx2 = tx2 + SUN_UX * len2;
-    const fy2 = ty2 + SUN_UY * len2;
-    // Gradient fade along shadow length so it blends into ambient instead of hard-edging.
-    const nearX = (tx1 + tx2) * 0.5 + ox, nearY = (ty1 + ty2) * 0.5 + oy;
-    const farX = (fx1 + fx2) * 0.5 + ox, farY = (fy1 + fy2) * 0.5 + oy;
-    const grad = ctx.createLinearGradient(nearX, nearY, farX, farY);
-    grad.addColorStop(0, 'rgba(0,0,0,' + (baseAlpha * 0.85).toFixed(3) + ')');
-    grad.addColorStop(0.35, 'rgba(0,0,0,' + (baseAlpha * 0.45).toFixed(3) + ')');
-    grad.addColorStop(0.7, 'rgba(0,0,0,' + (baseAlpha * 0.15).toFixed(3) + ')');
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(tx1 + ox, ty1 + oy);
-    ctx.lineTo(fx1 + ox, fy1 + oy);
-    ctx.lineTo(fx2 + ox, fy2 + oy);
-    ctx.lineTo(tx2 + ox, ty2 + oy);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
 // ---- WEBGL LIGHTING ----
 const lightCanvas = document.createElement('canvas');
 const GL_ATTRS = { alpha: true, premultipliedAlpha: false, antialias: false, depth: false, stencil: false };
@@ -13269,8 +13199,6 @@ function render() {
       ctx.globalAlpha = 0.18;
       ctx.drawImage(lightCanvas, 0, 0, canvas.width, canvas.height);
       ctx.restore();
-      // ---- DYNAMIC SHADOWS: zombies cast 2D shadow volumes in player flashlights ----
-      drawZombieShadows(camera.x, camera.y, screenShake.x, screenShake.y, spotRadius);
     } else if (glReady) {
       if (lightCanvas.width !== canvas.width || lightCanvas.height !== canvas.height) {
         lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
