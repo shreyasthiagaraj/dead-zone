@@ -7380,9 +7380,14 @@ function dash() {
   const _mods = runMods || {};
   // Charge system: Extra Charge card adds +1 max charge
   lp._dashChargesMax = 1 + (_mods.extraCharge || 0);
-  if (lp._dashCharges === undefined) lp._dashCharges = lp._dashChargesMax;
+  if (lp._dashCharges == null) lp._dashCharges = lp._dashChargesMax;
+  // Grant extra charge immediately when card is purchased (don't wait for cooldown cycle)
+  if (lp.dashCooldown <= 0 && lp._dashCharges < lp._dashChargesMax) lp._dashCharges = lp._dashChargesMax;
+  // If mid-dash and have charges, buffer the press — it fires when the current dash ends
+  if (lp._dashFrames > 0 && lp._dashCharges > 0) { lp._dashBuffer = true; return; }
   if (lp._dashCharges <= 0) return; // no charges available
   lp._dashCharges--;
+  lp._dashBuffer = false;
   // Start recharge timer — ticks per charge independently
   lp.dashCooldown = DASH_COOLDOWN * (_mods.blastCdMult || 1);
   runStats.shockwavesUsed++;
@@ -9361,6 +9366,8 @@ function update() {
             }
           }
         }
+        // Buffered dash: if player pressed dash during the previous dash, auto-fire now
+        if (lp._dashBuffer) { lp._dashBuffer = false; setTimeout(dash, 0); }
       }
     }
     lp.x+=lp.vx;lp.y+=lp.vy;
