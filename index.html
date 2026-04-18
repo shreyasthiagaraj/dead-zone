@@ -9939,47 +9939,43 @@ function update() {
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
     // Mobile: AUTO-AIM system.
-    // Hold shoot = AIM MODE (flashlight locks targets, fires only when in yellow range).
-    // Release shoot = normal movement, no aiming.
+    // Hold shoot = always fire + lock onto target. Release = normal movement.
     if (isMobile) {
       // Left joystick ALWAYS controls movement
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
-      // Always scan for nearest detected enemy
+      // Always scan for detected enemies (for reticle display)
       _autoAimDetect = findDetectTarget(lp);
 
       let _desiredAngle = _autoAimAngle;
-      if (shootButtonHeld && _autoAimDetect) {
-        // ---- AIM MODE: hold shoot with enemies nearby ----
-        // Flashlight locks toward the best detected/fire target.
-        // Only actually FIRES when a target is in fire range (yellow→red).
-        rightJoystick.aiming = true;
-        _autoAimTarget = findFireTarget(lp);
+      if (shootButtonHeld) {
+        // ---- SHOOTING: always fire. Lock onto fire target if available. ----
+        rightJoystick.aiming = true; rightJoystick.firing = true;
+        // If we have a locked target and it's still alive, keep it (sticky lock)
         if (_autoAimTarget && _autoAimTarget.hp > 0) {
-          // In fire range — shoot at this target (red reticle)
-          rightJoystick.firing = true;
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
-          // No fire target — aim toward detected enemy (gray) but DON'T fire
-          rightJoystick.firing = false;
-          _desiredAngle = Math.atan2(_autoAimDetect.y - lp.y, _autoAimDetect.x - lp.x);
+          // Find a new fire target
+          _autoAimTarget = findFireTarget(lp);
+          if (_autoAimTarget && _autoAimTarget.hp > 0) {
+            _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
+          } else {
+            // No fire target — shoot in movement direction
+            _autoAimTarget = null;
+            const moveMag = Math.sqrt(dx*dx+dy*dy);
+            if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
+          }
         }
-      } else if (shootButtonHeld) {
-        // Shoot held but NO enemies detected: not in aim mode, face movement
-        rightJoystick.aiming = false; rightJoystick.firing = false;
-        _autoAimTarget = null;
-        const moveMag = Math.sqrt(dx*dx+dy*dy);
-        if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       } else {
-        // ---- NORMAL MODE: not shooting, move freely ----
+        // ---- NOT SHOOTING: normal movement, no lock-on ----
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Smooth lerp — faster when locked on fire target, medium in aim mode, slow in normal
-      const _aimLerp = _autoAimTarget ? 0.20 : (shootButtonHeld && _autoAimDetect ? 0.10 : 0.06);
+      // Smooth angle lerp — fast lock when targeting, gentle turn otherwise
+      const _aimLerp = _autoAimTarget ? 0.25 : 0.08;
       _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, _aimLerp);
       lp.angle = _autoAimAngle;
     }
@@ -11876,10 +11872,9 @@ function update() {
     cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.012);
     cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.012);
   }
-  // Camera lerp: smoothly ramps up when shooting, smoothly ramps down when not
-  const _camTarget = (lp._firing || shootButtonHeld) ? 0.30 : 0.08;
-  window._camLerp = lerp(window._camLerp || 0.08, _camTarget, 0.04); // smooth transition between speeds
-  camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,window._camLerp);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,window._camLerp);
+  // Camera lerp: constant speed. Fast enough to feel responsive, smooth enough to not jar.
+  const _camLerpSpeed = 0.12;
+  camera.x=lerp(camera.x,camTarget.x+cameraOffset.x,_camLerpSpeed);camera.y=lerp(camera.y,camTarget.y+cameraOffset.y,_camLerpSpeed);
   // Clamp camera to playable region, with some wiggle room past the edge so the
   // player doesn't end up glued to the far side of the screen. Without wiggle the
   // camera hard-stops at the wall and the player slides off-center; with wiggle
