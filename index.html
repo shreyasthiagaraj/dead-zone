@@ -4772,10 +4772,11 @@ function raycastToWall(ax, ay, angle, maxDist) {
 }
 
 // Dynamic zombie shadows: 2D shadow volumes cast from each player's flashlight.
-// Drawn on the main canvas after the light compositing so shadows appear as dark patches
-// in lit areas. Wall-clipped via raycastToWall. Culls offscreen zombies and zombies outside
-// the flashlight cone (with a small ambient radius for close-range shadows).
-const SHADOW_MAX_LEN = 320;
+// Drawn on the main canvas after the light compositing so shadows appear as soft dark
+// patches in lit areas. Wall-clipped via raycastToWall. The shadow extends to the full
+// flashlight radius (so it always reaches the lit-area boundary) and uses a linear
+// gradient that fades to transparent, so shadows blend into ambient rather than ending
+// with a visible cut-off.
 const SHADOW_CONE_HALF = 1.0;   // ~57° each side of flashlight angle
 const SHADOW_AMBIENT_R = 150;   // always shadow if zombie is within this radius of the player
 function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
@@ -4783,7 +4784,6 @@ function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
   const oy = -camY + canvas.height/2 + shakeY;
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
   for (const lp of players) {
     if (!lp || !lp.alive || !isFinite(lp.x) || !isFinite(lp.y)) continue;
     const lightX = lp.x, lightY = lp.y;
@@ -4808,8 +4808,9 @@ function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
       // Tangent angles from light to zombie circle
       const halfAng = Math.asin(z.radius / d);
       const rayA1 = ang - halfAng, rayA2 = ang + halfAng;
-      // Clamp shadow length against walls
-      const maxLen = d + SHADOW_MAX_LEN;
+      // Extend shadows to full flashlight radius so they always reach the lit-area boundary.
+      // Wall-clip each ray — shadows stop at walls so they don't paint through solid geometry.
+      const maxLen = flashR * 1.1;
       const wallD1 = raycastToWall(lightX, lightY, rayA1, maxLen);
       const wallD2 = raycastToWall(lightX, lightY, rayA2, maxLen);
       const len1 = Math.min(wallD1, maxLen);
@@ -4826,6 +4827,20 @@ function drawZombieShadows(camX, camY, shakeX, shakeY, flashR) {
       const fy1 = lightY + Math.sin(rayA1) * len1;
       const fx2 = lightX + Math.cos(rayA2) * len2;
       const fy2 = lightY + Math.sin(rayA2) * len2;
+      // Base alpha dips for distant zombies — near the edge of the flashlight,
+      // ambient light is weak so shadows should be subtle.
+      const distFade = 1 - (d / flashR);
+      const baseAlpha = 0.32 * Math.min(1, distFade * 1.6);
+      if (baseAlpha < 0.04) continue;
+      // Gradient from near (darkest) to far (transparent) — removes the "drawn-on line"
+      // look and makes the shadow blend into ambient instead of ending in a visible edge.
+      const nearX = (tx1 + tx2) * 0.5 + ox, nearY = (ty1 + ty2) * 0.5 + oy;
+      const farX = (fx1 + fx2) * 0.5 + ox, farY = (fy1 + fy2) * 0.5 + oy;
+      const grad = ctx.createLinearGradient(nearX, nearY, farX, farY);
+      grad.addColorStop(0, 'rgba(0,0,0,' + baseAlpha.toFixed(3) + ')');
+      grad.addColorStop(0.55, 'rgba(0,0,0,' + (baseAlpha * 0.55).toFixed(3) + ')');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.moveTo(tx1 + ox, ty1 + oy);
       ctx.lineTo(fx1 + ox, fy1 + oy);
