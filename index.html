@@ -7590,15 +7590,15 @@ function fireWeaponForPlayer(p) {
   bullets.push({
     x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
     damage: dmg, color: _buildColor, size: gun.bulletSize,
-    _glowBoost: 0.3,
+    _glowBoost: 0.15,
     knockback: gun.knockback, pierce: gun.pierce, pierced: 0,
     life: GUN_BULLET_RANGE, maxLife: GUN_BULLET_RANGE,
     flame: false, explosive: false, explosionRadius: 0,
-    tracer: true, chain: false, chainRange: 0, chainCount: 0,
-    laserGlow: true, grenade: false,
+    tracer: false, chain: false, chainRange: 0, chainCount: 0,
+    laserGlow: false, grenade: false,
     owner: 'player', ownerId: p.id, trail: [], crit: false,
     _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
-    _angVel: 0, // no drift — precise rail gun
+    _angVel: (Math.random() - 0.5) * 0.015, // slight drift at range
   });
   // ---- OVER THE TOP VFX ----
   // Heavy muzzle flash — bright, wide
@@ -10042,37 +10042,57 @@ function update() {
     let dx=0,dy=0;
     // Keyboard input always works
     if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
-    // Mobile: AUTO-TARGETING system (weighted score, periodic retarget).
+    // Mobile: AIM ASSIST — player must face the enemy, system nudges aim.
+    // Press shoot → lock nearest enemy in facing cone → fire until dead or overheat.
+    // Release shoot → clear lock. Must re-press to pick new target.
     if (isMobile) {
       if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
       let _desiredAngle = _autoAimAngle;
       if (shootButtonHeld) {
-        rightJoystick.aiming = true; rightJoystick.firing = true;
-        // Retarget periodically (every 0.1s), not every frame
-        _autoAimRetargetTimer--;
-        if (_autoAimRetargetTimer <= 0 || !_autoAimTarget || _autoAimTarget.hp <= 0) {
-          _autoAimRetargetTimer = AA_RETARGET_INTERVAL;
-          _autoAimTarget = _aaSelectTarget(lp);
+        rightJoystick.aiming = true;
+        // If locked target is dead or gone, STOP firing (don't auto-retarget)
+        if (_autoAimTarget && _autoAimTarget.hp <= 0 && !_autoAimTarget.alive) {
+          _autoAimTarget = null;
+          rightJoystick.firing = false;
         }
+        // If no lock yet, find one in facing direction (only on initial press)
+        if (!_autoAimTarget) {
+          _autoAimTarget = _aaSelectTarget(lp);
+          // Only accept targets roughly in front of the player (within ~70° cone)
+          if (_autoAimTarget) {
+            const _taDx = _autoAimTarget.x - lp.x, _taDy = _autoAimTarget.y - lp.y;
+            let _taDiff = Math.atan2(_taDy, _taDx) - _autoAimAngle;
+            while (_taDiff > Math.PI) _taDiff -= Math.PI*2;
+            while (_taDiff < -Math.PI) _taDiff += Math.PI*2;
+            if (Math.abs(_taDiff) > 1.2) _autoAimTarget = null; // too far off-axis, reject
+          }
+          if (_autoAimTarget) rightJoystick.firing = true;
+          else rightJoystick.firing = true; // fire in facing direction even without target
+        }
+        // Locked on: nudge aim toward target (assist, not full snap)
         if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
-        } else {
-          _autoAimTarget = null;
+          rightJoystick.firing = true;
+        } else if (!_autoAimTarget) {
+          // No target: fire in movement/facing direction
           const moveMag = Math.sqrt(dx*dx+dy*dy);
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
+          rightJoystick.firing = true;
         }
+        // Stop firing if magazine empty (overheat)
+        if (_gunReloading) rightJoystick.firing = false;
       } else {
+        // Released shoot — clear everything
         rightJoystick.aiming = false; rightJoystick.firing = false;
         _autoAimTarget = null;
-        _autoAimRetargetTimer = 0;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
-      // Angle: instant when moving, lerp when targeting, quick transition on release
-      if (_autoAimTarget) {
-        _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.25);
+      // Angle: smooth nudge when locked, instant when moving
+      if (_autoAimTarget && shootButtonHeld) {
+        _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.15); // gentle assist nudge
         lp._wasAutoAiming = true;
       } else if (lp._wasAutoAiming) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.20);
