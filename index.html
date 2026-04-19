@@ -3527,13 +3527,21 @@ let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
 
 // Pre-compute section widths from templates
-let _sectionWidths = []; // cells per section (computed during initTrenchSections)
+let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
 let _sectionXPositions = []; // cumulative X in cells
+let _sectionTemplateNames = []; // template name per section (set once in generateTrenchMap)
 
 function generateTrenchMap(seed) {
-  // Compute widths from templates (initTrenchSections must run first to set _sectionWidths)
-  if (_sectionWidths.length === 0) {
-    for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) _sectionWidths.push(TRENCH_SECTION_W);
+  // SELECT TEMPLATES FIRST — this is the single source of truth for section widths.
+  // Templates are selected here and stored so initTrenchSections doesn't re-roll them.
+  _sectionWidths = [];
+  _sectionTemplateNames = [];
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
+    const tmplName = selectTrenchTemplate(['normal'], si, isBoss);
+    const tmpl = TRENCH_TEMPLATES[tmplName];
+    _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
+    _sectionTemplateNames.push(tmplName);
   }
   // Compute cumulative X positions
   _sectionXPositions = [];
@@ -3549,12 +3557,7 @@ function generateTrenchMap(seed) {
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Pre-compute section types for template selection
-  const _sectionTypes = [];
-  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
-    _sectionTypes.push(['normal']); // placeholder — real types set in initTrenchSections
-  }
-  // Each section: carve interior using its own width, then apply template
+  // Each section: carve interior using its own width, then apply the PRE-SELECTED template
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
     const baseX = _sectionXPositions[si];
     const secW = _sectionWidths[si];
@@ -3564,9 +3567,8 @@ function generateTrenchMap(seed) {
         if (baseX + dx < GRID_W) dungeonGrid[y][baseX + dx] = true;
       }
     }
-    // Select and apply template
-    const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
-    const tmplName = selectTrenchTemplate(_sectionTypes[si], si, isBoss);
+    // Use pre-selected template (NOT re-rolling — must match width)
+    const tmplName = _sectionTemplateNames[si];
     const tmpl = TRENCH_TEMPLATES[tmplName];
     const tmplCells = tmpl ? tmpl.build() : [];
     for (const c of tmplCells) {
@@ -3658,21 +3660,14 @@ function generateTrenchMap(seed) {
 
 function initTrenchSections() {
   trenchSections = [];
-  // Pre-compute per-section widths from templates
-  _sectionWidths = [];
-  for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
-    // Pick a template early to get its width
-    const isBoss = i === 10 || i === 20 || i === 30 || i === 40 || (i > 40 && (i - 40) % 10 === 0);
-    const tmplName = selectTrenchTemplate(['normal'], i, isBoss);
-    const tmpl = TRENCH_TEMPLATES[tmplName];
-    _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
-  }
-  // Compute cumulative X positions
-  _sectionXPositions = [];
-  let _cumX = 0;
-  for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
-    _sectionXPositions.push(_cumX);
-    _cumX += _sectionWidths[i];
+  // _sectionWidths and _sectionXPositions are already computed by generateTrenchMap().
+  // If somehow empty (shouldn't happen), fall back to defaults.
+  if (_sectionWidths.length === 0) {
+    _sectionWidths = [];
+    for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) _sectionWidths.push(TRENCH_SECTION_W);
+    _sectionXPositions = [];
+    let _cumX = 0;
+    for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) { _sectionXPositions.push(_cumX); _cumX += _sectionWidths[i]; }
   }
   for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
     const sectionX = _sectionXPositions[i] * CELL_SIZE;
