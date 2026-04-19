@@ -6022,8 +6022,9 @@ float computeLight(vec2 worldPos, vec2 lightPos, float lightAngle, float lightRa
 
   float distFactor = dist / lightRadius;
 
-  // Ambient glow — very smooth exponential falloff, no hard edges
-  float ambient = 0.25 * exp(-distFactor * distFactor * 8.0);
+  // Ambient glow — widened falloff so the player has more 360° situational awareness
+  // at close range while the directional flashlight still dominates at distance.
+  float ambient = 0.32 * exp(-distFactor * distFactor * 4.5);
 
   // Flashlight cone — smooth in all dimensions
   float angle = atan(diff.y, diff.x);
@@ -6062,7 +6063,9 @@ void main() {
     }
   }
 
-  float light = 0.15 + min(totalLight * 1.1, 1.0) * 0.85;
+  // Fog floor raised from 0.15 to 0.28 — unlit floor is readable in sunlight without
+  // killing the flashlight contrast. Lit areas still reach 1.0.
+  float light = 0.28 + min(totalLight * 1.1, 1.0) * 0.72;
 
   float warmR = light;
   float warmG = light;
@@ -15220,12 +15223,12 @@ function render() {
     // Type-specific body shape
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:2;
     ctx.shadowColor=_zc;ctx.shadowBlur=z.hitFlash>0?20:12;
-    // Glow outline
-    ctx.fillStyle=_zc;ctx.globalAlpha=0.15;
+    // Glow outline — bumped alpha so the status tint reads more through the body silhouette
+    ctx.fillStyle=_zc;ctx.globalAlpha=0.25;
     _drawZombieShape(ctx, z.type, _zr+2);
     ctx.fill();
-    // Solid dark body
-    ctx.globalAlpha=1;ctx.fillStyle='#0a0a0a';
+    // Solid body — lifted from near-black to #1a1a1a so enemies pop in dim ambient
+    ctx.globalAlpha=1;ctx.fillStyle='#1a1a1a';
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
     ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();ctx.shadowBlur=0;
@@ -15700,6 +15703,36 @@ function render() {
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
+    }
+
+    // ---- RIM LIGHT: thin colored silhouettes on enemies, visible through fog ----
+    // Drawn after the light composite so shadows don't dim the outline. The rim color
+    // matches the zombie's current status tint (frozen blue, burning orange, etc.) so
+    // the silhouette also telegraphs status at a glance.
+    if (lp3 && lp3.alive) {
+      const _rox = -camera.x + canvas.width/2 + screenShake.x;
+      const _roy = -camera.y + canvas.height/2 + screenShake.y;
+      const _vL = camera.x - canvas.width/2 - 40, _vR = camera.x + canvas.width/2 + 40;
+      const _vT = camera.y - canvas.height/2 - 40, _vB = camera.y + canvas.height/2 + 40;
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      for (const z of zombies) {
+        if (!z || z.hp <= 0) continue;
+        if (z.x < _vL || z.x > _vR || z.y < _vT || z.y > _vB) continue;
+        const rc = z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#eaf':z.color;
+        ctx.save();
+        ctx.translate(z.x + _rox, z.y + _roy);
+        ctx.rotate(z.angle || 0);
+        ctx.globalAlpha = 0.6;
+        ctx.strokeStyle = rc;
+        ctx.lineWidth = 1.3;
+        ctx.shadowColor = rc;
+        ctx.shadowBlur = 5;
+        _drawZombieShape(ctx, z.type, z.radius + 1);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
     }
 
     // Sunbeam: yellow tint on screen + particles in the beam
