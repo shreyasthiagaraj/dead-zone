@@ -2614,10 +2614,15 @@ function closeDataLink() {
 function deliverDataLinkReward(typeId) {
   const lp = getLocalPlayer();
   switch (typeId) {
-    case 'mod':
-      // Open the existing mod terminal shop
-      openShopDirect();
+    case 'mod': {
+      // Spawn a physical Cache Node chest on the stage (player walks up to it)
+      gameState = 'playing';
+      if (lp) {
+        const _sp = _pickStrideChestSpawn(lp);
+        spawnShopChest(_sp.x, _sp.y);
+      }
       break;
+    }
 
     case 'repair': {
       if (lp) {
@@ -3572,23 +3577,39 @@ function generateTrenchMap(seed) {
         if (gx < GRID_W && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
-    // ---- PATHABILITY CHECK: ensure spawn zone can reach door zone ----
-    // Flood-fill from spawn (baseX+3, door center Y) to door (baseX+secW-2, door center Y).
-    // If blocked, carve a horizontal corridor at door height.
+    // ---- PATHABILITY CHECK: BFS flood-fill from spawn zone to door zone ----
+    // If no path exists, carve corridors until reachable.
     {
       const doorCY = Math.floor(TRENCH_HEIGHT / 2);
-      const startX = baseX + 3, endX = baseX + secW - 2;
-      // Simple horizontal scan: check each column from left to right at door rows
-      let blocked = false;
-      for (let cx = startX; cx <= endX; cx++) {
-        // Check if ANY of the door-height rows are passable at this column
-        let anyOpen = false;
-        for (let dy = doorCY - 2; dy <= doorCY + 2; dy++) {
-          if (dy >= 1 && dy < TRENCH_HEIGHT - 1 && cx < GRID_W && dungeonGrid[dy] && dungeonGrid[dy][cx]) { anyOpen = true; break; }
+      const spawnX = baseX + 3, doorX = baseX + secW - 2;
+      // BFS flood-fill from spawn column to door column
+      const visited = new Set();
+      const queue = [];
+      // Seed from spawn column at all walkable Y positions
+      for (let sy = 1; sy < TRENCH_HEIGHT - 1; sy++) {
+        if (spawnX < GRID_W && dungeonGrid[sy] && dungeonGrid[sy][spawnX]) {
+          const key = spawnX + ',' + sy;
+          if (!visited.has(key)) { visited.add(key); queue.push([spawnX, sy]); }
         }
-        if (!anyOpen) { blocked = true; break; }
       }
-      if (blocked) {
+      let reachable = false;
+      while (queue.length > 0) {
+        const [cx, cy] = queue.shift();
+        // Reached door column?
+        if (cx >= doorX) { reachable = true; break; }
+        // Expand neighbors (4-directional)
+        const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
+        for (const [nx, ny] of neighbors) {
+          if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < 1 || ny >= TRENCH_HEIGHT - 1) continue;
+          if (nx >= GRID_W) continue;
+          const nk = nx + ',' + ny;
+          if (!visited.has(nk) && dungeonGrid[ny] && dungeonGrid[ny][nx]) {
+            visited.add(nk);
+            queue.push([nx, ny]);
+          }
+        }
+      }
+      if (!reachable) {
         // Carve a 3-cell-tall corridor at door center height across the entire section
         for (let cx = baseX + 1; cx < baseX + secW - 1 && cx < GRID_W; cx++) {
           for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
@@ -3751,7 +3772,7 @@ function startTrench() {
 function spawnTrenchWave(idx, waveIdx) {
   const sec = trenchSections[idx];
   if (!sec) return;
-  const TW = TRENCH_SECTION_W * CELL_SIZE;
+  const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
   const enemyCount = sec.waves[waveIdx];
   // Per-section difficulty scaling + modifier adjustments
   let hpScale = 1 + idx * 0.15;
@@ -3810,7 +3831,7 @@ function spawnTrenchSection(idx) {
   sec.spawned = true;
   sec.currentWave = 0;
   sec.waveSpawnTimer = 0;
-  const TW = TRENCH_SECTION_W * CELL_SIZE;
+  const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
   const cx = sec.x + TW / 2;
   const cy = (TRENCH_HEIGHT / 2) * CELL_SIZE;
   // Apply trial modifier if active
@@ -3900,7 +3921,7 @@ function updateTrench() {
   if (trenchFadeDir !== 0) return; // mid-transition: don't process
   const sec = trenchSections[trenchSection];
   if (!sec) return;
-  const TW = TRENCH_SECTION_W * CELL_SIZE;
+  const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
   const xMin = sec.x, xMax = sec.x + TW;
   const sectionZombies = zombies.filter(z => z.x >= xMin && z.x < xMax);
   // Wave countdown: ticking down toward next wave's spawn
@@ -11260,7 +11281,7 @@ function update() {
     if(gameMode==='trench'){
       const _tsec = trenchSections[trenchSection];
       if(_tsec){
-        const _tTW = TRENCH_SECTION_W * CELL_SIZE;
+        const _tTW = (_sectionWidths[trenchSection] || TRENCH_SECTION_W) * CELL_SIZE;
         const _tLeft = _tsec.x + CELL_SIZE + PLAYER_RADIUS + 1;
         const _tRight = _tsec.x + _tTW - CELL_SIZE - PLAYER_RADIUS - 1;
         if (lp.x < _tLeft) lp.x = _tLeft;
@@ -12507,7 +12528,8 @@ function update() {
             let _bsx, _bsy;
             if (gameMode === 'trench') {
               const _tsecBA = trenchSections[trenchSection] || null;
-              _bsx = _tsecBA ? (_tsecBA.x + CELL_SIZE*2 + Math.random()*(TRENCH_SECTION_W-4)*CELL_SIZE) : z.x + (Math.random()-0.5)*200;
+              const _bsW = (_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W;
+              _bsx = _tsecBA ? (_tsecBA.x + CELL_SIZE*2 + Math.random()*(_bsW-4)*CELL_SIZE) : z.x + (Math.random()-0.5)*200;
               _bsy = Math.random() < 0.5 ? 2*CELL_SIZE : (TRENCH_HEIGHT-2)*CELL_SIZE;
             } else {
               // Descent/other: pick a spot near the player but offset
@@ -12893,7 +12915,7 @@ function update() {
     if (gameMode === 'trench') {
       const _tsec = trenchSections[trenchSection];
       if (_tsec) {
-        const _tTW = TRENCH_SECTION_W * CELL_SIZE;
+        const _tTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
         for (const _tz of zombies) {
           const _tLeft = _tsec.x + CELL_SIZE + _tz.radius + 1;
           const _tRight = _tsec.x + _tTW - CELL_SIZE - _tz.radius - 1;
@@ -14726,7 +14748,7 @@ function render() {
   // Trench door
   if(gameMode==='trench'&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
-    const TW=TRENCH_SECTION_W*CELL_SIZE;
+    const TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
     const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
     const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
     const dx1=sec.x+TW-CELL_SIZE;
