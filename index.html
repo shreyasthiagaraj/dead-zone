@@ -10892,15 +10892,13 @@ function update() {
       let _desiredAngle = _autoAimAngle;
       if (shootButtonHeld) {
         rightJoystick.aiming = true;
-        // If locked target is dead or gone, STOP firing (don't auto-retarget)
-        let _targetJustDied = false;
+        rightJoystick.firing = true; // always fire while shoot held — don't wait for lock
+        // If locked target is dead or gone, immediately retarget
         if (_autoAimTarget && _autoAimTarget.hp <= 0 && !_autoAimTarget.alive) {
           _autoAimTarget = null;
-          rightJoystick.firing = false;
-          _targetJustDied = true;
         }
-        // If no lock yet, find one in facing direction + within bullet range
-        if (!_autoAimTarget && !_targetJustDied) {
+        // If no lock, find nearest enemy in facing direction + within range
+        if (!_autoAimTarget) {
           const _strikeRange = 250; // aim assist range
           _autoAimTarget = _aaSelectTarget(lp);
           if (_autoAimTarget) {
@@ -10909,21 +10907,19 @@ function update() {
             let _taDiff = Math.atan2(_taDy, _taDx) - _autoAimAngle;
             while (_taDiff > Math.PI) _taDiff -= Math.PI*2;
             while (_taDiff < -Math.PI) _taDiff += Math.PI*2;
-            // Reject if outside facing cone (~70°) OR beyond bullet range
-            if (Math.abs(_taDiff) > 1.2 || _taDist > _strikeRange) _autoAimTarget = null;
+            // Reject if outside facing cone (~35°) OR beyond bullet range
+            if (Math.abs(_taDiff) > 0.6 || _taDist > _strikeRange) _autoAimTarget = null;
           }
-          if (_autoAimTarget) rightJoystick.firing = true;
         }
         // Locked on: nudge aim toward target (assist, not full snap)
         if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
-          rightJoystick.firing = true;
-        } else if (!_autoAimTarget && !_targetJustDied) {
-          // No target: fire in movement/facing direction
+        } else {
+          // No target in cone: fire in movement/facing direction
           const moveMag = Math.sqrt(dx*dx+dy*dy);
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
         }
-        // Stop firing if magazine empty (overheat)
+        // Stop firing if magazine empty (reloading)
         if (_gunReloading) rightJoystick.firing = false;
       } else {
         // Released shoot — clear everything
