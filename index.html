@@ -780,13 +780,15 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 30, fireRate: 120, bulletSpeed: 20, spread: 0.02, bulletSize: 4, knockback: 3, pierce: 0 };
+const BASE_GUN = { damage: 25, fireRate: 120, bulletSpeed: 20, spread: 0.02, bulletSize: 4, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s reload)
-const GUN_BULLET_RANGE = 22;      // bullet life in frames (~330px at speed 20)
+const GUN_BULLET_RANGE = 22;      // bullet life in frames (~440px at speed 20)
+const GUN_AUTO_RELOAD_DELAY = 180; // frames (~3s) of not firing before auto-reload
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
 let _gunReloadTimer = 0;
+let _gunIdleTimer = 0;            // frames since last shot
 
 // ============================================================
 // NARRATIVE CONTENT — Ghostwave lore threaded through gameplay
@@ -7306,7 +7308,7 @@ function startSoloGame() {
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; hazeParticles = []; activeBeacon = null;
   _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
-  _gunAmmo = GUN_MAG_SIZE; _gunReloading = false; _gunReloadTimer = 0;
+  _gunAmmo = GUN_MAG_SIZE; _gunReloading = false; _gunReloadTimer = 0; _gunIdleTimer = 0;
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
@@ -7553,7 +7555,7 @@ function fireWeaponForPlayer(p) {
     if (_gunReloadTimer <= 0) {
       _gunReloading = false;
       _gunAmmo = GUN_MAG_SIZE;
-      addFloatingText(p.x, p.y - 30, 'RELOADED', '#0ff');
+      floatingTexts.push({x:p.x,y:p.y-30,text:'RELOADED',color:'#0ff',vy:0,life:30,maxLife:30,_follow:p,_followOffY:-30});
       playSound(1200, 0.08, 'sine', 0.06); playSound(800, 0.06, 'square', 0.04);
     }
     return; // can't fire while reloading
@@ -7562,7 +7564,7 @@ function fireWeaponForPlayer(p) {
     // Empty — start reload
     _gunReloading = true;
     _gunReloadTimer = GUN_RELOAD_TIME;
-    addFloatingText(p.x, p.y - 30, 'RELOADING', '#ff0');
+    floatingTexts.push({x:p.x,y:p.y-30,text:'RELOADING',color:'#ff0',vy:0,life:GUN_RELOAD_TIME,maxLife:GUN_RELOAD_TIME,_follow:p,_followOffY:-30});
     playSound(300, 0.06, 'sine', 0.08); // click sound
     return;
   }
@@ -7572,6 +7574,7 @@ function fireWeaponForPlayer(p) {
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
   _gunAmmo--;
+  _gunIdleTimer = 0; // reset idle timer on each shot
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
@@ -10065,7 +10068,7 @@ function update() {
         }
         // If no lock yet, find one in facing direction + within bullet range
         if (!_autoAimTarget) {
-          const _strikeRange = GUN_BULLET_RANGE * BASE_GUN.bulletSpeed; // actual bullet travel distance
+          const _strikeRange = 350; // aim assist range
           _autoAimTarget = _aaSelectTarget(lp);
           if (_autoAimTarget) {
             const _taDx = _autoAimTarget.x - lp.x, _taDy = _autoAimTarget.y - lp.y;
@@ -10739,7 +10742,12 @@ function update() {
     const shouldFire=isMobile?rightJoystick.firing:(mouse.down||gamepad.fire);
     lp._firing=shouldFire;
     // Reload ticks even when not firing
-    if (_gunReloading) { _gunReloadTimer--; if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE; addFloatingText(lp.x, lp.y-30, 'RELOADED', '#0ff'); playSound(1200,0.08,'sine',0.06); } }
+    if (_gunReloading) { _gunReloadTimer--; if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE; floatingTexts.push({x:lp.x,y:lp.y-30,text:'RELOADED',color:'#0ff',vy:0,life:30,maxLife:30,_follow:lp,_followOffY:-30}); playSound(1200,0.08,'sine',0.06); } }
+    // Auto-reload after 3s idle (not full mag, not already reloading)
+    if (!_gunReloading && _gunAmmo < GUN_MAG_SIZE) {
+      _gunIdleTimer++;
+      if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY) { _gunReloading = true; _gunReloadTimer = GUN_RELOAD_TIME; _gunIdleTimer = 0; }
+    }
     if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
     else if(!shouldFire) stopWeaponLoop(); // stop loop sound when not firing
     // Stop loop if reloading or out of ammo
