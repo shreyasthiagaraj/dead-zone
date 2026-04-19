@@ -2407,7 +2407,8 @@ const DL_TYPES = {
 let _dlSectionsSinceChoice = 0; // cadence counter (replaces shouldSpawnShopChest for choice system)
 let _dlChoiceHistory = [];       // last N choices made (reward type ids)
 let _dlModDrought = 0;           // sections since MOD was last offered as an option
-let _dlActive = false;           // true while choice overlay is visible
+let _dlActive = false;           // (legacy — unused, kept for compat)
+let _dlChoicePending = false;    // true while DL chests are on the stage — door stays locked
 let _dlTrialActive = false;      // true if next section has trial modifier
 let _dlTrialBonusPending = false;// true if player just cleared a trial section and hasn't received bonus card yet
 let _dlFirstChoice = true;       // first choice of the run (guaranteed MOD)
@@ -2417,6 +2418,7 @@ function resetDataLinkState() {
   _dlChoiceHistory = [];
   _dlModDrought = 0;
   _dlActive = false;
+  _dlChoicePending = false;
   _dlTrialActive = false;
   _dlTrialBonusPending = false;
   _dlFirstChoice = true;
@@ -2565,11 +2567,12 @@ function spawnDataLinkChests() {
   const picks = generateDataLinkChoice();
   _dlFirstChoice = false;
 
-  // Spawn parallel to the exit door (vertical spread), with generous spacing
+  // Spawn in front of the door (right wall), parallel to it with generous spacing
   const sec = trenchSections[trenchSection];
   const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
   const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
-  const spawnX = sec ? sec.x + TW * 0.6 : lp.x + 80;
+  // Position: ~3 cells left of the door
+  const spawnX = sec ? sec.x + TW - CELL_SIZE * 4 : lp.x + 80;
   const gap = 80; // vertical gap between chests
   const positions = [
     { x: spawnX, y: midY - gap / 2 },
@@ -2579,9 +2582,16 @@ function spawnDataLinkChests() {
   for (const pos of positions) {
     const gx = Math.floor(pos.x / CELL_SIZE), gy = Math.floor(pos.y / CELL_SIZE);
     if (!(dungeonGrid[gy] && dungeonGrid[gy][gx])) {
-      pos.y += (pos === positions[0] ? -CELL_SIZE : CELL_SIZE);
+      // Try closer to center
+      pos.x -= CELL_SIZE * 2;
+      const gx2 = Math.floor(pos.x / CELL_SIZE);
+      if (!(dungeonGrid[gy] && dungeonGrid[gy][gx2])) {
+        pos.y = midY + (pos === positions[0] ? -CELL_SIZE : CELL_SIZE);
+      }
     }
   }
+  // Lock the door until a choice is made
+  _dlChoicePending = true;
 
   for (let i = 0; i < 2; i++) {
     const typeId = picks[i];
@@ -2612,6 +2622,7 @@ function claimDataLinkChest(barrel) {
   const typeId = barrel._dlRewardType;
   const t = DL_TYPES[typeId];
   _dlChoiceHistory.push(typeId);
+  _dlChoicePending = false; // unlock the door
   const bx = barrel.x, by = barrel.y;
 
   // Burst particles in reward color
@@ -2622,14 +2633,28 @@ function claimDataLinkChest(barrel) {
   playSfx('level_up', 0.25) || playSound(900, 0.08, 'sine', 0.15);
   screenShake.intensity = Math.max(screenShake.intensity, 4);
 
-  // Despawn the OTHER data link chest
+  // Despawn the OTHER data link chest with cyber glitch dissolve
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b = barrels[i];
     if (b._dlChest && b !== barrel) {
-      for (let k = 0; k < 8; k++) {
-        const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
-        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 16, maxLife: 16, size: 2, color: '#555', type: 'spark' });
+      const bCol = b._dlColor || '#888';
+      // Glitch rectangle shards flying outward
+      for (let k = 0; k < 14; k++) {
+        const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 3.5;
+        particles.push({ x: b.x + (Math.random()-0.5)*20, y: b.y + (Math.random()-0.5)*20,
+          vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+          life: 20 + Math.random()*10, maxLife: 30, size: 2 + Math.random()*3, color: bCol, type: 'spark' });
       }
+      // Glitch text chars dissolving
+      const _gChars = '█░▓▒╳◆▪';
+      for (let k = 0; k < 4; k++) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({ x: b.x + Math.cos(a)*10, y: b.y + Math.sin(a)*10,
+          vx: Math.cos(a)*1.5, vy: Math.sin(a)*1.5 - 1,
+          life: 24, maxLife: 24, size: 10, color: bCol, type: 'glitchtext',
+          text: _gChars[Math.floor(Math.random() * _gChars.length)] });
+      }
+      triggerGlitchSurge(0.2, 12);
       barrels.splice(i, 1);
     }
   }
@@ -3990,8 +4015,8 @@ function updateTrench() {
       }
     }
   }
-  // Door trigger: when cleared and any player is at the right wall in the door y range — only when not in shop/reforge state
-  if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge') {
+  // Door trigger: when cleared and any player is at the right wall — blocked during shop/reforge/choice pending
+  if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
     const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
     const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
@@ -9761,7 +9786,9 @@ function explodeBarrel(barrel, idx) {
   // Data Link chest — claim reward and despawn the other
   if (barrel._dlChest) {
     claimDataLinkChest(barrel);
-    barrels.splice(idx, 1);
+    // Re-find index since claimDataLinkChest may have spliced other barrels
+    const newIdx = barrels.indexOf(barrel);
+    if (newIdx >= 0) barrels.splice(newIdx, 1);
     return;
   }
   // Shop chest (Cache Node) — open the shop UI
@@ -14167,6 +14194,12 @@ function render() {
       const bob = Math.sin(performance.now() * 0.003 + (br._bobTimer || 0)) * 3;
       const scale = Math.min(1, dlT * 1.2);
       // Use the outer ctx.save()/translate(br.x, br.y) from the loop — just add bob + scale
+      // ---- SPOTLIGHT: wide ambient glow visible across the room ----
+      ctx.globalAlpha = 0.12 * dlPulse;
+      const _slGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 120);
+      _slGrad.addColorStop(0, dlColor); _slGrad.addColorStop(0.5, dlColor); _slGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = _slGrad; ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
       ctx.translate(0, bob);
       ctx.scale(scale, scale);
       // Outer glow
@@ -14774,9 +14807,9 @@ function render() {
     const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
     const dx1=sec.x+TW-CELL_SIZE;
     const dx2=sec.x+TW;
-    const open=sec.cleared;
+    const open=sec.cleared && !_dlChoicePending; // door stays locked until choice is made
     const isLast=trenchSection>=TRENCH_NUM_SECTIONS-1;
-    const dColor=isLast?'#0f0':open?'#0ff':'#f44';
+    const dColor=isLast?'#0f0':open?'#0ff':_dlChoicePending?'#f80':'#f44';
     const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
     ctx.globalAlpha=open?0.6*pulse:0.3;
     ctx.shadowColor=dColor;ctx.shadowBlur=12;
@@ -14787,7 +14820,7 @@ function render() {
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.fillStyle=dColor;ctx.shadowColor=dColor;ctx.shadowBlur=8;
-    const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ DOOR OPEN ▶':'✕ LOCKED ✕';
+    const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ DOOR OPEN ▶':_dlChoicePending?'◆ CHOOSE ◆':'✕ LOCKED ✕';
     ctx.fillText(lbl,dx1,(doorY1+doorY2)/2);
     ctx.shadowBlur=0;ctx.textBaseline='alphabetic';
   }
