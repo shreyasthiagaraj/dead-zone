@@ -273,6 +273,22 @@ body.mobile #mobile-buttons { display: block; }
 @keyframes scanline-flicker { 0%,100%{opacity:0.03} 50%{opacity:0.08} }
 #shop-screen { opacity:0; transition:opacity 0.5s ease-out; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
 #shop-screen.visible { opacity:1; }
+#datalink-screen.visible { opacity:1; }
+#reforge-screen.visible { opacity:1; }
+.dl-option { flex:1;max-width:220px;min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px 12px;border-radius:14px;border:2px solid rgba(255,255,255,0.15);background:rgba(10,10,20,0.85);cursor:pointer;transition:transform 0.2s,border-color 0.3s,box-shadow 0.3s,opacity 0.3s;-webkit-tap-highlight-color:transparent;user-select:none }
+.dl-option:active { transform:scale(0.96); }
+.dl-option.selected { transform:scale(1.05);opacity:1; }
+.dl-option.deselected { opacity:0.2;transform:scale(0.9);pointer-events:none; }
+.dl-option .dl-icon { font-size:36px;line-height:1; }
+.dl-option .dl-label { font-size:15px;font-weight:bold;letter-spacing:3px;text-transform:uppercase; }
+.dl-option .dl-desc { font-size:10px;color:#aab;letter-spacing:1px;text-align:center;line-height:1.4; }
+.reforge-card { width:140px;min-height:120px;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 8px;border-radius:10px;border:2px solid rgba(255,136,0,0.3);background:rgba(10,10,20,0.9);cursor:pointer;transition:transform 0.15s,border-color 0.2s,box-shadow 0.2s;-webkit-tap-highlight-color:transparent }
+.reforge-card:active { transform:scale(0.96); }
+.reforge-card.maxed { opacity:0.35;pointer-events:none;border-color:rgba(255,255,255,0.1); }
+.reforge-card .rf-icon { font-size:22px; }
+.reforge-card .rf-name { font-size:10px;font-weight:bold;letter-spacing:2px;text-align:center; }
+.reforge-card .rf-level { font-size:9px;letter-spacing:1px; }
+.reforge-card .rf-next { font-size:9px;color:#f80;text-align:center;line-height:1.3;margin-top:4px; }
 #mods-panel.visible { opacity:1; }
 .shop-card-wrap { opacity:0; transform:translateY(20px); transition:opacity 0.3s ease-out, transform 0.3s ease-out; }
 .shop-card-wrap.card-in { opacity:1; transform:translateY(0); }
@@ -557,6 +573,26 @@ body.mobile #mobile-buttons { display: block; }
       <button class="menu-btn" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:160px">PURCHASE MOD</button>
     </div>
   </div>
+</div>
+
+<!-- ---- DATA LINK CHOICE OVERLAY ---- -->
+<div id="datalink-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:58;background:rgba(3,3,12,0.75);font-family:'Courier New',monospace;align-items:center;justify-content:flex-end;flex-direction:column;padding:0 14px 40px;box-sizing:border-box;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);opacity:0;transition:opacity 0.4s ease-out">
+  <div style="position:absolute;top:18%;left:50%;transform:translateX(-50%);text-align:center">
+    <div style="color:#0ff;font-size:10px;letter-spacing:4px;opacity:0.5">// DATA ROUTING //</div>
+    <div style="color:#fff;font-size:18px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.3);margin-top:6px">CHOOSE YOUR PATH</div>
+  </div>
+  <div id="datalink-options" style="display:flex;flex-direction:row;gap:16px;width:100%;max-width:500px;justify-content:center"></div>
+</div>
+
+<!-- ---- REFORGE OVERLAY ---- -->
+<div id="reforge-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:62;background:rgba(3,3,12,0.85);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;transition:opacity 0.4s ease-out">
+  <div style="text-align:center;margin-bottom:14px">
+    <div style="color:#f80;font-size:10px;letter-spacing:4px;opacity:0.5">// PROTOCOL UPGRADE //</div>
+    <div style="color:#f80;font-size:20px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 12px #f80,0 0 24px rgba(255,136,0,0.3);margin-top:4px">REFORGE</div>
+    <div style="color:#aab;font-size:11px;margin-top:4px">Select a mod to upgrade</div>
+  </div>
+  <div id="reforge-cards" style="display:flex;flex-direction:row;gap:12px;justify-content:center;flex-wrap:wrap;max-width:700px;width:100%;overflow-y:auto;max-height:55vh"></div>
+  <button id="btn-reforge-skip" style="margin-top:14px;padding:10px 32px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15)">SKIP</button>
 </div>
 
 <!-- ---- PAUSE MENU ---- -->
@@ -2327,6 +2363,603 @@ function shouldSpawnShopChest() {
 }
 function resetShopCadence() { _sectionsSinceLastShop = 0; }
 
+// ========================================================================
+//  DATA LINK CHOICE SYSTEM — replaces fixed shop spawns with player choice
+// ========================================================================
+
+// --- Reward type definitions ---
+const DL_TYPES = {
+  mod:     { id: 'mod',     label: 'MOD',     icon: '◆', color: '#0ff', desc: 'Open Mod Terminal (3 cards)' },
+  repair:  { id: 'repair',  label: 'REPAIR',  icon: '✚', color: '#4f4', desc: 'Restore 30 HP (or 15 barrier)' },
+  reforge: { id: 'reforge', label: 'REFORGE', icon: '⚒', color: '#f80', desc: 'Upgrade an existing mod +1 level' },
+  bits:    { id: 'bits',    label: 'BITS',    icon: '⬡', color: '#ff0', desc: '' }, // desc set dynamically
+  trial:   { id: 'trial',   label: 'TRIAL',   icon: '☠', color: '#f44', desc: 'Harder section → guaranteed rare card' },
+};
+
+// --- Run-scoped state ---
+let _dlSectionsSinceChoice = 0; // cadence counter (replaces shouldSpawnShopChest for choice system)
+let _dlChoiceHistory = [];       // last N choices made (reward type ids)
+let _dlModDrought = 0;           // sections since MOD was last offered as an option
+let _dlActive = false;           // true while choice overlay is visible
+let _dlTrialActive = false;      // true if next section has trial modifier
+let _dlTrialBonusPending = false;// true if player just cleared a trial section and hasn't received bonus card yet
+let _dlFirstChoice = true;       // first choice of the run (guaranteed MOD)
+
+function resetDataLinkState() {
+  _dlSectionsSinceChoice = 0;
+  _dlChoiceHistory = [];
+  _dlModDrought = 0;
+  _dlActive = false;
+  _dlTrialActive = false;
+  _dlTrialBonusPending = false;
+  _dlFirstChoice = true;
+}
+
+// --- Should a Data Link choice appear after this section clear? ---
+function shouldShowDataLink() {
+  _dlSectionsSinceChoice++;
+  if (_dlSectionsSinceChoice >= SHOP_SECTION_INTERVAL) {
+    _dlSectionsSinceChoice = 0;
+    return true;
+  }
+  return false;
+}
+
+// --- Check if boss section (end of each domain: 10, 20, 30, 40, then every 10) ---
+function _isBossSection(si) {
+  return si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
+}
+
+// --- Check if domain transition ---
+function _isDomainTransition(si) {
+  return si === 9 || si === 19 || si === 29 || si === 39;
+}
+
+// --- Count upgradeable cards (below max level) ---
+function _countUpgradeableCards() {
+  let count = 0;
+  for (const id in runUpgrades) {
+    const u = UPGRADE_POOL.find(c => c.id === id);
+    if (u && runUpgrades[id] < u.max) count++;
+  }
+  return count;
+}
+
+// --- Count total cards in build ---
+function _countTotalCards() {
+  let count = 0;
+  for (const id in runUpgrades) { if (runUpgrades[id] > 0) count++; }
+  return count;
+}
+
+// --- Count cards in a specific class ---
+function _countClassCards(cls) {
+  let count = 0;
+  for (const id in runUpgrades) {
+    if (runUpgrades[id] > 0 && _CARD_CLASS_MAP[id] === cls) count++;
+  }
+  return count;
+}
+
+// --- Get bits reward amount for current section ---
+function _dlBitsAmount() {
+  return Math.floor(15 + trenchSection * 0.7);
+}
+
+// --- Generate the two Data Link options ---
+function generateDataLinkChoice() {
+  const lp = getLocalPlayer();
+  const hpPct = lp ? (lp.hp / lp.maxHp) : 1;
+  const totalCards = _countTotalCards();
+  const upgradeableCards = _countUpgradeableCards();
+  const lastChoice = _dlChoiceHistory.length > 0 ? _dlChoiceHistory[_dlChoiceHistory.length - 1] : null;
+  const hasClassCards = ['thermal', 'cryo', 'arc', 'pulse', 'corrupt'].some(c => _countClassCards(c) > 0);
+
+  // Build weight pool
+  const pool = {};
+  // MOD — always available
+  pool.mod = 55;
+  if (!hasClassCards) pool.mod += 20;
+  if (lastChoice === 'mod') pool.mod -= 15;
+  if (_dlModDrought >= 3) pool.mod += 30; // drought protection
+
+  // REPAIR — always available (barrier fallback at full hp)
+  pool.repair = 30;
+  if (hpPct < 0.5) pool.repair += 25;
+  if (hpPct < 0.3) pool.repair += 15; // total +40
+  if (hpPct > 0.9) pool.repair -= 15;
+  if (lastChoice === 'repair') pool.repair -= 20;
+
+  // REFORGE — only if 2+ upgradeable cards
+  if (upgradeableCards >= 2) {
+    pool.reforge = 25;
+    const maxClassCount = Math.max(...['thermal','cryo','arc','pulse','corrupt'].map(c => _countClassCards(c)));
+    if (maxClassCount >= 3) pool.reforge += 15;
+    // After boss kill — boost reforge
+    if (_isBossSection(trenchSection)) pool.reforge += 20;
+  }
+
+  // BITS — always available
+  pool.bits = 20;
+  if (trenchSection >= 30) pool.bits -= 10;
+  if (lastChoice === 'bits') pool.bits -= 10;
+
+  // TRIAL — only after section 5
+  if (trenchSection >= 5) {
+    pool.trial = 12;
+    if (totalCards >= 5) pool.trial += 10;
+  }
+
+  // Clamp all weights to >= 0
+  for (const k in pool) { pool[k] = Math.max(0, pool[k]); }
+
+  // First choice of the run: always include MOD
+  if (_dlFirstChoice) {
+    pool.mod = 999; // guarantee MOD is picked first
+  }
+
+  // Draw 2 without replacement using weighted random
+  const picks = [];
+  const remaining = { ...pool };
+  for (let i = 0; i < 2; i++) {
+    const totalW = Object.values(remaining).reduce((s, w) => s + w, 0);
+    if (totalW <= 0) break;
+    let r = Math.random() * totalW;
+    for (const [type, w] of Object.entries(remaining)) {
+      r -= w;
+      if (r <= 0) {
+        picks.push(type);
+        delete remaining[type];
+        break;
+      }
+    }
+  }
+
+  // Hard rule: at least one build-advancing option (mod or reforge)
+  if (!picks.includes('mod') && !picks.includes('reforge')) {
+    picks[Math.floor(Math.random() * 2)] = 'mod';
+  }
+
+  // Ensure exactly 2
+  while (picks.length < 2) picks.push('mod');
+
+  // Track drought
+  if (picks.includes('mod')) _dlModDrought = 0;
+  else _dlModDrought++;
+
+  return picks;
+}
+
+// --- Show the Data Link choice overlay ---
+function showDataLinkChoice() {
+  if (isMultiplayer) return; // v1: solo only
+  _dlActive = true;
+  const picks = generateDataLinkChoice();
+  const container = document.getElementById('datalink-options');
+  if (!container) return;
+  container.innerHTML = '';
+
+  for (const typeId of picks) {
+    const t = DL_TYPES[typeId];
+    const opt = document.createElement('div');
+    opt.className = 'dl-option';
+    opt.style.borderColor = t.color;
+    opt.style.boxShadow = `0 0 16px ${t.color}40, inset 0 0 12px ${t.color}15`;
+
+    let desc = t.desc;
+    if (typeId === 'bits') desc = `+${_dlBitsAmount()} bits (meta-currency)`;
+
+    opt.innerHTML = `
+      <div class="dl-icon" style="color:${t.color};text-shadow:0 0 12px ${t.color}">${t.icon}</div>
+      <div class="dl-label" style="color:${t.color};text-shadow:0 0 8px ${t.color}80">${t.label}</div>
+      <div class="dl-desc">${desc}</div>
+    `;
+
+    const handler = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      selectDataLink(typeId, opt, container);
+    };
+    opt.addEventListener('click', handler);
+    opt.addEventListener('touchend', handler, { passive: false });
+    container.appendChild(opt);
+  }
+
+  // Show overlay
+  const el = document.getElementById('datalink-screen');
+  if (el) {
+    el.style.display = 'flex';
+    void el.offsetWidth;
+    el.classList.add('visible');
+  }
+  triggerGlitchSurge(0.3, 20);
+  playSfx('ui_click', 0.15) || playSound(500, 0.06, 'sine', 0.1);
+  // Pause game during choice
+  if (gameState === 'playing') gameState = 'datalink';
+}
+
+// --- Player selected a Data Link option ---
+function selectDataLink(typeId, optEl, container) {
+  if (!_dlActive) return;
+  _dlActive = false;
+  _dlFirstChoice = false;
+  _dlChoiceHistory.push(typeId);
+
+  // Visual feedback — selected pulses, other fades
+  container.querySelectorAll('.dl-option').forEach(el => {
+    if (el === optEl) el.classList.add('selected');
+    else el.classList.add('deselected');
+  });
+
+  playSfx('level_up', 0.25) || playSound(1100, 0.08, 'sine', 0.15);
+  triggerGlitchSurge(0.25, 15);
+
+  // Brief pause then deliver reward
+  setTimeout(() => {
+    closeDataLink();
+    deliverDataLinkReward(typeId);
+  }, 500);
+}
+
+// --- Close the Data Link overlay ---
+function closeDataLink() {
+  const el = document.getElementById('datalink-screen');
+  if (el) {
+    el.classList.remove('visible');
+    setTimeout(() => { el.style.display = 'none'; }, 400);
+  }
+}
+
+// --- Deliver the chosen reward ---
+function deliverDataLinkReward(typeId) {
+  const lp = getLocalPlayer();
+  switch (typeId) {
+    case 'mod':
+      // Open the existing mod terminal shop
+      openShopDirect();
+      break;
+
+    case 'repair': {
+      if (lp) {
+        if (lp.hp >= lp.maxHp) {
+          // Full HP — grant barrier instead
+          lp._barrier = Math.min(50, (lp._barrier || 0) + 15);
+          addFloatingText(lp.x, lp.y - 40, '+15 BARRIER', '#4ff');
+          for (let i = 0; i < 10; i++) {
+            const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
+            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 24, maxLife: 24, size: 2, color: '#4ff', type: 'spark' });
+          }
+        } else {
+          const heal = Math.min(30, lp.maxHp - lp.hp);
+          lp.hp += heal;
+          addFloatingText(lp.x, lp.y - 40, `+${heal} HP`, '#4f4');
+          for (let i = 0; i < 14; i++) {
+            const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 2.5;
+            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 28, maxLife: 28, size: 2.5, color: '#4f4', type: 'spark' });
+          }
+        }
+        playSfx('level_up', 0.2) || playSound(800, 0.08, 'sine', 0.12);
+      }
+      gameState = 'playing';
+      break;
+    }
+
+    case 'bits': {
+      const amount = _dlBitsAmount();
+      metaShards += amount;
+      runBitsEarned += amount;
+      try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
+      if (lp) {
+        addFloatingText(lp.x, lp.y - 40, `+${amount} BITS`, '#ff0');
+        for (let i = 0; i < 12; i++) {
+          const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 2;
+          particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 22, maxLife: 22, size: 2, color: '#ff0', type: 'spark' });
+        }
+      }
+      _pulseBitsHUD();
+      playSfx('level_up', 0.2) || playSound(700, 0.08, 'sine', 0.12);
+      gameState = 'playing';
+      break;
+    }
+
+    case 'reforge':
+      openReforge();
+      break;
+
+    case 'trial':
+      _dlTrialActive = true;
+      if (lp) addFloatingText(lp.x, lp.y - 40, 'TRIAL: OVERCLOCKED', '#f44');
+      triggerGlitchSurge(0.4, 30);
+      playSfx('level_up', 0.15) || playSound(300, 0.08, 'sawtooth', 0.12);
+      gameState = 'playing';
+      break;
+  }
+}
+
+// --- Open mod terminal directly (no physical chest needed) ---
+function openShopDirect() {
+  _shopActiveChest = null;
+  _shopSelectedId = null;
+  _shopPurchased = false;
+  shopCards = draftShopCards(3);
+  _resetJoysticks();
+  gameState = 'shop';
+  canvas.classList.add('focus-back');
+  triggerGlitchSurge(0.5, 40);
+  const el = document.getElementById('shop-screen');
+  if (!el) return;
+  const loadEl = document.getElementById('shop-loading');
+  const loadText = document.getElementById('shop-load-text');
+  const loadFill = document.getElementById('shop-load-fill');
+  const loadSub = document.getElementById('shop-load-sub');
+  const termContent = el.querySelector('[data-shop-content]');
+  if (loadEl) { loadEl.style.display = 'flex'; loadEl.style.opacity = '0'; }
+  if (termContent) termContent.style.display = 'none';
+  if (loadFill) loadFill.style.width = '0%';
+  if (loadText) loadText.textContent = '';
+  if (loadSub) loadSub.textContent = '';
+  el.style.display = 'flex';
+  el.classList.remove('visible');
+  void el.offsetWidth;
+  el.classList.add('visible');
+  setTimeout(() => {
+    if (loadEl) loadEl.style.opacity = '1';
+    if (loadText) loadText.textContent = 'CONNECTING';
+    if (loadSub) loadSub.textContent = 'establishing secure channel...';
+    playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
+    const _loadSteps = [
+      { t: 200, text: 'SCANNING', sub: 'indexing available protocols...', pct: '30%' },
+      { t: 500, text: 'DECRYPTING', sub: 'unlocking mod cache...', pct: '65%' },
+      { t: 800, text: 'COMPILING', sub: 'preparing selection...', pct: '100%' },
+    ];
+    for (const step of _loadSteps) {
+      setTimeout(() => {
+        if (loadText) loadText.textContent = step.text;
+        if (loadSub) loadSub.textContent = step.sub;
+        if (loadFill) loadFill.style.width = step.pct;
+        if (step.pct === '100%') triggerGlitchSurge(0.2, 8);
+        playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
+      }, step.t);
+    }
+  }, 600);
+  setTimeout(() => {
+    if (loadEl) loadEl.style.display = 'none';
+    if (termContent) termContent.style.display = 'flex';
+    _renderShopCards();
+    _updateShopBitsDisplay();
+    const cards = el.querySelectorAll('.shop-card-wrap');
+    cards.forEach((c, i) => { setTimeout(() => c.classList.add('card-in'), i * 120); });
+    playSfx('level_up', 0.2) || playSound(900, 0.1, 'sine', 0.15);
+  }, 1900);
+}
+
+// --- REFORGE UI ---
+function openReforge() {
+  gameState = 'reforge';
+  _resetJoysticks();
+  const container = document.getElementById('reforge-cards');
+  if (!container) { gameState = 'playing'; return; }
+  container.innerHTML = '';
+
+  // List all owned cards
+  const ownedIds = Object.keys(runUpgrades).filter(id => runUpgrades[id] > 0);
+  if (ownedIds.length === 0) {
+    // Fallback — nothing to reforge, give a free MOD instead
+    gameState = 'playing';
+    openShopDirect();
+    return;
+  }
+
+  for (const id of ownedIds) {
+    const u = UPGRADE_POOL.find(c => c.id === id);
+    if (!u) continue;
+    const curLv = runUpgrades[id];
+    const isMaxed = curLv >= u.max;
+    const card = document.createElement('div');
+    card.className = 'reforge-card' + (isMaxed ? ' maxed' : '');
+    card.style.borderColor = isMaxed ? 'rgba(255,255,255,0.1)' : u.color;
+    if (!isMaxed) card.style.boxShadow = `0 0 10px ${u.color}30`;
+
+    let nextDesc = 'MAX LEVEL';
+    if (!isMaxed && u.descs && u.descs[curLv]) {
+      nextDesc = u.descs[curLv].replace(/^LEVEL \d+:\s*/i, '');
+    }
+
+    card.innerHTML = `
+      <div class="rf-icon">${u.icon}</div>
+      <div class="rf-name" style="color:${u.color}">${u.name}</div>
+      <div class="rf-level" style="color:#aab">Lv ${curLv}/${u.max}</div>
+      ${isMaxed ? '<div class="rf-next" style="color:#667">MAXED</div>' : `<div class="rf-next">NEXT: ${nextDesc}</div>`}
+    `;
+
+    if (!isMaxed) {
+      const handler = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        applyReforge(id, card);
+      };
+      card.addEventListener('click', handler);
+      card.addEventListener('touchend', handler, { passive: false });
+    }
+    container.appendChild(card);
+  }
+
+  // Skip button handler
+  const skipBtn = document.getElementById('btn-reforge-skip');
+  if (skipBtn) {
+    const _skipHandler = (ev) => {
+      ev.preventDefault();
+      closeReforge();
+    };
+    skipBtn.onclick = _skipHandler;
+  }
+
+  // Show overlay
+  const el = document.getElementById('reforge-screen');
+  if (el) {
+    el.style.display = 'flex';
+    void el.offsetWidth;
+    el.classList.add('visible');
+  }
+  triggerGlitchSurge(0.3, 20);
+  playSfx('ui_click', 0.15) || playSound(600, 0.06, 'sine', 0.1);
+}
+
+// --- Apply a reforge upgrade ---
+function applyReforge(cardId, cardEl) {
+  const u = UPGRADE_POOL.find(c => c.id === cardId);
+  if (!u || runUpgrades[cardId] >= u.max) return;
+
+  // Handle mutual exclusivity (same as buyShopCard)
+  const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake', 'kinetic_wake'];
+  if (_dashTrailIds.includes(cardId)) {
+    for (const tid of _dashTrailIds) { if (tid !== cardId) delete runUpgrades[tid]; }
+  }
+  const _roundsIds = ['thermal_rounds', 'cryo_rounds', 'arc_rounds', 'pulse_shot', 'viral_payload'];
+  if (_roundsIds.includes(cardId)) {
+    for (const rid of _roundsIds) { if (rid !== cardId) delete runUpgrades[rid]; }
+  }
+  const _beaconElemIds = ['beacon_thermal', 'beacon_cryo', 'beacon_arc', 'beacon_corrupt'];
+  if (_beaconElemIds.includes(cardId)) {
+    for (const tid of _beaconElemIds) { if (tid !== cardId) delete runUpgrades[tid]; }
+  }
+
+  runUpgrades[cardId] = (runUpgrades[cardId] || 0) + 1;
+  rebuildRunMods();
+
+  // Visual celebration
+  const lp = getLocalPlayer();
+  if (lp) {
+    addFloatingText(lp.x, lp.y - 40, `⚒ ${u.name} → Lv ${runUpgrades[cardId]}`, u.color);
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 3;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 22, maxLife: 22, size: 2.5, color: u.color, type: 'spark' });
+    }
+  }
+  playSfx('level_up', 0.3) || playSound(1200, 0.1, 'sine', 0.18);
+  triggerGlitchSurge(0.35, 20);
+
+  // Update max HP if needed
+  if (lp) {
+    const targetMaxHp = Math.floor(100 * (1 + getMetaBonus('vitality')) + (runMods.maxHpBonus || 0)) * (1 - (runMods.maxHpPenalty || 0));
+    const newMax = Math.max(10, Math.round(targetMaxHp));
+    const bump = newMax - lp.maxHp;
+    lp.maxHp = newMax;
+    if (bump > 0) lp.hp += bump;
+    lp.hp = Math.min(lp.hp, lp.maxHp);
+    lp.speed = 6 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
+  }
+
+  // Close after brief celebration
+  setTimeout(() => closeReforge(), 600);
+}
+
+// --- Close Reforge overlay ---
+function closeReforge() {
+  const el = document.getElementById('reforge-screen');
+  if (el) {
+    el.classList.remove('visible');
+    setTimeout(() => { el.style.display = 'none'; }, 400);
+  }
+  if (gameState === 'reforge') gameState = 'playing';
+}
+
+// --- Boss reward: guaranteed rare+ card pick ---
+function showBossReward() {
+  if (isMultiplayer) return;
+  _shopActiveChest = null;
+  _shopSelectedId = null;
+  _shopPurchased = false;
+  // Draft cards but only rare+ quality
+  const cap = getShopTierCap();
+  const pool = UPGRADE_POOL.filter(u =>
+    (u.rarity === 'rare' || u.rarity === 'epic' || u.rarity === 'legendary') &&
+    (runUpgrades[u.id] || 0) < u.max &&
+    (!u.prereqs || u.prereqs.every(g => g.split('|').some(id => (runUpgrades[id] || 0) > 0)))
+  );
+  if (pool.length === 0) return; // no eligible cards — skip
+  const picks = [];
+  const used = new Set();
+  for (let i = 0; i < 3 && pool.length > 0; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    if (!used.has(pool[idx].id)) {
+      picks.push(pool[idx]);
+      used.add(pool[idx].id);
+    }
+    pool.splice(idx, 1);
+  }
+  if (picks.length === 0) return;
+  shopCards = picks;
+  _resetJoysticks();
+  gameState = 'shop';
+  canvas.classList.add('focus-back');
+  triggerGlitchSurge(0.5, 40);
+  const el = document.getElementById('shop-screen');
+  if (!el) return;
+  const loadEl = document.getElementById('shop-loading');
+  const loadText = document.getElementById('shop-load-text');
+  const loadFill = document.getElementById('shop-load-fill');
+  const loadSub = document.getElementById('shop-load-sub');
+  const termContent = el.querySelector('[data-shop-content]');
+  if (loadEl) { loadEl.style.display = 'flex'; loadEl.style.opacity = '0'; }
+  if (termContent) termContent.style.display = 'none';
+  if (loadFill) loadFill.style.width = '0%';
+  if (loadText) loadText.textContent = '';
+  if (loadSub) loadSub.textContent = '';
+  el.style.display = 'flex';
+  el.classList.remove('visible');
+  void el.offsetWidth;
+  el.classList.add('visible');
+  setTimeout(() => {
+    if (loadEl) loadEl.style.opacity = '1';
+    if (loadText) loadText.textContent = 'BOSS DEFEATED';
+    if (loadSub) loadSub.textContent = 'decrypting rare protocols...';
+    playSfx('ui_click', 0.15) || playSound(400, 0.06, 'sine', 0.1);
+    const _loadSteps = [
+      { t: 200, text: 'SCANNING', sub: 'high-value cache detected...', pct: '30%' },
+      { t: 500, text: 'EXTRACTING', sub: 'rare protocols unlocked...', pct: '65%' },
+      { t: 800, text: 'COMPILING', sub: 'preparing selection...', pct: '100%' },
+    ];
+    for (const step of _loadSteps) {
+      setTimeout(() => {
+        if (loadText) loadText.textContent = step.text;
+        if (loadSub) loadSub.textContent = step.sub;
+        if (loadFill) loadFill.style.width = step.pct;
+        if (step.pct === '100%') triggerGlitchSurge(0.2, 8);
+        playSound(600 + Math.random() * 400, 0.02, 'sine', 0.06);
+      }, step.t);
+    }
+  }, 600);
+  setTimeout(() => {
+    if (loadEl) loadEl.style.display = 'none';
+    if (termContent) termContent.style.display = 'flex';
+    _renderShopCards();
+    _updateShopBitsDisplay();
+    const cards = el.querySelectorAll('.shop-card-wrap');
+    cards.forEach((c, i) => { setTimeout(() => c.classList.add('card-in'), i * 120); });
+    playSfx('level_up', 0.2) || playSound(900, 0.1, 'sine', 0.15);
+  }, 1900);
+}
+
+// --- Trial bonus reward: after clearing a trial section ---
+function showTrialReward() {
+  _dlTrialBonusPending = false;
+  showBossReward(); // Same UI — guaranteed rare+ cards, free pick
+}
+
+// --- Apply trial modifier to a section's enemies ---
+function applyTrialModifier(sec) {
+  if (!_dlTrialActive) return;
+  // Boost all wave enemy counts by ~30%
+  for (let w = 0; w < sec.waves.length; w++) {
+    sec.waves[w] = Math.ceil(sec.waves[w] * 1.3);
+  }
+  // Mark the section so enemy HP/speed scaling knows
+  sec._trialModified = true;
+  _dlTrialActive = false;
+  _dlTrialBonusPending = true;
+}
+
 function spawnRandomPowerupChest(x, y, opts) {
   const orbitalChance = (opts && opts.orbitalChance != null) ? opts.orbitalChance : 0.15;
   let content;
@@ -3130,6 +3763,8 @@ function spawnTrenchWave(idx, waveIdx) {
   if (sec.modifier && sec.modifier.id === 'doubletime') hpScale *= 0.6;
   // WARDEN'S GAZE modifier: enemies 20% faster
   if (sec.modifier && sec.modifier.id === 'warden') speedBoost += 0.4;
+  // TRIAL modifier: +30% HP, +20% speed
+  if (sec._trialModified) { hpScale *= 1.3; speedBoost += 0.3; }
   // Cap ranged enemies per wave: max 1 early, max 2 late. Prevents projectile spam
   // since the player can't move and shoot simultaneously.
   // Boss sections also exclude elite/ranged types entirely during phase 1 — the boss is
@@ -3178,6 +3813,11 @@ function spawnTrenchSection(idx) {
   const TW = TRENCH_SECTION_W * CELL_SIZE;
   const cx = sec.x + TW / 2;
   const cy = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+  // Apply trial modifier if active
+  applyTrialModifier(sec);
+  if (sec._trialModified) {
+    addFloatingText(cx, cy - 60, '// TRIAL: OVERCLOCKED //', '#f44');
+  }
   // First wave
   spawnTrenchWave(idx, 0);
   // Boss spawns once with the first wave (uses the same per-section scaling)
@@ -3310,17 +3950,36 @@ function updateTrench() {
     const lp2 = getLocalPlayer();
     if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
     playExitFoundSound();
-    // Cache Node — solo only (multiplayer uses power-up drops instead of mods)
+    // ---- DATA LINK CHOICE or BOSS REWARD ----
     if (!isMultiplayer) {
-      const _archiveMod = sec.modifier && sec.modifier.id === 'archive';
-      if (!_anyShopChestActive() && (_archiveMod || shouldSpawnShopChest())) {
-        const lpc = getLocalPlayer();
-        if (lpc) { const _sp = _pickStrideChestSpawn(lpc); spawnShopChest(_sp.x, _sp.y); }
+      // Trial bonus: if player just cleared a trial section, give bonus rare card
+      if (_dlTrialBonusPending) {
+        addFloatingText(lp2 ? lp2.x : 0, lp2 ? lp2.y - 50 : 0, 'TRIAL COMPLETE', '#f44');
+        setTimeout(() => showTrialReward(), 600);
+      }
+      // Boss sections: guaranteed rare+ card reward (on top of regular cadence)
+      else if (sec.isBoss) {
+        setTimeout(() => showBossReward(), 800);
+      }
+      // Domain transition (sections 9, 19, 29, 39): bonus domain gift rare card
+      else if (_isDomainTransition(trenchSection)) {
+        if (lp2) addFloatingText(lp2.x, lp2.y - 50, 'DOMAIN GIFT', '#ff0');
+        setTimeout(() => showBossReward(), 600); // Same quality — guaranteed rare+ pick
+      }
+      // Regular cadence: Data Link choice every 2 sections
+      else if (shouldShowDataLink()) {
+        const _archiveMod = sec.modifier && sec.modifier.id === 'archive';
+        if (_archiveMod) {
+          // Archive modifier forces a free MOD terminal
+          setTimeout(() => { openShopDirect(); }, 400);
+        } else {
+          setTimeout(() => showDataLinkChoice(), 400);
+        }
       }
     }
   }
-  // Door trigger: when cleared and any player is at the right wall in the door y range
-  if (sec.cleared && _trenchPendingNext < 0) {
+  // Door trigger: when cleared and any player is at the right wall in the door y range — only when not in a choice/shop/reforge state
+  if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'datalink' && gameState !== 'shop' && gameState !== 'reforge') {
     const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
     const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
@@ -3430,10 +4089,9 @@ function updateDescent() {
     descentGateOpen = true;
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
     playExitFoundSound();
-    // Cache Node — solo only
-    if (!isMultiplayer && !_anyShopChestActive() && shouldSpawnShopChest()) {
-      const lpc = getLocalPlayer();
-      if (lpc) { const _sp = _pickStrideChestSpawn(lpc); spawnShopChest(_sp.x, _sp.y); }
+    // Data Link choice — solo only
+    if (!isMultiplayer && shouldShowDataLink()) {
+      setTimeout(() => showDataLinkChoice(), 400);
     }
   }
   // Check if player passed through the gate to next section
@@ -7465,6 +8123,7 @@ function startSoloGame() {
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
   resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
+  resetDataLinkState();
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600; // first whisper after ~10s
   memoryFragments = [];
@@ -7549,6 +8208,7 @@ function startMultiplayerGame() {
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
   resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
+  resetDataLinkState();
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600;
   memoryFragments = [];
@@ -9805,10 +10465,9 @@ function updateGauntlet() {
       playExitFoundSound();
       // Drop loot — health every 3 rooms; power-ups + elements now come from enemy drops
       if (gauntletRoom % 3 === 0) spawnHealthPickup();
-      // Cache Node — solo only
-      if (!isMultiplayer && !_anyShopChestActive() && shouldSpawnShopChest()) {
-        const lpc = getLocalPlayer();
-        if (lpc) { const _sp = _pickStrideChestSpawn(lpc); spawnShopChest(_sp.x, _sp.y); }
+      // Data Link choice — solo only
+      if (!isMultiplayer && shouldShowDataLink()) {
+        setTimeout(() => showDataLinkChoice(), 400);
       }
     }
     return;
@@ -12931,7 +13590,7 @@ function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
-  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell') { renderMenuBackground(); renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'datalink' && gameState !== 'reforge') { renderMenuBackground(); renderMinimap(); return; }
   // Cache nearest-zombie distance for the local player — used by the close-range vignette
   {
     _playerNearestZombieDist = Infinity;
@@ -14049,6 +14708,21 @@ function render() {
     if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#100008';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
   }
 
+  // Trial section overlay — red vein pulsing tint
+  if(gameMode==='trench'&&trenchSections[trenchSection]&&trenchSections[trenchSection]._trialModified){
+    const _tSec=trenchSections[trenchSection];
+    const _tTW=_sectionWidths[trenchSection]*CELL_SIZE;
+    const _tPulse=0.03+Math.sin(gameTime*0.06)*0.015;
+    ctx.globalAlpha=_tPulse;ctx.fillStyle='#f00';
+    ctx.fillRect(_tSec.x,0,_tTW,TRENCH_HEIGHT*CELL_SIZE);
+    ctx.globalAlpha=1;
+    // "TRIAL" label top-center
+    if(gameTime%120<60){
+      ctx.globalAlpha=0.7;ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillStyle='#f44';ctx.shadowColor='#f44';ctx.shadowBlur=8;
+      ctx.fillText('// TRIAL: OVERCLOCKED //',_tSec.x+_tTW/2,20);
+      ctx.shadowBlur=0;ctx.globalAlpha=1;
+    }
+  }
   // Trench door
   if(gameMode==='trench'&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
