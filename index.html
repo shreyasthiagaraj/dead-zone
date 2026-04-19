@@ -2532,140 +2532,111 @@ function generateDataLinkChoice() {
   return picks;
 }
 
-// --- Show the Data Link choice overlay ---
-function showDataLinkChoice() {
-  if (isMultiplayer) return; // v1: solo only
-  _dlActive = true;
+// --- Spawn two physical Data Link chests on the stage ---
+function spawnDataLinkChests() {
+  if (isMultiplayer) return;
+  const lp = getLocalPlayer();
+  if (!lp) return;
   const picks = generateDataLinkChoice();
-  const container = document.getElementById('datalink-options');
-  if (!container) return;
-  container.innerHTML = '';
+  _dlFirstChoice = false;
 
-  for (const typeId of picks) {
+  // Spawn positions: offset from player toward the door, one above center, one below
+  const sec = trenchSections[trenchSection];
+  const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+  const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+  const spawnX = sec ? sec.x + TW * 0.65 : lp.x + 80;
+  const yOff = 3.5 * CELL_SIZE; // distance from center
+  const positions = [
+    { x: spawnX, y: midY - yOff },
+    { x: spawnX, y: midY + yOff },
+  ];
+  // Ensure spawn positions are walkable
+  for (const pos of positions) {
+    const gx = Math.floor(pos.x / CELL_SIZE), gy = Math.floor(pos.y / CELL_SIZE);
+    if (!(dungeonGrid[gy] && dungeonGrid[gy][gx])) {
+      pos.x = lp.x + 60 + Math.random() * 40;
+      pos.y = lp.y + (positions.indexOf(pos) === 0 ? -50 : 50);
+    }
+  }
+
+  for (let i = 0; i < 2; i++) {
+    const typeId = picks[i];
     const t = DL_TYPES[typeId];
-    const opt = document.createElement('div');
-    opt.className = 'dl-option';
-    opt.style.borderColor = t.color;
-    opt.style.boxShadow = `0 0 16px ${t.color}40, inset 0 0 12px ${t.color}15`;
-
-    let desc = t.desc;
-    if (typeId === 'bits') desc = `+${_dlBitsAmount()} bits (meta-currency)`;
-
-    opt.innerHTML = `
-      <div class="dl-icon" style="color:${t.color};text-shadow:0 0 12px ${t.color}">${t.icon}</div>
-      <div class="dl-label" style="color:${t.color};text-shadow:0 0 8px ${t.color}80">${t.label}</div>
-      <div class="dl-desc">${desc}</div>
-    `;
-
-    const handler = (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      selectDataLink(typeId, opt, container);
-    };
-    opt.addEventListener('click', handler);
-    opt.addEventListener('touchend', handler, { passive: false });
-    container.appendChild(opt);
+    barrels.push({
+      x: positions[i].x, y: positions[i].y,
+      radius: 18,
+      hp: 2, maxHp: 2,
+      _dlChest: true,
+      _dlRewardType: typeId,
+      _dlColor: t.color,
+      _dlIcon: t.icon,
+      _dlLabel: t.label,
+      _bobTimer: Math.random() * Math.PI * 2,
+      _spawnAnim: 30, _spawnAnimMax: 30,
+    });
+    // Spawn particles
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2, s = 1.5 + Math.random() * 2.5;
+      particles.push({ x: positions[i].x, y: positions[i].y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 24, maxLife: 24, size: 2, color: t.color, type: 'spark' });
+    }
   }
-
-  // Show overlay
-  const el = document.getElementById('datalink-screen');
-  if (el) {
-    el.style.display = 'flex';
-    void el.offsetWidth;
-    el.classList.add('visible');
-  }
-  triggerGlitchSurge(0.3, 20);
-  playSfx('ui_click', 0.15) || playSound(500, 0.06, 'sine', 0.1);
-  // Pause game during choice
-  if (gameState === 'playing') gameState = 'datalink';
+  playSound(500, 0.08, 'sine', 0.1);
 }
 
-// --- Player selected a Data Link option ---
-function selectDataLink(typeId, optEl, container) {
-  if (!_dlActive) return;
-  _dlActive = false;
-  _dlFirstChoice = false;
+// --- When a Data Link chest is broken, deliver the reward and despawn the other ---
+function claimDataLinkChest(barrel) {
+  const typeId = barrel._dlRewardType;
+  const t = DL_TYPES[typeId];
   _dlChoiceHistory.push(typeId);
 
-  // Visual feedback — selected pulses, other fades
-  container.querySelectorAll('.dl-option').forEach(el => {
-    if (el === optEl) el.classList.add('selected');
-    else el.classList.add('deselected');
-  });
-
-  playSfx('level_up', 0.25) || playSound(1100, 0.08, 'sine', 0.15);
-  triggerGlitchSurge(0.25, 15);
-
-  // Brief pause then deliver reward
-  setTimeout(() => {
-    closeDataLink();
-    deliverDataLinkReward(typeId);
-  }, 500);
-}
-
-// --- Close the Data Link overlay ---
-function closeDataLink() {
-  const el = document.getElementById('datalink-screen');
-  if (el) {
-    el.classList.remove('visible');
-    setTimeout(() => { el.style.display = 'none'; }, 400);
+  // Celebration burst in the reward's color
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2, s = 2 + Math.random() * 5;
+    particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 28, maxLife: 28, size: 3 + Math.random() * 2, color: t.color, type: 'spark' });
   }
-}
+  playSfx('level_up', 0.25) || playSound(900, 0.08, 'sine', 0.15);
 
-// --- Deliver the chosen reward ---
-function deliverDataLinkReward(typeId) {
+  // Despawn the OTHER data link chest with a fade-out effect
+  for (let i = barrels.length - 1; i >= 0; i--) {
+    const b = barrels[i];
+    if (b._dlChest && b !== barrel) {
+      // Dissolve particles
+      for (let k = 0; k < 10; k++) {
+        const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
+        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 18, maxLife: 18, size: 2, color: '#888', type: 'spark' });
+      }
+      barrels.splice(i, 1);
+    }
+  }
+
+  // Deliver the reward
   const lp = getLocalPlayer();
   switch (typeId) {
-    case 'mod': {
-      // Spawn a physical Cache Node chest on the stage (player walks up to it)
-      gameState = 'playing';
-      if (lp) {
-        const _sp = _pickStrideChestSpawn(lp);
-        spawnShopChest(_sp.x, _sp.y);
-      }
+    case 'mod':
+      // Spawn the mod terminal chest near the broken chest's position
+      spawnShopChest(barrel.x, barrel.y);
       break;
-    }
 
-    case 'repair': {
+    case 'repair':
       if (lp) {
         if (lp.hp >= lp.maxHp) {
-          // Full HP — grant barrier instead
           lp._barrier = Math.min(50, (lp._barrier || 0) + 15);
-          addFloatingText(lp.x, lp.y - 40, '+15 BARRIER', '#4ff');
-          for (let i = 0; i < 10; i++) {
-            const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
-            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 24, maxLife: 24, size: 2, color: '#4ff', type: 'spark' });
-          }
+          addFloatingText(barrel.x, barrel.y - 30, '+15 BARRIER', '#4ff');
         } else {
           const heal = Math.min(30, lp.maxHp - lp.hp);
           lp.hp += heal;
-          addFloatingText(lp.x, lp.y - 40, `+${heal} HP`, '#4f4');
-          for (let i = 0; i < 14; i++) {
-            const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 2.5;
-            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 28, maxLife: 28, size: 2.5, color: '#4f4', type: 'spark' });
-          }
+          addFloatingText(barrel.x, barrel.y - 30, `+${heal} HP`, '#4f4');
         }
-        playSfx('level_up', 0.2) || playSound(800, 0.08, 'sine', 0.12);
       }
-      gameState = 'playing';
       break;
-    }
 
     case 'bits': {
       const amount = _dlBitsAmount();
       metaShards += amount;
       runBitsEarned += amount;
       try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
-      if (lp) {
-        addFloatingText(lp.x, lp.y - 40, `+${amount} BITS`, '#ff0');
-        for (let i = 0; i < 12; i++) {
-          const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 2;
-          particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 22, maxLife: 22, size: 2, color: '#ff0', type: 'spark' });
-        }
-      }
+      addFloatingText(barrel.x, barrel.y - 30, `+${amount} BITS`, '#ff0');
       _pulseBitsHUD();
-      playSfx('level_up', 0.2) || playSound(700, 0.08, 'sine', 0.12);
-      gameState = 'playing';
       break;
     }
 
@@ -2675,10 +2646,8 @@ function deliverDataLinkReward(typeId) {
 
     case 'trial':
       _dlTrialActive = true;
-      if (lp) addFloatingText(lp.x, lp.y - 40, 'TRIAL: OVERCLOCKED', '#f44');
-      triggerGlitchSurge(0.4, 30);
-      playSfx('level_up', 0.15) || playSound(300, 0.08, 'sawtooth', 0.12);
-      gameState = 'playing';
+      addFloatingText(barrel.x, barrel.y - 30, 'TRIAL: OVERCLOCKED', '#f44');
+      triggerGlitchSurge(0.3, 20);
       break;
   }
 }
@@ -3991,13 +3960,13 @@ function updateTrench() {
           // Archive modifier forces a free MOD terminal
           setTimeout(() => { openShopDirect(); }, 400);
         } else {
-          setTimeout(() => showDataLinkChoice(), 400);
+          setTimeout(() => spawnDataLinkChests(), 400);
         }
       }
     }
   }
-  // Door trigger: when cleared and any player is at the right wall in the door y range — only when not in a choice/shop/reforge state
-  if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'datalink' && gameState !== 'shop' && gameState !== 'reforge') {
+  // Door trigger: when cleared and any player is at the right wall in the door y range — only when not in shop/reforge state
+  if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge') {
     const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
     const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
@@ -4109,7 +4078,7 @@ function updateDescent() {
     playExitFoundSound();
     // Data Link choice — solo only
     if (!isMultiplayer && shouldShowDataLink()) {
-      setTimeout(() => showDataLinkChoice(), 400);
+      setTimeout(() => spawnDataLinkChests(), 400);
     }
   }
   // Check if player passed through the gate to next section
@@ -9785,6 +9754,12 @@ function spawnBarrels(count) {
   }
 }
 function explodeBarrel(barrel, idx) {
+  // Data Link chest — claim reward and despawn the other
+  if (barrel._dlChest) {
+    claimDataLinkChest(barrel);
+    barrels.splice(idx, 1);
+    return;
+  }
   // Shop chest (Cache Node) — open the shop UI
   if (barrel._shopChest) {
     // Celebration burst identical in shape to the stride chest but with a warmer gold palette
@@ -9854,7 +9829,7 @@ function explodeBarrel(barrel, idx) {
   // Chain reaction: explode nearby barrels
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
-    if (b2._chest) continue; // don't chain to chests
+    if (b2._chest || b2._dlChest || b2._shopChest) continue; // don't chain to special chests
     if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 120) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
@@ -10482,7 +10457,7 @@ function updateGauntlet() {
       if (gauntletRoom % 3 === 0) spawnHealthPickup();
       // Data Link choice — solo only
       if (!isMultiplayer && shouldShowDataLink()) {
-        setTimeout(() => showDataLinkChoice(), 400);
+        setTimeout(() => spawnDataLinkChests(), 400);
       }
     }
     return;
@@ -13602,7 +13577,7 @@ function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
-  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'datalink' && gameState !== 'reforge') { renderMenuBackground(); renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'reforge') { renderMenuBackground(); renderMinimap(); return; }
   // Cache nearest-zombie distance for the local player — used by the close-range vignette
   {
     _playerNearestZombieDist = Infinity;
@@ -14174,6 +14149,58 @@ function render() {
         if (_pdx * _pdx + _pdy * _pdy < (br.radius + PLAYER_RADIUS + 6) ** 2) {
           const _bi = barrels.indexOf(br);
           if (_bi >= 0) explodeBarrel(br, _bi);
+        }
+      }
+      continue;
+    }
+    // ---- DATA LINK CHEST ----
+    if (br._dlChest) {
+      if (br._hitFlash > 0) br._hitFlash--;
+      if (br._spawnAnim > 0) br._spawnAnim--;
+      const dlT = 1 - (br._spawnAnim / (br._spawnAnimMax || 30));
+      const dlColor = br._dlColor || '#0ff';
+      const dlPulse = 0.5 + Math.sin(performance.now() * 0.005 + br.x) * 0.25;
+      const bob = Math.sin(performance.now() * 0.003 + (br._bobTimer || 0)) * 3;
+      const scale = Math.min(1, dlT * 1.2);
+      ctx.save(); ctx.translate(br.x, br.y + bob);
+      ctx.scale(scale, scale);
+      // Outer glow
+      ctx.globalAlpha = dlPulse * 0.5;
+      ctx.shadowColor = dlColor; ctx.shadowBlur = 22;
+      ctx.fillStyle = dlColor; ctx.beginPath(); ctx.arc(0, 0, br.radius + 8, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      // Body — dark hexagonal shape
+      ctx.fillStyle = '#080812';
+      const w = br.radius * 1.3, h = br.radius * 1.1;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-w, -h, w*2, h*2, 4) : ctx.rect(-w, -h, w*2, h*2);
+      ctx.fill();
+      ctx.strokeStyle = br._hitFlash > 0 ? '#fff' : dlColor;
+      ctx.lineWidth = 2.5; ctx.shadowColor = dlColor; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0;
+      // Icon inside
+      ctx.fillStyle = dlColor; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = dlColor; ctx.shadowBlur = 8;
+      ctx.fillText(br._dlIcon || '?', 0, 1);
+      ctx.shadowBlur = 0;
+      // Floating label above
+      ctx.fillStyle = dlColor; ctx.font = 'bold 10px monospace'; ctx.globalAlpha = 0.9;
+      ctx.shadowColor = dlColor; ctx.shadowBlur = 6;
+      ctx.fillText(br._dlLabel || '', 0, -br.radius - 14);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      // Damage cracks
+      const dmg = (br.maxHp || 2) - br.hp;
+      if (dmg >= 1) {
+        ctx.strokeStyle = '#fff8'; ctx.lineWidth = 1; ctx.globalAlpha = 0.6;
+        ctx.beginPath(); ctx.moveTo(-w*0.5, -h*0.3); ctx.lineTo(0, h*0.2); ctx.lineTo(w*0.3, -h*0.1); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+      // Auto-break on proximity
+      const _lpDl = getLocalPlayer();
+      if (_lpDl && _lpDl.alive && br._spawnAnim <= 0) {
+        const _dldx = _lpDl.x - br.x, _dldy = _lpDl.y - br.y;
+        if (_dldx*_dldx + _dldy*_dldy < (br.radius + PLAYER_RADIUS + 8) ** 2) {
+          const _dli = barrels.indexOf(br);
+          if (_dli >= 0) explodeBarrel(br, _dli);
         }
       }
       continue;
