@@ -2706,18 +2706,18 @@ function spawnDescentSection(idx) {
 }
 
 // ---- THE TRENCH (horizontal clone of descent) ----
-const TRENCH_SECTION_W = 22; // cells per section horizontally
+const TRENCH_SECTION_W = 22; // default cells per section (overridden per-section)
 const TRENCH_HEIGHT = 18;    // cells tall
-const TRENCH_NUM_SECTIONS = 35;
+const TRENCH_NUM_SECTIONS = 50;
 const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
-  { name: 'ENTRY CACHE',       sections: [0, 6],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
-  { name: 'CORRUPTED SUBNET',  sections: [7, 13],   wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
-  { name: 'DEEP STORAGE',      sections: [14, 20],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
-  { name: 'KERNEL BOUNDARY',   sections: [21, 27],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
-  { name: 'THE CORE',          sections: [28, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
+  { name: 'ENTRY CACHE',       sections: [0, 9],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
+  { name: 'CORRUPTED SUBNET',  sections: [10, 19],  wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
+  { name: 'DEEP STORAGE',      sections: [20, 29],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
+  { name: 'KERNEL BOUNDARY',   sections: [30, 39],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
+  { name: 'THE CORE',          sections: [40, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
 ];
 function getTrenchDomain(sectionIdx) {
   for (const d of TRENCH_DOMAINS) { if (sectionIdx >= d.sections[0] && sectionIdx <= d.sections[1]) return d; }
@@ -2728,85 +2728,142 @@ function getTrenchDomain(sectionIdx) {
 // Each template returns an array of {x,y} cell offsets (section-local) to set as WALL.
 // Interior playable area: cols 2-19, rows 2-15 (with 5-col spawn clearance on left,
 // 3-col door clearance on right).
+// Templates define layout AND size (w = section width in cells). Default is 22.
 const TRENCH_TEMPLATES = {
-  arena: () => [], // no obstacles — pure open space
-  crossroads: () => {
-    // One large 4×4 central block
-    const cells = [];
-    for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) cells.push({ x: 10 + dx, y: 7 + dy });
-    return cells;
-  },
-  corridor: () => {
-    // Two horizontal walls creating a wide central lane with open flanks
-    const cells = [];
-    for (let dx = 6; dx <= 16; dx++) { cells.push({ x: dx, y: 4 }); cells.push({ x: dx, y: 13 }); }
-    return cells;
-  },
-  pillars: () => {
-    // 3 small 2×2 pillars with 5+ cell gaps between each cluster.
-    // Layout: left pillar, center-low pillar, right pillar — well separated.
-    const positions = [{ x: 7, y: 4 }, { x: 12, y: 10 }, { x: 17, y: 4 }];
-    // Verify gaps: (7,4)→(12,10): dx=5,dy=6 ✓  (12,10)→(17,4): dx=5,dy=6 ✓  (7,4)→(17,4): dx=10 ✓
-    const cells = [];
-    for (const p of positions) {
-      cells.push({ x: p.x, y: p.y }, { x: p.x+1, y: p.y }, { x: p.x, y: p.y+1 }, { x: p.x+1, y: p.y+1 });
+  // ---- SMALL (16 wide) — tight, claustrophobic ----
+  tight: { w: 16, build: () => [] }, // tiny open room, melee pressure
+  tight_pillars: { w: 16, build: () => {
+    const c = [];
+    c.push({x:6,y:5},{x:7,y:5},{x:6,y:6},{x:7,y:6}); // one pillar
+    c.push({x:10,y:10},{x:11,y:10},{x:10,y:11},{x:11,y:11}); // another
+    return c;
+  }},
+  tight_corridor: { w: 16, build: () => {
+    const c = [];
+    for (let dx = 5; dx <= 12; dx++) { c.push({x:dx,y:5}); c.push({x:dx,y:12}); }
+    return c;
+  }},
+
+  // ---- STANDARD (22 wide) — balanced ----
+  arena: { w: 22, build: () => [] },
+  crossroads: { w: 22, build: () => {
+    const c = [];
+    for (let dx = 0; dx < 4; dx++) for (let dy = 0; dy < 4; dy++) c.push({ x: 10+dx, y: 7+dy });
+    return c;
+  }},
+  corridor: { w: 22, build: () => {
+    const c = [];
+    for (let dx = 6; dx <= 16; dx++) { c.push({x:dx,y:4}); c.push({x:dx,y:13}); }
+    return c;
+  }},
+  pillars: { w: 22, build: () => {
+    const c = [];
+    for (const p of [{x:7,y:4},{x:12,y:10},{x:17,y:4}]) {
+      c.push({x:p.x,y:p.y},{x:p.x+1,y:p.y},{x:p.x,y:p.y+1},{x:p.x+1,y:p.y+1});
     }
-    return cells;
-  },
-  lshape: () => {
-    const cells = [];
-    for (let dy = 4; dy <= 10; dy++) cells.push({ x: 10, y: dy }); // vertical
-    for (let dx = 10; dx <= 15; dx++) cells.push({ x: dx, y: 10 }); // horizontal
-    return cells;
-  },
-  split: () => {
-    // Vertical wall bisecting with a wide gap in the middle
-    const cells = [];
-    for (let dy = 2; dy <= 6; dy++) cells.push({ x: 11, y: dy });
-    for (let dy = 11; dy <= 15; dy++) cells.push({ x: 11, y: dy });
-    return cells;
-  },
-  islands: () => {
-    const cells = [];
-    for (let dx = 0; dx < 3; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: 7+dx, y: 4+dy });
-    for (let dx = 0; dx < 3; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: 14+dx, y: 11+dy });
-    return cells;
-  },
-  bunker: () => {
-    const cells = [];
-    for (let dx = 9; dx <= 13; dx++) { cells.push({ x: dx, y: 6 }); cells.push({ x: dx, y: 11 }); }
-    cells.push({ x: 9, y: 7 }, { x: 9, y: 8 }, { x: 9, y: 10 }); // left wall (gap at 9)
-    cells.push({ x: 13, y: 7 }, { x: 13, y: 9 }, { x: 13, y: 10 }); // right wall (gap at 8)
-    return cells;
-  },
-  gauntlet: () => {
-    // Staggered 3×2 blocks creating a winding wide path. 4+ cell gaps enforced.
-    // Block1 (7-9, 3-4), Block2 (14-16, 8-9), Block3 (7-9, 13-14)
-    // Gaps: B1→B2: dx=5, dy=4 ✓  B2→B3: dx=5, dy=4 ✓
-    const cells = [];
-    for (let dx = 7; dx <= 9; dx++) cells.push({ x: dx, y: 3 }, { x: dx, y: 4 });
-    for (let dx = 14; dx <= 16; dx++) cells.push({ x: dx, y: 8 }, { x: dx, y: 9 });
-    for (let dx = 7; dx <= 9; dx++) cells.push({ x: dx, y: 13 }, { x: dx, y: 14 });
-    return cells;
-  },
+    return c;
+  }},
+  lshape: { w: 22, build: () => {
+    const c = [];
+    for (let dy = 4; dy <= 10; dy++) c.push({x:10,y:dy});
+    for (let dx = 10; dx <= 15; dx++) c.push({x:dx,y:10});
+    return c;
+  }},
+  split: { w: 22, build: () => {
+    const c = [];
+    for (let dy = 2; dy <= 6; dy++) c.push({x:11,y:dy});
+    for (let dy = 11; dy <= 15; dy++) c.push({x:11,y:dy});
+    return c;
+  }},
+  islands: { w: 22, build: () => {
+    const c = [];
+    for (let dx=0;dx<3;dx++) for (let dy=0;dy<2;dy++) c.push({x:7+dx,y:4+dy});
+    for (let dx=0;dx<3;dx++) for (let dy=0;dy<2;dy++) c.push({x:14+dx,y:11+dy});
+    return c;
+  }},
+  bunker: { w: 22, build: () => {
+    const c = [];
+    for (let dx = 9; dx <= 13; dx++) { c.push({x:dx,y:6}); c.push({x:dx,y:11}); }
+    c.push({x:9,y:7},{x:9,y:8},{x:9,y:10});
+    c.push({x:13,y:7},{x:13,y:9},{x:13,y:10});
+    return c;
+  }},
+  gauntlet: { w: 22, build: () => {
+    const c = [];
+    for (let dx=7;dx<=9;dx++) c.push({x:dx,y:3},{x:dx,y:4});
+    for (let dx=14;dx<=16;dx++) c.push({x:dx,y:8},{x:dx,y:9});
+    for (let dx=7;dx<=9;dx++) c.push({x:dx,y:13},{x:dx,y:14});
+    return c;
+  }},
+
+  // ---- LARGE (28 wide) — open battlefield ----
+  wide_arena: { w: 28, build: () => [] }, // huge open field
+  wide_pillars: { w: 28, build: () => {
+    const c = [];
+    for (const p of [{x:8,y:4},{x:14,y:10},{x:20,y:4},{x:8,y:12},{x:20,y:12}]) {
+      c.push({x:p.x,y:p.y},{x:p.x+1,y:p.y},{x:p.x,y:p.y+1},{x:p.x+1,y:p.y+1});
+    }
+    return c;
+  }},
+  columns: { w: 28, build: () => {
+    // Grid of small 1-cell pillars for cover-based combat
+    const c = [];
+    for (let gx = 7; gx <= 23; gx += 4) for (let gy = 4; gy <= 14; gy += 5) c.push({x:gx,y:gy});
+    return c;
+  }},
+  fortress: { w: 28, build: () => {
+    // Room-within-room: outer walls with 2 entrances
+    const c = [];
+    for (let dx = 10; dx <= 20; dx++) { c.push({x:dx,y:5}); c.push({x:dx,y:12}); }
+    for (let dy = 5; dy <= 12; dy++) { if (dy!==8&&dy!==9) c.push({x:10,y:dy}); if (dy!==8&&dy!==9) c.push({x:20,y:dy}); }
+    return c;
+  }},
+  maze: { w: 28, build: () => {
+    // Winding walls that break line of sight
+    const c = [];
+    for (let dy = 3; dy <= 9; dy++) c.push({x:9,y:dy});
+    for (let dy = 8; dy <= 14; dy++) c.push({x:15,y:dy});
+    for (let dy = 3; dy <= 9; dy++) c.push({x:21,y:dy});
+    return c;
+  }},
 };
 
 // Select a template based on enemy types and section depth
 function selectTrenchTemplate(types, sectionIdx, isBoss) {
-  if (sectionIdx < 2 || isBoss) return 'arena';
+  if (isBoss) return 'wide_arena'; // bosses get big open arenas
+  if (sectionIdx < 2) return 'arena'; // first 2 = open learning
   const pool = [];
   const hasRanged = types.some(t => ['spitter','strafe','mini','mortar','caster'].includes(t));
   const hasMelee = types.some(t => ['normal','fast','brute','stalker','leaper','drone'].includes(t));
   const hasControl = types.some(t => ['anchor','shieldbot','phaser'].includes(t));
-  if (hasRanged && hasMelee) pool.push('pillars', 'islands', 'crossroads', 'lshape');
-  if (hasRanged && !hasMelee) pool.push('corridor', 'split', 'bunker');
-  if (hasMelee && !hasRanged) pool.push('arena', 'crossroads', 'gauntlet');
-  if (hasControl) pool.push('bunker', 'split', 'islands');
-  if (pool.length === 0) {
-    if (sectionIdx < 7) pool.push('arena', 'crossroads');
-    else if (sectionIdx < 14) pool.push('crossroads', 'pillars', 'corridor');
-    else if (sectionIdx < 21) pool.push('pillars', 'islands', 'split', 'bunker');
-    else pool.push('gauntlet', 'lshape', 'bunker', 'split', 'islands');
+  // Domain 1 (0-9): mix of small + standard, learning stages
+  if (sectionIdx < 10) {
+    pool.push('arena', 'crossroads', 'tight', 'tight_pillars');
+    if (sectionIdx >= 4) pool.push('pillars', 'corridor');
+    if (sectionIdx >= 7) pool.push('tight_corridor', 'lshape');
+  }
+  // Domain 2 (10-19): standard + some large, ranged pressure needs cover
+  else if (sectionIdx < 20) {
+    pool.push('pillars', 'corridor', 'islands', 'crossroads');
+    if (hasRanged) pool.push('columns', 'bunker', 'split');
+    if (hasMelee) pool.push('tight', 'tight_pillars', 'gauntlet');
+    if (sectionIdx >= 15) pool.push('wide_pillars', 'fortress');
+  }
+  // Domain 3 (20-29): more large stages, fortress/maze for support hunting
+  else if (sectionIdx < 30) {
+    pool.push('fortress', 'maze', 'columns', 'wide_pillars');
+    if (hasControl) pool.push('bunker', 'split', 'islands');
+    pool.push('tight_corridor', 'gauntlet'); // occasional claustrophobia
+  }
+  // Domain 4 (30-39): full variety — anything goes
+  else if (sectionIdx < 40) {
+    pool.push('maze', 'fortress', 'columns', 'wide_pillars', 'gauntlet');
+    pool.push('tight', 'tight_corridor', 'bunker', 'lshape');
+  }
+  // Domain 5 (40+): everything, emphasis on large + complex
+  else {
+    pool.push('fortress', 'maze', 'columns', 'wide_arena', 'wide_pillars');
+    pool.push('gauntlet', 'bunker', 'tight', 'tight_corridor');
   }
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -2831,54 +2888,59 @@ let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
 let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
 
+// Pre-compute section widths from templates
+let _sectionWidths = []; // cells per section (computed during initTrenchSections)
+let _sectionXPositions = []; // cumulative X in cells
+
 function generateTrenchMap(seed) {
-  const totalW = TRENCH_NUM_SECTIONS * TRENCH_SECTION_W * CELL_SIZE;
+  // Compute widths from templates (initTrenchSections must run first to set _sectionWidths)
+  if (_sectionWidths.length === 0) {
+    for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) _sectionWidths.push(TRENCH_SECTION_W);
+  }
+  // Compute cumulative X positions
+  _sectionXPositions = [];
+  let _cumX = 0;
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    _sectionXPositions.push(_cumX);
+    _cumX += _sectionWidths[si];
+  }
+  const totalWCells = _cumX;
+  const totalW = totalWCells * CELL_SIZE;
   const totalH = TRENCH_HEIGHT * CELL_SIZE;
   setArenaDimensions(totalW, totalH);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  // Pre-compute section types so templates can be selected with enemy awareness
+  // Pre-compute section types for template selection
   const _sectionTypes = [];
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
-    const t = ['normal'];
-    if (si >= 2) t.push('fast');
-    if (si >= 3) t.push('spitter');
-    if (si >= 4) t.push('tank', 'beam');
-    if (si >= 5) t.push('splitter');
-    if (si >= 7) t.push('mini');
-    if (si >= 8) t.push('exploder');
-    _sectionTypes.push(t);
+    _sectionTypes.push(['normal']); // placeholder — real types set in initTrenchSections
   }
-  // Each section: carve the open interior, then apply the selected template
+  // Each section: carve interior using its own width, then apply template
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
-    const baseX = si * TRENCH_SECTION_W;
-    // Carve interior (all walkable by default)
+    const baseX = _sectionXPositions[si];
+    const secW = _sectionWidths[si];
+    // Carve interior
     for (let y = 1; y < TRENCH_HEIGHT - 1; y++) {
-      for (let dx = 1; dx < TRENCH_SECTION_W - 1; dx++) {
+      for (let dx = 1; dx < secW - 1; dx++) {
         if (baseX + dx < GRID_W) dungeonGrid[y][baseX + dx] = true;
       }
     }
-    // ---- TEMPLATE-BASED OBSTACLES (replaces random pillar scatter) ----
-    // Select template based on enemy types + section depth (design principles #4, #6)
-    const isBoss = si === 6 || (si >= 10 && si % 5 === 0);
+    // Select and apply template
+    const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
     const tmplName = selectTrenchTemplate(_sectionTypes[si], si, isBoss);
-    const tmplCells = TRENCH_TEMPLATES[tmplName] ? TRENCH_TEMPLATES[tmplName]() : [];
-    // Apply template cells as walls, with safety checks
+    const tmpl = TRENCH_TEMPLATES[tmplName];
+    const tmplCells = tmpl ? tmpl.build() : [];
     for (const c of tmplCells) {
       const gx = baseX + c.x, gy = c.y;
-      // Enforce principle #3: spawn zone (cols 1-5) must stay clear
-      if (c.x < 6) continue;
-      // Enforce: door zone (last 3 cols) must stay clear
-      if (c.x >= TRENCH_SECTION_W - 3) continue;
-      // Bounds check
-      if (gy >= 1 && gy < TRENCH_HEIGHT - 1 && gx >= baseX + 1 && gx < baseX + TRENCH_SECTION_W - 1) {
+      if (c.x < 6) continue; // spawn zone clear
+      if (c.x >= secW - 3) continue; // door zone clear
+      if (gy >= 1 && gy < TRENCH_HEIGHT - 1 && gx >= baseX + 1 && gx < baseX + secW - 1) {
         if (gx < GRID_W && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
-    // Store the template name on the section for later reference
     const domain = getTrenchDomain(si);
-    rooms.push({ x: baseX, y: 0, w: TRENCH_SECTION_W, h: TRENCH_HEIGHT,
+    rooms.push({ x: baseX, y: 0, w: secW, h: TRENCH_HEIGHT,
       theme: ROOM_THEMES[4], brightness: domain.noFog ? 1.5 : 1.0, flicker: false,
       _template: tmplName, _domain: domain });
   }
@@ -2901,9 +2963,10 @@ function generateTrenchMap(seed) {
     roomGrid[y] = new Int8Array(GRID_W);
     roomGrid[y].fill(-1);
     for (let si = 0; si < TRENCH_NUM_SECTIONS && si < 127; si++) {
-      const baseX = si * TRENCH_SECTION_W;
+      const baseX = _sectionXPositions[si];
+      const secW = _sectionWidths[si];
       if (y >= 1 && y < TRENCH_HEIGHT - 1) {
-        for (let dx = 1; dx < TRENCH_SECTION_W - 1; dx++) {
+        for (let dx = 1; dx < secW - 1; dx++) {
           if (baseX + dx < GRID_W) roomGrid[y][baseX + dx] = 0;
         }
       }
@@ -2916,72 +2979,85 @@ function generateTrenchMap(seed) {
 
 function initTrenchSections() {
   trenchSections = [];
+  // Pre-compute per-section widths from templates
+  _sectionWidths = [];
   for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
-    const sectionX = i * TRENCH_SECTION_W * CELL_SIZE;
-    // Boss at end of each domain: 7, 14, 21, 28, then every 7 after
-    const isBoss = i === 7 || i === 14 || i === 21 || i === 28 || (i > 28 && (i - 28) % 7 === 0);
-    const isDark = i > 3 && i % 4 === 3;
+    // Pick a template early to get its width
+    const isBoss = i === 10 || i === 20 || i === 30 || i === 40 || (i > 40 && (i - 40) % 10 === 0);
+    const tmplName = selectTrenchTemplate(['normal'], i, isBoss);
+    const tmpl = TRENCH_TEMPLATES[tmplName];
+    _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
+  }
+  // Compute cumulative X positions
+  _sectionXPositions = [];
+  let _cumX = 0;
+  for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
+    _sectionXPositions.push(_cumX);
+    _cumX += _sectionWidths[i];
+  }
+  for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
+    const sectionX = _sectionXPositions[i] * CELL_SIZE;
+    const secW = _sectionWidths[i];
+    // Boss at end of each domain: 10, 20, 30, 40, then every 10 after
+    const isBoss = i === 10 || i === 20 || i === 30 || i === 40 || (i > 40 && (i - 40) % 10 === 0);
+    const isDark = i > 5 && i % 5 === 4;
     const domain = getTrenchDomain(i);
-    // Section modifier (principle: progressive variety)
     const modifier = rollSectionModifier(i);
-    // Decide wave count
+    // Wave count
     let waveCount = 1;
-    if (!isBoss && i >= 2) {
+    if (!isBoss && i >= 3) {
       const r = Math.random();
-      if (i < 5)        waveCount = r < 0.35 ? 2 : 1;
-      else if (i < 10)  waveCount = r < 0.25 ? 3 : r < 0.65 ? 2 : 1;
-      else              waveCount = r < 0.40 ? 3 : r < 0.80 ? 2 : 1;
+      if (i < 10)       waveCount = r < 0.30 ? 2 : 1;
+      else if (i < 20)  waveCount = r < 0.20 ? 3 : r < 0.60 ? 2 : 1;
+      else              waveCount = r < 0.35 ? 3 : r < 0.75 ? 2 : 1;
     }
-    // Quality over quantity: fewer enemies, each more dangerous
+    // Quality over quantity
     let baseEnemies;
-    if (i <= 6) baseEnemies = 3 + Math.floor(i * 0.3);
-    else if (i <= 13) baseEnemies = 4 + Math.floor((i-7)*0.2);
-    else if (i <= 20) baseEnemies = 4 + Math.floor((i-14)*0.2);
-    else if (i <= 27) baseEnemies = 5 + Math.floor((i-21)*0.15);
-    else baseEnemies = 5 + Math.floor((i-28)*0.1);
+    if (i <= 9) baseEnemies = 3 + Math.floor(i * 0.2);       // 3-5
+    else if (i <= 19) baseEnemies = 4 + Math.floor((i-10)*0.15); // 4-5
+    else if (i <= 29) baseEnemies = 4 + Math.floor((i-20)*0.15); // 4-5
+    else if (i <= 39) baseEnemies = 5 + Math.floor((i-30)*0.1);  // 5-6
+    else baseEnemies = 5 + Math.floor((i-40)*0.08);              // 5-6
     baseEnemies = Math.min(7, baseEnemies);
-    // DOUBLE TIME modifier: 2× enemies, 60% HP (applied at spawn time)
     if (modifier && modifier.id === 'doubletime') baseEnemies = Math.floor(baseEnemies * 2);
     const waves = [];
     for (let w = 0; w < waveCount; w++) {
       let count = baseEnemies;
-      if (isBoss) count = Math.floor(count * 0.5);
+      if (isBoss) count = Math.floor(count * 0.4);
       if (w > 0) count = Math.max(2, Math.floor(count * 0.85));
       waves.push(count);
     }
-    // Domain-based enemy composition — each domain has its own roster
+    // Domain-based enemy composition (10 sections per domain)
     let types;
-    if (i <= 6) {
-      // Domain 1: Breakdown Zone
+    if (i <= 9) {
+      // Domain 1: Breakdown Zone — learn fundamentals
       types = ['normal', 'normal', 'fast'];
-      if (i >= 2) types.push('drone', 'drone');
-      if (i >= 4) types.push('spitter');
-      if (i >= 5) types.push('stalker');
-    } else if (i <= 13) {
-      // Domain 2: Crossfire Zone
+      if (i >= 3) types.push('drone', 'drone');
+      if (i >= 5) types.push('spitter');
+      if (i >= 7) types.push('stalker');
+    } else if (i <= 19) {
+      // Domain 2: Crossfire Zone — ranged pressure
       types = ['strafe', 'brute', 'spitter', 'mortar'];
-      if (i >= 9) types.push('leaper');
-      if (i >= 10) types.push('exploder');
-      if (i >= 11) types.push('stalker');
-    } else if (i <= 20) {
-      // Domain 3: Siege Zone
+      if (i >= 13) types.push('leaper');
+      if (i >= 15) types.push('exploder', 'stalker');
+    } else if (i <= 29) {
+      // Domain 3: Siege Zone — support + priority
       types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster'];
-      if (i >= 16) types.push('tank');
-      if (i >= 18) types.push('mortar');
-    } else if (i <= 27) {
-      // Domain 4: Control Zone
+      if (i >= 23) types.push('tank');
+      if (i >= 26) types.push('mortar');
+    } else if (i <= 39) {
+      // Domain 4: Control Zone — movement denial
       types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster'];
-      if (i >= 23) types.push('shieldbot');
-      if (i >= 25) types.push('stalker');
+      if (i >= 33) types.push('shieldbot');
+      if (i >= 36) types.push('stalker');
     } else {
-      // Domain 5: Collapse Zone
+      // Domain 5: Collapse Zone — everything
       types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker'];
     }
-    // Stage hazards disabled — enemy variety provides the complexity
     const hazards = [];
     trenchSections.push({
       x: sectionX,
-      width: TRENCH_SECTION_W * CELL_SIZE,
+      width: secW * CELL_SIZE,
       waves,
       currentWave: 0,
       waveSpawnTimer: 0,
@@ -3083,12 +3159,12 @@ function spawnTrenchSection(idx) {
   if (sec.isBoss) {
     // Domain-specific boss
     let bossType = 'boss'; // default Warden
-    if (idx >= 7 && idx < 14) bossType = 'boss_firewall';
-    else if (idx >= 14 && idx < 21) bossType = 'boss_archivist';
-    else if (idx >= 21 && idx < 28) bossType = 'boss_watchdog';
-    else if (idx >= 28) bossType = ['boss', 'boss_firewall', 'boss_archivist', 'boss_watchdog'][Math.floor(Math.random()*4)];
+    if (idx >= 10 && idx < 20) bossType = 'boss_firewall';
+    else if (idx >= 20 && idx < 30) bossType = 'boss_archivist';
+    else if (idx >= 30 && idx < 40) bossType = 'boss_watchdog';
+    else if (idx >= 40) bossType = ['boss', 'boss_firewall', 'boss_archivist', 'boss_watchdog'][Math.floor(Math.random()*4)];
     const bt = ZOMBIE_TYPES[bossType];
-    const tier = Math.floor(idx / 7);
+    const tier = Math.floor(idx / 10);
     const bossHp = (bt.hp + tier * 200) * (1 + idx * 0.10);
     const bossDmg = Math.round(bt.damage * (1 + idx * 0.04));
     const _bossX = sec.x + TW * 0.7, _bossY = cy;
