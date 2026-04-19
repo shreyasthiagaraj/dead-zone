@@ -2540,22 +2540,21 @@ function spawnDataLinkChests() {
   const picks = generateDataLinkChoice();
   _dlFirstChoice = false;
 
-  // Spawn positions: offset from player toward the door, one above center, one below
+  // Spawn near the door, side by side with a small gap
   const sec = trenchSections[trenchSection];
   const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
   const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
-  const spawnX = sec ? sec.x + TW * 0.65 : lp.x + 80;
-  const yOff = 3.5 * CELL_SIZE; // distance from center
+  const spawnX = sec ? sec.x + TW * 0.6 : lp.x + 80;
+  const gap = 50; // horizontal gap between chests
   const positions = [
-    { x: spawnX, y: midY - yOff },
-    { x: spawnX, y: midY + yOff },
+    { x: spawnX - gap / 2, y: midY },
+    { x: spawnX + gap / 2, y: midY },
   ];
-  // Ensure spawn positions are walkable
+  // Ensure spawn positions are walkable — nudge if inside a wall
   for (const pos of positions) {
     const gx = Math.floor(pos.x / CELL_SIZE), gy = Math.floor(pos.y / CELL_SIZE);
     if (!(dungeonGrid[gy] && dungeonGrid[gy][gx])) {
-      pos.x = lp.x + 60 + Math.random() * 40;
-      pos.y = lp.y + (positions.indexOf(pos) === 0 ? -50 : 50);
+      pos.y += (pos === positions[0] ? -CELL_SIZE : CELL_SIZE);
     }
   }
 
@@ -2575,78 +2574,83 @@ function spawnDataLinkChests() {
       _spawnAnim: 30, _spawnAnimMax: 30,
     });
     // Spawn particles
-    for (let k = 0; k < 16; k++) {
-      const a = (k / 16) * Math.PI * 2, s = 1.5 + Math.random() * 2.5;
-      particles.push({ x: positions[i].x, y: positions[i].y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 24, maxLife: 24, size: 2, color: t.color, type: 'spark' });
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, s = 1.5 + Math.random() * 2;
+      particles.push({ x: positions[i].x, y: positions[i].y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 20, maxLife: 20, size: 2, color: t.color, type: 'spark' });
     }
   }
   playSound(500, 0.08, 'sine', 0.1);
 }
 
-// --- When a Data Link chest is broken, deliver the reward and despawn the other ---
+// --- When a Data Link chest is broken, spill out the reward and despawn the other ---
 function claimDataLinkChest(barrel) {
   const typeId = barrel._dlRewardType;
   const t = DL_TYPES[typeId];
   _dlChoiceHistory.push(typeId);
+  const bx = barrel.x, by = barrel.y;
 
-  // Celebration burst in the reward's color
-  for (let k = 0; k < 24; k++) {
-    const a = (k / 24) * Math.PI * 2, s = 2 + Math.random() * 5;
-    particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 28, maxLife: 28, size: 3 + Math.random() * 2, color: t.color, type: 'spark' });
+  // Burst particles in reward color
+  for (let k = 0; k < 18; k++) {
+    const a = (k / 18) * Math.PI * 2, s = 2 + Math.random() * 4;
+    particles.push({ x: bx, y: by, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 22, maxLife: 22, size: 3 + Math.random() * 2, color: t.color, type: 'spark' });
   }
   playSfx('level_up', 0.25) || playSound(900, 0.08, 'sine', 0.15);
+  screenShake.intensity = Math.max(screenShake.intensity, 4);
 
-  // Despawn the OTHER data link chest with a fade-out effect
+  // Despawn the OTHER data link chest
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b = barrels[i];
     if (b._dlChest && b !== barrel) {
-      // Dissolve particles
-      for (let k = 0; k < 10; k++) {
+      for (let k = 0; k < 8; k++) {
         const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
-        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 18, maxLife: 18, size: 2, color: '#888', type: 'spark' });
+        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 16, maxLife: 16, size: 2, color: '#555', type: 'spark' });
       }
       barrels.splice(i, 1);
     }
   }
 
-  // Deliver the reward
-  const lp = getLocalPlayer();
+  // Spill out the reward as a physical pickup or object
   switch (typeId) {
     case 'mod':
-      // Spawn the mod terminal chest near the broken chest's position
-      spawnShopChest(barrel.x, barrel.y);
+      // Mod terminal materializes where the chest was
+      spawnShopChest(bx, by);
+      addFloatingText(bx, by - 30, 'MOD TERMINAL', '#0ff');
       break;
 
     case 'repair':
-      if (lp) {
-        if (lp.hp >= lp.maxHp) {
-          lp._barrier = Math.min(50, (lp._barrier || 0) + 15);
-          addFloatingText(barrel.x, barrel.y - 30, '+15 BARRIER', '#4ff');
-        } else {
-          const heal = Math.min(30, lp.maxHp - lp.hp);
-          lp.hp += heal;
-          addFloatingText(barrel.x, barrel.y - 30, `+${heal} HP`, '#4f4');
-        }
+      // Spill health pickups that the player collects
+      for (let i = 0; i < 3; i++) {
+        const a = Math.random() * Math.PI * 2, d = 10 + Math.random() * 20;
+        pickups.push({ type: 'health', amount: 10, x: bx + Math.cos(a)*d, y: by + Math.sin(a)*d, bobTimer: Math.random() * Math.PI * 2 });
       }
+      addFloatingText(bx, by - 30, 'HEALTH', '#4f4');
       break;
 
     case 'bits': {
+      // Spill bit orbs that fly toward the player
       const amount = _dlBitsAmount();
-      metaShards += amount;
-      runBitsEarned += amount;
-      try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
-      addFloatingText(barrel.x, barrel.y - 30, `+${amount} BITS`, '#ff0');
-      _pulseBitsHUD();
+      const orbCount = Math.min(8, Math.max(3, Math.floor(amount / 5)));
+      const perOrb = Math.floor(amount / orbCount);
+      const remainder = amount - perOrb * orbCount;
+      for (let i = 0; i < orbCount; i++) {
+        const a = (i / orbCount) * Math.PI * 2 + Math.random() * 0.3;
+        const d = 15 + Math.random() * 25;
+        const orbAmt = perOrb + (i === 0 ? remainder : 0);
+        pickups.push({ type: 'bits', amount: orbAmt, x: bx + Math.cos(a)*d, y: by + Math.sin(a)*d, bobTimer: Math.random() * Math.PI * 2 });
+      }
+      addFloatingText(bx, by - 30, `${amount} BITS`, '#ff0');
       break;
     }
 
     case 'reforge':
+      // Reforge is UI-based — open the panel
       openReforge();
+      addFloatingText(bx, by - 30, 'REFORGE', '#f80');
       break;
 
     case 'trial':
       _dlTrialActive = true;
-      addFloatingText(barrel.x, barrel.y - 30, 'TRIAL: OVERCLOCKED', '#f44');
+      addFloatingText(bx, by - 30, 'TRIAL ACTIVATED', '#f44');
       triggerGlitchSurge(0.3, 20);
       break;
   }
@@ -9677,6 +9681,7 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
         if(isLocalUI)showPickupMsg(`DISRUPTER · ${WEAPON_DEFS[p.weaponType].name} RECOMPILED`);
       }if(isLocalUI)playPickupSound();pickups.splice(i,1);}
       else if(p.type==='health'){if(pl.hp<pl.maxHp){pl.hp=Math.min(pl.maxHp,pl.hp+p.amount);if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}else if(isLocalUI&&dist(pl,p)<30&&!p._fullShown){p._fullShown=true;addFloatingText(pl.x,pl.y-30,'HEALTH FULL','#4f4');}}
+      else if(p.type==='bits'){metaShards+=p.amount;runBitsEarned+=p.amount;try{localStorage.setItem('necrowave_shards',String(metaShards));}catch(e){}_pulseBitsHUD();if(isLocalUI){addFloatingText(pl.x,pl.y-30,`+${p.amount}◆`,'#ff0');playPickupSound();}pickups.splice(i,1);}
       else if(p.type==='ammo'){const w=pl.weapons[pl.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;if(isLocalUI){showPickupMsg('+AMMO');playPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='powerup'){
         if(isLocalUI){stopSunbeamLoop();const ppd=POWERUP_TYPES.find(t=>t.id===p.powerupId);activatePowerUp(p.powerupId);playPickupSound();if(ppd)showPickupMsg(`${ppd.icon} BURST MOD · ${ppd.name}`,ppd.desc);}
@@ -14728,7 +14733,7 @@ function render() {
     ctx.globalAlpha=0.3+bt*0.3;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,p._radius*(1-bt),0,Math.PI*2);ctx.stroke();
     ctx.globalAlpha=0.8;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,5,0,Math.PI*2);ctx.fill();
     ctx.restore();continue;}
-    const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}else if(p.type==='element'){const ed=ELEMENT_TYPES.find(e=>e.id===p.elementId);if(ed){const pulse=0.55+Math.sin(performance.now()*0.009)*0.45;ctx.globalAlpha=pulse;ctx.shadowColor=ed.color;ctx.shadowBlur=24;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.3;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,18+Math.sin(performance.now()*0.006)*2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ed.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=ed.color;ctx.fillText(ed.name,0,22);}}ctx.restore();}
+    const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){ctx.shadowColor='#4f4';ctx.shadowBlur=10;ctx.fillStyle='#4f4';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.shadowBlur=0;}else if(p.type==='bits'){const bpulse=0.6+Math.sin(performance.now()*0.007)*0.4;ctx.globalAlpha=bpulse;ctx.shadowColor='#ff0';ctx.shadowBlur=12;ctx.fillStyle='#ff0';ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(7,-4);ctx.lineTo(7,4);ctx.lineTo(0,8);ctx.lineTo(-7,4);ctx.lineTo(-7,-4);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#000';ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('◆',0,0);}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}else if(p.type==='element'){const ed=ELEMENT_TYPES.find(e=>e.id===p.elementId);if(ed){const pulse=0.55+Math.sin(performance.now()*0.009)*0.45;ctx.globalAlpha=pulse;ctx.shadowColor=ed.color;ctx.shadowBlur=24;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.3;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,18+Math.sin(performance.now()*0.006)*2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ed.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=ed.color;ctx.fillText(ed.name,0,22);}}ctx.restore();}
 
   // Descent gate
   if(gameMode==='descent'&&descentSections[descentSection]){
