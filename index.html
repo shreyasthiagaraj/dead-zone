@@ -780,7 +780,7 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 20, spread: 0.02, bulletSize: 4, knockback: 3, pierce: 0 };
+const BASE_GUN = { damage: 20, fireRate: 180, bulletSpeed: 20, spread: 0.02, bulletSize: 4, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s reload)
 const GUN_BULLET_RANGE = 22;      // bullet life in frames (~440px at speed 20)
@@ -2708,16 +2708,16 @@ function spawnDescentSection(idx) {
 // ---- THE TRENCH (horizontal clone of descent) ----
 const TRENCH_SECTION_W = 22; // cells per section horizontally
 const TRENCH_HEIGHT = 18;    // cells tall
-const TRENCH_NUM_SECTIONS = 25;
+const TRENCH_NUM_SECTIONS = 35;
 const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
-  { name: 'ENTRY CACHE',       sections: [0, 4],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
-  { name: 'CORRUPTED SUBNET',  sections: [5, 9],    wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
-  { name: 'DEEP STORAGE',      sections: [10, 14],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
-  { name: 'KERNEL BOUNDARY',   sections: [15, 19],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
-  { name: 'THE CORE',          sections: [20, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
+  { name: 'ENTRY CACHE',       sections: [0, 6],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
+  { name: 'CORRUPTED SUBNET',  sections: [7, 13],   wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
+  { name: 'DEEP STORAGE',      sections: [14, 20],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
+  { name: 'KERNEL BOUNDARY',   sections: [21, 27],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
+  { name: 'THE CORE',          sections: [28, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
 ];
 function getTrenchDomain(sectionIdx) {
   for (const d of TRENCH_DOMAINS) { if (sectionIdx >= d.sections[0] && sectionIdx <= d.sections[1]) return d; }
@@ -2794,23 +2794,20 @@ const TRENCH_TEMPLATES = {
 // Select a template based on enemy types and section depth
 function selectTrenchTemplate(types, sectionIdx, isBoss) {
   if (sectionIdx < 2 || isBoss) return 'arena';
-  const hasBeam = types.includes('beam');
-  const hasCharger = types.includes('fast');
-  const hasSpitter = types.includes('spitter');
-  const hasTank = types.includes('tank');
   const pool = [];
-  // Enemy-aware selection (principle #4)
-  if (hasBeam)    pool.push('arena', 'corridor'); // beams need sightlines
-  if (hasCharger) pool.push('pillars', 'crossroads'); // dodge space
-  if (hasSpitter) pool.push('corridor', 'lshape', 'islands'); // cover from ranged
-  if (hasTank)    pool.push('arena', 'crossroads'); // big guys need space
-  // Depth-based complexity (principle #6)
+  const hasRanged = types.some(t => ['spitter','strafe','mini','mortar','caster'].includes(t));
+  const hasMelee = types.some(t => ['normal','fast','brute','stalker','leaper','drone'].includes(t));
+  const hasControl = types.some(t => ['anchor','shieldbot','phaser'].includes(t));
+  if (hasRanged && hasMelee) pool.push('pillars', 'islands', 'crossroads', 'lshape');
+  if (hasRanged && !hasMelee) pool.push('corridor', 'split', 'bunker');
+  if (hasMelee && !hasRanged) pool.push('arena', 'crossroads', 'gauntlet');
+  if (hasControl) pool.push('bunker', 'split', 'islands');
   if (pool.length === 0) {
-    if (sectionIdx < 5)       pool.push('arena', 'crossroads');
-    else if (sectionIdx < 10) pool.push('crossroads', 'pillars', 'corridor');
-    else                      pool.push('pillars', 'islands', 'split', 'gauntlet', 'lshape');
+    if (sectionIdx < 7) pool.push('arena', 'crossroads');
+    else if (sectionIdx < 14) pool.push('crossroads', 'pillars', 'corridor');
+    else if (sectionIdx < 21) pool.push('pillars', 'islands', 'split', 'bunker');
+    else pool.push('gauntlet', 'lshape', 'bunker', 'split', 'islands');
   }
-  if (sectionIdx >= 12 && Math.random() < 0.3) pool.push('bunker');
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -2921,8 +2918,8 @@ function initTrenchSections() {
   trenchSections = [];
   for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
     const sectionX = i * TRENCH_SECTION_W * CELL_SIZE;
-    // First boss at section 6 (gives 3 shop visits to build up). Then every 5 after.
-    const isBoss = i === 6 || (i >= 10 && i % 5 === 0);
+    // Boss at end of each domain: 7, 14, 21, 28, then every 7 after
+    const isBoss = i === 7 || i === 14 || i === 21 || i === 28 || (i > 28 && (i - 28) % 7 === 0);
     const isDark = i > 3 && i % 4 === 3;
     const domain = getTrenchDomain(i);
     // Section modifier (principle: progressive variety)
@@ -2937,12 +2934,12 @@ function initTrenchSections() {
     }
     // Quality over quantity: fewer enemies, each more dangerous
     let baseEnemies;
-    if (i <= 4) baseEnemies = 3 + Math.floor(i * 0.4);      // 3-5
-    else if (i <= 9) baseEnemies = 4 + Math.floor((i-5)*0.3); // 4-5
-    else if (i <= 14) baseEnemies = 4 + Math.floor((i-10)*0.3); // 4-5
-    else if (i <= 19) baseEnemies = 5 + Math.floor((i-15)*0.2); // 5-6
-    else baseEnemies = 5 + Math.floor((i-20)*0.15);           // 5-6, slow growth
-    baseEnemies = Math.min(8, baseEnemies); // hard cap at 8
+    if (i <= 6) baseEnemies = 3 + Math.floor(i * 0.3);
+    else if (i <= 13) baseEnemies = 4 + Math.floor((i-7)*0.2);
+    else if (i <= 20) baseEnemies = 4 + Math.floor((i-14)*0.2);
+    else if (i <= 27) baseEnemies = 5 + Math.floor((i-21)*0.15);
+    else baseEnemies = 5 + Math.floor((i-28)*0.1);
+    baseEnemies = Math.min(7, baseEnemies);
     // DOUBLE TIME modifier: 2× enemies, 60% HP (applied at spawn time)
     if (modifier && modifier.id === 'doubletime') baseEnemies = Math.floor(baseEnemies * 2);
     const waves = [];
@@ -2954,28 +2951,31 @@ function initTrenchSections() {
     }
     // Domain-based enemy composition — each domain has its own roster
     let types;
-    if (i <= 4) {
-      // Domain 1: Breakdown Zone — learn to move and shoot
+    if (i <= 6) {
+      // Domain 1: Breakdown Zone
       types = ['normal', 'normal', 'fast'];
       if (i >= 2) types.push('drone', 'drone');
-      if (i >= 3) types.push('spitter');
-    } else if (i <= 9) {
-      // Domain 2: Crossfire Zone — ranged pressure + bruisers
+      if (i >= 4) types.push('spitter');
+      if (i >= 5) types.push('stalker');
+    } else if (i <= 13) {
+      // Domain 2: Crossfire Zone
       types = ['strafe', 'brute', 'spitter', 'mortar'];
-      if (i >= 7) types.push('leaper');
-      if (i >= 8) types.push('exploder');
-    } else if (i <= 14) {
-      // Domain 3: Siege Zone — support + priority targets + casters
+      if (i >= 9) types.push('leaper');
+      if (i >= 10) types.push('exploder');
+      if (i >= 11) types.push('stalker');
+    } else if (i <= 20) {
+      // Domain 3: Siege Zone
       types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster'];
-      if (i >= 12) types.push('tank');
-      if (i >= 13) types.push('mortar');
-    } else if (i <= 19) {
-      // Domain 4: Control Zone — movement denial + elites
+      if (i >= 16) types.push('tank');
+      if (i >= 18) types.push('mortar');
+    } else if (i <= 27) {
+      // Domain 4: Control Zone
       types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster'];
-      if (i >= 17) types.push('shieldbot');
+      if (i >= 23) types.push('shieldbot');
+      if (i >= 25) types.push('stalker');
     } else {
-      // Domain 5: Collapse Zone — everything
-      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster'];
+      // Domain 5: Collapse Zone
+      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker'];
     }
     // Stage hazards disabled — enemy variety provides the complexity
     const hazards = [];
@@ -3081,24 +3081,31 @@ function spawnTrenchSection(idx) {
   spawnTrenchWave(idx, 0);
   // Boss spawns once with the first wave (uses the same per-section scaling)
   if (sec.isBoss) {
-    const bt = ZOMBIE_TYPES.boss;
-    const tier = Math.floor(idx / 5);
+    // Domain-specific boss
+    let bossType = 'boss'; // default Warden
+    if (idx >= 7 && idx < 14) bossType = 'boss_firewall';
+    else if (idx >= 14 && idx < 21) bossType = 'boss_archivist';
+    else if (idx >= 21 && idx < 28) bossType = 'boss_watchdog';
+    else if (idx >= 28) bossType = ['boss', 'boss_firewall', 'boss_archivist', 'boss_watchdog'][Math.floor(Math.random()*4)];
+    const bt = ZOMBIE_TYPES[bossType];
+    const tier = Math.floor(idx / 7);
     const bossHp = (bt.hp + tier * 200) * (1 + idx * 0.10);
     const bossDmg = Math.round(bt.damage * (1 + idx * 0.04));
     const _bossX = sec.x + TW * 0.7, _bossY = cy;
-    zombies.push({ zid: _nextZombieId++, x: _bossX, y: _bossY, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: 'boss', attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: true, _spawnAnim: 90, _spawnAnimMax: 90 });
+    zombies.push({ zid: _nextZombieId++, x: _bossX, y: _bossY, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: bossType, attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: bt.summoner||false, firewall: bt.firewall||false, archivist: bt.archivist||false, watchdog: bt.watchdog||false, _spawnAnim: 90, _spawnAnimMax: 90 });
     // ---- BOSS INTRO ----
     triggerGlitchSurge(0.6, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
     // Big dramatic particle burst at boss spawn point
     for (let bi = 0; bi < 40; bi++) {
       const ba = (bi / 40) * Math.PI * 2, bs = 3 + Math.random() * 6;
-      particles.push({ x: _bossX, y: _bossY, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs, life: 36, maxLife: 36, size: 4 + Math.random()*3, color: Math.random()<0.5?'#f0f':'#f44', type: 'spark' });
+      particles.push({ x: _bossX, y: _bossY, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs, life: 36, maxLife: 36, size: 4 + Math.random()*3, color: Math.random()<0.5?bt.color:'#f44', type: 'spark' });
     }
     // Boss title card
-    const _bossNames = ['THE WARDEN', 'ADMIN PROCESS', 'THE SENTINEL', 'CORE GUARDIAN', 'THE ARCHITECT'];
-    const _bossName = _bossNames[tier % _bossNames.length];
-    showSectionTitleCard(`⚠ ${_bossName} ⚠`, 'admin process detected — eliminate to proceed', true);
+    const _bossNameMap = { boss: 'THE WARDEN', boss_firewall: 'THE FIREWALL', boss_archivist: 'THE ARCHIVIST', boss_watchdog: 'THE WATCHDOG' };
+    const _bossName = _bossNameMap[bossType] || 'THE WARDEN';
+    const _bossSubMap = { boss: 'admin process detected', boss_firewall: 'firewall protocol active', boss_archivist: 'archive corruption spreading', boss_watchdog: 'watchdog process hunting' };
+    showSectionTitleCard(`⚠ ${_bossName} ⚠`, `${_bossSubMap[bossType] || 'eliminate to proceed'} — eliminate to proceed`, true);
     playSound(80, 0.4, 'sawtooth', 0.2);
     playSound(120, 0.3, 'square', 0.15);
   }
@@ -4386,6 +4393,9 @@ const ZOMBIE_TYPES = {
   spitter:  { hp: 140, speed: 1.7, radius: 12, color: '#a4f', damage: 10, score: 200, ranged: true, fireRate: 2800, spreadShot: true }, // neon purple — slower fire rate for single-stick controls
   exploder: { hp: 100, speed: 2.0, radius: 13, color: '#f42', damage: 35, score: 250, explodeOnDeath: true, explosionRadius: 80, bomber: true, fireRate: 3000 }, // neon red-orange
   boss:     { hp: 2200, speed: 1.8, radius: 32, color: '#f0f', damage: 40, score: 500, summoner: true, fireRate: 200 }, // hot magenta — admin process
+  boss_firewall: { hp: 2800, speed: 1.5, radius: 30, color: '#f80', damage: 30, score: 600, firewall: true, fireRate: 150 },
+  boss_archivist: { hp: 3200, speed: 1.0, radius: 34, color: '#4ef', damage: 35, score: 700, archivist: true, fireRate: 180 },
+  boss_watchdog: { hp: 2500, speed: 2.5, radius: 28, color: '#f44', damage: 45, score: 800, watchdog: true, fireRate: 120 },
   splitter: { hp: 200, speed: 1.5, radius: 15, color: '#48f', damage: 15, score: 200, shielded: true }, // neon blue
   mini:     { hp: 90,  speed: 1.8, radius: 11, color: '#fa0', damage: 30, score: 200, sniper: true, fireRate: 3500 }, // neon orange — slower for single-stick
   // Beam Array — perches at walls, sweeps a laser beam across the room
@@ -6377,6 +6387,9 @@ const ZOMBIE_CODEX = {
   spitter:  { name: 'SPITTER',   desc: 'Keeps distance and fires a 3-spread of acid projectiles.' },
   exploder: { name: 'BOMBER',    desc: 'Rushes in and detonates on death. Radius damage.' },
   boss:     { name: 'SUMMONER',  desc: 'Boss. Retreats and summons more zombies. Very tough.' },
+  boss_firewall: { name: 'THE FIREWALL', desc: 'Domain 2 boss. Fires projectile walls and spread fans. Gets faster and meaner in later phases.' },
+  boss_archivist: { name: 'THE ARCHIVIST', desc: 'Domain 3 boss. Rains mortar barrages and summons drone swarms. Slower but devastating.' },
+  boss_watchdog: { name: 'THE WATCHDOG', desc: 'Domain 4 boss. Fast and aggressive. Dashes at you with slam attacks. Phase 2 adds ranged fire.' },
   splitter: { name: 'SHIELDER',  desc: 'Front-facing energy shield blocks bullets. Flank it.' },
   mini:     { name: 'SNIPER',    desc: 'Stays far, charges a laser sight, fires a fast precision shot.' },
   brute:    { name: 'BRUTE',     desc: 'Heavy mid-tier melee. More HP than normal, hits harder.' },
@@ -10096,12 +10109,14 @@ function update() {
       if (shootButtonHeld) {
         rightJoystick.aiming = true;
         // If locked target is dead or gone, STOP firing (don't auto-retarget)
+        let _targetJustDied = false;
         if (_autoAimTarget && _autoAimTarget.hp <= 0 && !_autoAimTarget.alive) {
           _autoAimTarget = null;
           rightJoystick.firing = false;
+          _targetJustDied = true;
         }
         // If no lock yet, find one in facing direction + within bullet range
-        if (!_autoAimTarget) {
+        if (!_autoAimTarget && !_targetJustDied) {
           const _strikeRange = 300; // aim assist range
           _autoAimTarget = _aaSelectTarget(lp);
           if (_autoAimTarget) {
@@ -10113,17 +10128,16 @@ function update() {
             // Reject if outside facing cone (~70°) OR beyond bullet range
             if (Math.abs(_taDiff) > 1.2 || _taDist > _strikeRange) _autoAimTarget = null;
           }
-          rightJoystick.firing = true; // fire regardless (in facing dir if no target)
+          if (_autoAimTarget) rightJoystick.firing = true;
         }
         // Locked on: nudge aim toward target (assist, not full snap)
         if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
           rightJoystick.firing = true;
-        } else if (!_autoAimTarget) {
+        } else if (!_autoAimTarget && !_targetJustDied) {
           // No target: fire in movement/facing direction
           const moveMag = Math.sqrt(dx*dx+dy*dy);
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
-          rightJoystick.firing = true;
         }
         // Stop firing if magazine empty (overheat)
         if (_gunReloading) rightJoystick.firing = false;
@@ -11580,6 +11594,111 @@ function update() {
             addFloatingText(z.x,z.y-z.radius-20,phase===2?'ADMIN ESCALATING':'ADMIN ENRAGED',phase===2?'#f0f':'#f44');
             for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:phase===2?'#f0f':'#f44',type:'spark'});}
           }
+        }
+        // ---- BOSS: FIREWALL (Domain 2) — shield phases + projectile walls ----
+        else if(zt?.firewall){
+          const hpPct = z.hp / z.maxHp;
+          const phase = hpPct > 0.6 ? 1 : hpPct > 0.3 ? 2 : 3;
+          if (phase === 1) { z.vx *= 0.6; z.vy *= 0.6; } // stationary phase 1
+          else { z.vx=_chaseDx*z.speed*(phase===3?1.8:1.2);z.vy=_chaseDy*z.speed*(phase===3?1.8:1.2); }
+          z._shotTimer=(z._shotTimer||0)+1;
+          // Phase 1: projectile wall — 8 bullets in a line perpendicular to player
+          if(phase===1&&z._shotTimer>=z.fireRate&&zombies.length<10){
+            z._shotTimer=0;
+            const wallA=z.angle+Math.PI/2;
+            for(let wi=-3;wi<=3;wi++){
+              const wx=z.x+Math.cos(wallA)*wi*25, wy=z.y+Math.sin(wallA)*wi*25;
+              bullets.push({x:wx,y:wy,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage*0.4,color:'#f80',size:5,knockback:3,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});
+            }
+            screenShake.intensity=Math.max(screenShake.intensity,5);playZombieAttackSound();
+          }
+          // Phase 2: spread fans
+          else if(phase===2&&z._shotTimer>=90){
+            z._shotTimer=0;
+            for(let fi=0;fi<7;fi++){
+              const fa=z.angle+(fi-3)*0.15;
+              bullets.push({x:z.x,y:z.y,vx:Math.cos(fa)*6,vy:Math.sin(fa)*6,damage:z.damage*0.5,color:'#fa0',size:5,knockback:2,pierce:0,pierced:0,life:70,owner:'zombie',trail:[]});
+            }
+            screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
+          }
+          // Phase 3: rapid fire + speed
+          else if(phase===3&&z._shotTimer>=40){
+            z._shotTimer=0;
+            bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*8,vy:Math.sin(z.angle)*8,damage:z.damage*0.6,color:'#ff0',size:4,knockback:4,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
+          }
+          // Phase transition
+          if(!z._lastPhase)z._lastPhase=1;
+          if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
+            addFloatingText(z.x,z.y-z.radius-20,phase===2?'FIREWALL ADAPTING':'FIREWALL CRITICAL',phase===2?'#f80':'#f44');
+            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:phase===2?'#f80':'#f44',type:'spark'});}}
+        }
+        // ---- BOSS: ARCHIVIST (Domain 3) — artillery + summons small packs ----
+        else if(zt?.archivist){
+          const hpPct = z.hp / z.maxHp;
+          const phase = hpPct > 0.5 ? 1 : 2;
+          z.vx=_chaseDx*z.speed*(phase===2?1.5:0.8);z.vy=_chaseDy*z.speed*(phase===2?1.5:0.8);
+          z._shotTimer=(z._shotTimer||0)+1;
+          z._summonTimer=(z._summonTimer||0)+1;
+          // Mortar barrage: 3 delayed bombs
+          if(z._shotTimer>=z.fireRate){
+            z._shotTimer=0;
+            for(let mi=0;mi<3;mi++){
+              const bx=np.x+(Math.random()-0.5)*80,by=np.y+(Math.random()-0.5)*80;
+              pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90+mi*20,_damage:z.damage*0.6,_radius:70,bobTimer:0});
+            }
+            for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:14,maxLife:14,size:4,color:'#4ef',type:'spark'});}
+            screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
+          }
+          // Summon drones periodically
+          if(z._summonTimer>=240&&zombies.length<8){
+            z._summonTimer=0;
+            for(let si=0;si<3;si++){const sa=Math.random()*Math.PI*2,sd=35+Math.random()*20;
+              const _sx=z.x+Math.cos(sa)*sd,_sy=z.y+Math.sin(sa)*sd,st=ZOMBIE_TYPES.drone;
+              zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:st.hp,maxHp:st.hp,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:30,type:'drone',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:20,_spawnAnimMax:20});
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ef',type:'lightning',tx:_sx,ty:_sy});
+            }
+          }
+          if(!z._lastPhase)z._lastPhase=1;
+          if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
+            addFloatingText(z.x,z.y-z.radius-20,'ARCHIVIST ENRAGED','#4ef');
+            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:'#4ef',type:'spark'});}}
+        }
+        // ---- BOSS: WATCHDOG (Domain 4) — fast, aggressive, dash attacks ----
+        else if(zt?.watchdog){
+          const hpPct = z.hp / z.maxHp;
+          const phase = hpPct > 0.5 ? 1 : 2;
+          z._wdTimer=(z._wdTimer||0)+1;
+          if(!z._wdState) z._wdState = 'chase';
+          if(z._wdState==='chase'){
+            z.vx=_chaseDx*z.speed*(phase===2?1.6:1.0);z.vy=_chaseDy*z.speed*(phase===2?1.6:1.0);
+            if(z._wdTimer>=60&&zd<250){z._wdState='windup';z._wdTimer=0;z._wdTx=np.x;z._wdTy=np.y;}
+          } else if(z._wdState==='windup'){
+            z.vx=0;z.vy=0;z._wdTimer++;
+            z.x+=(Math.random()-0.5)*3;z.y+=(Math.random()-0.5)*3;
+            if(z._wdTimer>=20){z._wdState='dash';z._wdTimer=0;
+              const da=Math.atan2(z._wdTy-z.y,z._wdTx-z.x);z.vx=Math.cos(da)*16;z.vy=Math.sin(da)*16;}
+          } else if(z._wdState==='dash'){
+            z._wdTimer++;
+            for(let pi=0;pi<2;pi++){particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10,maxLife:10,size:4,color:'#f44',type:'spark'});}
+            if(z._wdTimer>=12){z._wdState='recover';z._wdTimer=0;z.vx=0;z.vy=0;
+              // Landing slam
+              for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<60)damagePlayerObj(p,z.damage);}
+              screenShake.intensity=Math.max(screenShake.intensity,8);
+              for(let si=0;si<12;si++){const sa=si/12*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*40,y:z.y+Math.sin(sa)*40,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:16,maxLife:16,size:4,color:'#f44',type:'spark'});}
+              playExplosionSound();
+            }
+          } else if(z._wdState==='recover'){
+            z.vx=0;z.vy=0;z._wdTimer++;
+            if(z._wdTimer>=30){z._wdState='chase';z._wdTimer=0;}
+          }
+          // Phase 2: also fires shots while chasing
+          if(phase===2&&z._wdState==='chase'&&z._wdTimer%30===0){
+            bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*7,vy:Math.sin(z.angle)*7,damage:z.damage*0.4,color:'#f44',size:5,knockback:3,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
+          }
+          if(!z._lastPhase)z._lastPhase=1;
+          if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
+            addFloatingText(z.x,z.y-z.radius-20,'WATCHDOG ENRAGED','#f44');
+            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:'#f44',type:'spark'});}}
         }
         // ---- BRUISER: leap attack + ground pound ----
         else if(zt?.groundPound){
