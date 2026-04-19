@@ -4446,12 +4446,11 @@ function fireModifiedWeapon(p) {
       _bouncing: weaponMods.behavior === 'bouncing' ? 3 : 0,
     });
   }
-  // Sound and muzzle FX
+  // Sound and muzzle FX (no per-shot screen shake — too jittery at high fire rate)
   const freq = weaponMods.element === 'lightning' ? 1800 : weaponMods.element === 'ice' ? 1200 : weaponMods.element === 'fire' ? 400 : 600;
   playSound(freq, 0.05, 'square', 0.2);
-  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 2);
   const c2 = Math.cos(p.angle), s2 = Math.sin(p.angle);
-  for (let i = 0; i < 3; i++) particles.push({ x: p.x + c2 * 24, y: p.y + s2 * 24, vx: c2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, vy: s2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, life: 8 + Math.random() * 6, maxLife: 14, size: 2 + Math.random() * 2, color: w.bulletColor, type: 'spark' });
+  for (let i = 0; i < 2; i++) particles.push({ x: p.x + c2 * 24, y: p.y + s2 * 24, vx: c2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, vy: s2 * (3 + Math.random() * 3) + (Math.random() - 0.5) * 2, life: 6 + Math.random() * 4, maxLife: 10, size: 2 + Math.random() * 2, color: w.bulletColor, type: 'spark' });
 }
 
 // Apply element effects when bullet hits zombie
@@ -7727,7 +7726,7 @@ function updateShell() {
   // Tick particles/fade BEFORE player check (player may not exist during spawn sequence)
   { let _pw = 0;
     for (let i = 0; i < particles.length; i++) { const p = particles[i]; p.x += p.vx; p.y += p.vy; if (p.gravity) p.vy += p.gravity; const drag = p.type === 'blood' ? 0.985 : 0.95; p.vx *= drag; p.vy *= drag; p.life--; if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; } }
-    particles.length = _pw; if (particles.length > 450) particles.splice(0, particles.length - 450);
+    particles.length = _pw; if (particles.length > 300) particles.splice(0, particles.length - 300);
   }
   { let _tw = 0; for (let i = 0; i < floatingTexts.length; i++) { const t = floatingTexts[i]; if (t._follow && t._follow.x !== undefined) { t.x = t._follow.x; t.y = t._follow.y + t._followOffY; } t.y += t.vy; t.life--; if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; } } floatingTexts.length = _tw; }
   if (_shellFadeDir !== 0) {
@@ -8440,16 +8439,15 @@ function fireWeaponForPlayer(p) {
     _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
     _angVel: (Math.random() - 0.5) * 0.015, // slight drift at range
   });
-  // ---- OVER THE TOP VFX ----
-  // Heavy muzzle flash — bright, wide
+  // Muzzle flash — punchy but lean
   const mx = p.x+c*24, my = p.y+s*24;
-  for (let k = 0; k < 5; k++) {
-    const fa = a + (Math.random()-0.5)*0.8, fs = 4+Math.random()*5;
+  for (let k = 0; k < 2; k++) {
+    const fa = a + (Math.random()-0.5)*0.6, fs = 4+Math.random()*4;
     particles.push({x:mx,y:my,vx:Math.cos(fa)*fs,vy:Math.sin(fa)*fs,
-      life:6+Math.random()*4,maxLife:10,size:3+Math.random()*3,color:_buildColor,type:'spark'});
+      life:5+Math.random()*3,maxLife:8,size:2.5+Math.random()*2,color:_buildColor,type:'spark'});
   }
-  // Bright core flash
-  particles.push({x:mx,y:my,vx:c*2,vy:s*2,life:4,maxLife:4,size:8,color:'#fff',type:'spark'});
+  // Core flash
+  particles.push({x:mx,y:my,vx:c*2,vy:s*2,life:3,maxLife:3,size:6,color:'#fff',type:'spark'});
   // Shell casing ejection (perpendicular to aim)
   const perpC = -s, perpS = c;
   const casingSide = Math.random() < 0.5 ? 1 : -1;
@@ -8460,8 +8458,7 @@ function fireWeaponForPlayer(p) {
   // Sound: punchy rail gun burst
   playSound(400, 0.08, 'square', 0.12);
   playSound(180, 0.06, 'sawtooth', 0.06);
-  // Screen shake — snappy per shot
-  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 3);
+  // No per-shot screen shake — at 150ms fire rate it creates constant jitter
   return;
 }
 function fireSingleShot(p,w,d) { /* legacy — unused */
@@ -13050,7 +13047,7 @@ function update() {
     }
     particles.length = _pw;
     // Hard cap: drop oldest entries via one slice-reassign (avoids O(n²) splice shifts)
-    const PARTICLE_CAP = 450;
+    const PARTICLE_CAP = 300;
     if (particles.length > PARTICLE_CAP) {
       particles.splice(0, particles.length - PARTICLE_CAP);
     }
