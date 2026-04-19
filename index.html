@@ -2977,53 +2977,8 @@ function initTrenchSections() {
       // Domain 5: Collapse Zone — everything
       types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster'];
     }
-    // ---- DOMAIN-AWARE HAZARDS ----
+    // Stage hazards disabled — enemy variety provides the complexity
     const hazards = [];
-    if (i >= 4 && !isBoss) {
-      const numHaz = 1 + Math.floor(Math.random() * (i >= 10 ? 2 : 1));
-      const _hxMin = sectionX + 6 * CELL_SIZE, _hxMax = sectionX + (TRENCH_SECTION_W - 5) * CELL_SIZE;
-      const _hyMin = 3 * CELL_SIZE, _hyMax = (TRENCH_HEIGHT - 4) * CELL_SIZE;
-      for (let hi = 0; hi < numHaz; hi++) {
-        const hx = _hxMin + Math.random() * (_hxMax - _hxMin);
-        const hy = _hyMin + Math.random() * (_hyMax - _hyMin);
-        // Domain-specific hazard pools
-        const pool = [];
-        if (domain.sections[0] <= 4) pool.push('collapse'); // D1: collapse only
-        if (domain.sections[0] >= 5 && domain.sections[0] <= 9) pool.push('spawner', 'emp', 'collapse'); // D2
-        if (domain.sections[0] >= 10 && domain.sections[0] <= 14) pool.push('icepatch', 'collapse', 'emp'); // D3: ice
-        if (domain.sections[0] >= 15 && domain.sections[0] <= 19) pool.push('flamvent', 'collapse', 'spawner'); // D4: fire
-        if (domain.sections[0] >= 20) pool.push('datastorm', 'phasewall', 'emp'); // D5: abstract
-        if (pool.length === 0) continue;
-        const htype = pool[Math.floor(Math.random() * pool.length)];
-        if (htype === 'collapse') {
-          const cx = Math.floor(6 + Math.random() * (TRENCH_SECTION_W - 12));
-          const cy = Math.floor(3 + Math.random() * (TRENCH_HEIGHT - 6));
-          hazards.push({ type: 'collapse', gx: i * TRENCH_SECTION_W + cx, gy: cy,
-            x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
-            w: 3, h: 2, triggered: false, timer: 0, collapsed: false });
-        } else if (htype === 'spawner') {
-          // Verify spawner isn't inside an obstacle
-          const _sgx = Math.floor(hx / CELL_SIZE), _sgy = Math.floor(hy / CELL_SIZE);
-          if (dungeonGrid[_sgy] && dungeonGrid[_sgy][_sgx]) {
-            hazards.push({ type: 'spawner', x: hx, y: hy, hp: 120, maxHp: 120, spawnTimer: 0, spawnRate: 180, alive: true });
-          }
-        } else if (htype === 'emp') {
-          hazards.push({ type: 'emp', x: hx, y: hy, radius: 55 + Math.random() * 25 });
-        } else if (htype === 'icepatch') {
-          hazards.push({ type: 'icepatch', x: hx, y: hy, radius: 50 + Math.random() * 30 });
-        } else if (htype === 'flamvent') {
-          hazards.push({ type: 'flamvent', x: hx, y: hy, timer: 0, state: 'idle' }); // idle → warn → fire → cooldown
-        } else if (htype === 'datastorm') {
-          hazards.push({ type: 'datastorm', timer: 0, active: false, cooldown: 300 + Math.floor(Math.random() * 180) });
-        } else if (htype === 'phasewall') {
-          const cx = Math.floor(7 + Math.random() * (TRENCH_SECTION_W - 14));
-          const cy = Math.floor(4 + Math.random() * (TRENCH_HEIGHT - 8));
-          hazards.push({ type: 'phasewall', gx: i * TRENCH_SECTION_W + cx, gy: cy,
-            x: (i * TRENCH_SECTION_W + cx) * CELL_SIZE, y: cy * CELL_SIZE,
-            w: 3, h: 1, timer: 0, solid: true, period: 180 + Math.floor(Math.random() * 120) });
-        }
-      }
-    }
     trenchSections.push({
       x: sectionX,
       width: TRENCH_SECTION_W * CELL_SIZE,
@@ -3212,19 +3167,14 @@ function updateTrench() {
     }
     return;
   }
-  // Early wave overlap (disabled by LOCKDOWN modifier — must kill ALL enemies).
-  const _lockdown = sec.modifier && sec.modifier.id === 'lockdown';
-  if (!_lockdown && sec.spawned && !sec.cleared && sec.waveSpawnTimer <= 0 && sec.currentWave < sec.waves.length - 1) {
-    const waveSize = sec.waves[sec.currentWave] || 1;
-    const threshold = Math.max(2, Math.ceil(waveSize * 0.35)); // ~35% remaining
-    if (sectionZombies.length <= threshold && sectionZombies.length > 0) {
-      sec.waveSpawnTimer = 20; // very short overlap delay (~0.33s)
-      const cx2 = sec.x + TW / 2, cy2 = (TRENCH_HEIGHT / 2) * CELL_SIZE;
-      addFloatingText(cx2, cy2 - 30, 'MORE INCOMING...', '#ff8040');
+  // Next wave triggers when down to 1 or 0 enemies remaining
+  if (sec.spawned && !sec.cleared && sec.waveSpawnTimer <= 0 && sec.currentWave < sec.waves.length - 1) {
+    if (sectionZombies.length <= 1) {
+      sec.waveSpawnTimer = 10; // brief gap
     }
   }
   if (sec.spawned && sectionZombies.length === 0 && !sec.cleared) {
-    // More waves to spawn? Start next wave immediately.
+    // More waves to spawn? Start next wave.
     if (sec.currentWave < sec.waves.length - 1) {
       sec.waveSpawnTimer = 5; // near-instant (~80ms, just enough for a frame gap)
       return;
@@ -4013,18 +3963,15 @@ DEAD CODE END */
 // Power-ups — this redeclaration is the ACTIVE one (overrides the earlier definition)
 // Keep in sync with the primary POWERUP_TYPES above.
 const POWERUP_TYPES = [
-  { id: 'overcharge', name: 'OVERCHARGE', color: '#ff0', icon: '⚡', duration: 600, desc: 'Infinite ammo, 3x fire rate' },
+  { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 600, desc: 'Double damage + faster fire for 10s' },
   { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 600, desc: 'Invincible force field' },
-  { id: 'triple', name: 'TRIPLE SHOT', color: '#fa0', icon: '⁂', duration: 600, desc: '3 bullets per shot' },
-  { id: 'sunbeam', name: 'SUNBEAM', color: '#ffa', icon: '☀', duration: 600, desc: 'Flashlight burns zombies' },
   { id: 'magnet', name: 'MAGNET', color: '#4af', icon: '🧲', duration: 600, desc: 'Pickups fly to you' },
-  { id: 'bomb', name: 'BOMB', color: '#fa0', icon: '💣', duration: 1, desc: 'Drops explosion where you stand' },
-  { id: 'giant', name: 'GIANT', color: '#4f4', icon: '🍄', duration: 600, desc: 'Grow big, crush zombies on contact' },
-  { id: 'freeze', name: 'FREEZE', color: '#aef', icon: '🧊', duration: 600, desc: 'All zombies slowed 70%' },
-  { id: 'frenzy', name: 'FRENZY', color: '#f80', icon: '💀', duration: 600, desc: '2x speed, 3x damage, half HP' },
-  { id: 'timebomb', name: 'TIME BOMB', color: '#a8f', icon: '⏳', duration: 1, desc: 'Slows zombies in area for 8s' },
-  { id: 'firebomb', name: 'FIRE BOMB', color: '#f60', icon: '🔥', duration: 1, desc: 'Drops fire that burns zombies' },
-  { id: 'drone', name: 'DRONE', color: '#a8f', icon: '🤖', duration: 600, desc: 'A drone follows you and shoots' },
+  { id: 'freeze', name: 'FREEZE', color: '#aef', icon: '🧊', duration: 600, desc: 'All enemies frozen for 5s' },
+  // Class bombs — instant AoE that inflicts heavy status on all enemies in a wide radius
+  { id: 'thermalbomb', name: 'THERMAL BOMB', color: '#f80', icon: '🔥', duration: 1, desc: 'Massive fire blast — heavy Overheat to all nearby' },
+  { id: 'cryobomb', name: 'CRYO BOMB', color: '#8ef', icon: '🧊', duration: 1, desc: 'Flash freeze blast — Chill + Freeze to all nearby' },
+  { id: 'arcbomb', name: 'ARC BOMB', color: '#4ff', icon: '⚡', duration: 1, desc: 'EMP blast — Charged + stun to all nearby' },
+  { id: 'corruptbomb', name: 'CORRUPT BOMB', color: '#a4f', icon: '☣', duration: 1, desc: 'Corruption wave — heavy Corrupt to all nearby' },
 ];
 let activePowerUp = null; // kept for compat — points to first active power-up or null
 let activePowerUps = []; // array of { id, timer }
@@ -4035,17 +3982,36 @@ function activatePowerUp(id) {
   const lp = getLocalPlayer();
   // Instant power-ups (duration <= 1)
   if (id === 'nuke') { if (isHost) { for (const z of zombies) z.hp = 0; } screenShake.intensity = 20; playExplosionSound(); if(lp)lp.damageFlash=8; addFloatingText(lp.x,lp.y-40,'NUKE!','#f0f'); return; }
-  if (id === 'bomb') { if (lp) createExplosion(lp.x, lp.y, 160, 400, 'player'); screenShake.intensity = 15; addFloatingText(lp.x,lp.y-40,'BOMB!','#fa0'); playExplosionSound(); return; }
-  if (id === 'timebomb') { if (lp&&isHost){for(const tz of zombies){const td=Math.sqrt((tz.x-lp.x)**2+(tz.y-lp.y)**2);if(td<300)tz._slowTimer=480;}} addFloatingText(lp.x,lp.y-40,'TIME SLOW!','#a8f'); for(let k=0;k<15;k++){const a=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(a)*80,y:lp.y+Math.sin(a)*80,vx:0,vy:-0.5,life:30,maxLife:30,size:4,color:'#a8f',type:'spark'});} return; }
-  if (id === 'firebomb') { if(lp){for(let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fd=Math.random()*60;particles.push({x:lp.x+Math.cos(fa)*fd,y:lp.y+Math.sin(fa)*fd,vx:(Math.random()-0.5)*0.5,vy:-0.5-Math.random(),life:300,maxLife:300,size:6+Math.random()*4,color:Math.random()>0.5?'#f80':'#f40',type:'explosion'});}if(isHost){for(const fz of zombies){const fd2=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2);if(fd2<80)damageZombie(fz,60,0,0);}}} addFloatingText(lp.x,lp.y-40,'FIRE!','#f60'); playExplosionSound(); return; }
+  // Class bombs — wide-radius status infliction
+  const _bombR = 200; // wide radius
+  if (id === 'thermalbomb') {
+    if (lp && isHost) { for(const bz of zombies){const bd=Math.sqrt((bz.x-lp.x)**2+(bz.y-lp.y)**2);if(bd<_bombR){damageZombie(bz,40,0,0);applyOverheat(bz,20,2);}} }
+    createExplosion(lp.x,lp.y,_bombR,30,'player');
+    for(let k=0;k<24;k++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:4+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});}
+    screenShake.intensity=12; playExplosionSound(); addFloatingText(lp.x,lp.y-40,'THERMAL BOMB!','#f80'); return;
+  }
+  if (id === 'cryobomb') {
+    if (lp && isHost) { for(const bz of zombies){const bd=Math.sqrt((bz.x-lp.x)**2+(bz.y-lp.y)**2);if(bd<_bombR){applyChill(bz,4);}} }
+    for(let k=0;k<24;k++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:24,maxLife:24,size:4+Math.random()*3,color:Math.random()>0.4?'#8ef':'#cff',type:'spark'});}
+    screenShake.intensity=10; addFloatingText(lp.x,lp.y-40,'CRYO BOMB!','#8ef'); playSound(1200,0.1,'square',0.1); return;
+  }
+  if (id === 'arcbomb') {
+    if (lp && isHost) { for(const bz of zombies){const bd=Math.sqrt((bz.x-lp.x)**2+(bz.y-lp.y)**2);if(bd<_bombR){applyCharged(bz);damageZombie(bz,20,0,0);}} }
+    for(let k=0;k<20;k++){const a=Math.random()*Math.PI*2,r=50+Math.random()*_bombR*0.7;particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:lp.x+Math.cos(a)*r,ty:lp.y+Math.sin(a)*r});}
+    screenShake.intensity=10; addFloatingText(lp.x,lp.y-40,'ARC BOMB!','#4ff'); playSound(220,0.12,'sawtooth',0.12); return;
+  }
+  if (id === 'corruptbomb') {
+    if (lp && isHost) { for(const bz of zombies){const bd=Math.sqrt((bz.x-lp.x)**2+(bz.y-lp.y)**2);if(bd<_bombR){applyCorrupt(bz,3);}} }
+    for(let k=0;k<24;k++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:3+Math.random()*4,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}
+    screenShake.intensity=10; addFloatingText(lp.x,lp.y-40,'CORRUPT BOMB!','#a4f'); playSound(180,0.1,'sawtooth',0.1); return;
+  }
   // Duration power-ups — stack (refresh if already active)
   const existing = activePowerUps.find(p => p.id === id);
   if (existing) { existing.timer = def.duration; }
   else { activePowerUps.push({ id, timer: def.duration }); }
   activePowerUp = activePowerUps[0] || null;
   addFloatingText(lp.x, lp.y-40, def.name+'!', def.color);
-  if (id === 'frenzy' && lp) { lp.hp = Math.max(1, Math.floor(lp.hp * 0.5)); }
-  if (id === 'drone') { _droneAngle = _droneAngle || 0; }
+  // (frenzy, drone, giant power-ups removed)
 }
 function hasPowerUp(id) { return activePowerUps.some(p => p.id === id); }
 function playerHasPowerUp(p, id) { if (p === getLocalPlayer()) return hasPowerUp(id); return p._remotePowerUp === id; }
@@ -4427,7 +4393,7 @@ const ZOMBIE_TYPES = {
   // Legacy compat
   brute:    { hp: 350, speed: 2.0, radius: 16, color: '#f80', damage: 20, score: 250 }, // neon orange
   stalker:  { hp: 80,  speed: 2.0, radius: 11, color: '#08f', damage: 15, score: 200 }, // neon blue
-  drone:     { hp: 40, speed: 4.5, radius: 8, color: '#0f8', damage: 5, score: 50 },
+  drone:     { hp: 30, speed: 3.5, radius: 8, color: '#0f8', damage: 4, score: 50 },
   leaper:    { hp: 130, speed: 2.0, radius: 14, color: '#af0', damage: 22, score: 200, leaper: true },
   mortar:    { hp: 180, speed: 0.6, radius: 16, color: '#a33', damage: 18, score: 250, mortar: true, fireRate: 2200 },
   strafe:    { hp: 110, speed: 3.0, radius: 12, color: '#fc0', damage: 12, score: 200, ranged: true, fireRate: 1800, strafe: true },
