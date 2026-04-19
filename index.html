@@ -780,7 +780,13 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 20, fireRate: 180, bulletSpeed: 16, spread: 0.03, bulletSize: 3, knockback: 2, pierce: 0 };
+const BASE_GUN = { damage: 30, fireRate: 120, bulletSpeed: 20, spread: 0.02, bulletSize: 4, knockback: 3, pierce: 0 };
+const GUN_MAG_SIZE = 15;          // shots before reload
+const GUN_RELOAD_TIME = 50;       // frames (~0.8s reload)
+const GUN_BULLET_RANGE = 22;      // bullet life in frames (~330px at speed 20)
+let _gunAmmo = GUN_MAG_SIZE;
+let _gunReloading = false;
+let _gunReloadTimer = 0;
 
 // ============================================================
 // NARRATIVE CONTENT — Ghostwave lore threaded through gameplay
@@ -7293,6 +7299,7 @@ function startSoloGame() {
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; hazeParticles = []; activeBeacon = null;
   _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
+  _gunAmmo = GUN_MAG_SIZE; _gunReloading = false; _gunReloadTimer = 0;
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
@@ -7530,81 +7537,91 @@ function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 
 function fireWeaponForPlayer(p) {
-  // Smooth scaling gun — same weapon, just gets stronger
   const gun = getScaledGun();
   const now = performance.now();
+  // ---- MAGAZINE SYSTEM ----
+  // Reload tick (runs even when not firing)
+  if (_gunReloading) {
+    _gunReloadTimer--;
+    if (_gunReloadTimer <= 0) {
+      _gunReloading = false;
+      _gunAmmo = GUN_MAG_SIZE;
+      addFloatingText(p.x, p.y - 30, 'RELOADED', '#0ff');
+      playSound(1200, 0.08, 'sine', 0.06); playSound(800, 0.06, 'square', 0.04);
+    }
+    return; // can't fire while reloading
+  }
+  if (_gunAmmo <= 0) {
+    // Empty — start reload
+    _gunReloading = true;
+    _gunReloadTimer = GUN_RELOAD_TIME;
+    addFloatingText(p.x, p.y - 30, 'RELOADING', '#ff0');
+    playSound(300, 0.06, 'sine', 0.08); // click sound
+    return;
+  }
+  // Fire rate check
   let effectiveFireRate = gun.fireRate;
   if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.5;
-  // Adrenaline upgrade: fire rate boost when below 50% HP
-  if (runMods && runMods.adrenaline > 0 && p === getLocalPlayer() && p.hp < p.maxHp * 0.5) {
-    effectiveFireRate /= (1 + runMods.adrenaline);
-  }
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
+  _gunAmmo--;
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  // Shot count: base 1 + Wide Spread extra projectiles + Triple power-up
-  const isTriple = hasPowerUp('triple');
-  const _wideExtra = gun.extraProjectiles || 0;
-  const shotCount = (isTriple ? 3 : 1) + _wideExtra;
-  if (p === getLocalPlayer()) runStats.shotsFired += shotCount;
-  for (let si = 0; si < shotCount; si++) {
-    const _isWideExtra = si >= (isTriple ? 3 : 1);
-    const spreadOff = shotCount > 1 ? ((si - Math.floor(shotCount/2)) * 0.18) : 0;
-    let sp = (Math.random()-0.5) * gun.spread * 2 + spreadOff;
-    // Bullet magnetism: if auto-aim has a target, nudge bullet angle toward it
-    if (isMobile && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
-      const _magDx = _autoAimTarget.x - p.x, _magDy = _autoAimTarget.y - p.y;
-      const _magA = Math.atan2(_magDy, _magDx);
-      let _magDiff = _magA - (p.angle + sp);
-      while (_magDiff > Math.PI) _magDiff -= Math.PI*2;
-      while (_magDiff < -Math.PI) _magDiff += Math.PI*2;
-      sp += _magDiff * AA_BULLET_MAGNETISM;
-    }
-    const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
-    let dmg = isTriple ? Math.floor(gun.damage * 0.5) : gun.damage;
-    if (_isWideExtra) dmg = Math.floor(gun.damage * (gun.wideSpreadDmgMult || 0.7));
-    // No base crit — crit is conditional only (applied at hit time)
-    let isCrit = false;
-    const elColor = activeElement ? ELEMENT_TYPES.find(e=>e.id===activeElement.id)?.color : null;
-    const bSize = isTriple ? Math.max(2, gun.bulletSize - 1) : gun.bulletSize;
-    // ---- VISUAL SCALING from card stacks ----
-    // Bullets visually reflect the player's build: bigger, brighter, tinted by dominant element.
-    const _rm = runMods || {};
-    const _dmgGlow = Math.min(0.6, (_rm.damageMult || 0) * 0.5);
-    const _sizeBoost = 1 + Math.min(0.4, (_rm.damageMult || 0) * 0.1);
-    let _buildColor = gun.bulletColor;
-    if (_rm.dominantClass === 'fire')  _buildColor = '#f80';
-    else if (_rm.dominantClass === 'ice')   _buildColor = '#8ef';
-    else if (_rm.dominantClass === 'chain') _buildColor = '#4ff';
-    else if (_rm.dominantClass === 'wind')  _buildColor = '#cef';
-    else if (_rm.dominantClass === 'corrupt') _buildColor = '#a4f';
-    const _finalColor = isCrit ? '#f0f' : _isWideExtra ? '#fa8' : (elColor || _buildColor);
-    const _finalSize = (isCrit ? bSize + 2 : _isWideExtra ? bSize * 0.85 : bSize) * _sizeBoost;
-    bullets.push({
-      x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
-      damage: dmg, color: _finalColor, size: _finalSize,
-      _glowBoost: _dmgGlow,
-      knockback: gun.knockback, pierce: gun.pierce, pierced: 0,
-      // Extended bullet life with drift — bullets travel further (~352px base) but
-      // become unreliable as they age. See _angVel below: each bullet has a random
-      // angular velocity that amplifies with age, causing the shot to visibly drift
-      // off course at long range. Close shots stay accurate; far shots are a prayer.
-      life: 36, maxLife: 36,
-      flame: false, explosive: false, explosionRadius: 0,
-      tracer: false, chain: false, chainRange: 0, chainCount: 0,
-      laserGlow: false, grenade: false,
-      owner: 'player', ownerId: p.id, trail: [], crit: isCrit,
-      _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
-      // Per-bullet sway: small random angular velocity, amplified quadratically with age
-      _angVel: (Math.random() - 0.5) * 0.022,
-    });
+  if (p === getLocalPlayer()) runStats.shotsFired++;
+  // ---- BULLET CREATION ----
+  let sp = (Math.random()-0.5) * gun.spread * 2;
+  // Auto-aim magnetism
+  if (isMobile && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
+    const _magDx = _autoAimTarget.x - p.x, _magDy = _autoAimTarget.y - p.y;
+    const _magA = Math.atan2(_magDy, _magDx);
+    let _magDiff = _magA - (p.angle + sp);
+    while (_magDiff > Math.PI) _magDiff -= Math.PI*2;
+    while (_magDiff < -Math.PI) _magDiff += Math.PI*2;
+    sp += _magDiff * AA_BULLET_MAGNETISM;
   }
-  // Sound pitch shifts slightly with power
-  const freq = 600 - Math.min(runKills, 200);
-  playSound(freq, 0.05, 'square', 0.2);
-  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 2 + Math.min(runKills/100, 2));
-  const c2=Math.cos(p.angle),s2=Math.sin(p.angle);
-  for(let k=0;k<3;k++)particles.push({x:p.x+c2*24,y:p.y+s2*24,vx:c2*(3+Math.random()*3)+(Math.random()-0.5)*2,vy:s2*(3+Math.random()*3)+(Math.random()-0.5)*2,life:8+Math.random()*6,maxLife:14,size:2+Math.random()*2,color:gun.bulletColor,type:'spark'});
+  const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
+  const dmg = gun.damage;
+  const _rm = runMods || {};
+  let _buildColor = gun.bulletColor;
+  if (_rm.dominantClass === 'fire')  _buildColor = '#f80';
+  else if (_rm.dominantClass === 'ice')   _buildColor = '#8ef';
+  else if (_rm.dominantClass === 'chain') _buildColor = '#4ff';
+  else if (_rm.dominantClass === 'wind')  _buildColor = '#cef';
+  else if (_rm.dominantClass === 'corrupt') _buildColor = '#a4f';
+  bullets.push({
+    x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
+    damage: dmg, color: _buildColor, size: gun.bulletSize,
+    _glowBoost: 0.3,
+    knockback: gun.knockback, pierce: gun.pierce, pierced: 0,
+    life: GUN_BULLET_RANGE, maxLife: GUN_BULLET_RANGE,
+    flame: false, explosive: false, explosionRadius: 0,
+    tracer: true, chain: false, chainRange: 0, chainCount: 0,
+    laserGlow: true, grenade: false,
+    owner: 'player', ownerId: p.id, trail: [], crit: false,
+    _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
+    _angVel: 0, // no drift — precise rail gun
+  });
+  // ---- OVER THE TOP VFX ----
+  // Heavy muzzle flash — bright, wide
+  const mx = p.x+c*24, my = p.y+s*24;
+  for (let k = 0; k < 5; k++) {
+    const fa = a + (Math.random()-0.5)*0.8, fs = 4+Math.random()*5;
+    particles.push({x:mx,y:my,vx:Math.cos(fa)*fs,vy:Math.sin(fa)*fs,
+      life:6+Math.random()*4,maxLife:10,size:3+Math.random()*3,color:_buildColor,type:'spark'});
+  }
+  // Bright core flash
+  particles.push({x:mx,y:my,vx:c*2,vy:s*2,life:4,maxLife:4,size:8,color:'#fff',type:'spark'});
+  // Shell casing ejection (perpendicular to aim)
+  const perpC = -s, perpS = c;
+  const casingSide = Math.random() < 0.5 ? 1 : -1;
+  particles.push({x:p.x+perpC*8*casingSide,y:p.y+perpS*8*casingSide,
+    vx:perpC*casingSide*(2+Math.random()*2)+(Math.random()-0.5),
+    vy:perpS*casingSide*(2+Math.random()*2)-1,
+    life:30,maxLife:30,size:2,color:'#da3',type:'casing',gravity:0.12});
+  // Sound: punchy rail gun burst
+  playSound(400, 0.08, 'square', 0.12);
+  playSound(180, 0.06, 'sawtooth', 0.06);
+  // Screen shake — snappy per shot
+  if (p === getLocalPlayer()) screenShake.intensity = Math.max(screenShake.intensity, 3);
   return;
 }
 function fireSingleShot(p,w,d) { /* legacy — unused */
@@ -10077,8 +10094,8 @@ function update() {
       // (ghost/frenzy speed boosts removed — auto-aim rebalance)
       // Slipstream: speed boost after dash
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
-      // Shooting slows movement — forces strategic shoot/move decisions
-      if (isMobile && shootButtonHeld && _autoAimTarget) moveSpeed *= 0.4;
+      // Cannot move while firing — Adamant Rail style. Must release to reposition.
+      if (isMobile && shootButtonHeld && _autoAimTarget) moveSpeed = 0;
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -10693,8 +10710,10 @@ function update() {
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
     const shouldFire=isMobile?rightJoystick.firing:(mouse.down||gamepad.fire);
     lp._firing=shouldFire;
-    if(shouldFire && !(lp._empDisabled > 0))fireWeaponForPlayer(lp);
-    else stopWeaponLoop(); // stop loop sound when not firing
+    // Reload ticks even when not firing
+    if (_gunReloading) { _gunReloadTimer--; if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE; addFloatingText(lp.x, lp.y-30, 'RELOADED', '#0ff'); playSound(1200,0.08,'sine',0.06); } }
+    if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
+    else if(!shouldFire) stopWeaponLoop(); // stop loop sound when not firing
     // Stop loop if reloading or out of ammo
     if(w.ammo<=0 && !shouldFire) stopWeaponLoop();
   }
@@ -14112,6 +14131,20 @@ function render() {
     // Dash cooldown (desktop only, local player only)
     if(p===getLocalPlayer()&&!isMobile){const _maxC=p._dashChargesMax||1,_curC=p._dashCharges||0;if(_curC<_maxC){const pct=1-p.dashCooldown/DASH_COOLDOWN;ctx.strokeStyle=p.color;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+6,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}if(_maxC>1){for(let _ci=0;_ci<_maxC;_ci++){const _ca=-Math.PI/2+(_ci/_maxC)*Math.PI*2;const _cx=p.x+Math.cos(_ca)*(PLAYER_RADIUS+10),_cy=p.y+Math.sin(_ca)*(PLAYER_RADIUS+10);ctx.fillStyle=_ci<_curC?'#0ff':'#444';ctx.beginPath();ctx.arc(_cx,_cy,2.5,0,Math.PI*2);ctx.fill();}}}
     if(p===getLocalPlayer()&&p._beaconCooldown>0&&!isMobile){const pct=1-p._beaconCooldown/BEACON_COOLDOWN;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,PLAYER_RADIUS+10,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();}
+    // Ammo ring — shows remaining shots as an arc around the player
+    if(p===getLocalPlayer()){
+      const _ammoPct = _gunAmmo / GUN_MAG_SIZE;
+      const _ammoColor = _gunReloading ? '#ff0' : (_ammoPct > 0.3 ? '#0ff' : '#f44');
+      ctx.strokeStyle = _ammoColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.6;
+      if (_gunReloading) {
+        // Reload: spinning arc
+        const _rlPct = 1 - _gunReloadTimer / GUN_RELOAD_TIME;
+        ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_RADIUS+4, -Math.PI/2, -Math.PI/2+Math.PI*2*_rlPct); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_RADIUS+4, -Math.PI/2, -Math.PI/2+Math.PI*2*_ammoPct); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
     // Shield force field — glowing circle
     if(playerHasPowerUp(p,'shield')){
       const pulse=0.4+Math.sin(performance.now()*0.006)*0.2;
