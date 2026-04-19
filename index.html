@@ -1228,8 +1228,8 @@ function getScaledGun() {
   const dmgMult = (1 + (m.damageMult || 0)) * (1 + getMetaBonus('power'));
   const frMult = Math.max(0.5, 1 + (m.fireRateMult || 0)); // floor at 0.5 to prevent negative
   const bulletColor = m.dominantClass ? _ELEM_COLOR[m.dominantClass] : '#ff0';
-  // Wide Spread: extra projectiles (handled in fireWeaponForPlayer)
-  const wideSpreadExtra = m.wideSpread > 0 ? 2 : 0;
+  // Wide Spread: +1 extra projectile per level
+  const wideSpreadExtra = m.wideSpread || 0;
   return {
     damage: Math.floor((BASE_GUN.damage + (m.flatDamageBonus || 0)) * dmgMult),
     fireRate: Math.max(50, BASE_GUN.fireRate / frMult),
@@ -1327,8 +1327,8 @@ const UPGRADE_POOL = [
   // ---- GENERIC WEAPON (common, max 2) ----
   { id:'wide_spread', name:'WIDE SPREAD', rarity:'epic', max:2, icon:'⫸', color:'#fa0',
     descs:[
-      'LEVEL 1: +2 projectiles in a wider cone (70% damage each).',
-      'LEVEL 2: 80% damage per projectile.',
+      'LEVEL 1: +1 projectile in a wider cone (70% damage each).',
+      'LEVEL 2: +2 projectiles (80% damage each).',
     ], flavor:'spray protocol. cover the room.' },
   { id:'piercing_shot', name:'PIERCING SHOT', rarity:'common', max:2, icon:'➟', color:'#0cf',
     descs:[
@@ -2082,7 +2082,7 @@ function _renderShopCards() {
     const isSelected = _shopSelectedId === u.id;
     // Uniform card: same border color (#0ff4), same background, FIXED height
     card.style.cssText = `
-      width:185px; height:195px; padding:10px 10px;
+      width:210px; min-height:210px; padding:12px 12px;
       border:2px solid ${isSelected ? '#0ff' : '#0ff4'};
       border-radius:10px;
       background:rgba(6,8,16,0.96);
@@ -2112,15 +2112,15 @@ function _renderShopCards() {
     }
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:8px;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:1px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${u.rarity}</span>
-        <span style="font-size:8px;letter-spacing:1px;color:#556">MOD ${String(ci+1).padStart(2,'0')}</span>
+        <span style="font-size:10px;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:2px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${u.rarity}</span>
+        <span style="font-size:9px;letter-spacing:1px;color:#889">MOD ${String(ci+1).padStart(2,'0')}</span>
       </div>
-      <div style="text-align:center;margin:2px 0">
-        <div style="font-size:22px;line-height:1;color:${u.color};text-shadow:0 0 8px ${u.color}">${u.icon}</div>
+      <div style="text-align:center;margin:4px 0">
+        <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
       </div>
-      <div style="font-size:10px;font-weight:bold;letter-spacing:1.5px;color:${u.color};text-shadow:0 0 5px ${u.color};text-align:center">${u.name}</div>
-      <div style="font-size:10px;color:#ccd;line-height:1.35;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
-      ${owned ? `<div style="font-size:8px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
+      <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
+      <div style="font-size:12px;color:#eef;line-height:1.4;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
+      ${owned ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
       ${_replacesHtml}
       <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
         <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
@@ -8437,7 +8437,6 @@ function fireWeaponForPlayer(p) {
     sp += _magDiff * AA_BULLET_MAGNETISM;
   }
   const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
-  const dmg = gun.damage;
   const _rm = runMods || {};
   let _buildColor = gun.bulletColor;
   if (_rm.dominantClass === 'fire')  _buildColor = '#f80';
@@ -8445,19 +8444,28 @@ function fireWeaponForPlayer(p) {
   else if (_rm.dominantClass === 'chain') _buildColor = '#4ff';
   else if (_rm.dominantClass === 'wind')  _buildColor = '#cef';
   else if (_rm.dominantClass === 'corrupt') _buildColor = '#a4f';
-  bullets.push({
-    x: p.x+c*22, y: p.y+s*22, vx: c*gun.bulletSpeed, vy: s*gun.bulletSpeed,
-    damage: dmg, color: _buildColor, size: gun.bulletSize,
-    _glowBoost: 0.15,
-    knockback: gun.knockback, pierce: gun.pierce, pierced: 0,
-    life: GUN_BULLET_RANGE, maxLife: GUN_BULLET_RANGE,
-    flame: false, explosive: false, explosionRadius: 0,
-    tracer: false, chain: false, chainRange: 0, chainCount: 0,
-    laserGlow: false, grenade: false,
-    owner: 'player', ownerId: p.id, trail: [], crit: false,
-    _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
-    _angVel: (Math.random() - 0.5) * 0.015, // slight drift at range
-  });
+  // Wide Spread: fire extra projectiles in a fan pattern
+  const extraProj = gun.extraProjectiles || 0;
+  const totalProj = 1 + extraProj;
+  const dmgPerBullet = extraProj > 0 ? Math.floor(gun.damage * (gun.wideSpreadDmgMult || 0.7)) : gun.damage;
+  const fanSpread = extraProj > 0 ? 0.25 : 0; // angle between each extra projectile
+  for (let pi = 0; pi < totalProj; pi++) {
+    const angleOffset = extraProj > 0 ? (pi - (totalProj - 1) / 2) * fanSpread : 0;
+    const ba = a + angleOffset, bc = Math.cos(ba), bs = Math.sin(ba);
+    bullets.push({
+      x: p.x+bc*22, y: p.y+bs*22, vx: bc*gun.bulletSpeed, vy: bs*gun.bulletSpeed,
+      damage: dmgPerBullet, color: _buildColor, size: gun.bulletSize,
+      _glowBoost: 0.15,
+      knockback: gun.knockback, pierce: gun.pierce, pierced: 0,
+      life: GUN_BULLET_RANGE, maxLife: GUN_BULLET_RANGE,
+      flame: false, explosive: false, explosionRadius: 0,
+      tracer: false, chain: false, chainRange: 0, chainCount: 0,
+      laserGlow: false, grenade: false,
+      owner: 'player', ownerId: p.id, trail: [], crit: false,
+      _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
+      _angVel: (Math.random() - 0.5) * 0.015,
+    });
+  }
   // Muzzle flash — punchy but lean
   const mx = p.x+c*24, my = p.y+s*24;
   for (let k = 0; k < 2; k++) {
