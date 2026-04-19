@@ -3477,9 +3477,11 @@ function applyCharged(z) {
   const _m = runMods || {};
   z._charged = true;
   z._chargedTimer = Math.max(z._chargedTimer || 0, 180); // 3s conduit mark
-  // Lightning stun: 1s hard stop + stagger
-  z._shocked = Math.max(z._shocked || 0, 60);
-  z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+  // Brief stagger on first application only — then immune for 3s
+  if (!z._shockImmune || z._shockImmune <= 0) {
+    z.staggerTimer = Math.max(z.staggerTimer || 0, 10); // short flinch, not a stun
+    z._shockImmune = 180; // 3s immunity after flinch
+  }
   // PERMAFROST CIRCUIT: Charged → also Chill 2 stacks (chain stun = chain freeze)
   if (!_synLock && _m.synPermafrost) { _synLock = true; applyChill(z, 2); _synLock = false; }
   // LIVE WIRE: mark for passive Overheat DOT (ticked in zombie AI)
@@ -11226,6 +11228,7 @@ function update() {
       else if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;}
       // CHARGED: tick down conduit mark
       if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(gameTime%4===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
+      if(z._shockImmune>0)z._shockImmune--;
       // EXPOSED: tick down vulnerability mark
       if(z._exposed&&z._exposedTimer>0){z._exposedTimer--;if(z._exposedTimer<=0)z._exposed=false;}
       if(z._slamCooldown>0)z._slamCooldown--;
