@@ -2965,17 +2965,17 @@ function initTrenchSections() {
       if (i >= 7) types.push('leaper');
       if (i >= 8) types.push('exploder');
     } else if (i <= 14) {
-      // Domain 3: Siege Zone — support + priority targets
-      types = ['shieldbot', 'mini', 'phaser', 'strafe'];
+      // Domain 3: Siege Zone — support + priority targets + casters
+      types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster'];
       if (i >= 12) types.push('tank');
       if (i >= 13) types.push('mortar');
     } else if (i <= 19) {
       // Domain 4: Control Zone — movement denial + elites
-      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute'];
+      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster'];
       if (i >= 17) types.push('shieldbot');
     } else {
       // Domain 5: Collapse Zone — everything
-      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank'];
+      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster'];
     }
     // ---- DOMAIN-AWARE HAZARDS ----
     const hazards = [];
@@ -4382,6 +4382,10 @@ function _drawZombieShape(ctx, type, r) {
   } else if (type === 'anchor') {
     // Large octagon
     for(let hi=0;hi<8;hi++){const ha=(hi/8)*Math.PI*2;ctx.lineTo(Math.cos(ha)*r,Math.sin(ha)*r);}ctx.closePath();
+  } else if (type === 'caster') {
+    // Rounded diamond with notches — arcane caster
+    ctx.moveTo(r*1.1, 0); ctx.lineTo(r*0.3, -r*0.8); ctx.lineTo(0, -r*1.1); ctx.lineTo(-r*0.3, -r*0.8);
+    ctx.lineTo(-r*1.1, 0); ctx.lineTo(-r*0.3, r*0.8); ctx.lineTo(0, r*1.1); ctx.lineTo(r*0.3, r*0.8); ctx.closePath();
   } else {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
   }
@@ -4430,6 +4434,7 @@ const ZOMBIE_TYPES = {
   shieldbot: { hp: 90, speed: 2.4, radius: 10, color: '#4af', damage: 0, score: 250, support: true },
   phaser:    { hp: 100, speed: 2.2, radius: 12, color: '#eef', damage: 20, score: 250, phaser: true },
   anchor:    { hp: 350, speed: 0.4, radius: 20, color: '#c6f', damage: 0, score: 300, anchor: true },
+  caster:    { hp: 160, speed: 1.2, radius: 14, color: '#f4f', damage: 25, score: 250, caster: true, fireRate: 3000 },
 };
 
 // ---- AUDIO ENGINE ----
@@ -6418,6 +6423,7 @@ const ZOMBIE_CODEX = {
   shieldbot: { name: 'SHIELDBOT',  desc: 'Support unit. Orbits allies and grants them damage reduction.' },
   phaser:    { name: 'PHASER',     desc: 'Teleports toward you every 1.5s. Hard to kite.' },
   anchor:    { name: 'ANCHOR',     desc: 'Heavy control unit. Creates gravity pull that slows nearby players.' },
+  caster:    { name: 'CASTER',    desc: 'Fires large, slow glowing orbs. High damage but easy to dodge if you see them coming.' },
 };
 
 const CODEX_CATEGORIES = [
@@ -11840,19 +11846,97 @@ function update() {
         }
         // ---- PHASER: teleports toward player periodically ----
         else if(zt?.phaser){
-          z.vx=_chaseDx*z.speed*0.4;z.vy=_chaseDy*z.speed*0.4; // slow approach
-          z._phaseTimer=(z._phaseTimer||0)+1;
-          if(z._phaseTimer>=90&&zd>60&&zd<350){ // teleport every ~1.5s
-            z._phaseTimer=0;
-            const oldX=z.x,oldY=z.y;
-            // Blink toward player (60% of distance)
-            z.x=z.x+(np.x-z.x)*0.6;z.y=z.y+(np.y-z.y)*0.6;
-            // VFX: departure + arrival glitch
-            for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2,ps=2+Math.random()*3;
-              particles.push({x:oldX,y:oldY,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});
-              particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});}
-            playSound(900,0.05,'sine',0.06);
-            z.staggerTimer=5;
+          if (z._slashState) {
+            // ---- SLASH after teleport ----
+            if (z._slashState === 'windup') {
+              z.vx=0;z.vy=0;z._slashTimer--;
+              z.angle = Math.atan2(np.y-z.y, np.x-z.x); // face player during windup
+              if (z._slashTimer <= 0) { z._slashState = 'swing'; z._slashTimer = 6; z._slashAngle = z.angle; }
+            } else if (z._slashState === 'swing') {
+              z.vx=0;z.vy=0;z._slashTimer--;
+              // Cone damage check: 90° arc in front, 50px range
+              if (z._slashTimer === 4) {
+                for(const p of players){if(!p.alive)continue;const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
+                  if(pd<50){let da=Math.atan2(pdy,pdx)-z._slashAngle;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;
+                    if(Math.abs(da)<0.8){damagePlayerObj(p,z.damage*1.5);screenShake.intensity=Math.max(screenShake.intensity,5);}}}
+                // VFX: slash arc
+                for(let si=0;si<12;si++){const sa=z._slashAngle+(si/12-0.5)*1.6,sr=20+Math.random()*30;
+                  particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:10,maxLife:10,size:3+Math.random()*2,color:'#eef',type:'spark'});}
+                playSound(500,0.08,'sawtooth',0.06);
+              }
+              if (z._slashTimer <= 0) { z._slashState = null; z._phaseTimer = 0; }
+            }
+          } else {
+            z.vx=_chaseDx*z.speed*0.4;z.vy=_chaseDy*z.speed*0.4;
+            z._phaseTimer=(z._phaseTimer||0)+1;
+            if(z._phaseTimer>=90&&zd>60&&zd<350){
+              z._phaseTimer=0;
+              const oldX=z.x,oldY=z.y;
+              z.x=z.x+(np.x-z.x)*0.6;z.y=z.y+(np.y-z.y)*0.6;
+              for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2,ps=2+Math.random()*3;
+                particles.push({x:oldX,y:oldY,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});
+                particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});}
+              playSound(900,0.05,'sine',0.06);
+              // After teleport → slash
+              z._slashState = 'windup'; z._slashTimer = 12;
+            }
+          }
+        }
+        // ---- CASTER: fires large slow glowing orbs ----
+        else if(zt?.caster){
+          // Keep distance ~180px, retreat if too close
+          if(zd<120){z.vx=-zdx/zd*z.speed*1.2;z.vy=-zdy/zd*z.speed*1.2;}
+          else if(zd>250){z.vx=_chaseDx*z.speed*0.6;z.vy=_chaseDy*z.speed*0.6;}
+          else{z.vx*=0.9;z.vy*=0.9;} // hold position
+          z.angle=Math.atan2(zdy,zdx);
+          z._castTimer=(z._castTimer||0)+1;
+          if(z._castTimer>=Math.floor(z.fireRate/16.67)&&zd<350){
+            z._castTimer=0;
+            const ca=z.angle;
+            // Large, slow, glowing orb — size 10, speed 3.5, long life
+            bullets.push({x:z.x+Math.cos(ca)*18,y:z.y+Math.sin(ca)*18,
+              vx:Math.cos(ca)*3.5,vy:Math.sin(ca)*3.5,
+              damage:z.damage,color:'#f4f',size:10,knockback:6,pierce:0,pierced:0,
+              life:120,owner:'zombie',trail:[],_glow:true});
+            // Charge-up VFX
+            for(let pi=0;pi<10;pi++){const pa=Math.random()*Math.PI*2,pr=10+Math.random()*15;
+              particles.push({x:z.x+Math.cos(pa)*pr,y:z.y+Math.sin(pa)*pr,vx:-Math.cos(pa)*3,vy:-Math.sin(pa)*3,life:10,maxLife:10,size:3+Math.random()*2,color:'#f4f',type:'spark'});}
+            playSound(250,0.08,'sine',0.12); playSound(400,0.05,'square',0.06);
+            screenShake.intensity=Math.max(screenShake.intensity,2);
+          }
+        }
+        // ---- STALKER: fast flanker with melee slash ----
+        else if(z.type==='stalker'){
+          if (z._slashState) {
+            if (z._slashState === 'windup') {
+              z.vx*=0.3;z.vy*=0.3;z._slashTimer--;
+              z.angle = Math.atan2(np.y-z.y, np.x-z.x);
+              // Shake during windup
+              z.x+=(Math.random()-0.5)*1.5;z.y+=(Math.random()-0.5)*1.5;
+              if (z._slashTimer <= 0) { z._slashState = 'swing'; z._slashTimer = 8; z._slashAngle = z.angle; }
+            } else if (z._slashState === 'swing') {
+              // Lunge forward slightly during swing
+              z.vx=Math.cos(z._slashAngle)*6;z.vy=Math.sin(z._slashAngle)*6;
+              z._slashTimer--;
+              if (z._slashTimer === 5) {
+                // 120° wide arc, 45px range
+                for(const p of players){if(!p.alive)continue;const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
+                  if(pd<45){let da=Math.atan2(pdy,pdx)-z._slashAngle;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;
+                    if(Math.abs(da)<1.05){damagePlayerObj(p,z.damage);screenShake.intensity=Math.max(screenShake.intensity,4);}}}
+                // VFX: wide cyan slash arc
+                for(let si=0;si<16;si++){const sa=z._slashAngle+(si/16-0.5)*2.1,sr=15+Math.random()*30;
+                  particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:8,maxLife:8,size:2.5+Math.random()*2,color:'#08f',type:'spark'});}
+                playSound(400,0.07,'sawtooth',0.05);
+              }
+              if (z._slashTimer <= 0) { z._slashState = null; z.attackCooldown = 40; }
+            }
+          } else {
+            // Chase with flanking offset
+            z.vx=_chaseDx*z.speed*1.2;z.vy=_chaseDy*z.speed*1.2;
+            // Initiate slash when close enough
+            if(zd<40&&z.attackCooldown<=0){
+              z._slashState = 'windup'; z._slashTimer = 10;
+            }
           }
         }
         // ---- ANCHOR: stationary gravity pull — slows nearby player ----
@@ -11949,7 +12033,7 @@ function update() {
           const dot=(p.vx*pdx+p.vy*pdy);
           if(dot>0) meleeRange-=6; // tighter range when retreating
         }
-        if(pd<meleeRange&&z.attackCooldown<=0){damagePlayerObj(p,z.damage);z.attackCooldown=30;}
+        if(pd<meleeRange&&z.attackCooldown<=0&&z.type!=='stalker'&&!zt?.phaser){damagePlayerObj(p,z.damage);z.attackCooldown=30;}
       }
       if(z.attackCooldown>0)z.attackCooldown--;
     }
@@ -14700,6 +14784,16 @@ function render() {
     for(let j=Math.max(0,b.trail.length-3);j<b.trail.length;j++){ctx.lineTo(b.trail[j].x+(Math.random()-0.5)*4,b.trail[j].y+(Math.random()-0.5)*4);}
     ctx.lineTo(b.x,b.y);ctx.stroke();ctx.shadowBlur=0;
     ctx.fillStyle='#fff';ctx.globalAlpha=0.8;ctx.beginPath();ctx.arc(b.x,b.y,b.size+2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    }else if(b._glow){
+      // Large slow glowing orb — pulsing halo + bright core
+      const _orbPulse = 0.7 + Math.sin(performance.now()*0.015)*0.3;
+      ctx.globalAlpha=0.15*_orbPulse;ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=30;
+      ctx.beginPath();ctx.arc(b.x,b.y,b.size*2.5,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=0.4*_orbPulse;ctx.beginPath();ctx.arc(b.x,b.y,b.size*1.5,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=0.9;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size*0.6,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;ctx.globalAlpha=1;
+      // Trailing particles
+      if(gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*b.size,y:b.y+(Math.random()-0.5)*b.size,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:12,maxLife:12,size:2+Math.random()*2,color:b.color,type:'spark'});
     }else{ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}}
   // Redraw zombie eyes on top of fog — always glowing
   for(const z of zombies){
