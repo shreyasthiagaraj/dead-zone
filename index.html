@@ -10056,19 +10056,20 @@ function update() {
           _autoAimTarget = null;
           rightJoystick.firing = false;
         }
-        // If no lock yet, find one in facing direction (only on initial press)
+        // If no lock yet, find one in facing direction + within bullet range
         if (!_autoAimTarget) {
+          const _strikeRange = GUN_BULLET_RANGE * BASE_GUN.bulletSpeed; // actual bullet travel distance
           _autoAimTarget = _aaSelectTarget(lp);
-          // Only accept targets roughly in front of the player (within ~70° cone)
           if (_autoAimTarget) {
             const _taDx = _autoAimTarget.x - lp.x, _taDy = _autoAimTarget.y - lp.y;
+            const _taDist = Math.sqrt(_taDx*_taDx + _taDy*_taDy);
             let _taDiff = Math.atan2(_taDy, _taDx) - _autoAimAngle;
             while (_taDiff > Math.PI) _taDiff -= Math.PI*2;
             while (_taDiff < -Math.PI) _taDiff += Math.PI*2;
-            if (Math.abs(_taDiff) > 1.2) _autoAimTarget = null; // too far off-axis, reject
+            // Reject if outside facing cone (~70°) OR beyond bullet range
+            if (Math.abs(_taDiff) > 1.2 || _taDist > _strikeRange) _autoAimTarget = null;
           }
-          if (_autoAimTarget) rightJoystick.firing = true;
-          else rightJoystick.firing = true; // fire in facing direction even without target
+          rightJoystick.firing = true; // fire regardless (in facing dir if no target)
         }
         // Locked on: nudge aim toward target (assist, not full snap)
         if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
@@ -10114,8 +10115,8 @@ function update() {
       // (ghost/frenzy speed boosts removed — auto-aim rebalance)
       // Slipstream: speed boost after dash
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
-      // Cannot move while firing — Adamant Rail style. Must release to reposition.
-      if (isMobile && shootButtonHeld && _autoAimTarget) moveSpeed = 0;
+      // Cannot move while firing. Must release to reposition.
+      if (isMobile && shootButtonHeld) moveSpeed = 0;
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
