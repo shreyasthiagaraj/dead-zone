@@ -3385,7 +3385,7 @@ const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
-  { name: 'ENTRY CACHE',       sections: [0, 9],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: null },
+  { name: 'ENTRY CACHE',       sections: [0, 9],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: 'dust' },
   { name: 'CORRUPTED SUBNET',  sections: [10, 19],  wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
   { name: 'DEEP STORAGE',      sections: [20, 29],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
   { name: 'KERNEL BOUNDARY',   sections: [30, 39],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
@@ -3787,6 +3787,7 @@ function startTrench() {
   _trenchPendingNext = -1;
   trenchFadeAlpha = 0;
   trenchFadeDir = 0;
+  decor = [];
   initTrenchSections();
   const el = document.getElementById('wave-announce');
   document.getElementById('wave-num').textContent = 'THE TRENCH';
@@ -3900,6 +3901,10 @@ function spawnTrenchSection(idx) {
     playSound(80, 0.4, 'sawtooth', 0.2);
     playSound(120, 0.3, 'square', 0.15);
   }
+  // ---- AMBIENT DECOR ----
+  // Procedural decor populates the section with atmosphere (terminals, server racks,
+  // cryopods, bodies, etc). Domain-aware — different types fit different domains.
+  spawnTrenchSectionDecor(idx);
   // ---- DESTRUCTIBLE OBJECTS ----
   // Explosive barrels + data crates (break for possible drops)
   const _numBarrels = 1 + Math.floor(Math.random() * 2);
@@ -4177,6 +4182,453 @@ const ELEMENT_TYPES = [
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
 let burnoutPuddles = []; // { x, y, radius, life, maxLife } — Burnout Wake Lv2 fire trail
+
+// ============================================================
+// AMBIENT DECOR SYSTEM
+// Procedural stationary objects populate sections with atmosphere. No sprite assets —
+// all geometry, particles, and gradients. Rendered between decals and entities.
+// Types: terminal, server_rack, crt_monitor, cryopod, poster, cable, hazard_stripes,
+//        wireframe_obj, slumped_body.
+// ============================================================
+let decor = [];
+
+function _decorRand(seed) {
+  const x = Math.sin(seed * 9301.2834 + 12.94) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function _pickDecorTypesForDomain(domainIdx, isBoss) {
+  if (isBoss) return ['server_rack','terminal','crt_monitor','hazard_stripes','slumped_body'];
+  const pools = [
+    ['terminal','server_rack','crt_monitor','poster','cable','slumped_body'],
+    ['crt_monitor','hazard_stripes','server_rack','poster','terminal','slumped_body'],
+    ['cryopod','cable','server_rack','crt_monitor','cryopod','slumped_body'],
+    ['hazard_stripes','terminal','server_rack','cable','slumped_body'],
+    ['wireframe_obj','terminal','server_rack','wireframe_obj'],
+  ];
+  return pools[Math.max(0, Math.min(4, domainIdx))];
+}
+
+function _findDecorSpot(sec, type) {
+  for (let tries = 0; tries < 20; tries++) {
+    const gx = Math.floor(sec.x / CELL_SIZE) + 3 + Math.floor(Math.random() * (TRENCH_SECTION_W - 6));
+    const gy = 2 + Math.floor(Math.random() * (TRENCH_HEIGHT - 4));
+    if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
+    // Wall-adjacent types need a neighboring non-walkable cell
+    if (type === 'terminal' || type === 'crt_monitor' || type === 'poster' || type === 'cable') {
+      const hasWall = (!dungeonGrid[gy-1] || !dungeonGrid[gy-1][gx]) ||
+                      (!dungeonGrid[gy+1] || !dungeonGrid[gy+1][gx]) ||
+                      (!dungeonGrid[gy][gx-1]) ||
+                      (!dungeonGrid[gy][gx+1]);
+      if (!hasWall) continue;
+    }
+    const x = gx * CELL_SIZE + CELL_SIZE/2;
+    const y = gy * CELL_SIZE + CELL_SIZE/2;
+    const lp = getLocalPlayer();
+    if (lp && Math.abs(x - lp.x) < 70 && Math.abs(y - lp.y) < 70) continue;
+    return { x, y };
+  }
+  return null;
+}
+
+function _genLeds(seed) {
+  const leds = [];
+  for (let i = 0; i < 8; i++) {
+    leds.push({ phase: _decorRand(seed + i * 7) * Math.PI * 2, speed: 0.5 + _decorRand(seed + i * 13) * 1.5 });
+  }
+  return leds;
+}
+
+function _createDecor(type, x, y, domain, seed) {
+  const strokeColor = (domain && domain.wallStroke) || '#b06';
+  const accent = (domain && domain.accentColor) || '#b06';
+  switch (type) {
+    case 'terminal':       return { type, x, y, w: 22, h: 14, color: strokeColor, accent, domain, seed, _flicker: 0, _text: _corruptText('SCAN'), _textSwap: 0 };
+    case 'server_rack':    return { type, x, y, w: 14, h: 44, color: strokeColor, accent, domain, seed, _leds: _genLeds(seed) };
+    case 'crt_monitor':    return { type, x, y, w: 22, h: 18, color: '#0c1a10', accent: '#4f4', domain, seed, _staticTimer: 0 };
+    case 'cryopod':        return { type, x, y, w: 40, h: 20, color: '#8ef', accent: '#cef', domain, seed, _twitchTimer: 100 + Math.floor(Math.random()*200), _twitch: 0, _hasFigure: _decorRand(seed) > 0.35 };
+    case 'poster':         return { type, x, y, w: 26, h: 34, color: strokeColor, accent, domain, seed, _angle: (_decorRand(seed+1) - 0.5) * 0.1 };
+    case 'cable':          return { type, x, y, w: 54, h: 4, color: accent, accent, domain, seed };
+    case 'hazard_stripes': return { type, x, y, w: 48, h: 28, color: '#cc0', accent: '#111', domain, seed };
+    case 'wireframe_obj':  return { type, x, y, w: 28, h: 28, color: '#fff', accent: '#ff0', domain, seed };
+    case 'slumped_body':   return { type, x, y, w: 18, h: 10, color: '#2a1515', accent: '#611', domain, seed, _angle: _decorRand(seed) * Math.PI * 2 };
+  }
+  return { type: 'terminal', x, y, w: 22, h: 14, color: strokeColor, accent, domain, seed, _flicker: 0, _text: 'SCAN', _textSwap: 0 };
+}
+
+function _spawnDebrisCluster(x, y, domain) {
+  const palettes = {
+    'ENTRY CACHE':      ['#222','#1a1a2a','#2a133a'],
+    'CORRUPTED SUBNET': ['#320','#420','#510'],
+    'DEEP STORAGE':     ['#123','#234','#223'],
+    'KERNEL BOUNDARY':  ['#400','#511','#622'],
+    'THE CORE':         ['#333','#444','#222'],
+  };
+  const colors = palettes[domain && domain.name] || palettes['ENTRY CACHE'];
+  const count = 3 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, r = 4 + Math.random() * 14;
+    decals.push({ x: x + Math.cos(a)*r, y: y + Math.sin(a)*r,
+      size: 3 + Math.random() * 6, alpha: 0.25 + Math.random() * 0.25,
+      color: colors[Math.floor(Math.random() * colors.length)] });
+  }
+}
+
+function spawnTrenchSectionDecor(idx) {
+  const sec = trenchSections[idx];
+  if (!sec || sec._decorSeeded) return;
+  sec._decorSeeded = true;
+  const domain = sec.domain || getTrenchDomain(idx);
+  const domainIdx = TRENCH_DOMAINS.indexOf(domain);
+  const types = _pickDecorTypesForDomain(domainIdx, sec.isBoss);
+  // 4-7 decor items per section
+  const count = 4 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i++) {
+    const t = types[Math.floor(Math.random() * types.length)];
+    const pos = _findDecorSpot(sec, t);
+    if (!pos) continue;
+    const seed = Math.floor(Math.random() * 100000) + idx * 1000 + i;
+    decor.push(_createDecor(t, pos.x, pos.y, domain, seed));
+  }
+  // 1-2 debris clusters on the floor
+  for (let i = 0; i < 2; i++) {
+    const pos = _findDecorSpot(sec, 'debris');
+    if (pos) _spawnDebrisCluster(pos.x, pos.y, domain);
+  }
+}
+
+function updateDecor() {
+  for (const d of decor) {
+    if (d.type === 'terminal') {
+      d._flicker = (d._flicker + 1) % 80;
+      d._textSwap = (d._textSwap + 1) % 180;
+      if (d._textSwap === 0) d._text = _corruptText('SCAN');
+    } else if (d.type === 'crt_monitor') {
+      d._staticTimer = (d._staticTimer + 1) % 360;
+    } else if (d.type === 'cryopod') {
+      d._twitchTimer--;
+      if (d._twitchTimer <= 0) { d._twitch = 8; d._twitchTimer = 300 + Math.floor(Math.random() * 500); }
+      if (d._twitch > 0) d._twitch--;
+    }
+  }
+}
+
+function renderDecor(ctx) {
+  // Ensure the current trench section has decor populated. Host does this via
+  // spawnTrenchSection's call; non-host clients need their own trigger.
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    spawnTrenchSectionDecor(trenchSection);
+  }
+  if (decor.length === 0) return;
+  const vL = camera.x - canvas.width/2 - 80, vR = camera.x + canvas.width/2 + 80;
+  const vT = camera.y - canvas.height/2 - 80, vB = camera.y + canvas.height/2 + 80;
+  const t = performance.now();
+  for (const d of decor) {
+    if (d.x < vL || d.x > vR || d.y < vT || d.y > vB) continue;
+    switch (d.type) {
+      case 'terminal':       _renderTerminal(ctx, d, t); break;
+      case 'server_rack':    _renderServerRack(ctx, d, t); break;
+      case 'crt_monitor':    _renderCRTMonitor(ctx, d, t); break;
+      case 'cryopod':        _renderCryopod(ctx, d, t); break;
+      case 'poster':         _renderPoster(ctx, d, t); break;
+      case 'cable':          _renderCable(ctx, d, t); break;
+      case 'hazard_stripes': _renderHazardStripes(ctx, d, t); break;
+      case 'wireframe_obj':  _renderWireframe(ctx, d, t); break;
+      case 'slumped_body':   _renderSlumpedBody(ctx, d, t); break;
+    }
+  }
+}
+
+function _renderTerminal(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 0.003 + d.seed);
+  const flicker = d._flicker < 3 ? 0.15 : 1.0;
+  ctx.shadowColor = d.accent; ctx.shadowBlur = 6 + pulse * 6;
+  ctx.strokeStyle = d.accent; ctx.lineWidth = 1.5;
+  ctx.globalAlpha = 0.9 * flicker;
+  ctx.strokeRect(-d.w/2 + 1, -d.h/2 + 1, d.w - 2, d.h - 2);
+  ctx.shadowBlur = 3;
+  ctx.fillStyle = d.accent;
+  ctx.font = 'bold 7px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(d._text, 0, 0);
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+  // Soft additive glow around the terminal
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.10 + pulse * 0.06;
+  const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 32);
+  grad.addColorStop(0, d.accent); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(d.x - 32, d.y - 32, 64, 64);
+  ctx.restore();
+}
+
+function _renderServerRack(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = '#050508';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.strokeStyle = d.color;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.globalAlpha = 1;
+  const ledCount = d._leds.length, ledGap = d.h / (ledCount + 1);
+  for (let i = 0; i < ledCount; i++) {
+    const led = d._leds[i];
+    const alpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.001 * led.speed + led.phase));
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = d.accent;
+    ctx.shadowColor = d.accent;
+    ctx.shadowBlur = 3;
+    const ly = -d.h/2 + ledGap * (i + 1);
+    ctx.fillRect(-2, ly - 1, 4, 2);
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.06;
+  const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 46);
+  grad.addColorStop(0, d.accent); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(d.x - 46, d.y - 46, 92, 92);
+  ctx.restore();
+}
+
+function _renderCRTMonitor(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.strokeStyle = '#2a2a2a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  const sw = d.w - 6, sh = d.h - 6;
+  ctx.fillStyle = d.color;
+  ctx.fillRect(-sw/2, -sh/2, sw, sh);
+  for (let i = 0; i < 8; i++) {
+    const nx = (Math.random() - 0.5) * sw;
+    const ny = (Math.random() - 0.5) * sh;
+    ctx.fillStyle = Math.random() > 0.5 ? d.accent : '#fff';
+    ctx.globalAlpha = 0.25 + Math.random() * 0.5;
+    ctx.fillRect(nx, ny, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+  const scanY = -sh/2 + ((t * 0.05) % sh);
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = d.accent;
+  ctx.fillRect(-sw/2, scanY, sw, 1);
+  if (d._staticTimer < 40) {
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = d.accent;
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('◼', 0, 0);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderCryopod(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = '#0a1520';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, d.w/2, d.h/2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = d.color;
+  ctx.shadowColor = d.color; ctx.shadowBlur = 5;
+  ctx.lineWidth = 1.5; ctx.globalAlpha = 0.75;
+  ctx.stroke();
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  if (d._hasFigure) {
+    const tx = d._twitch > 0 ? (Math.random() - 0.5) * 1.8 : 0;
+    const ty = d._twitch > 0 ? (Math.random() - 0.5) * 1.8 : 0;
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#2a4050';
+    ctx.beginPath();
+    ctx.ellipse(-d.w/4 + tx, ty, 3, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-d.w/4 + 2 + tx, -2 + ty, d.w/2 - 4, 4);
+  }
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.5;
+  for (let fi = 0; fi < 4; fi++) {
+    const fa = _decorRand(d.seed + fi) * Math.PI * 2;
+    const fr1 = d.w/2 * 0.4, fr2 = d.w/2 * 0.85;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(fa) * fr1, Math.sin(fa) * fr1 * 0.5);
+    ctx.lineTo(Math.cos(fa) * fr2, Math.sin(fa) * fr2 * 0.5);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.04;
+  const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 40);
+  grad.addColorStop(0, d.color); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(d.x - 40, d.y - 40, 80, 80);
+  ctx.restore();
+}
+
+function _renderPoster(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.rotate(d._angle || 0);
+  ctx.fillStyle = '#1a1a22';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.strokeStyle = d.color;
+  ctx.globalAlpha = 0.55; ctx.lineWidth = 1;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = d.accent;
+  ctx.font = 'bold 6px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const titles = ['NECROWAVE','UPLOAD','CACHE','DEEP.SYS','HAZARD','QUARANTINE','ARCHIVE'];
+  ctx.fillText(titles[Math.floor(d.seed) % titles.length], 0, -4);
+  ctx.globalAlpha = 0.4;
+  ctx.font = '5px monospace';
+  ctx.fillText('REV ' + (Math.floor(d.seed) % 9999), 0, 6);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderCable(ctx, d, t) {
+  const x1 = d.x - d.w/2, x2 = d.x + d.w/2;
+  const cx = d.x, cy = d.y + 6;
+  ctx.save();
+  ctx.strokeStyle = d.color; ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.45;
+  ctx.shadowColor = d.color; ctx.shadowBlur = 2;
+  ctx.beginPath();
+  ctx.moveTo(x1, d.y);
+  ctx.quadraticCurveTo(cx, cy, x2, d.y);
+  ctx.stroke();
+  const t01 = ((t * 0.0007) % 1);
+  const px = x1 + (x2 - x1) * t01;
+  const py = d.y + (cy - d.y) * 2 * t01 * (1 - t01);
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = d.accent;
+  ctx.beginPath();
+  ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderHazardStripes(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.rotate(0.25);
+  const stripeW = 5;
+  const count = Math.ceil(d.w / stripeW);
+  ctx.globalAlpha = 0.25;
+  for (let i = 0; i < count; i++) {
+    ctx.fillStyle = i % 2 === 0 ? d.color : d.accent;
+    ctx.fillRect(-d.w/2 + i * stripeW, -d.h/2, stripeW, d.h);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderWireframe(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  const pulse = 0.5 + 0.5 * Math.sin(t * 0.002 + d.seed);
+  ctx.globalAlpha = 0.35 + pulse * 0.25;
+  ctx.strokeStyle = d.color;
+  ctx.shadowColor = d.color; ctx.shadowBlur = 6;
+  ctx.lineWidth = 1;
+  const s = d.w / 2;
+  const off = s * 0.3;
+  ctx.beginPath();
+  ctx.rect(-s, -s, s*2, s*2);
+  ctx.rect(-s + off, -s - off, s*2, s*2);
+  ctx.moveTo(-s, -s); ctx.lineTo(-s + off, -s - off);
+  ctx.moveTo(s, -s);  ctx.lineTo(s + off, -s - off);
+  ctx.moveTo(-s, s);  ctx.lineTo(-s + off, s - off);
+  ctx.moveTo(s, s);   ctx.lineTo(s + off, s - off);
+  ctx.stroke();
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderSlumpedBody(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.rotate(d._angle);
+  // Dried blood pool behind
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = '#3a0808';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, d.w * 0.9, d.h, 0, 0, Math.PI * 2); ctx.fill();
+  // Body — torso
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = d.color;
+  ctx.fillRect(-d.w/2, -d.h/3, d.w * 0.7, d.h * 0.7);
+  // Head
+  ctx.beginPath();
+  ctx.ellipse(-d.w/2, -d.h/6, d.h*0.4, d.h*0.4, 0, 0, Math.PI * 2); ctx.fill();
+  // Darker outline
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = '#1a0a0a';
+  ctx.lineWidth = 0.8;
+  ctx.strokeRect(-d.w/2, -d.h/3, d.w * 0.7, d.h * 0.7);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Domain-themed ambient particles. Spawned every ~3 frames in the visible area.
+function spawnAmbientParticles() {
+  if (gameTime % 3 !== 0) return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  if (gameState === 'shell') return;
+  let ambientType = null;
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    const dom = trenchSections[trenchSection].domain || getTrenchDomain(trenchSection);
+    ambientType = dom && dom.ambientType;
+  }
+  if (!ambientType) return;
+  const ax = camera.x + (Math.random() - 0.5) * canvas.width;
+  const ay = camera.y + (Math.random() - 0.5) * canvas.height;
+  let color, vx, vy, size, life;
+  switch (ambientType) {
+    case 'dust':
+      color = Math.random() > 0.5 ? '#aae' : '#b9c';
+      vx = (Math.random() - 0.5) * 0.15; vy = (Math.random() - 0.5) * 0.1 - 0.1;
+      size = 0.8 + Math.random() * 0.8; life = 120 + Math.random() * 60;
+      break;
+    case 'ember':
+      color = Math.random() > 0.5 ? '#f80' : '#fa0';
+      vx = (Math.random() - 0.5) * 0.3; vy = -0.4 - Math.random() * 0.7;
+      size = 1 + Math.random() * 1.5; life = 60 + Math.random() * 40;
+      break;
+    case 'ice':
+      color = Math.random() > 0.3 ? '#8ef' : '#cff';
+      vx = (Math.random() - 0.5) * 0.25; vy = 0.25 + Math.random() * 0.5;
+      size = 1 + Math.random(); life = 90 + Math.random() * 40;
+      break;
+    case 'ember_heavy':
+      color = Math.random() > 0.5 ? '#f44' : '#f84';
+      vx = (Math.random() - 0.5) * 0.4; vy = -0.7 - Math.random() * 1.0;
+      size = 1.3 + Math.random() * 1.8; life = 70 + Math.random() * 30;
+      break;
+    case 'gold':
+      color = Math.random() > 0.4 ? '#ff0' : '#fff';
+      vx = (Math.random() - 0.5) * 0.18; vy = (Math.random() - 0.5) * 0.18;
+      size = 1 + Math.random() * 1.2; life = 110 + Math.random() * 60;
+      break;
+    default: return;
+  }
+  particles.push({ x: ax, y: ay, vx, vy, life, maxLife: life, size, color, type: 'spark' });
+}
 
 // STUB: element zones no longer exist in the world — elements are earned via STRIDE cards.
 // All old callers are now no-ops so we don't need to chase every callsite individually.
@@ -7673,7 +8125,7 @@ function enterShell(fromDeath) {
   players = []; localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = [];
   floatingTexts = []; explosions = []; barrels = []; xpOrbs = [];
-  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _deadshotCharging = false; _deadshotCharge = 0;
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _deadshotCharging = false; _deadshotCharge = 0;
   activeOrbital = null;
   // Clear run-specific state so old mods don't persist in the Shell
   runUpgrades = {}; rebuildRunMods();
@@ -8165,7 +8617,7 @@ function _showRebootScreen() {
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
-  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; hazeParticles = []; activeBeacon = null; _beacons = [];
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
   _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
   _gunAmmo = GUN_MAG_SIZE; _gunReloading = false; _gunReloadTimer = 0; _gunIdleTimer = 0;
   // Reset run-scoped progression
@@ -11576,6 +12028,8 @@ function update() {
     updateStreak();
     updateElementZones();
     updateBurnoutPuddles();
+    updateDecor();
+    spawnAmbientParticles();
     updateOrbital();
     updateXPOrbs();
     updateRunOrbitals();
@@ -13856,6 +14310,9 @@ function render() {
     }
     ctx.globalAlpha = 1;
   }
+
+  // Ambient decor — terminals, server racks, cryopods, etc. Drawn between decals and entities.
+  renderDecor(ctx);
 
   // Corrupted memory fragments — ghostly floor text you read while passing through
   if (memoryFragments.length > 0) {
