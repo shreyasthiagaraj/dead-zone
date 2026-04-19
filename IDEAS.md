@@ -285,3 +285,89 @@ Auto-locks nearest enemy, deals DOT, slows 30%. Breaks at distance or 3s. ~5s co
 1. Beacon (exists), Pulse Nova, Discharge — cover deploy/defense/offense
 2. Payload, Deadshot — add indirect fire and precision
 3. Others as unlockables or character-specific
+
+---
+
+# Monetization
+
+## Recommended Model: Free-to-Try, $3.99 Full Unlock
+
+No ads, no currencies, no battle passes, no gacha. One price, everything.
+
+### Free Tier (the demo)
+- Full game through Domain 1 (sections 0-5, first boss)
+- All combat mechanics, mod terminal, dash, specials
+- Replayable infinitely — this IS the game, just capped at domain 1
+- Player experiences the hook before paying
+
+### Paid Unlock ($3.99)
+- All 5 domains, all bosses, all sections
+- The Forge (permanent upgrades)
+- All specials, all cards, all content. Forever.
+- Clean paywall screen after section 5: "THE MESH GOES DEEPER. Unlock the full game for $3.99."
+- One button. No timer. No pressure.
+
+### Optional: Cosmetic Skins ($0.99 each, post-unlock only)
+- 3-4 skin packs: neon color variants, themed skins (Hazmat, Cyber-Knight, etc.)
+- Each has unique: body glow, dash trail color, death effect
+- Never pushed — only accessible from a Cosmetics Terminal in the Shell
+- Player walks up to browse, previews on their character, buys if they want
+- Pure bonus. Game never mentions them unless the player seeks them out.
+
+### Why This Model
+- $3.99 is impulse-buy territory after 20+ min of free gameplay
+- Conversion point (end of domain 1) is when player investment peaks
+- "One price, everything" builds trust and word-of-mouth
+- No ongoing monetization engineering burden
+- Design decisions never corrupted by revenue considerations
+- Roguelite precedent: Vampire Survivors ($5), Dead Cells ($9), Slay the Spire ($10)
+
+### What We Don't Sell
+- Extra HP, damage, speed, or any combat stat
+- Exclusive cards/mods unavailable to free players
+- Energy/stamina systems
+- Lootboxes, gacha, or random purchases
+- Difficulty bypasses
+- Anything that makes the free experience feel incomplete
+
+### Revenue Math
+- 10K installs × 15% conversion × $3.99 = ~$6K
+- 100K installs × 15% conversion × $3.99 = ~$60K
+- Cosmetic add-ons: ~10% of paying users × $0.99 = bonus
+
+---
+
+## Alternative Model: Free-to-Play with Cores (shelved)
+
+If the premium model doesn't hit volume targets, fall back to F2P with hard currency (Cores). Key principles:
+
+### Cores (hard currency)
+- Bought with real money ($0.99 for 5, $1.99 for 12, $4.99 for 30, $9.99 for 75)
+- Earned slowly through play (~5-10/week via boss kills, daily/weekly challenges, achievements)
+
+### What to sell with Cores
+- Player skins (3-5 cores)
+- Bullet trails, dash effects, kill effects (2-3 cores each)
+- Bit Booster: +25% bits for 3 runs (2 cores)
+- Reroll Chip: reroll mod terminal cards (1 core, also earnable from bosses)
+- Quick Revive: continue from death once per run (2 cores OR watch ad)
+- Character variants with unique passives (5-8 cores, also unlockable through extensive play)
+- Seasonal Battle Pass: $3-5, cosmetic rewards only
+
+### Starter Pack ($1.99, one-time)
+- 10 cores + 500 bits + exclusive skin + permanent +10% bit bonus
+- Offered once after 3rd run. Dismissible.
+
+### Ad touchpoints (free alternative at every spend point)
+- Death screen: watch ad to continue OR double bits (1 per run each)
+- Mod terminal: watch ad to reroll (1 per visit)
+
+### Surfacing rules
+- NEVER during combat or during a run
+- Store is a terminal in the Shell, not a pop-up
+- Death screen offers are clean and non-desperate
+- No countdown timers, no "limited time!" pressure
+- Always show what you GET, cost second
+
+### What NOT to sell (same as premium model)
+- Combat stats, exclusive cards, energy systems, lootboxes, difficulty bypasses
