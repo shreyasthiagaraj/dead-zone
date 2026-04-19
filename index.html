@@ -2939,6 +2939,31 @@ function generateTrenchMap(seed) {
         if (gx < GRID_W && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
+    // ---- PATHABILITY CHECK: ensure spawn zone can reach door zone ----
+    // Flood-fill from spawn (baseX+3, door center Y) to door (baseX+secW-2, door center Y).
+    // If blocked, carve a horizontal corridor at door height.
+    {
+      const doorCY = Math.floor(TRENCH_HEIGHT / 2);
+      const startX = baseX + 3, endX = baseX + secW - 2;
+      // Simple horizontal scan: check each column from left to right at door rows
+      let blocked = false;
+      for (let cx = startX; cx <= endX; cx++) {
+        // Check if ANY of the door-height rows are passable at this column
+        let anyOpen = false;
+        for (let dy = doorCY - 2; dy <= doorCY + 2; dy++) {
+          if (dy >= 1 && dy < TRENCH_HEIGHT - 1 && cx < GRID_W && dungeonGrid[dy] && dungeonGrid[dy][cx]) { anyOpen = true; break; }
+        }
+        if (!anyOpen) { blocked = true; break; }
+      }
+      if (blocked) {
+        // Carve a 3-cell-tall corridor at door center height across the entire section
+        for (let cx = baseX + 1; cx < baseX + secW - 1 && cx < GRID_W; cx++) {
+          for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
+            if (dy >= 1 && dy < TRENCH_HEIGHT - 1 && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
+          }
+        }
+      }
+    }
     const domain = getTrenchDomain(si);
     rooms.push({ x: baseX, y: 0, w: secW, h: TRENCH_HEIGHT,
       theme: ROOM_THEMES[4], brightness: domain.noFog ? 1.5 : 1.0, flicker: false,
