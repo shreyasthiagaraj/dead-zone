@@ -1839,6 +1839,24 @@ const _CARD_CLASS_MAP = {};
   for (const id of _corrupt) _CARD_CLASS_MAP[id] = 'corrupt';
 }
 
+// Draft N cards from rare+ pool only (for boss/domain/trial rewards)
+function _draftBossCards(n) {
+  const pool = UPGRADE_POOL.filter(u =>
+    (u.rarity === 'rare' || u.rarity === 'epic' || u.rarity === 'legendary') &&
+    (runUpgrades[u.id] || 0) < u.max &&
+    (!u.prereqs || u.prereqs.every(g => g.split('|').some(id => (runUpgrades[id] || 0) > 0)))
+  );
+  if (pool.length === 0) return draftShopCards(n); // fallback to normal draft
+  const picks = [];
+  const used = new Set();
+  for (let i = 0; i < n && pool.length > 0; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    if (!used.has(pool[idx].id)) { picks.push(pool[idx]); used.add(pool[idx].id); }
+    pool.splice(idx, 1);
+  }
+  return picks.length > 0 ? picks : draftShopCards(n);
+}
+
 function draftShopCards(n) {
   n = n || 4;
   _shopVisitCount++;
@@ -1916,11 +1934,18 @@ let shopCards = null;           // current 4 cards on display
 let _shopActiveChest = null;     // which chest spawned this shop (so we can clear it on leave)
 let _shopSelectedId = null;       // currently highlighted card id (selected but not yet confirmed)
 let _shopPurchased = false;       // true after purchase confirmed — blocks further card interaction
+let _pendingBossShop = false;     // true = next shop opened drafts rare+ cards (boss/domain/trial reward)
 
 function openShop(chest) {
   _shopActiveChest = chest || null;
   _shopSelectedId = null;
-  shopCards = draftShopCards(3);
+  // Boss/domain/trial reward: draft only rare+ cards
+  if (_pendingBossShop) {
+    _pendingBossShop = false;
+    shopCards = _draftBossCards(3);
+  } else {
+    shopCards = draftShopCards(3);
+  }
   _resetJoysticks();
   if (!isMultiplayer) gameState = 'shop';
   canvas.classList.add('focus-back');
@@ -3941,31 +3966,27 @@ function updateTrench() {
     const lp2 = getLocalPlayer();
     if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
     playExitFoundSound();
-    // ---- DATA LINK CHOICE or BOSS REWARD ----
+    // ---- DATA LINK CHOICE or BONUS REWARD ----
+    // ALL rewards spawn as physical objects — never auto-open UI.
     if (!isMultiplayer) {
-      // Trial bonus: if player just cleared a trial section, give bonus rare card
+      // Trial bonus: spawn a rare+ mod terminal chest
       if (_dlTrialBonusPending) {
-        addFloatingText(lp2 ? lp2.x : 0, lp2 ? lp2.y - 50 : 0, 'TRIAL COMPLETE', '#f44');
-        setTimeout(() => showTrialReward(), 600);
+        _dlTrialBonusPending = false;
+        if (lp2) addFloatingText(lp2.x, lp2.y - 50, 'TRIAL COMPLETE', '#f44');
+        setTimeout(() => { _pendingBossShop = true; spawnShopChest(lp2 ? lp2.x + 60 : sec.x + TW * 0.5, (TRENCH_HEIGHT / 2) * CELL_SIZE); }, 600);
       }
-      // Boss sections: guaranteed rare+ card reward (on top of regular cadence)
+      // Boss sections: spawn a rare+ mod terminal chest
       else if (sec.isBoss) {
-        setTimeout(() => showBossReward(), 800);
+        setTimeout(() => { _pendingBossShop = true; spawnShopChest(lp2 ? lp2.x + 60 : sec.x + TW * 0.5, (TRENCH_HEIGHT / 2) * CELL_SIZE); }, 800);
       }
-      // Domain transition (sections 9, 19, 29, 39): bonus domain gift rare card
+      // Domain transition: spawn a rare+ mod terminal chest
       else if (_isDomainTransition(trenchSection)) {
         if (lp2) addFloatingText(lp2.x, lp2.y - 50, 'DOMAIN GIFT', '#ff0');
-        setTimeout(() => showBossReward(), 600); // Same quality — guaranteed rare+ pick
+        setTimeout(() => { _pendingBossShop = true; spawnShopChest(lp2 ? lp2.x + 60 : sec.x + TW * 0.5, (TRENCH_HEIGHT / 2) * CELL_SIZE); }, 600);
       }
-      // Regular cadence: Data Link choice every 2 sections
+      // Regular cadence: Data Link choice chests every 2 sections
       else if (shouldShowDataLink()) {
-        const _archiveMod = sec.modifier && sec.modifier.id === 'archive';
-        if (_archiveMod) {
-          // Archive modifier forces a free MOD terminal
-          setTimeout(() => { openShopDirect(); }, 400);
-        } else {
-          setTimeout(() => spawnDataLinkChests(), 400);
-        }
+        setTimeout(() => spawnDataLinkChests(), 400);
       }
     }
   }
@@ -8112,7 +8133,7 @@ function startSoloGame() {
   // Reset run-scoped progression
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
-  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
+  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0; _pendingBossShop = false;
   resetDataLinkState();
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600; // first whisper after ~10s
@@ -8197,7 +8218,7 @@ function startMultiplayerGame() {
   // Reset run-scoped progression (each client tracks their own XP/upgrades)
   runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
-  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0;
+  resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0; _pendingBossShop = false;
   resetDataLinkState();
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600;
