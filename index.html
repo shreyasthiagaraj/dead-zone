@@ -2484,7 +2484,8 @@ function _countClassCards(cls) {
 
 // --- Get bits reward amount for current section ---
 function _dlBitsAmount() {
-  return Math.floor(15 + trenchSection * 0.7);
+  // Minimum 30 bits so a "bits" reward is always worth picking; scales up in deeper runs.
+  return Math.max(30, Math.floor(30 + trenchSection * 1.2));
 }
 
 // --- Generate the two Data Link options ---
@@ -3715,13 +3716,13 @@ function initTrenchSections() {
     const isDark = i > 5 && i % 5 === 4;
     const domain = getTrenchDomain(i);
     const modifier = rollSectionModifier(i);
-    // Wave count
+    // Wave count — bumped early sections so the first 10 feel less empty
     let waveCount = 1;
-    if (!isBoss && i >= 3) {
+    if (!isBoss && i >= 2) {
       const r = Math.random();
-      if (i < 10)       waveCount = r < 0.30 ? 2 : 1;
-      else if (i < 20)  waveCount = r < 0.20 ? 3 : r < 0.60 ? 2 : 1;
-      else              waveCount = r < 0.35 ? 3 : r < 0.75 ? 2 : 1;
+      if (i < 10)       waveCount = r < 0.20 ? 3 : r < 0.65 ? 2 : 1;   // 20% / 45% / 35%
+      else if (i < 20)  waveCount = r < 0.25 ? 3 : r < 0.70 ? 2 : 1;   // 25% / 45% / 30%
+      else              waveCount = r < 0.40 ? 3 : r < 0.80 ? 2 : 1;
     }
     // Quality over quantity
     let baseEnemies;
@@ -10707,7 +10708,29 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
         if(isLocalUI)showPickupMsg(`DISRUPTER · ${WEAPON_DEFS[p.weaponType].name} RECOMPILED`);
       }if(isLocalUI)playPickupSound();pickups.splice(i,1);}
       else if(p.type==='health'){if(pl.hp<pl.maxHp){pl.hp=Math.min(pl.maxHp,pl.hp+p.amount);if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}else if(isLocalUI&&dist(pl,p)<30&&!p._fullShown){p._fullShown=true;addFloatingText(pl.x,pl.y-30,'HEALTH FULL','#4f4');}}
-      else if(p.type==='bits'){metaShards+=p.amount;runBitsEarned+=p.amount;try{localStorage.setItem('necrowave_shards',String(metaShards));}catch(e){}_pulseBitsHUD();if(isLocalUI){addFloatingText(pl.x,pl.y-30,`+${p.amount}◆`,'#ff0');playPickupSound();}pickups.splice(i,1);}
+      else if(p.type==='bits'){
+        metaShards += p.amount; runBitsEarned += p.amount;
+        try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch(e){}
+        _pulseBitsHUD();
+        if (isLocalUI) {
+          // Accumulate back-to-back pickups into one big label that follows the player.
+          if (pl._bitsLabel && pl._bitsLabel.life > 0) {
+            pl._bitsLabel._bitsAmount += p.amount;
+            pl._bitsLabel.text = `+${pl._bitsLabel._bitsAmount}◆`;
+            pl._bitsLabel.life = pl._bitsLabel.maxLife;
+            pl._bitsLabel._pulse = 12;
+          } else {
+            const lab = { x: pl.x, y: pl.y - 30, text: `+${p.amount}◆`, color: '#ff0',
+              vx: 0, vy: -0.6, life: 80, maxLife: 80,
+              _bitsAmount: p.amount, _bitsLabel: true, _pulse: 12,
+              _follow: pl, _followOffY: -38 };
+            floatingTexts.push(lab);
+            pl._bitsLabel = lab;
+          }
+          playPickupSound();
+        }
+        pickups.splice(i,1);
+      }
       else if(p.type==='ammo'){const w=pl.weapons[pl.currentWeapon],d=WEAPON_DEFS[w.type];if(!d.infinite){w.reserveAmmo+=d.magSize*3;if(isLocalUI){showPickupMsg('+AMMO');playPickupSound();}pickups.splice(i,1);}}
       else if(p.type==='powerup'){
         if(isLocalUI){stopSunbeamLoop();const ppd=POWERUP_TYPES.find(t=>t.id===p.powerupId);activatePowerUp(p.powerupId);playPickupSound();if(ppd)showPickupMsg(`${ppd.icon} BURST MOD · ${ppd.name}`,ppd.desc);}
@@ -10854,7 +10877,23 @@ function explodeBarrel(barrel, idx) {
     barrels.splice(idx, 1);
     return;
   }
-  createExplosion(barrel.x, barrel.y, 85, 50, 'any'); // 50 dmg, 85px radius — punchy but not lethal
+  // Barrels punch hard against enemies but only nick the player — reward the shot, forgive the proximity.
+  const _barrelR = 95;
+  if (isHost) {
+    for (const z of zombies) {
+      const dx = z.x - barrel.x, dy = z.y - barrel.y, d = Math.sqrt(dx*dx + dy*dy);
+      if (d < _barrelR + z.radius) {
+        const closeness = 1 - d / (_barrelR + z.radius);
+        damageZombie(z, Math.floor(130 * closeness), (dx/d) * 14, (dy/d) * 14);
+      }
+    }
+    for (const p of players) {
+      if (!p.alive) continue;
+      const dx = p.x - barrel.x, dy = p.y - barrel.y, d = Math.sqrt(dx*dx + dy*dy);
+      if (d < _barrelR + PLAYER_RADIUS) damagePlayerObj(p, 15);
+    }
+  }
+  createExplosion(barrel.x, barrel.y, _barrelR, 0, 'player'); // VFX only; damage handled above
   screenShake.intensity = Math.max(screenShake.intensity, 10);
   // Fire burst particles
   for (let k = 0; k < 24; k++) { const a = Math.random()*Math.PI*2, s = 2.5+Math.random()*6; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:28+Math.random()*16,maxLife:44,size:4+Math.random()*5,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
@@ -16667,6 +16706,15 @@ function render() {
       ctx.shadowBlur = (ft._crit ? 10 : 5) + (ft._pulse > 0 ? 6 : 0);
       ctx.fillStyle = ft.color;
       ctx.font = 'bold ' + Math.round(_baseSize * _dmgScale) + 'px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(ft.text, ft.x, ft.y);
+    } else if (ft._bitsLabel) {
+      // Accumulating bits pickup label — bigger, glowing, pulses when it grows
+      let _bScale = 1;
+      if (ft._pulse > 0) { _bScale = 1 + (ft._pulse / 12) * 0.45; ft._pulse--; }
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = ft.color;
+      ctx.font = 'bold ' + Math.round(20 * _bScale) + 'px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
     } else {
