@@ -1527,6 +1527,12 @@ const UPGRADE_POOL = [
       'LEVEL 2: +4 seconds total.',
       'LEVEL 3: +6 seconds total.',
     ], flavor:'overclocked runtime. it just keeps going.' },
+  { id:'rapid_turret', name:'RAPID TURRET', rarity:'rare', max:3, icon:'⚡', color:'#0ff',
+    descs:[
+      'LEVEL 1: Beacon turret fires 25% faster.',
+      'LEVEL 2: 45% faster total.',
+      'LEVEL 3: 60% faster total.',
+    ], flavor:'fire control loop unshackled.' },
   { id:'multi_beacon', name:'MULTI BEACON', rarity:'epic', max:1, icon:'⚡', color:'#4ff',
     descs:['Deploy up to 2 beacons at once.'], flavor:'redundant signal nodes' },
   { id:'beacon_range', name:'EXTENDED REACH', rarity:'common', max:3, icon:'◎', color:'#0ff',
@@ -1632,7 +1638,7 @@ function rebuildRunMods() {
     synStormSurge: false, synFaultLine: false, synBreachProtocol: false,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
-    recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
+    recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -1706,6 +1712,7 @@ function rebuildRunMods() {
       case 'gravity_well': m.gravityWell += n; break;
       case 'hazard_zone':  m.hazardZone  += n; break;
       case 'extended_uptime': m.extendedUptime += n; break;
+      case 'rapid_turret':    m.rapidTurret    += n; break;
       case 'beacon_thermal': m.beaconElement = 'fire'; break;
       case 'beacon_cryo':    m.beaconElement = 'ice'; break;
       case 'beacon_arc':     m.beaconElement = 'chain'; break;
@@ -10047,7 +10054,10 @@ function updateBeacon() {
   if (!b._recall) {
     b.fireCd--;
     if (b.fireCd <= 0 && best) {
-      b.fireCd = BEACON_FIRE_RATE;
+      // Rapid Turret mod scales fire rate — lower fireCd = faster shots.
+      const _rtMults = [1.0, 0.75, 0.55, 0.40]; // 0/1/2/3 stacks — 25%/45%/60% faster
+      const _rtLv = Math.min(3, _bm.rapidTurret || 0);
+      b.fireCd = Math.max(3, Math.round(BEACON_FIRE_RATE * _rtMults[_rtLv]));
       const a = b.angle;
       bullets.push({ x:b.x+Math.cos(a)*12,y:b.y+Math.sin(a)*12, vx:Math.cos(a)*14,vy:Math.sin(a)*14,
         damage:BEACON_DAMAGE, color:bColor, size:2.5, knockback:1, pierce:0, pierced:0,
@@ -11023,6 +11033,11 @@ function spawnBarrels(count) {
   }
 }
 function explodeBarrel(barrel, idx) {
+  // Mark dead so auto-aim's "current target alive?" check drops the lock.
+  // Clear the lock directly too in case this is the bottom frame before a
+  // retarget runs.
+  barrel.hp = 0;
+  if (_autoAimTarget === barrel) _autoAimTarget = null;
   // Data Link chest — claim reward and despawn the other
   if (barrel._dlChest) {
     claimDataLinkChest(barrel);
