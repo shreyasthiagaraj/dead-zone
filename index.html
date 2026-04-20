@@ -705,6 +705,10 @@ const ctx = canvas.getContext('2d');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 
+// Cached radial gradients for hot-path additive lighting (created on first render, reused every frame).
+// Barrels: radius 40 (constant). Burning zombies: radius 60 (fixed; was 60+rand). Translate CTM to draw.
+let _barrelGlowGrad = null, _burnGlowGrad = null;
+
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) && 'ontouchstart' in window;
 
 // ---- Gamepad (PS5 DualSense / Xbox / generic) support ----
@@ -7428,9 +7432,11 @@ function uploadDungeonGrid() {
 
 function renderLighting(lights, camX, camY) {
   if (!glReady || gl.isContextLost()) return;
-  // Half-res for performance; GPU blur pass handles smoothing
-  const targetW = Math.ceil(canvas.width / 2);
-  const targetH = Math.ceil(canvas.height / 2);
+  // Reduced-res for performance; GPU blur pass handles smoothing. Mobile uses 1/2.5 for
+  // extra fill-rate headroom (blur is unchanged, so the drop is visually imperceptible).
+  const _lScale = isMobile ? 2.5 : 2;
+  const targetW = Math.ceil(canvas.width / _lScale);
+  const targetH = Math.ceil(canvas.height / _lScale);
   if (lightCanvas.width !== targetW || lightCanvas.height !== targetH) {
     lightCanvas.width = targetW;
     lightCanvas.height = targetH;
@@ -13176,7 +13182,7 @@ function update() {
     // Bouncing behavior: ricochet off walls
     if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
     const _bAH=ARENA_H;
-    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}bullets.splice(i,1);continue;}
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}bullets[i]=bullets[bullets.length-1],bullets.pop();continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
@@ -13199,7 +13205,7 @@ function update() {
         // Tiny scorch decal
         decals.push({ x: b.x, y: b.y, size: 3 + Math.random() * 2, alpha: 0.3, color: '#222' });
       }
-      bullets.splice(i,1);continue;
+      bullets[i]=bullets[bullets.length-1],bullets.pop();continue;
     }
     if(b.life<=0){
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
@@ -13215,11 +13221,11 @@ function update() {
             type: 'glitchtext', text: _gc[Math.floor(Math.random() * _gc.length)] });
         }
       }
-      bullets.splice(i,1);continue;
+      bullets[i]=bullets[bullets.length-1],bullets.pop();continue;
     }
     // Barrel collision — all clients check (barrels are visual + host-authoritative)
     // Shop terminals are immune to bullets — player must walk up to interact.
-    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];if(br._shopChest||br._signalLab)continue;const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){br.hp--;br._hitFlash=8;if(br.hp<=0)explodeBarrel(br,bi);else{playHitSound();for(let sp=0;sp<4;sp++){const sa=Math.random()*Math.PI*2;particles.push({x:br.x+Math.cos(sa)*br.radius,y:br.y+Math.sin(sa)*br.radius,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#ff0',type:'spark'});}}bullets.splice(i,1);break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
+    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];if(br._shopChest||br._signalLab)continue;const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){br.hp--;br._hitFlash=8;if(br.hp<=0)explodeBarrel(br,bi);else{playHitSound();for(let sp=0;sp<4;sp++){const sa=Math.random()*Math.PI*2;particles.push({x:br.x+Math.cos(sa)*br.radius,y:br.y+Math.sin(sa)*br.radius,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#ff0',type:'spark'});}}bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
     // Only host does damage calculations
     if(isHost){
       if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
@@ -13477,7 +13483,7 @@ function update() {
                     _kp.hp=Math.min(_kp.maxHp,_kp.hp+healAmt);
                   }}
                   if(z.splitOnDeath||ZOMBIE_TYPES[z.type]?.splitOnDeath)splitZombie(z);
-                  zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}}}}
+                  zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){
         // Siege mode: zombie bullets damage wall sections they pass through
@@ -13491,7 +13497,7 @@ function update() {
                   sec.hp-=8; sec._flashTimer=6;
                   for(let sp=0;sp<3;sp++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10,maxLife:10,size:2,color:'#f80',type:'spark'});
                   if(sec.hp<=0){sec.hp=0;addFloatingText(wallX,sec.y+sec.height/2,'BREACH!','#f44');screenShake.intensity=Math.max(screenShake.intensity,10);playExplosionSound();for(let k=0;k<20;k++){const a=Math.random()*Math.PI*2,s=2+Math.random()*5;particles.push({x:wallX,y:sec.y+Math.random()*sec.height,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:25,maxLife:40,size:3+Math.random()*3,color:['#f44','#f80','#fa0'][Math.floor(Math.random()*3)],type:'explosion'});}}
-                  bullets.splice(i,1);hitWall=true;return;
+                  bullets[i]=bullets[bullets.length-1],bullets.pop();hitWall=true;return;
                 }
               }
             }
@@ -13505,11 +13511,11 @@ function update() {
         for(const p of players){if(!p.alive)continue;
           if(playerHasPowerUp(p,'shield')&&dist(b,p)<60+b.size){
             for(let si=0;si<4;si++){particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8,maxLife:8,size:2,color:'#4ff',type:'spark'});}
-            bullets.splice(i,1);shieldBlocked=true;break;
+            bullets[i]=bullets[bullets.length-1],bullets.pop();shieldBlocked=true;break;
           }
         }
         if(shieldBlocked)continue;
-        for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets.splice(i,1);break;}}
+        for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}
       }
     }
     // Non-host: visual bullet collision with client-side hit prediction
@@ -13550,7 +13556,7 @@ function update() {
           for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#f0f',type:'blood'});
         }
         playHitSound();
-        b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets.splice(i,1);break;}
+        b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}
       }}
     }
   }
@@ -14729,7 +14735,7 @@ function update() {
     if(lp&&lp.alive){const dx=h.x-lp.x,dy=h.y-lp.y,d=Math.sqrt(dx*dx+dy*dy);
       if(d<80&&d>1){const push=0.8*(1-d/80);h.vx+=dx/d*push;h.vy+=dy/d*push;h.alpha*=0.5;}}
     h.vx*=0.98;h.vy*=0.98;h.size+=0.03; // slowly expand
-    if(h.life<=0)hazeParticles.splice(i,1);
+    if(h.life<=0){hazeParticles[i]=hazeParticles[hazeParticles.length-1];hazeParticles.pop();}
   }}
   // Movement dust — sparse fine motes behind player
   {const lp=getLocalPlayer();if(lp&&lp.alive&&(Math.abs(lp.vx)>1.5||Math.abs(lp.vy)>1.5)){
@@ -14748,7 +14754,7 @@ function update() {
     particles.push({x:lp.x+(Math.random()-0.5)*6,y:lp.y+(Math.random()-0.5)*6,
       vx:0,vy:0,life:10,maxLife:10,size:PLAYER_RADIUS*0.7,color:lp.color,type:'dashtrail'});
   }}
-  for(let i=explosions.length-1;i>=0;i--){explosions[i].life--;if(explosions[i].life<=0)explosions.splice(i,1);}
+  for(let i=explosions.length-1;i>=0;i--){explosions[i].life--;if(explosions[i].life<=0){explosions[i]=explosions[explosions.length-1];explosions.pop();}}
   for(let pi=pickups.length-1;pi>=0;pi--){const p=pickups[pi];p.bobTimer+=0.05;if(p.dropCooldown>0)p.dropCooldown--;
     // Despawn pickups after 10 seconds (600 frames)
     if(p.type!=='_bomb'){p._age=(p._age||0)+1;if(p._age>600){pickups.splice(pi,1);continue;}}
@@ -15378,15 +15384,7 @@ function render() {
     if(rx>vL-cb&&rx<vR&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx,ry+rh-cb);ctx.lineTo(rx,ry+rh);ctx.lineTo(rx+cb,ry+rh);ctx.stroke();}
     if(rx+rw>vL&&rx+rw<vR+cb&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx+rw-cb,ry+rh);ctx.lineTo(rx+rw,ry+rh);ctx.lineTo(rx+rw,ry+rh-cb);ctx.stroke();}
     ctx.shadowBlur=0;
-    // For large rooms: add grid of accent dots across the floor
-    if(rw>CELL_SIZE*10||rh>CELL_SIZE*10){
-      ctx.globalAlpha=0.12;ctx.fillStyle=r.theme.accent;
-      const spacing=CELL_SIZE*4;
-      const sx=Math.ceil(Math.max(rx,vL)/spacing)*spacing,sy=Math.ceil(Math.max(ry,vT)/spacing)*spacing;
-      for(let dy=sy;dy<Math.min(ry+rh,vB);dy+=spacing)for(let dx=sx;dx<Math.min(rx+rw,vR);dx+=spacing){
-        ctx.beginPath();ctx.arc(dx,dy,2,0,Math.PI*2);ctx.fill();
-      }
-    }
+    // (Neon accent dot grid removed — 25+ arc/fill per large room, no gameplay value)
     ctx.globalAlpha=1;
   }
 
@@ -17196,8 +17194,9 @@ function render() {
       ctx.stroke();ctx.shadowBlur=0;
     } else {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
-      // Skip glow (shadowBlur) for tiny particles — it's the most expensive op per particle
-      const useGlow = sz >= 3;
+      // shadowBlur is the single most expensive op per particle on mobile. Gate aggressively:
+      // only particles that'd visibly benefit (sz >= 6) and not for sparks/smoke.
+      const useGlow = sz >= 6 && p.type !== 'spark' && p.type !== 'smoke';
       if(p.type==='dashtrail'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=10; }
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
@@ -17279,9 +17278,13 @@ function render() {
         ft._pulse--;
       }
       const _baseSize = ft._crit ? 18 : 13;
-      ctx.shadowBlur = (ft._crit ? 10 : 5) + (ft._pulse > 0 ? 6 : 0);
+      // Crits get bigger glow; non-crits clamped low (invisible-difference on small text but expensive)
+      ctx.shadowBlur = ft._crit ? (10 + (ft._pulse > 0 ? 6 : 0)) : 4;
       ctx.fillStyle = ft.color;
-      ctx.font = 'bold ' + Math.round(_baseSize * _dmgScale) + 'px monospace';
+      // Cache font string on the floating text — font string allocation + parse is surprisingly hot
+      const _dSz = Math.round(_baseSize * _dmgScale);
+      if (ft._cachedSize !== _dSz) { ft._cachedFont = 'bold ' + _dSz + 'px monospace'; ft._cachedSize = _dSz; }
+      ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
     } else if (ft._bitsLabel) {
@@ -17290,7 +17293,9 @@ function render() {
       if (ft._pulse > 0) { _bScale = 1 + (ft._pulse / 12) * 0.45; ft._pulse--; }
       ctx.shadowBlur = 14;
       ctx.fillStyle = ft.color;
-      ctx.font = 'bold ' + Math.round(20 * _bScale) + 'px monospace';
+      const _bSz = Math.round(20 * _bScale);
+      if (ft._cachedSize !== _bSz) { ft._cachedFont = 'bold ' + _bSz + 'px monospace'; ft._cachedSize = _bSz; }
+      ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
     } else {
@@ -17379,8 +17384,8 @@ function render() {
         ambG.addColorStop(0, 'rgba(0,0,0,0.5)'); ambG.addColorStop(0.3, 'rgba(0,0,0,0.3)');
         ambG.addColorStop(0.6, 'rgba(0,0,0,0.1)'); ambG.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = ambG; fctx.fillRect(fsx - ambR, fsy - ambR, ambR * 2, ambR * 2);
-        // Flashlight beam
-        const steps = 12;
+        // Flashlight beam — mobile halves step count (each step allocates a radial gradient)
+        const steps = isMobile ? 6 : 10;
         for (let s = 0; s < steps; s++) {
           const t = (s + 1) / steps;
           const fd = 40 + spotRadius * t * 0.85;
@@ -17488,12 +17493,24 @@ function render() {
     const mf=p.weapons[p.currentWeapon].muzzleFlash/6;const c=Math.cos(p.angle),s=Math.sin(p.angle);
     const mx=p.x+c*24+dlx,my=p.y+s*24+dly,mr=80*mf;
     const mg=ctx.createRadialGradient(mx,my,0,mx,my,mr);mg.addColorStop(0,`rgba(255,200,100,${mf*0.3})`);mg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=mg;ctx.fillRect(mx-mr,my-mr,mr*2,mr*2);}}
-  // Barrel glow
-  for(const br of barrels){const bsx=br.x+dlx,bsy=br.y+dly,brr=40;
-    const bg=ctx.createRadialGradient(bsx,bsy,0,bsx,bsy,brr);bg.addColorStop(0,'rgba(255,60,0,0.08)');bg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=bg;ctx.fillRect(bsx-brr,bsy-brr,brr*2,brr*2);}
-  // Burning zombie fire light
-  for(const z of zombies){if(z._burning>0){const fsx=z.x+dlx,fsy=z.y+dly,fr=60+Math.random()*10;
-    const fg=ctx.createRadialGradient(fsx,fsy,0,fsx,fsy,fr);fg.addColorStop(0,'rgba(255,120,20,0.2)');fg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=fg;ctx.fillRect(fsx-fr,fsy-fr,fr*2,fr*2);}}
+  // Barrel glow — cached gradient (constant radius 40), translate to each barrel
+  if (!_barrelGlowGrad) {
+    _barrelGlowGrad = ctx.createRadialGradient(0,0,0,0,0,40);
+    _barrelGlowGrad.addColorStop(0,'rgba(255,60,0,0.08)');
+    _barrelGlowGrad.addColorStop(1,'rgba(0,0,0,0)');
+  }
+  ctx.fillStyle=_barrelGlowGrad;
+  for(const br of barrels){const bsx=br.x+dlx,bsy=br.y+dly;
+    ctx.save();ctx.translate(bsx,bsy);ctx.fillRect(-40,-40,80,80);ctx.restore();}
+  // Burning zombie fire light — cached gradient (radius fixed at 60, was 60+rand*10)
+  if (!_burnGlowGrad) {
+    _burnGlowGrad = ctx.createRadialGradient(0,0,0,0,0,60);
+    _burnGlowGrad.addColorStop(0,'rgba(255,120,20,0.2)');
+    _burnGlowGrad.addColorStop(1,'rgba(0,0,0,0)');
+  }
+  ctx.fillStyle=_burnGlowGrad;
+  for(const z of zombies){if(z._burning>0){const fsx=z.x+dlx,fsy=z.y+dly;
+    ctx.save();ctx.translate(fsx,fsy);ctx.fillRect(-60,-60,120,120);ctx.restore();}}
   ctx.restore();}
 
   // Redraw bullets on top of fog so they're always visible
