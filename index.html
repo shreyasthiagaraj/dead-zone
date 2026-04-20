@@ -10520,7 +10520,7 @@ function updateDischarge() {
 // ============================================================
 // PAYLOAD — lob a grenade that bounces then detonates
 // ============================================================
-const PAYLOAD_COOLDOWN = BEACON_COOLDOWN;  // same as beacon
+const PAYLOAD_COOLDOWN = 240;  // 4 seconds
 let activeGrenade = null;
 
 function activatePayload() {
@@ -10533,13 +10533,29 @@ function activatePayload() {
   // Fire straight in facing direction
   const dx = Math.cos(lp.angle), dy = Math.sin(lp.angle);
   const speed = 14;
+  const gc = classId ? (_ELEM_COLOR[classId] || '#fa0') : '#fa0';
   activeGrenade = {
     x: lp.x + dx*20, y: lp.y + dy*20,
     vx: dx * speed, vy: dy * speed,
     timer: 45, // 0.75s fuse if it doesn't hit anything
     classId, ownerId: lp.id,
   };
-  playSound(400, 0.06, 'sine', 0.06); playSound(250, 0.04, 'square', 0.04);
+  // Punchy launch: thump + whoosh + recoil kick
+  playSound(80, 0.15, 'sawtooth', 0.08);
+  playSound(200, 0.1, 'square', 0.06);
+  setTimeout(() => playSound(500, 0.06, 'sine', 0.04), 40);
+  // Launch VFX: muzzle blast + smoke ring
+  for (let i = 0; i < 8; i++) {
+    const fa = lp.angle + (Math.random()-0.5)*0.9, fs = 3+Math.random()*4;
+    particles.push({ x: lp.x+dx*22, y: lp.y+dy*22, vx: Math.cos(fa)*fs, vy: Math.sin(fa)*fs,
+      life: 10, maxLife: 10, size: 3+Math.random()*2, color: gc, type: 'spark' });
+  }
+  for (let i = 0; i < 4; i++) {
+    const fa = lp.angle + Math.PI + (Math.random()-0.5)*1.2, fs = 1.5+Math.random()*2;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(fa)*fs, vy: Math.sin(fa)*fs,
+      life: 16, maxLife: 16, size: 4+Math.random()*3, color: '#555', type: 'smoke' });
+  }
+  screenShake.intensity = Math.max(screenShake.intensity, 4);
 }
 
 function updatePayload() {
@@ -10607,7 +10623,7 @@ function updatePayload() {
 // ============================================================
 // DEADSHOT — charge a piercing long-range shot
 // ============================================================
-const DEADSHOT_COOLDOWN = 180;  // 3 seconds
+const DEADSHOT_COOLDOWN = 240;  // 4 seconds
 const DEADSHOT_MAX_CHARGE = 45; // 0.75s to full charge
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
@@ -10655,7 +10671,7 @@ function _fireDeadshot(lp) {
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
   _deadshotCharge = 0;
-  lp._beaconCooldown = BEACON_COOLDOWN; // same cooldown as beacon
+  lp._beaconCooldown = DEADSHOT_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || _m.dominantClass; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
