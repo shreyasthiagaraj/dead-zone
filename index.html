@@ -8913,9 +8913,9 @@ function activateRightJoystickFromButton(touch) {
 document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); dash(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
 document.getElementById('btn-mark').addEventListener('touchstart', (e) => { e.preventDefault(); activateSpecial(); }, { passive: false });
-document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); }, { passive: false });
+document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); }, { passive: false });
 document.getElementById('btn-mark').addEventListener('mousedown', () => { activateSpecial(); });
-document.getElementById('btn-mark').addEventListener('mouseup', () => { if (selectedSpecial === 'deadshot') releaseDeadshot(); });
+document.getElementById('btn-mark').addEventListener('mouseup', () => { if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); });
 // Shoot button: hold to auto-aim + fire, drag to bias target selection
 document.getElementById('btn-shoot').addEventListener('touchstart', (e) => {
   e.preventDefault(); shootButtonHeld = true;
@@ -9809,7 +9809,7 @@ function handleKeyDown(e) {
     if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
   }
 }
-function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 'q' || e.key === 'Q') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
+function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 'q' || e.key === 'Q') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 'q' || e.key === 'Q') && selectedSpecial === 'payload') releasePayload(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 document.addEventListener('keydown', handleKeyDown);
@@ -10523,30 +10523,40 @@ function updateDischarge() {
 const PAYLOAD_COOLDOWN = 150;  // 2.5 seconds
 let activeGrenade = null;
 
+let _payloadAiming = false; // true while holding the special button to aim payload
+
 function activatePayload() {
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   // Tap again while grenade is mid-flight → detonate early
   if (activeGrenade) { activeGrenade.timer = 0; return; }
   if (lp._beaconCooldown > 0) return;
+  // Start aiming — fire on release
+  _payloadAiming = true;
+  playSound(300, 0.05, 'sine', 0.04);
+}
+
+function releasePayload() {
+  if (!_payloadAiming) return;
+  _payloadAiming = false;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
   lp._beaconCooldown = PAYLOAD_COOLDOWN;
   const _m = runMods || {};
-  const classId = _m.beaconElement || _m.dominantClass; // beacon element cards apply to payload
-  // Fire straight in facing direction
+  const classId = _m.beaconElement || _m.dominantClass;
   const dx = Math.cos(lp.angle), dy = Math.sin(lp.angle);
   const speed = 14;
   const gc = classId ? (_ELEM_COLOR[classId] || '#fa0') : '#fa0';
   activeGrenade = {
     x: lp.x + dx*20, y: lp.y + dy*20,
     vx: dx * speed, vy: dy * speed,
-    timer: 45, // 0.75s fuse if it doesn't hit anything
+    timer: 45,
     classId, ownerId: lp.id,
   };
-  // Punchy launch: thump + whoosh + recoil kick
+  // Punchy launch
   playSound(80, 0.15, 'sawtooth', 0.08);
   playSound(200, 0.1, 'square', 0.06);
   setTimeout(() => playSound(500, 0.06, 'sine', 0.04), 40);
-  // Launch VFX: muzzle blast + smoke ring
   for (let i = 0; i < 8; i++) {
     const fa = lp.angle + (Math.random()-0.5)*0.9, fs = 3+Math.random()*4;
     particles.push({ x: lp.x+dx*22, y: lp.y+dy*22, vx: Math.cos(fa)*fs, vy: Math.sin(fa)*fs,
@@ -10586,7 +10596,7 @@ function updatePayload() {
   // Detonate
   if (g.timer <= 0) {
     const radius = 120;
-    const dmg = 100;
+    const dmg = 140;
     const gc = g.classId ? (_ELEM_COLOR[g.classId] || '#fa0') : '#fa0';
     if (isHost) {
       for (const z of zombies) {
@@ -16436,6 +16446,28 @@ function render() {
       // Charge ring
       ctx.shadowBlur = 4; ctx.strokeStyle = _dc; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(mx, my, 14, -Math.PI/2, -Math.PI/2 + Math.PI*2*chPct); ctx.stroke();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  }
+  // Payload aim line while holding to aim
+  if (_payloadAiming) {
+    const lp2 = getLocalPlayer();
+    if (lp2) {
+      const _m2 = runMods || {};
+      const _pc2 = (_m2.beaconElement || _m2.dominantClass) ? (_ELEM_COLOR[_m2.beaconElement || _m2.dominantClass] || '#fa0') : '#fa0';
+      const mx = lp2.x + Math.cos(lp2.angle)*22, my = lp2.y + Math.sin(lp2.angle)*22;
+      const aimLen = 200;
+      const aimEndX = mx + Math.cos(lp2.angle)*aimLen, aimEndY = my + Math.sin(lp2.angle)*aimLen;
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = _pc2; ctx.lineWidth = 2; ctx.shadowColor = _pc2; ctx.shadowBlur = 6;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(aimEndX, aimEndY); ctx.stroke();
+      ctx.setLineDash([]);
+      // Impact circle at aim end
+      ctx.globalAlpha = 0.2;
+      ctx.beginPath(); ctx.arc(aimEndX, aimEndY, 30, 0, Math.PI*2); ctx.stroke();
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       ctx.restore();
     }
