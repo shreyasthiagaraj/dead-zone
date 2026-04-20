@@ -1919,19 +1919,10 @@ function draftShopCards(n) {
       const cls = _CARD_CLASS_MAP[id];
       if (cls) classCounts[cls] += runUpgrades[id];
     }
-    // Research focus takes priority; otherwise use most-owned class
-    let priorityClass = _researchFocus || null;
-    let affinityChance = 0.65; // research focus: 65% chance
-    if (!priorityClass) {
-      // Fallback to natural affinity from owned cards
-      let bestCount = 0;
-      for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; priorityClass = cls; } }
-      if (bestCount < 2) priorityClass = null;
-      affinityChance = 0.50;
-    }
-    if (priorityClass && Math.random() < affinityChance) {
+    // Research focus: GUARANTEE at least 1 card from the focused class
+    if (_researchFocus) {
       const classPool = UPGRADE_POOL.filter(u =>
-        _CARD_CLASS_MAP[u.id] === priorityClass &&
+        _CARD_CLASS_MAP[u.id] === _researchFocus &&
         !attempted.has(u.id) &&
         (runUpgrades[u.id] || 0) < u.max &&
         _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
@@ -1943,6 +1934,27 @@ function draftShopCards(n) {
         for (const u of classPool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
         picks.push(chosen);
         attempted.add(chosen.id);
+      }
+    }
+    // Natural affinity from owned cards (50% chance, only if no research focus already added one)
+    if (!_researchFocus) {
+      let bestClass = null, bestCount = 0;
+      for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; bestClass = cls; } }
+      if (bestClass && bestCount >= 2 && Math.random() < 0.50) {
+        const classPool = UPGRADE_POOL.filter(u =>
+          _CARD_CLASS_MAP[u.id] === bestClass &&
+          !attempted.has(u.id) &&
+          (runUpgrades[u.id] || 0) < u.max &&
+          _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
+        );
+        if (classPool.length > 0) {
+          const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
+          let roll = Math.random() * totalW;
+          let chosen = classPool[0];
+          for (const u of classPool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
+          picks.push(chosen);
+          attempted.add(chosen.id);
+        }
       }
     }
   }
@@ -15200,7 +15212,11 @@ function updateHUD() {
     const _specDef = SPECIAL_DEFS[selectedSpecial] || SPECIAL_DEFS.beacon;
     const _specActive = (selectedSpecial === 'beacon' && (activeBeacon || _beacons.length > 0)) || _dischargeActive || _deadshotCharging || activeGrenade;
     const _specCanInteract = _specActive && ((runMods||{}).recallAnchor > 0 || (runMods||{}).trapMine > 0 || selectedSpecial === 'deadshot');
-    if (_specActive && _specCanInteract) { mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = _specDef.color; mb2.style.color = _specDef.color; mb2.style.boxShadow = '0 0 12px ' + _specDef.color + '88'; }
+    // Multi-beacon: button stays ready if there's room for another beacon
+    const _maxB = ((runMods||{}).multiBeacon > 0) ? 2 : 1;
+    const _canDeployMore = selectedSpecial === 'beacon' && _beacons.length < _maxB && !(lp._beaconCooldown > 0);
+    if (_canDeployMore) { mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
+    else if (_specActive && _specCanInteract) { mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = _specDef.color; mb2.style.color = _specDef.color; mb2.style.boxShadow = '0 0 12px ' + _specDef.color + '88'; }
     else if (_specActive || lp._beaconCooldown > 0) { mb2.className = 'mobile-btn mark-cooldown'; mb2.style.opacity = '0.3'; mb2.style.pointerEvents = 'none'; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
     else { mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
   }
