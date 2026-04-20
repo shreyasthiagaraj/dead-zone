@@ -6163,23 +6163,25 @@ let musicBus = null;
 // user interaction switches Safari to "media playback" audio category, which
 // ignores the hardware silent/mute switch. Without this, Web Audio API is
 // muted when the phone is in silent mode.
-let _iosSilentBypassed = false;
-function _bypassIOSSilentSwitch() {
-  if (_iosSilentBypassed) return;
-  _iosSilentBypassed = true;
+// Re-invokable: when coming back from another app (Notes, Messages, etc.) the
+// audio session may have been handed off — replaying the silent audio reclaims it.
+let _silentBypassLast = 0;
+const _SILENT_URI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+function _bypassIOSSilentSwitch(force) {
+  const now = performance.now();
+  if (!force && _silentBypassLast && (now - _silentBypassLast < 400)) return; // throttle
+  _silentBypassLast = now;
   try {
-    // Create a tiny silent WAV as a data URI and play it
-    const silentDataURI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    const a = new Audio(silentDataURI);
+    const a = new Audio(_SILENT_URI);
     a.setAttribute('playsinline', '');
     a.play().catch(() => {});
   } catch (e) {}
 }
 
 function initAudio() {
-  _bypassIOSSilentSwitch();
+  _bypassIOSSilentSwitch(true);
   if (audioCtx) {
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx.state !== 'running') { try { audioCtx.resume(); } catch(e) {} }
     return;
   }
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -6192,25 +6194,88 @@ function initAudio() {
   musicBus = audioCtx.createGain();
   musicBus.gain.value = 0.35;
   musicBus.connect(masterGain);
-  // Resume immediately in case it starts suspended (iOS)
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  // iOS may emit 'statechange' when another app grabs/releases audio focus. Re-sync
+  // music when we return to 'running'. Prevents a dead BufferSource from being
+  // held as currentMusic after the context was interrupted mid-playback.
+  try {
+    audioCtx.addEventListener('statechange', () => {
+      if (audioCtx.state === 'running') _checkMusicAfterResume();
+    });
+  } catch(e) {}
+  if (audioCtx.state !== 'running') { try { audioCtx.resume(); } catch(e) {} }
 }
 
-// iOS suspends AudioContext when the app goes to background. Resume it when
-// the user comes back. visibilitychange fires reliably on iOS Safari; the
-// touchstart listener catches the case where resume needs a user gesture.
+// Rock-solid audio foreground recovery.
+// Covers: app-to-home-screen-to-app (visibility), focus loss, cross-app audio handoff
+// (Notes/Messages grabbing audio focus then releasing), native Capacitor state change,
+// and long-running app where iOS silently interrupts the context.
+let _lastMusicName = null;
+
+function _checkMusicAfterResume() {
+  // If a music track was registered but its source died during suspend/interrupt,
+  // restart it. The playMusic guard handles the no-op case where it's still alive.
+  if (!audioCtx || audioCtx.state !== 'running') return;
+  if (!_lastMusicName) return;
+  if (!currentMusic || currentMusic.name !== _lastMusicName) {
+    // Delay slightly so the resume has time to fully connect before we start a source
+    setTimeout(() => {
+      if (audioCtx && audioCtx.state === 'running' && _lastMusicName &&
+          (!currentMusic || currentMusic.name !== _lastMusicName)) {
+        playMusic(_lastMusicName, 0.8);
+      }
+    }, 120);
+  }
+}
+
+function _resumeAudioFully() {
+  _bypassIOSSilentSwitch(true);
+  if (!audioCtx) { initAudio(); loadSfx(); return; }
+  // iOS reports 'suspended' normally AND 'interrupted' after cross-app handoff.
+  // Both need resume(). Guard against the 'closed' state (unrecoverable).
+  if (audioCtx.state === 'closed') return;
+  if (audioCtx.state !== 'running') {
+    try {
+      const p = audioCtx.resume();
+      if (p && p.then) p.then(_checkMusicAfterResume).catch(() => {});
+      else _checkMusicAfterResume();
+    } catch(e) {}
+  } else {
+    _checkMusicAfterResume();
+  }
+}
+
+// Single foreground handler — all paths funnel here.
+function _onAppForeground() { _resumeAudioFully(); }
+
+// Primary triggers: tab/app visibility, window focus, bfcache restore.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
-    _bypassIOSSilentSwitch();
-  }
+  if (document.visibilityState === 'visible') _onAppForeground();
 });
-document.addEventListener('touchstart', function _resumeAudio() {
-  if (audioCtx && audioCtx.state === 'suspended') {
-    audioCtx.resume();
-    _bypassIOSSilentSwitch();
+window.addEventListener('focus', _onAppForeground);
+window.addEventListener('pageshow', _onAppForeground);
+
+// Every user touch also opportunistically resumes (iOS sometimes only allows
+// resume inside a user-gesture handler even when the page is visible).
+document.addEventListener('touchstart', _onAppForeground, { passive: true });
+
+// Watchdog — if we're visible but the context somehow isn't running (silent iOS
+// interrupt, mid-playback audio-session loss), attempt recovery every 2 seconds.
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  if (!audioCtx) return;
+  if (audioCtx.state !== 'running') _resumeAudioFully();
+  else _checkMusicAfterResume(); // also catches dead music sources even when ctx is fine
+}, 2000);
+
+// Capacitor native wrapper (iOS/Android app build) fires appStateChange when the app
+// goes to background or returns. This is more reliable than visibilitychange on native.
+try {
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+    window.Capacitor.Plugins.App.addListener('appStateChange', (state) => {
+      if (state && state.isActive) _onAppForeground();
+    });
   }
-}, { once: false, passive: true });
+} catch(e) {}
 
 // Synthesizer fallback for when mp3s aren't loaded
 function playSound(freq, dur, type='square', vol=0.15) {
@@ -6381,13 +6446,17 @@ let musicFadeInterval = null;
 
 function playMusic(name, fadeIn = 2.0) {
   if (!audioCtx || !musicBus) return;
+  // Remember what we WANT playing even before we have a live source —
+  // the foreground-recovery watchdog uses this to restart after interrupts.
+  _lastMusicName = name;
   // Already playing this track
   if (currentMusic && currentMusic.name === name) return;
   // Stop current music with fade
-  stopMusic(1.0);
+  stopMusic(1.0, true);
   // Wait for buffer or start immediately if available
   const startTrack = () => {
     if (!sfxBuffers[name]) return;
+    if (!audioCtx || audioCtx.state !== 'running') return; // don't start into a dead context
     try {
       const src = audioCtx.createBufferSource();
       const gain = audioCtx.createGain();
@@ -6415,7 +6484,10 @@ function playMusic(name, fadeIn = 2.0) {
   else setTimeout(startTrack, 2000); // retry after load
 }
 
-function stopMusic(fadeOut = 1.5) {
+function stopMusic(fadeOut = 1.5, keepTrackMemory) {
+  // keepTrackMemory=true means we're switching tracks (playMusic) — keep _lastMusicName.
+  // Otherwise clear it so the foreground watchdog doesn't try to restart a stopped track.
+  if (!keepTrackMemory) _lastMusicName = null;
   if (!currentMusic || !audioCtx) return;
   const { source, gain } = currentMusic;
   currentMusic = null;
@@ -9335,17 +9407,12 @@ document.addEventListener('keydown', handleKeyDown);
 document.addEventListener('keyup', handleKeyUp);
 // Reset all keys when window loses focus (prevents stuck keys)
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+// Clear stuck keys on hide. Audio resume on visibility/touch/focus/pageshow is
+// handled centrally by the _onAppForeground pipeline in the audio engine section.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    for (const k in keys) keys[k] = false;
-  } else {
-    // Resume AudioContext when returning to the app — mobile browsers suspend it on background
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  }
+  if (document.hidden) { for (const k in keys) keys[k] = false; }
 });
-// Also resume on any touch/click (iOS requires user gesture to resume)
-document.addEventListener('touchstart', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { once: false, passive: true });
-document.addEventListener('click', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { once: false });
+document.addEventListener('click', _onAppForeground);
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 window.addEventListener('mousedown', e => { if (e.button === 0) mouse.down = true; });
 window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
@@ -17286,8 +17353,8 @@ if (_isNativeApp) {
 document.addEventListener('click', tryStartMenuMusic, { once: true, capture: true });
 document.addEventListener('touchstart', tryStartMenuMusic, { once: true, capture: true });
 document.addEventListener('keydown', tryStartMenuMusic, { once: true, capture: true });
-// Keep audio alive on iOS — resume on every touch (iOS suspends on background/lock)
-document.addEventListener('touchstart', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { passive: true });
+// (audio foreground recovery is handled centrally by _onAppForeground — touchstart
+//  already funnels into it from the audio engine section.)
 // "Play fullscreen" — only shown on mobile web browsers (not in the native Capacitor app,
 // not in desktop, not already installed as a PWA). Opens a modal with add-to-home-screen instructions.
 (function setupFullscreenCTA() {
