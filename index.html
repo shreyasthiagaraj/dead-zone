@@ -1937,6 +1937,23 @@ function draftShopCards(n) {
         attempted.add(chosen.id);
       }
     }
+    // Research focus: in the first 3 shop visits, try to add a SECOND focused card
+    if (_researchFocus && _shopVisitCount <= 3 && picks.length < n) {
+      const classPool2 = UPGRADE_POOL.filter(u =>
+        _CARD_CLASS_MAP[u.id] === _researchFocus &&
+        !attempted.has(u.id) &&
+        (runUpgrades[u.id] || 0) < u.max &&
+        _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
+      );
+      if (classPool2.length > 0) {
+        const totalW2 = classPool2.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
+        let roll2 = Math.random() * totalW2;
+        let chosen2 = classPool2[0];
+        for (const u of classPool2) { roll2 -= (weights[u.rarity] || 1); if (roll2 <= 0) { chosen2 = u; break; } }
+        picks.push(chosen2);
+        attempted.add(chosen2.id);
+      }
+    }
     // Natural affinity from owned cards (50% chance, only if no research focus already added one)
     if (!_researchFocus) {
       let bestClass = null, bestCount = 0;
@@ -3670,6 +3687,7 @@ let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
 let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
 let _checkpointRoomActive = false; // true while player is in the checkpoint safe room (after boss)
+let _checkpointContinues = 2; // number of continues remaining from checkpoint (decremented on death)
 
 // Pre-compute section widths from templates
 let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
@@ -6032,6 +6050,7 @@ const CHECKPOINT_KEY = 'necrowave_checkpoint';
 function saveCheckpoint() {
   const lp = getLocalPlayer();
   if (!lp || gameMode !== 'trench') return;
+  _checkpointContinues = 2; // reset continues when a new checkpoint is saved
   const data = {
     version: 1,
     timestamp: Date.now(),
@@ -6062,6 +6081,8 @@ function saveCheckpoint() {
     selectedSpecial: selectedSpecial,
     // Research focus
     researchFocus: _researchFocus,
+    // Continues
+    continues: _checkpointContinues,
   };
   try {
     localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
@@ -6145,6 +6166,9 @@ function resumeFromCheckpoint() {
 
   // Restore research focus
   _researchFocus = cp.researchFocus || null;
+
+  // Restore continues
+  _checkpointContinues = cp.continues != null ? cp.continues : 2;
 
   // Set up game state
   gameState = 'playing';
@@ -9476,10 +9500,30 @@ function calculateDeathStats() {
 }
 
 function showDeathToShell() {
+  // Check if we can continue from checkpoint instead of going to Shell
+  if (hasCheckpoint() && _checkpointContinues > 0) {
+    _checkpointContinues--;
+    // Update saved checkpoint with decremented continues
+    const cpData = loadCheckpoint();
+    if (cpData) { cpData.continues = _checkpointContinues; try { localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(cpData)); } catch(e){} }
+    // Show continue message
+    const lp = getLocalPlayer();
+    if (lp) addFloatingText(lp.x, lp.y - 40, `CONTINUE (${_checkpointContinues} LEFT)`, '#ff0');
+    // Brief death effects before resume
+    window._deathBeatPlaying = true;
+    gameState = 'dying';
+    triggerGlitchSurge(0.5, 60);
+    screenShake.intensity = Math.max(screenShake.intensity, 12);
+    // Resume from checkpoint after death animation
+    setTimeout(() => {
+      window._deathBeatPlaying = false;
+      resumeFromCheckpoint();
+    }, 2000);
+    return; // don't proceed with normal death-to-shell
+  }
   window._deathBeatPlaying = true;
   gameState = 'dying';
   stopSunbeamLoop(); stopWeaponLoop();
-  clearCheckpoint(); // clear checkpoint on death
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
   _shellDeathStats = calculateDeathStats();
   // ---- PHASE 1: FREEZE + GLITCH OUT (1.5s) ----
@@ -16567,42 +16611,59 @@ function render() {
       ctx.shadowBlur=0;ctx.globalAlpha=1;
     }
   }
-  // Checkpoint room visuals
+  // Checkpoint room visuals — Shell-like void with green color scheme
   if(_checkpointRoomActive&&gameMode==='trench'&&trenchSections[trenchSection]){
     const cpSec=trenchSections[trenchSection];
     const cpTW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
     const cpMidX=cpSec.x+cpTW*0.5;
     const cpMidY=(TRENCH_HEIGHT/2)*CELL_SIZE;
     const cpT=performance.now();
-    // Green ambient glow — safe room feeling
-    ctx.globalAlpha=0.06+Math.sin(cpT*0.003)*0.02;
+    // Dark blue-green void background (Shell-like)
+    ctx.globalAlpha=0.85;
+    ctx.fillStyle='#030a12';
+    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
+    ctx.globalAlpha=1;
+    // Green ambient glow — safe room feeling (stronger)
+    ctx.globalAlpha=0.10+Math.sin(cpT*0.003)*0.04;
     ctx.fillStyle='#0f0';
     ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
     ctx.globalAlpha=1;
-    // "CHECKPOINT" text pulsing at top center
-    const cpPulse=0.6+Math.sin(cpT*0.004)*0.3;
+    // CRT boost during checkpoint — periodic glitch for atmosphere
+    if (gameTime % 90 < 3) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.10);
+    if (gameTime % 240 < 2) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.20);
+    // Large centered "CHECKPOINT" text with pulsing glow
+    const cpPulse=0.7+Math.sin(cpT*0.004)*0.3;
     ctx.globalAlpha=cpPulse;
-    ctx.font='bold 16px monospace';ctx.textAlign='center';
-    ctx.fillStyle='#0f0';ctx.shadowColor='#0f0';ctx.shadowBlur=14;
-    ctx.fillText('\u25C6 CHECKPOINT \u25C6',cpMidX,28);
-    ctx.font='10px monospace';ctx.fillStyle='#8f8';
-    ctx.fillText('progress saved \u00B7 hp restored',cpMidX,44);
+    ctx.font='bold 24px monospace';ctx.textAlign='center';
+    ctx.fillStyle='#0f0';ctx.shadowColor='#0f0';ctx.shadowBlur=24;
+    ctx.fillText('\u25C6 CHECKPOINT \u25C6',cpMidX,cpMidY-60);
+    ctx.font='14px monospace';ctx.fillStyle='#8f8';ctx.shadowBlur=12;
+    ctx.fillText('progress saved \u00B7 hp restored',cpMidX,cpMidY-36);
+    // Continues remaining in yellow
+    ctx.font='bold 12px monospace';ctx.fillStyle='#ff0';ctx.shadowColor='#ff0';ctx.shadowBlur=10;
+    ctx.fillText('CONTINUES: ' + _checkpointContinues,cpMidX,cpMidY-14);
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     // Domain info — what's coming next
     const cpNextDomain=getTrenchDomain(trenchSection);
     if(cpNextDomain){
-      ctx.globalAlpha=0.7;ctx.font='10px monospace';
+      ctx.globalAlpha=0.7;ctx.font='12px monospace';
       ctx.fillStyle=cpNextDomain.accentColor||'#aaa';
-      ctx.shadowColor=cpNextDomain.accentColor||'#aaa';ctx.shadowBlur=6;
-      ctx.fillText('NEXT: '+cpNextDomain.name,cpMidX,TRENCH_HEIGHT*CELL_SIZE-20);
+      ctx.shadowColor=cpNextDomain.accentColor||'#aaa';ctx.shadowBlur=8;
+      ctx.fillText('NEXT: '+cpNextDomain.name,cpMidX,cpMidY+20);
       ctx.shadowBlur=0;ctx.globalAlpha=1;
     }
-    // Green corner brackets (safe zone markers)
+    // HP RESTORED persistent label near center
+    const hpPulse=0.5+Math.sin(cpT*0.006)*0.3;
+    ctx.globalAlpha=hpPulse;ctx.font='bold 11px monospace';
+    ctx.fillStyle='#4f4';ctx.shadowColor='#4f4';ctx.shadowBlur=8;
+    ctx.fillText('\u2764 HP RESTORED \u2764',cpMidX,cpMidY+50);
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+    // Green corner brackets (safe zone markers) — larger
     const bx1=cpSec.x+CELL_SIZE*2,by1=CELL_SIZE*2;
     const bx2=cpSec.x+cpTW-CELL_SIZE*2,by2=(TRENCH_HEIGHT-2)*CELL_SIZE;
-    const bLen=20;
-    ctx.strokeStyle='#0f0';ctx.lineWidth=2;ctx.globalAlpha=0.4*cpPulse;
-    ctx.shadowColor='#0f0';ctx.shadowBlur=8;
+    const bLen=30;
+    ctx.strokeStyle='#0f0';ctx.lineWidth=3;ctx.globalAlpha=0.5*cpPulse;
+    ctx.shadowColor='#0f0';ctx.shadowBlur=12;
     ctx.beginPath();ctx.moveTo(bx1,by1+bLen);ctx.lineTo(bx1,by1);ctx.lineTo(bx1+bLen,by1);ctx.stroke();
     ctx.beginPath();ctx.moveTo(bx2-bLen,by1);ctx.lineTo(bx2,by1);ctx.lineTo(bx2,by1+bLen);ctx.stroke();
     ctx.beginPath();ctx.moveTo(bx1,by2-bLen);ctx.lineTo(bx1,by2);ctx.lineTo(bx1+bLen,by2);ctx.stroke();
