@@ -14036,20 +14036,43 @@ function update() {
       for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd2=sx*sx+sy*sy,md2=z.radius+o.radius,md22=md2*md2;if(sd2<md22&&sd2>0){const sd=Math.sqrt(sd2);const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
       // Push zombies out of players — prevent visual overlap.
       // Skip for any player who is mid-dash (they ghost through enemies).
-      for(const p of players){if(!p.alive)continue;if(p._dashFrames>0||p.dashTimer>100)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd*0.8;z.x+=sx*push;z.y+=sy*push;}}
-      // Melee all players — velocity-compensated for remote players
+      // Full separation (1.0x) so zombies can't clip inside the player sprite.
+      for(const p of players){if(!p.alive)continue;if(p._dashFrames>0||p.dashTimer>100)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd;z.x+=sx*push;z.y+=sy*push;}}
+      // Melee all players — contact damage at the boundary (zombies don't enter the player).
       for(const p of players){if(!p.alive)continue;
         const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
-        // For remote players: if moving away from zombie, require tighter contact
-        // This compensates for position extrapolation lag
-        let meleeRange=z.radius+PLAYER_RADIUS-2;
+        // Melee hit triggers slightly BEFORE full separation so ramming reads as contact.
+        let meleeRange=z.radius+PLAYER_RADIUS+2;
         if(p.id!==myId&&(p.vx*p.vx+p.vy*p.vy)>1){
-          // Dot product: positive = moving away from zombie
           const dot=(p.vx*pdx+p.vy*pdy);
-          if(dot>0) meleeRange-=6; // tighter range when retreating
+          if(dot>0) meleeRange-=6; // remote player retreating — tighter contact needed
         }
         const _zt2=ZOMBIE_TYPES[z.type];
-        if(pd<meleeRange&&z.attackCooldown<=0&&z.type!=='stalker'&&!_zt2?.phaser){damagePlayerObj(p,z.damage);z.attackCooldown=30;}
+        if(pd<meleeRange&&z.attackCooldown<=0&&z.type!=='stalker'&&!_zt2?.phaser){
+          damagePlayerObj(p,z.damage);
+          z.attackCooldown=30;
+          // Ram rebound — zombie bounces backward off the hit so they aren't still mashed against the player.
+          const _nx = pd > 0.1 ? pdx / pd : 0, _ny = pd > 0.1 ? pdy / pd : 0;
+          z.vx -= _nx * 3.5; z.vy -= _ny * 3.5;
+          z.attackCooldown = 35;
+          // Slash VFX — short bright arc between zombie and player at the contact point
+          const cx = z.x + _nx * z.radius, cy = z.y + _ny * z.radius;
+          const slashAng = Math.atan2(_ny, _nx) + Math.PI / 2;
+          const sl = 14;
+          particles.push({ x: cx - Math.cos(slashAng) * sl, y: cy - Math.sin(slashAng) * sl,
+            tx: cx + Math.cos(slashAng) * sl, ty: cy + Math.sin(slashAng) * sl,
+            vx: 0, vy: 0, life: 8, maxLife: 8, size: 2, color: '#fff', type: 'lightning' });
+          particles.push({ x: cx - Math.cos(slashAng) * sl * 0.7, y: cy - Math.sin(slashAng) * sl * 0.7,
+            tx: cx + Math.cos(slashAng) * sl * 0.7, ty: cy + Math.sin(slashAng) * sl * 0.7,
+            vx: 0, vy: 0, life: 6, maxLife: 6, size: 1, color: '#f88', type: 'lightning' });
+          // Impact sparks radiating outward along the slash
+          for (let si = 0; si < 5; si++) {
+            const sa = slashAng + (Math.random() - 0.5) * 0.8;
+            const ss = 2 + Math.random() * 3;
+            particles.push({ x: cx, y: cy, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss,
+              life: 10, maxLife: 10, size: 2 + Math.random(), color: Math.random() > 0.5 ? '#f44' : '#faa', type: 'spark' });
+          }
+        }
       }
       if(z.attackCooldown>0)z.attackCooldown--;
     }
