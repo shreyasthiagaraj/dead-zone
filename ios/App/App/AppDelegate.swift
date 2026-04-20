@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,47 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Force the audio session into .playback category so the game plays sound
+        // even when the hardware silent switch is on. This also keeps audio alive
+        // through screen lock and in the background. .mixWithOthers so a podcast
+        // or other app's audio isn't killed on launch.
+        configureAudioSession()
+        // Re-configure if iOS interrupts us (phone call, Siri, other app's audio).
+        NotificationCenter.default.addObserver(self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(self,
+            selector: #selector(handleAudioRouteChange(_:)),
+            name: AVAudioSession.routeChangeNotification,
+            object: nil)
         return true
+    }
+
+    private func configureAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            // .playback ignores the silent switch; .mixWithOthers is polite to background audio.
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true, options: [])
+        } catch {
+            NSLog("[Necrowave] AVAudioSession configure error: \(error)")
+        }
+    }
+
+    @objc private func handleAudioInterruption(_ note: Notification) {
+        guard let info = note.userInfo,
+              let typeRaw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeRaw) else { return }
+        if type == .ended {
+            // Interruption over (phone call ended, Siri dismissed) — reclaim audio session.
+            configureAudioSession()
+        }
+    }
+
+    @objc private func handleAudioRouteChange(_ note: Notification) {
+        // Headphones unplugged, Bluetooth lost, etc — re-apply category in case iOS switched it.
+        configureAudioSession()
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -26,7 +66,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        // Reclaim the audio session every time the app returns to foreground. This
+        // covers the case where another app (Notes, Messages, Music) grabbed audio
+        // focus while we were backgrounded — without this, the game would be silent
+        // until a restart.
+        configureAudioSession()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
