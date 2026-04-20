@@ -3204,11 +3204,24 @@ function updateXPOrbs() {
     // Pick up
     if (d2 < pickupR2) {
       grantXP(o.value);
+      // Floating +bits label — accumulates rapid pickups into one growing label
+      if (lp._bitsLabel && lp._bitsLabel.life > 0) {
+        lp._bitsLabel._bitsAmount += o.value;
+        lp._bitsLabel.text = `+${lp._bitsLabel._bitsAmount}◆`;
+        lp._bitsLabel.life = lp._bitsLabel.maxLife;
+      } else {
+        const _bl = { x: lp.x, y: lp.y - 38, text: `+${o.value}◆`, color: '#ff0',
+          vx: 0, vy: -0.5, life: 60, maxLife: 60,
+          _bitsAmount: o.value, _bitsLabel: true,
+          _follow: lp, _followOffY: -38 };
+        floatingTexts.push(_bl);
+        lp._bitsLabel = _bl;
+      }
       // Collect burst
-      for (let pi = 0; pi < 6; pi++) {
+      for (let pi = 0; pi < 4; pi++) {
         const pa = Math.random() * Math.PI * 2;
-        const ps = 1 + Math.random() * 3;
-        particles.push({ x: o.x, y: o.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 14, maxLife: 14, size: 2, color: _xpOrbColor(o.tier), type: 'spark' });
+        const ps = 1 + Math.random() * 2;
+        particles.push({ x: o.x, y: o.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 10, maxLife: 10, size: 2, color: _xpOrbColor(o.tier), type: 'spark' });
       }
       playSfx('xp_pickup', 0.18) || playSound(1200 + o.tier * 200, 0.04, 'sine', 0.1);
       continue;
@@ -14806,12 +14819,19 @@ function update() {
   // Camera follows local player (or spectate alive player) with aim-look-ahead
   let camTarget = lp;
   if (!lp.alive) { const alive = players.find(p => p.alive); if (alive) camTarget = alive; }
-  // Aim-based camera offset: player sits at ~30% screen width when aiming sideways
-  // Camera: no special behavior — just follow the player directly
-  if (window._camSettleFrames > 0) { window._camSettleFrames--; }
-  cameraOffset.x = 0; cameraOffset.y = 0;
-  camera.x = camTarget.x;
-  camera.y = camTarget.y;
+  // Aim-based camera offset: look-ahead toward aim direction
+  if (window._camSettleFrames > 0) { window._camSettleFrames--; cameraOffset.x = 0; cameraOffset.y = 0; }
+  else if (isMobile && _autoAimTarget) {
+    const aimOffsetMax = canvas.width * 0.15;
+    const aimCosA = Math.cos(camTarget.angle), aimSinA = Math.sin(camTarget.angle);
+    cameraOffset.x = lerp(cameraOffset.x, aimCosA * aimOffsetMax, 0.08);
+    cameraOffset.y = lerp(cameraOffset.y, aimSinA * aimOffsetMax * 0.5, 0.08);
+  } else {
+    cameraOffset.x = lerp(cameraOffset.x, 0, 0.15);
+    cameraOffset.y = lerp(cameraOffset.y, 0, 0.15);
+  }
+  camera.x = camTarget.x + cameraOffset.x;
+  camera.y = camTarget.y + cameraOffset.y;
   // Clamp camera to playable region, with some wiggle room past the edge so the
   // player doesn't end up glued to the far side of the screen. Without wiggle the
   // camera hard-stops at the wall and the player slides off-center; with wiggle
