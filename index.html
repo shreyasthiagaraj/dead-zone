@@ -10624,7 +10624,7 @@ function updatePayload() {
 // DEADSHOT — charge a piercing long-range shot
 // ============================================================
 const DEADSHOT_COOLDOWN = 240;  // 4 seconds
-const DEADSHOT_MAX_CHARGE = 45; // 0.75s to full charge
+const DEADSHOT_MAX_CHARGE = 75; // 1.25s to full charge
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
 
@@ -10675,34 +10675,29 @@ function _fireDeadshot(lp) {
   const _m = runMods || {};
   const classId = _m.beaconElement || _m.dominantClass; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
-  const baseDmg = 40 + Math.floor(chargePct * 160); // 40-200 damage
+  const baseDmg = 20 + Math.floor(chargePct * 80); // 20-100 damage
   const pierce = chargePct > 0.8 ? 99 : Math.floor(chargePct * 3); // full charge = infinite pierce
   const a = lp.angle;
-  const speed = 20;
-  // Fire the shot
+  const speed = 22;
+  // Fire the shot — arrow-shaped projectile with trail
   bullets.push({
     x: lp.x + Math.cos(a)*24, y: lp.y + Math.sin(a)*24,
     vx: Math.cos(a)*speed, vy: Math.sin(a)*speed,
-    damage: baseDmg, color: bColor, size: 4 + chargePct*4, knockback: 6 + chargePct*10,
+    damage: baseDmg, color: bColor, size: 3 + chargePct*3, knockback: 4 + chargePct*6,
     pierce: pierce, pierced: 0, life: 60, maxLife: 60,
     flame: false, explosive: false, explosionRadius: 0,
-    tracer: true, chain: false, chainRange: 0, chainCount: 0, laserGlow: true, grenade: false,
+    tracer: false, chain: false, chainRange: 0, chainCount: 0, laserGlow: false, grenade: false,
     owner: 'player', ownerId: lp.id, trail: [], crit: chargePct >= 1.0,
     _element: classId || null, _homing: false, _bouncing: 0, _angVel: 0,
-    _beaconBullet: false, _deadshotRound: true,
+    _beaconBullet: false, _deadshotRound: true, _deadshotColor: bColor,
   });
-  // Apply heavy class status on hit via the bullet's element
-  // Muzzle flash
-  for (let i = 0; i < 12; i++) {
-    const fa = a + (Math.random()-0.5)*0.8, fs = 4+Math.random()*6;
+  // Muzzle flash — compact
+  for (let i = 0; i < 6; i++) {
+    const fa = a + (Math.random()-0.5)*0.6, fs = 3+Math.random()*4;
     particles.push({ x: lp.x+Math.cos(a)*24, y: lp.y+Math.sin(a)*24,
       vx: Math.cos(fa)*fs, vy: Math.sin(fa)*fs,
-      life: 12, maxLife: 12, size: 3+Math.random()*3, color: bColor, type: 'spark' });
+      life: 8, maxLife: 8, size: 2+Math.random()*2, color: bColor, type: 'spark' });
   }
-  // Recoil line (tracer behind the shot)
-  particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 16, maxLife: 16,
-    size: 1, color: bColor, type: 'lightning',
-    tx: lp.x + Math.cos(a)*200, ty: lp.y + Math.sin(a)*200 });
   screenShake.intensity = Math.max(screenShake.intensity, 4 + chargePct*4);
   playSound(100, 0.12, 'square', 0.1); playSound(60, 0.1, 'sine', 0.06);
   if (chargePct >= 0.8) triggerGlitchSurge(0.3, 12);
@@ -13265,6 +13260,8 @@ function update() {
     else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
     // Elemental bullet particle trails
+    // Deadshot arrow trail
+    if(b._deadshotRound&&gameTime%2===0){const _dc=b._deadshotColor||b.color;particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:_dc,type:'spark'});}
     if(b._element==='fire'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1.5,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
     if(b._element==='lightning'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:6+Math.random()*4,maxLife:10,size:1.5+Math.random()*2,color:Math.random()>0.5?'#4ff':'#fff',type:'spark'});
@@ -16778,6 +16775,19 @@ function render() {
     for(let j=Math.max(0,b.trail.length-3);j<b.trail.length;j++){ctx.lineTo(b.trail[j].x+(Math.random()-0.5)*4,b.trail[j].y+(Math.random()-0.5)*4);}
     ctx.lineTo(b.x,b.y);ctx.stroke();ctx.shadowBlur=0;
     ctx.fillStyle='#fff';ctx.globalAlpha=0.8;ctx.beginPath();ctx.arc(b.x,b.y,b.size+2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
+    }else if(b._deadshotRound){
+    // Arrow-shaped projectile with particle trail
+    const _dsA = Math.atan2(b.vy, b.vx);
+    const _dsC = b._deadshotColor || b.color;
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_dsA);
+    // Arrow head — triangle
+    ctx.fillStyle = '#fff'; ctx.shadowColor = _dsC; ctx.shadowBlur = 12;
+    ctx.beginPath(); ctx.moveTo(b.size*2.5, 0); ctx.lineTo(-b.size*1.5, -b.size*1.2); ctx.lineTo(-b.size*0.5, 0); ctx.lineTo(-b.size*1.5, b.size*1.2); ctx.closePath(); ctx.fill();
+    // Inner color
+    ctx.globalAlpha = 0.8; ctx.fillStyle = _dsC;
+    ctx.beginPath(); ctx.moveTo(b.size*2, 0); ctx.lineTo(-b.size, -b.size*0.8); ctx.lineTo(-b.size*0.3, 0); ctx.lineTo(-b.size, b.size*0.8); ctx.closePath(); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.restore();
+    // Trailing particles (emitted in update loop via _deadshotRound flag)
     }else if(b.laserGlow){
     // Laser dot with intense glow
     ctx.shadowColor=b.color;ctx.shadowBlur=25;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();
