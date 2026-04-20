@@ -4198,15 +4198,89 @@ function _decorRand(seed) {
 }
 
 function _pickDecorTypesForDomain(domainIdx, isBoss) {
-  if (isBoss) return ['server_rack','terminal','crt_monitor','hazard_stripes','slumped_body'];
+  if (isBoss) return ['server_rack','terminal','crt_monitor','hazard_stripes','slumped_body','hazard_beacon','holo_dialog'];
   const pools = [
-    ['terminal','server_rack','crt_monitor','poster','cable','slumped_body'],
-    ['crt_monitor','hazard_stripes','server_rack','poster','terminal','slumped_body'],
-    ['cryopod','cable','server_rack','crt_monitor','cryopod','slumped_body'],
-    ['hazard_stripes','terminal','server_rack','cable','slumped_body'],
-    ['wireframe_obj','terminal','server_rack','wireframe_obj'],
+    // Entry Cache — sterile, mostly intact infrastructure
+    ['terminal','server_rack','crt_monitor','poster','cable','slumped_body','fluorescent','data_stream','ghost'],
+    // Corrupted Subnet — damaged, alarming
+    ['crt_monitor','hazard_stripes','server_rack','poster','terminal','slumped_body','hazard_beacon','holo_dialog','ghost'],
+    // Deep Storage — preservation, calm dread
+    ['cryopod','cable','server_rack','crt_monitor','cryopod','slumped_body','ghost','data_stream'],
+    // Kernel Boundary — hostile, burning
+    ['hazard_stripes','terminal','server_rack','cable','slumped_body','hazard_beacon','holo_dialog'],
+    // The Core — pure abstraction
+    ['wireframe_obj','terminal','server_rack','wireframe_obj','holo_dialog','data_stream'],
   ];
   return pools[Math.max(0, Math.min(4, domainIdx))];
+}
+
+// Generate a random error code for holographic dialogs
+function _genErrorCode(seed) {
+  const types = [
+    () => 'ERR_0x' + Math.floor(_decorRand(seed) * 0xFFFF).toString(16).toUpperCase().padStart(4, '0'),
+    () => 'CORE.DUMP_LOST',
+    () => 'SIGNAL.404',
+    () => 'MEM_FAULT',
+    () => 'STACK.' + Math.floor(_decorRand(seed + 1) * 999),
+    () => 'PACKET_LOSS',
+    () => 'CHECKSUM_BAD',
+    () => 'UPLOAD_FAIL',
+    () => 'QUEUE_OVERFLOW',
+    () => 'KERNEL_PANIC',
+    () => 'SEGFAULT_' + Math.floor(_decorRand(seed + 2) * 99),
+  ];
+  return types[Math.floor(_decorRand(seed + 3) * types.length)]();
+}
+
+// Generate scrolling data-stream glyphs for floor text
+function _genDataStream() {
+  const chars = '01░▒▓▪▫◆◇█▓▒░10';
+  let s = '';
+  for (let i = 0; i < 90; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+// Story clusters — small placed scenes that imply a narrative.
+// Each cluster: slumped body + supporting decals that tell you how they died.
+function _spawnStoryCluster(x, y, domain) {
+  const choice = Math.floor(_decorRand(Math.random() * 100000) * 4);
+  const seed = Math.random() * 100000;
+  if (choice === 0) {
+    // Last stand — body + shotgun casings + scorch marks
+    decor.push(_createDecor('slumped_body', x, y, domain, seed));
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2, r = 6 + Math.random() * 24;
+      decals.push({ x: x + Math.cos(a)*r, y: y + Math.sin(a)*r, size: 1.4 + Math.random(), alpha: 0.55, color: '#fa4' });
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = Math.random() * Math.PI * 2, r = 12 + Math.random() * 20;
+      decals.push({ x: x + Math.cos(a)*r, y: y + Math.sin(a)*r, size: 7 + Math.random() * 8, alpha: 0.35, color: '#1a0808' });
+    }
+  } else if (choice === 1) {
+    // Overdose — body + pill bottles
+    decor.push(_createDecor('slumped_body', x, y, domain, seed));
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2, r = 5 + Math.random() * 12;
+      decals.push({ x: x + Math.cos(a)*r, y: y + Math.sin(a)*r, size: 2, alpha: 0.6, color: Math.random() > 0.5 ? '#eee' : '#2a1810' });
+    }
+  } else if (choice === 2) {
+    // Escape attempt — handprint drag trail
+    const dir = Math.random() * Math.PI * 2;
+    for (let i = 0; i < 6; i++) {
+      const dx = Math.cos(dir) * i * 10, dy = Math.sin(dir) * i * 10;
+      decals.push({ x: x + dx, y: y + dy, size: 4 + Math.random() * 2, alpha: 0.4 - i * 0.05, color: '#400' });
+    }
+    // Small blood pool at the end
+    decals.push({ x: x + Math.cos(dir) * 50, y: y + Math.sin(dir) * 50, size: 9, alpha: 0.5, color: '#300' });
+  } else {
+    // Failed upload — body + broken CRT + circuit debris
+    decor.push(_createDecor('slumped_body', x - 6, y + 6, domain, seed));
+    decor.push(_createDecor('crt_monitor', x + 12, y - 4, domain, seed + 1));
+    for (let i = 0; i < 4; i++) {
+      const a = Math.random() * Math.PI * 2, r = 8 + Math.random() * 16;
+      decals.push({ x: x + Math.cos(a)*r, y: y + Math.sin(a)*r, size: 2 + Math.random() * 2, alpha: 0.45, color: '#334' });
+    }
+  }
 }
 
 function _findDecorSpot(sec, type) {
@@ -4252,6 +4326,11 @@ function _createDecor(type, x, y, domain, seed) {
     case 'hazard_stripes': return { type, x, y, w: 48, h: 28, color: '#cc0', accent: '#111', domain, seed };
     case 'wireframe_obj':  return { type, x, y, w: 28, h: 28, color: '#fff', accent: '#ff0', domain, seed };
     case 'slumped_body':   return { type, x, y, w: 18, h: 10, color: '#2a1515', accent: '#611', domain, seed, _angle: _decorRand(seed) * Math.PI * 2 };
+    case 'holo_dialog':    return { type, x, y, w: 30, h: 10, color: strokeColor, accent, domain, seed, _bob: _decorRand(seed+3) * Math.PI * 2, _text: _genErrorCode(seed), _flicker: 0 };
+    case 'data_stream':    return { type, x, y, w: 120, h: 7, color: strokeColor, accent, domain, seed, _text: _genDataStream() };
+    case 'ghost':          return { type, x, y, w: 10, h: 14, color: '#8cf', accent: '#bdf', domain, seed, _phase: 'wait', _timer: 60 + Math.floor(Math.random() * 240), _alpha: 0, _vx: 0, _vy: 0, _ox: x, _oy: y };
+    case 'hazard_beacon':  return { type, x, y, w: 10, h: 10, color: '#f44', accent: '#fff', domain, seed };
+    case 'fluorescent':    return { type, x, y, w: 34, h: 9, color: '#ccf', accent: '#fff', domain, seed, _flickerPhase: 0, _brightness: 1 };
   }
   return { type: 'terminal', x, y, w: 22, h: 14, color: strokeColor, accent, domain, seed, _flicker: 0, _text: 'SCAN', _textSwap: 0 };
 }
@@ -4295,6 +4374,11 @@ function spawnTrenchSectionDecor(idx) {
     const pos = _findDecorSpot(sec, 'debris');
     if (pos) _spawnDebrisCluster(pos.x, pos.y, domain);
   }
+  // 1 environmental story cluster per section (50% chance — not every room has a story)
+  if (Math.random() > 0.5 && !sec.isBoss) {
+    const pos = _findDecorSpot(sec, 'debris');
+    if (pos) _spawnStoryCluster(pos.x, pos.y, domain);
+  }
 }
 
 function updateDecor() {
@@ -4309,6 +4393,41 @@ function updateDecor() {
       d._twitchTimer--;
       if (d._twitchTimer <= 0) { d._twitch = 8; d._twitchTimer = 300 + Math.floor(Math.random() * 500); }
       if (d._twitch > 0) d._twitch--;
+    } else if (d.type === 'holo_dialog') {
+      d._flicker = (d._flicker + 1) % 90;
+      // Occasionally rotate the error code so the dialog isn't static
+      if (d._flicker === 0 && Math.random() > 0.6) d._text = _genErrorCode(d.seed + gameTime);
+    } else if (d.type === 'ghost') {
+      d._timer--;
+      if (d._phase === 'wait') {
+        d._alpha = 0;
+        if (d._timer <= 0) {
+          d._phase = 'fade_in'; d._timer = 30;
+          const a = Math.random() * Math.PI * 2;
+          d._vx = Math.cos(a) * 0.35; d._vy = Math.sin(a) * 0.35;
+          d.x = d._ox + (Math.random() - 0.5) * 40;
+          d.y = d._oy + (Math.random() - 0.5) * 40;
+        }
+      } else if (d._phase === 'fade_in') {
+        d._alpha = Math.min(0.35, d._alpha + 0.012);
+        if (d._timer <= 0) { d._phase = 'walk'; d._timer = 80 + Math.floor(Math.random() * 60); }
+      } else if (d._phase === 'walk') {
+        d._alpha = 0.35;
+        d.x += d._vx; d.y += d._vy;
+        if (d._timer <= 0) { d._phase = 'fade_out'; d._timer = 30; }
+      } else if (d._phase === 'fade_out') {
+        d._alpha = Math.max(0, d._alpha - 0.012);
+        d.x += d._vx * 0.5; d.y += d._vy * 0.5;
+        if (d._timer <= 0) { d._phase = 'wait'; d._timer = 120 + Math.floor(Math.random() * 300); }
+      }
+    } else if (d.type === 'fluorescent') {
+      if (d._flickerPhase > 0) {
+        d._flickerPhase--;
+        d._brightness = 0.15 + Math.random() * 0.3;
+      } else {
+        d._brightness = Math.min(1, d._brightness + 0.04);
+        if (Math.random() > 0.985) d._flickerPhase = 4 + Math.floor(Math.random() * 8);
+      }
     }
   }
 }
@@ -4335,8 +4454,170 @@ function renderDecor(ctx) {
       case 'hazard_stripes': _renderHazardStripes(ctx, d, t); break;
       case 'wireframe_obj':  _renderWireframe(ctx, d, t); break;
       case 'slumped_body':   _renderSlumpedBody(ctx, d, t); break;
+      case 'holo_dialog':    _renderHoloDialog(ctx, d, t); break;
+      case 'data_stream':    _renderDataStream(ctx, d, t); break;
+      case 'ghost':          _renderGhost(ctx, d, t); break;
+      case 'hazard_beacon':  _renderHazardBeacon(ctx, d, t); break;
+      case 'fluorescent':    _renderFluorescent(ctx, d, t); break;
     }
   }
+}
+
+function _renderHoloDialog(ctx, d, t) {
+  const bob = Math.sin(t * 0.003 + d._bob) * 2.5;
+  const flicker = d._flicker < 4 ? 0.25 : 0.8;
+  ctx.save();
+  ctx.translate(d.x, d.y + bob);
+  ctx.globalAlpha = flicker;
+  ctx.strokeStyle = d.accent;
+  ctx.shadowColor = d.accent;
+  ctx.shadowBlur = 4;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  // Corner brackets for a sci-fi dialog look
+  const ck = 3;
+  ctx.beginPath();
+  ctx.moveTo(-d.w/2, -d.h/2 + ck); ctx.lineTo(-d.w/2, -d.h/2); ctx.lineTo(-d.w/2 + ck, -d.h/2);
+  ctx.moveTo(d.w/2, -d.h/2 + ck); ctx.lineTo(d.w/2, -d.h/2); ctx.lineTo(d.w/2 - ck, -d.h/2);
+  ctx.moveTo(-d.w/2, d.h/2 - ck); ctx.lineTo(-d.w/2, d.h/2); ctx.lineTo(-d.w/2 + ck, d.h/2);
+  ctx.moveTo(d.w/2, d.h/2 - ck); ctx.lineTo(d.w/2, d.h/2); ctx.lineTo(d.w/2 - ck, d.h/2);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = d.accent;
+  ctx.font = 'bold 6px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(d._text, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderDataStream(ctx, d, t) {
+  ctx.save();
+  const scroll = (t * 0.05) % d.w;
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = d.accent;
+  ctx.font = 'bold 7px monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  // Clip to the strip area so scrolling looks contained
+  ctx.beginPath();
+  ctx.rect(d.x - d.w/2, d.y - d.h/2, d.w, d.h);
+  ctx.clip();
+  // Draw twice for seamless scroll
+  const baseY = d.y;
+  ctx.shadowColor = d.accent;
+  ctx.shadowBlur = 2;
+  ctx.fillText(d._text, d.x - d.w/2 - scroll, baseY);
+  ctx.fillText(d._text, d.x - d.w/2 - scroll + d.w, baseY);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderGhost(ctx, d, t) {
+  if (d._alpha <= 0.01) return;
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.globalAlpha = d._alpha;
+  ctx.strokeStyle = d.color;
+  ctx.shadowColor = d.color;
+  ctx.shadowBlur = 10;
+  ctx.lineWidth = 1;
+  // Head (circle)
+  ctx.beginPath();
+  ctx.arc(0, -6, 4, 0, Math.PI * 2);
+  ctx.stroke();
+  // Body (trapezoid — wireframe torso)
+  ctx.beginPath();
+  ctx.moveTo(-4, -2); ctx.lineTo(4, -2);
+  ctx.lineTo(3, 10); ctx.lineTo(-3, 10);
+  ctx.closePath();
+  ctx.stroke();
+  // Occasional glitch lines across the ghost
+  if (Math.random() > 0.7) {
+    ctx.beginPath();
+    const gy = -8 + Math.random() * 20;
+    ctx.moveTo(-6, gy); ctx.lineTo(6, gy);
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function _renderHazardBeacon(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  // Base housing
+  ctx.fillStyle = '#181818';
+  ctx.fillRect(-4, -4, 8, 8);
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-4, -4, 8, 8);
+  // Pulsing light bulb
+  const pulse = 0.4 + 0.6 * Math.abs(Math.sin(t * 0.004 + d.seed));
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = d.color;
+  ctx.shadowColor = d.color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(0, -1, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  // Rotating beam cone (additive)
+  const angle = (t * 0.0014 + d.seed) % (Math.PI * 2);
+  const beamLen = 90, beamSpread = 0.42;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = d.color;
+  ctx.beginPath();
+  ctx.moveTo(d.x, d.y);
+  ctx.arc(d.x, d.y, beamLen, angle - beamSpread, angle + beamSpread);
+  ctx.closePath();
+  ctx.fill();
+  // Brighter inner wedge
+  ctx.globalAlpha = 0.22;
+  ctx.beginPath();
+  ctx.moveTo(d.x, d.y);
+  ctx.arc(d.x, d.y, beamLen * 0.55, angle - beamSpread * 0.5, angle + beamSpread * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function _renderFluorescent(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  // Housing
+  ctx.fillStyle = '#181820';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  // Tube — gradient with current brightness
+  const tubeGrad = ctx.createLinearGradient(0, -d.h/2, 0, d.h/2);
+  tubeGrad.addColorStop(0, 'rgba(180,200,255,0.7)');
+  tubeGrad.addColorStop(0.5, 'rgba(240,240,255,1)');
+  tubeGrad.addColorStop(1, 'rgba(180,200,255,0.7)');
+  ctx.globalAlpha = d._brightness;
+  ctx.fillStyle = tubeGrad;
+  ctx.fillRect(-d.w/2 + 2, -d.h/2 + 2, d.w - 4, d.h - 4);
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  // Soft wash of light onto the floor below (additive)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.22 * d._brightness;
+  const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 110);
+  grad.addColorStop(0, '#ccf');
+  grad.addColorStop(0.6, 'rgba(150,170,220,0.3)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(d.x - 110, d.y - 110, 220, 220);
+  ctx.restore();
 }
 
 function _renderTerminal(ctx, d, t) {
