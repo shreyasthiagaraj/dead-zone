@@ -10520,7 +10520,7 @@ function updateDischarge() {
 // ============================================================
 // PAYLOAD — lob a grenade that bounces then detonates
 // ============================================================
-const PAYLOAD_COOLDOWN = 90;  // 1.5 seconds
+const PAYLOAD_COOLDOWN = BEACON_COOLDOWN;  // same as beacon
 let activeGrenade = null;
 
 function activatePayload() {
@@ -10529,7 +10529,7 @@ function activatePayload() {
   if (activeGrenade) return;
   lp._beaconCooldown = PAYLOAD_COOLDOWN;
   const _m = runMods || {};
-  const classId = _m.dominantClass;
+  const classId = _m.beaconElement || _m.dominantClass; // beacon element cards apply to payload
   // Fire straight in facing direction
   const dx = Math.cos(lp.angle), dy = Math.sin(lp.angle);
   const speed = 14;
@@ -10539,7 +10539,7 @@ function activatePayload() {
     timer: 45, // 0.75s fuse if it doesn't hit anything
     classId, ownerId: lp.id,
   };
-  playSound(500, 0.12, 'sine', 0.08); playSound(300, 0.08, 'square', 0.05);
+  playSound(400, 0.06, 'sine', 0.06); playSound(250, 0.04, 'square', 0.04);
 }
 
 function updatePayload() {
@@ -10598,8 +10598,8 @@ function updatePayload() {
         life:30, maxLife:30, size:6+Math.random()*4, color:'#555', type:'smoke' });
     }
     decals.push({ x: g.x, y: g.y, size: radius*0.6, alpha: 0.35, color: '#333' });
-    screenShake.intensity = Math.max(screenShake.intensity, 10);
-    playExplosionSound();
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    playSound(120, 0.08, 'sawtooth', 0.1); playSound(80, 0.06, 'square', 0.06);
     activeGrenade = null;
   }
 }
@@ -10636,7 +10636,8 @@ function updateDeadshot() {
   if (!lp || !lp.alive) { _deadshotCharging = false; _deadshotCharge = 0; return; }
   _deadshotCharge = Math.min(DEADSHOT_MAX_CHARGE, _deadshotCharge + 1);
   const _m = runMods || {};
-  const bColor = _m.dominantClass ? (_ELEM_COLOR[_m.dominantClass] || '#f44') : '#f44';
+  const _dsClassId = _m.beaconElement || _m.dominantClass;
+  const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#f44') : '#f44';
   const chargePct = _deadshotCharge / DEADSHOT_MAX_CHARGE;
   // Charging VFX: energy gathering at muzzle
   if (gameTime % 2 === 0) {
@@ -10654,9 +10655,9 @@ function _fireDeadshot(lp) {
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
   _deadshotCharge = 0;
-  lp._beaconCooldown = DEADSHOT_COOLDOWN;
+  lp._beaconCooldown = BEACON_COOLDOWN; // same cooldown as beacon
   const _m = runMods || {};
-  const classId = _m.dominantClass;
+  const classId = _m.beaconElement || _m.dominantClass; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
   const baseDmg = 40 + Math.floor(chargePct * 160); // 40-200 damage
   const pierce = chargePct > 0.8 ? 99 : Math.floor(chargePct * 3); // full charge = infinite pierce
@@ -10686,8 +10687,8 @@ function _fireDeadshot(lp) {
   particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 16, maxLife: 16,
     size: 1, color: bColor, type: 'lightning',
     tx: lp.x + Math.cos(a)*200, ty: lp.y + Math.sin(a)*200 });
-  screenShake.intensity = Math.max(screenShake.intensity, 6 + chargePct*8);
-  playSound(100, 0.3, 'square', 0.12); playSound(60, 0.25, 'sine', 0.08);
+  screenShake.intensity = Math.max(screenShake.intensity, 4 + chargePct*4);
+  playSound(100, 0.12, 'square', 0.1); playSound(60, 0.1, 'sine', 0.06);
   if (chargePct >= 0.8) triggerGlitchSurge(0.3, 12);
 }
 
@@ -12529,6 +12530,7 @@ function update() {
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
       // Cannot move while firing. Must release to reposition.
       if (isMobile && shootButtonHeld) moveSpeed = 0;
+      if (_deadshotCharging) moveSpeed = 0; // freeze while charging deadshot — joystick aims only
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -12539,7 +12541,10 @@ function update() {
         moveSpeed=moveSpeed*speedScale;
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
-      lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;}
+      lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;
+      // Deadshot: joystick aims instead of moves
+      if (_deadshotCharging && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
+    }
     // ---- DASH OVERRIDE ----
     // When the dash is active, slam velocity to the dash direction × dash speed and spawn
     // chromatic glitch afterimages. Normal input is ignored for the duration.
