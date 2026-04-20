@@ -12349,7 +12349,12 @@ function lineCircleHit(x0,y0,x1,y1,cx,cy,r){
 // Find nearest zombie hit along a line segment, returns {zombie, index, t, hx, hy} or null
 function raycastZombies(x0,y0,x1,y1,bSize){
   let best=null,bestT=2;
+  // Broadphase bounding box — skip zombies clearly outside the segment's bbox
+  const _margin = bSize + 32;
+  const _xMin = Math.min(x0, x1) - _margin, _xMax = Math.max(x0, x1) + _margin;
+  const _yMin = Math.min(y0, y1) - _margin, _yMax = Math.max(y0, y1) + _margin;
   for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+    if (z.x < _xMin || z.x > _xMax || z.y < _yMin || z.y > _yMax) continue;
     const t=lineCircleHit(x0,y0,x1,y1,z.x,z.y,z.radius+bSize);
     if(t>=0&&t<bestT){bestT=t;best={zombie:z,index:j,t,hx:x0+(x1-x0)*t,hy:y0+(y1-y0)*t};}
   }
@@ -13169,7 +13174,11 @@ function update() {
   }
 
   // ---- Bullet physics (all clients run this for smooth visuals) ----
-  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];b.trail.push({x:b.x,y:b.y});if(b.trail.length>6)b.trail.shift();if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
+  for(let i=bullets.length-1;i>=0;i--){const b=bullets[i];
+    // Trail: reuse oldest object once full (zero alloc/frame per bullet after warmup).
+    if(b.trail.length<6){b.trail.push({x:b.x,y:b.y});}
+    else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
+    if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
     // Elemental bullet particle trails
     if(b._element==='fire'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1.5,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
@@ -13241,6 +13250,11 @@ function update() {
     // Only host does damage calculations
     if(isHost){
       if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+        // BROADPHASE: skip zombies that are obviously too far — saves the full hit math + dist() sqrt.
+        // Fast bullets use sweep collision so margin must cover the bullet's per-frame travel distance.
+        const _brpdx=z.x-b.x,_brpdy=z.y-b.y;
+        const _brpfR=z.radius+b.size+(_bfast?40:4);
+        if(_brpdx*_brpdx+_brpdy*_brpdy>_brpfR*_brpfR)continue;
         // Use sweep collision for fast bullets (Tesla, etc) to prevent tunneling
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_bhit){
@@ -13533,6 +13547,10 @@ function update() {
     // Non-host: visual bullet collision with client-side hit prediction
     else if(b.owner==='player'){
       for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
+        // BROADPHASE: same squared-distance reject as host branch
+        const _brpdx=z.x-b.x,_brpdy=z.y-b.y;
+        const _brpfR=z.radius+b.size+(_bfast?40:4);
+        if(_brpdx*_brpdx+_brpdy*_brpdy>_brpfR*_brpfR)continue;
         const _vhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_vhit){
         // Client-side hit prediction: speculative damage for immediate visual feedback
