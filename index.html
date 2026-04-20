@@ -276,6 +276,8 @@ body.mobile #mobile-buttons { display: block; }
 #datalink-screen.visible { opacity:1; }
 #reforge-screen { opacity:0; transition:opacity 0.4s ease-out; }
 #reforge-screen.visible { opacity:1; }
+#signallab-screen { opacity:0; transition:opacity 0.4s ease-out; }
+#signallab-screen.visible { opacity:1; }
 .dl-option { flex:1;max-width:220px;min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px 12px;border-radius:14px;border:2px solid rgba(255,255,255,0.15);background:rgba(10,10,20,0.85);cursor:pointer;transition:transform 0.2s,border-color 0.3s,box-shadow 0.3s,opacity 0.3s;-webkit-tap-highlight-color:transparent;user-select:none }
 .dl-option:active { transform:scale(0.96); }
 .dl-option.selected { transform:scale(1.05);opacity:1; }
@@ -592,6 +594,17 @@ body.mobile #mobile-buttons { display: block; }
   <button id="btn-reforge-skip" style="margin-top:14px;padding:10px 32px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15)">SKIP</button>
 </div>
 
+<!-- ---- SIGNAL LAB OVERLAY ---- -->
+<div id="signallab-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:62;background:rgba(3,3,12,0.88);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
+  <div style="text-align:center;margin-bottom:16px">
+    <div style="color:#a8f;font-size:10px;letter-spacing:4px;opacity:0.5">// SIGNAL CALIBRATION //</div>
+    <div style="color:#a8f;font-size:20px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 12px #a8f;margin-top:4px">SIGNAL LAB</div>
+    <div style="color:#aab;font-size:11px;margin-top:4px">Tune your receiver to prioritize a protocol class</div>
+  </div>
+  <div id="signallab-options" style="display:flex;flex-direction:row;gap:10px;flex-wrap:wrap;justify-content:center;max-width:600px"></div>
+  <button id="btn-signallab-clear" style="margin-top:14px;padding:8px 24px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,255,0.04);border:1px solid #5568;border-radius:8px;color:#889;cursor:pointer">CLEAR FOCUS</button>
+</div>
+
 <!-- ---- PAUSE MENU ---- -->
 <div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;background:rgba(3,3,12,0.92);font-family:'Courier New',monospace;text-align:center">
   <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:350px">
@@ -790,6 +803,8 @@ let _shellGlitchInTimer = 0;
 let _shellDeathStats = null;
 let _returnToShell = false;
 let _shellInteractCooldown = 0;
+let _researchFocus = null; // null or one of: 'thermal','cryo','arc','pulse','corrupt'
+let _signalLabCooldown = 0;
 let level = 1, exitPos = null, spawnTimer = 0;
 let gameMode = 'dungeon'; // 'dungeon' or 'survival'
 // Survival mode wave state
@@ -1893,21 +1908,26 @@ function draftShopCards(n) {
       attempted.add(r.id);
     }
   }
-  // ---- CLASS AFFINITY WEIGHTING ----
-  // Count owned cards per class. If the player has committed to a class, ~50% chance
-  // one of the offered cards comes from that class. Encourages build convergence.
+  // ---- CLASS AFFINITY + RESEARCH FOCUS WEIGHTING ----
   {
     const classCounts = { thermal: 0, cryo: 0, arc: 0, pulse: 0, corrupt: 0 };
     for (const id in runUpgrades) {
       const cls = _CARD_CLASS_MAP[id];
       if (cls) classCounts[cls] += runUpgrades[id];
     }
-    let bestClass = null, bestCount = 0;
-    for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; bestClass = cls; } }
-    // Only weight if player has bought 2+ cards in a class
-    if (bestClass && bestCount >= 2 && Math.random() < 0.50) {
+    // Research focus takes priority; otherwise use most-owned class
+    let priorityClass = _researchFocus || null;
+    let affinityChance = 0.65; // research focus: 65% chance
+    if (!priorityClass) {
+      // Fallback to natural affinity from owned cards
+      let bestCount = 0;
+      for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; priorityClass = cls; } }
+      if (bestCount < 2) priorityClass = null;
+      affinityChance = 0.50;
+    }
+    if (priorityClass && Math.random() < affinityChance) {
       const classPool = UPGRADE_POOL.filter(u =>
-        _CARD_CLASS_MAP[u.id] === bestClass &&
+        _CARD_CLASS_MAP[u.id] === priorityClass &&
         !attempted.has(u.id) &&
         (runUpgrades[u.id] || 0) < u.max &&
         _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u)
@@ -2906,6 +2926,70 @@ function closeReforge() {
     setTimeout(() => { el.style.display = 'none'; }, 400);
   }
   if (gameState === 'reforge') gameState = 'playing';
+}
+
+// --- Signal Lab: research focus UI ---
+function openSignalLab() {
+    if (_signalLabCooldown > 0) return;
+    const el = document.getElementById('signallab-screen');
+    if (!el) return;
+    const container = document.getElementById('signallab-options');
+    if (!container) return;
+    container.innerHTML = '';
+    const classes = [
+        { id: 'thermal', name: 'THERMAL', icon: '\uD83D\uDD25', color: '#f80', desc: 'Overheat, fire, explosions' },
+        { id: 'cryo', name: 'CRYO', icon: '\uD83E\uDDCA', color: '#8ef', desc: 'Chill, freeze, shatter' },
+        { id: 'arc', name: 'ARC', icon: '\u26A1', color: '#4ff', desc: 'Charged, chain lightning' },
+        { id: 'pulse', name: 'PULSE', icon: '\uD83D\uDCA8', color: '#cef', desc: 'Knockback, exposed' },
+        { id: 'corrupt', name: 'CORRUPT', icon: '\u2623', color: '#a4f', desc: 'Corrupt, compromised' },
+    ];
+    for (const cls of classes) {
+        const isActive = _researchFocus === cls.id;
+        const btn = document.createElement('div');
+        btn.style.cssText = 'width:100px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:2px solid ' + (isActive ? cls.color : cls.color + '44') + ';background:' + (isActive ? cls.color + '18' : 'rgba(10,10,20,0.9)') + ';box-shadow:' + (isActive ? '0 0 16px ' + cls.color + '44' : 'none') + ';transition:border-color 0.15s,background 0.15s,box-shadow 0.15s;';
+        btn.innerHTML = '<div style="font-size:24px">' + cls.icon + '</div><div style="font-size:11px;font-weight:bold;letter-spacing:2px;color:' + cls.color + '">' + cls.name + '</div><div style="font-size:9px;color:#aab;text-align:center">' + cls.desc + '</div>' + (isActive ? '<div style="font-size:8px;color:#0f0;letter-spacing:1px;margin-top:2px">\u25CF ACTIVE</div>' : '');
+        const handler = (ev) => { ev.preventDefault(); ev.stopPropagation(); selectResearchFocus(cls.id); };
+        btn.addEventListener('click', handler);
+        btn.addEventListener('touchend', handler, { passive: false });
+        container.appendChild(btn);
+    }
+    const clearBtn = document.getElementById('btn-signallab-clear');
+    if (clearBtn) {
+        clearBtn.onclick = (ev) => { ev.preventDefault(); selectResearchFocus(null); };
+        clearBtn.style.display = _researchFocus ? '' : 'none';
+    }
+    if (gameState === 'playing') gameState = 'signallab';
+    else if (gameState === 'shell') gameState = 'signallab';
+    el.style.display = 'flex';
+    void el.offsetWidth;
+    el.classList.add('visible');
+    triggerGlitchSurge(0.2, 15);
+}
+
+function selectResearchFocus(classId) {
+    _researchFocus = classId;
+    const lp = getLocalPlayer();
+    if (classId) {
+        const cls = { thermal: '#f80', cryo: '#8ef', arc: '#4ff', pulse: '#cef', corrupt: '#a4f' };
+        if (lp) addFloatingText(lp.x, lp.y - 40, 'FOCUS: ' + classId.toUpperCase(), cls[classId] || '#fff');
+    } else {
+        if (lp) addFloatingText(lp.x, lp.y - 40, 'FOCUS CLEARED', '#889');
+    }
+    playSfx('level_up', 0.2) || playSound(1100, 0.06, 'sine', 0.12);
+    setTimeout(() => closeSignalLab(), 400);
+}
+
+function closeSignalLab() {
+    const el = document.getElementById('signallab-screen');
+    if (el) {
+        el.classList.remove('visible');
+        setTimeout(() => { el.style.display = 'none'; }, 400);
+    }
+    _signalLabCooldown = 60;
+    if (gameState === 'signallab') {
+        if (_checkpointRoomActive) gameState = 'playing';
+        else gameState = 'shell';
+    }
 }
 
 // --- Boss reward: guaranteed rare+ card pick ---
@@ -3990,6 +4074,14 @@ function updateCheckpointRoom(sec, TW) {
     _dlChoicePending = true; // lock door until shop is used
     spawnShopChest(midX, midY);
 
+    // Signal Lab — player can change research focus at checkpoints
+    const labX = sec.x + TW * 0.25;
+    const labY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+    barrels.push({
+        x: labX, y: labY, radius: 20, hp: 9999, maxHp: 9999,
+        _signalLab: true, _bobTimer: 0, _spawnAnim: 30, _spawnAnimMax: 30,
+    });
+
     // Big announcement
     showSectionTitleCard('\u25C6 CHECKPOINT \u25C6', 'progress cached \u00B7 systems restored', false);
     triggerGlitchSurge(0.3, 30);
@@ -4006,7 +4098,7 @@ function updateCheckpointRoom(sec, TW) {
   }
 
   // Door logic: player can walk to the right wall door once shop is used
-  if (_trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
+  if (_trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && gameState !== 'signallab' && !_dlChoicePending) {
     const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
     const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
@@ -5775,7 +5867,7 @@ function _aaSelectTarget(lp) {
   }
   // Also target barrels (not shop chests) and spawners
   for (const br of barrels) {
-    if (!br || br.hp <= 0 || br._shopChest || br._chest || br._strideChest) continue;
+    if (!br || br.hp <= 0 || br._shopChest || br._chest || br._strideChest || br._signalLab) continue;
     const s = _aaScoreEnemy(br, lp);
     if (s > bestScore) { bestScore = s; bestZ = br; }
   }
@@ -5940,6 +6032,8 @@ function saveCheckpoint() {
     dlFirstChoice: _dlFirstChoice,
     // Special weapon
     selectedSpecial: selectedSpecial,
+    // Research focus
+    researchFocus: _researchFocus,
   };
   try {
     localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
@@ -6020,6 +6114,9 @@ function resumeFromCheckpoint() {
 
   // Restore special weapon
   if (cp.selectedSpecial) selectedSpecial = cp.selectedSpecial;
+
+  // Restore research focus
+  _researchFocus = cp.researchFocus || null;
 
   // Set up game state
   gameState = 'playing';
@@ -7009,6 +7106,7 @@ function generateShellRoom() {
     { x: 4 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'crypt', label: 'THE FORGE', color: '#ff0', icon: '\u2692' },
     { x: 4 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'codex', label: 'CODEX', color: '#0ff', icon: '\u25C8' },
     { x: 14 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'armory', label: 'ARMORY', color: '#f80', icon: '\u2694' },
+    { x: 9 * CELL_SIZE, y: 3 * CELL_SIZE, type: 'signal_lab', label: 'SIGNAL LAB', color: '#a8f', icon: '\u25C8' },
   ];
   // Add resume terminal if a checkpoint exists
   if (hasCheckpoint()) {
@@ -8972,6 +9070,7 @@ function updateShell() {
     if (d < 55) { _shellNearTerminal = t; break; }
   }
   if (_shellInteractCooldown > 0) _shellInteractCooldown--;
+  if (_signalLabCooldown > 0) _signalLabCooldown--;
   // Only trigger when player WALKS IN (wasn't near last frame)
   if (_shellNearTerminal && _shellNearTerminal !== _prevNear && _shellInteractCooldown <= 0) {
     shellInteract(_shellNearTerminal);
@@ -8991,6 +9090,7 @@ function shellInteract(terminal) {
   if (terminal.type === 'crypt') openCryptMenu();
   else if (terminal.type === 'codex') openCodex();
   else if (terminal.type === 'armory') openArmory();
+  else if (terminal.type === 'signal_lab') openSignalLab();
   else if (terminal.type === 'checkpoint') {
     // Resume from checkpoint — fade to black, then restore
     if (_shellTransitioning) return;
@@ -9448,6 +9548,8 @@ function startSoloGame() {
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
   resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0; _pendingBossShop = false;
   resetDataLinkState();
+  _researchFocus = null;
+  _signalLabCooldown = 0;
   _seenGlitchTypes = new Set();
   _whisperCooldown = 600; // first whisper after ~10s
   memoryFragments = [];
@@ -9622,7 +9724,7 @@ function handleKeyDown(e) {
       if (_levelupSelectedId) { e.preventDefault(); confirmUpgradeCard(); return; }
     }
   }
-  if (e.key === 'Escape') { e.preventDefault(); togglePauseMenu(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); if (gameState === 'signallab') { closeSignalLab(); return; } togglePauseMenu(); return; }
   if (gameState === 'playing') {
     if (e.key === 'r') reloadWeapon();
     if (e.key >= '1' && e.key <= '9') switchWeapon(parseInt(e.key)-1);
@@ -11209,7 +11311,7 @@ function explodeBarrel(barrel, idx) {
   // Chain reaction: explode nearby barrels
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
-    if (b2._chest || b2._dlChest || b2._shopChest) continue; // don't chain to special chests
+    if (b2._chest || b2._dlChest || b2._shopChest || b2._signalLab) continue; // don't chain to special chests
     if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 120) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
@@ -12249,6 +12351,8 @@ function update() {
   if (gameState === 'shell') { updateShell(); return; }
   // Boss death dramatic freeze
   if (_bossDeathFreeze > 0) { _bossDeathFreeze--; return; }
+  // Signal lab cooldown (prevents re-open spam in checkpoint room)
+  if (_signalLabCooldown > 0) _signalLabCooldown--;
   // Update ambient audio and dynamic music every frame
   updateAmbientAudio();
 
@@ -13111,7 +13215,7 @@ function update() {
     }
     // Barrel collision — all clients check (barrels are visual + host-authoritative)
     // Shop terminals are immune to bullets — player must walk up to interact.
-    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];if(br._shopChest)continue;const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){br.hp--;br._hitFlash=8;if(br.hp<=0)explodeBarrel(br,bi);else{playHitSound();for(let sp=0;sp<4;sp++){const sa=Math.random()*Math.PI*2;particles.push({x:br.x+Math.cos(sa)*br.radius,y:br.y+Math.sin(sa)*br.radius,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#ff0',type:'spark'});}}bullets.splice(i,1);break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
+    if(b.owner==='player'){for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];if(br._shopChest||br._signalLab)continue;const _brhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,br.x,br.y,br.radius+b.size)>=0:dist(b,br)<br.radius+b.size;if(_brhit){br.hp--;br._hitFlash=8;if(br.hp<=0)explodeBarrel(br,bi);else{playHitSound();for(let sp=0;sp<4;sp++){const sa=Math.random()*Math.PI*2;particles.push({x:br.x+Math.cos(sa)*br.radius,y:br.y+Math.sin(sa)*br.radius,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#ff0',type:'spark'});}}bullets.splice(i,1);break;}}if(i>=bullets.length||!bullets[i]||bullets[i]!==b)continue;}
     // Only host does damage calculations
     if(isHost){
       if(b.owner==='player'){for(let j=zombies.length-1;j>=0;j--){const z=zombies[j];
@@ -14722,7 +14826,7 @@ function update() {
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,powerupId:p.powerupId,elementId:p.elementId,orbitalId:p.orbitalId,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
-    const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0}));
+    const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0,_signalLab:br._signalLab?1:0}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
     // Siege walls: only send HP arrays, positions are already known from map gen
     const sLHp = (gameMode === 'siege' && siegeWallLeft.length) ? siegeWallLeft.map(s => s.hp | 0) : null;
@@ -14949,7 +15053,7 @@ function applyHostState(msg) {
   // Sync pickups from host
   if (msg.pickups) { pickups = msg.pickups; }
   // Sync barrels from host — preserve chest flags so shop / stride chests render right on clients
-  if (msg.barrels) { barrels = msg.barrels.map(br => ({...br, hp: 1, _chest: !!br._chest, _strideChest: !!br._strideChest, _shopChest: !!br._shopChest})); }
+  if (msg.barrels) { barrels = msg.barrels.map(br => ({...br, hp: 1, _chest: !!br._chest, _strideChest: !!br._strideChest, _shopChest: !!br._shopChest, _signalLab: !!br._signalLab})); }
   // Check game over
   if (!players.some(p => p.alive) && gameState === 'playing') showDeathScreen();
 }
@@ -15152,7 +15256,7 @@ function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
-  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'reforge') { renderMenuBackground(); renderMinimap(); return; }
+  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'reforge' && gameState !== 'signallab') { renderMenuBackground(); renderMinimap(); return; }
   // Cache nearest-zombie distance for the local player — used by the close-range vignette
   {
     _playerNearestZombieDist = Infinity;
@@ -15734,6 +15838,51 @@ function render() {
         }
       }
       continue;
+    }
+    // ---- SIGNAL LAB (checkpoint terminal) ----
+    if (br._signalLab) {
+      if (br._spawnAnim > 0) br._spawnAnim--;
+      const slT = 1 - (br._spawnAnim / (br._spawnAnimMax || 30));
+      const slPulse = 0.5 + Math.sin(performance.now() * 0.004) * 0.25;
+      const slScale = Math.min(1, slT * 1.2);
+      // Spotlight glow
+      ctx.globalAlpha = 0.1 * slPulse;
+      const _slGrd = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
+      _slGrd.addColorStop(0, '#a8f'); _slGrd.addColorStop(0.5, '#a8f'); _slGrd.addColorStop(1, 'transparent');
+      ctx.fillStyle = _slGrd; ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.scale(slScale, slScale);
+      // Body
+      ctx.fillStyle = '#080812';
+      const slW = br.radius * 1.3, slH = br.radius * 1.1;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-slW, -slH, slW*2, slH*2, 4) : ctx.rect(-slW, -slH, slW*2, slH*2);
+      ctx.fill();
+      ctx.strokeStyle = '#a8f'; ctx.lineWidth = 2.5; ctx.shadowColor = '#a8f'; ctx.shadowBlur = 12; ctx.stroke(); ctx.shadowBlur = 0;
+      // Icon
+      ctx.fillStyle = '#a8f'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#a8f'; ctx.shadowBlur = 8;
+      ctx.fillText('\u25C8', 0, 1);
+      ctx.shadowBlur = 0;
+      // Label
+      ctx.fillStyle = '#a8f'; ctx.font = 'bold 9px monospace'; ctx.globalAlpha = 0.8;
+      ctx.shadowColor = '#a8f'; ctx.shadowBlur = 4;
+      ctx.fillText('SIGNAL LAB', 0, -br.radius - 12);
+      // Show current focus if set
+      if (_researchFocus) {
+        const fcol = { thermal: '#f80', cryo: '#8ef', arc: '#4ff', pulse: '#cef', corrupt: '#a4f' }[_researchFocus] || '#fff';
+        ctx.fillStyle = fcol; ctx.font = 'bold 8px monospace';
+        ctx.fillText(_researchFocus.toUpperCase(), 0, br.radius + 14);
+      }
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      // Proximity interaction
+      const _slLp = getLocalPlayer();
+      if (_slLp && _slLp.alive && br._spawnAnim <= 0 && gameState === 'playing' && _signalLabCooldown <= 0) {
+        const _sldx = _slLp.x - br.x, _sldy = _slLp.y - br.y;
+        if (_sldx*_sldx + _sldy*_sldy < (br.radius + PLAYER_RADIUS + 10) ** 2) {
+          openSignalLab();
+        }
+      }
+      ctx.restore(); continue;
     }
     // ---- DATA LINK CHEST ----
     if (br._dlChest) {
@@ -17177,7 +17326,7 @@ function render() {
     }
     // Mod terminals glow as point lights (cyan ambient, no directional cone needed)
     for (const br of barrels) {
-      if (br._shopChest && lights.length < 4) {
+      if ((br._shopChest || br._signalLab) && lights.length < 4) {
         lights.push({ x: br.x, y: br.y, angle: 0, radius: 140 });
       }
     }
