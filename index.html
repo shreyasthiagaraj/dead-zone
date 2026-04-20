@@ -10520,7 +10520,7 @@ function updateDischarge() {
 // ============================================================
 // PAYLOAD — lob a grenade that bounces then detonates
 // ============================================================
-const PAYLOAD_COOLDOWN = 120;  // 2 seconds
+const PAYLOAD_COOLDOWN = 90;  // 1.5 seconds
 let activeGrenade = null;
 
 function activatePayload() {
@@ -10532,11 +10532,11 @@ function activatePayload() {
   const classId = _m.dominantClass;
   // Fire straight in facing direction
   const dx = Math.cos(lp.angle), dy = Math.sin(lp.angle);
-  const speed = 10;
+  const speed = 14;
   activeGrenade = {
     x: lp.x + dx*20, y: lp.y + dy*20,
     vx: dx * speed, vy: dy * speed,
-    timer: 60, // 1s fuse if it doesn't hit anything
+    timer: 45, // 0.75s fuse if it doesn't hit anything
     classId, ownerId: lp.id,
   };
   playSound(500, 0.12, 'sine', 0.08); playSound(300, 0.08, 'square', 0.05);
@@ -10567,8 +10567,8 @@ function updatePayload() {
     life: 20, maxLife: 20, size: 4 + Math.random()*2, color: '#555', type: 'smoke' });
   // Detonate
   if (g.timer <= 0) {
-    const radius = 80;
-    const dmg = 50;
+    const radius = 120;
+    const dmg = 100;
     const gc = g.classId ? (_ELEM_COLOR[g.classId] || '#fa0') : '#fa0';
     if (isHost) {
       for (const z of zombies) {
@@ -10576,12 +10576,13 @@ function updatePayload() {
         const dx = z.x - g.x, dy = z.y - g.y, d = Math.sqrt(dx*dx+dy*dy);
         if (d < radius + z.radius) {
           const closeness = 1 - d / (radius + z.radius);
-          damageZombie(z, Math.floor(dmg * closeness), (dx/d)*8, (dy/d)*8);
-          if (g.classId === 'fire') applyOverheat(z, 10, 1);
-          if (g.classId === 'ice') applyChill(z, 3);
-          if (g.classId === 'chain') applyCharged(z);
-          if (g.classId === 'wind') applyExposed(z);
-          if (g.classId === 'corrupt') applyCorrupt(z, 2);
+          damageZombie(z, Math.floor(dmg * closeness), (dx/d)*12, (dy/d)*12);
+          z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+          if (g.classId === 'fire') applyOverheat(z, 15, 1);
+          if (g.classId === 'ice') applyChill(z, 4);
+          if (g.classId === 'chain') { applyCharged(z); z.staggerTimer = Math.max(z.staggerTimer, 30); }
+          if (g.classId === 'wind') { applyExposed(z); z.vx += (dx/d)*6; z.vy += (dy/d)*6; }
+          if (g.classId === 'corrupt') applyCorrupt(z, 3);
         }
       }
     }
@@ -10646,8 +10647,7 @@ function updateDeadshot() {
       life: 8, maxLife: 8, size: 2 + chargePct*3, color: bColor, type: 'spark' });
   }
   if (_deadshotCharge % 15 === 0) playSound(300 + _deadshotCharge * 8, 0.04, 'sine', 0.05);
-  // Auto-fire at max charge
-  if (_deadshotCharge >= DEADSHOT_MAX_CHARGE) _fireDeadshot(lp);
+  // Hold at max charge — fires only on button release
 }
 
 function _fireDeadshot(lp) {
