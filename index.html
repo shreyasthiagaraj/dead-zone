@@ -5289,6 +5289,7 @@ let weaponKillCounts = {};
 
 let highScore = parseInt(localStorage.getItem('deadzone_highscore') || '0');
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
+let _bossDeathFreeze = 0;
 let gameTime = 0;
 
 // ---- MULTIPLAYER STATE ----
@@ -6022,6 +6023,8 @@ function updateAmbientAudio() {
   // Dynamic music: combat starts at 3+ aware zombies nearby,
   // randomly picks from combat track pool. Switches ambient tracks too.
   const inCombat = currentMusic && COMBAT_TRACKS.includes(currentMusic.name);
+  // Force combat music during boss fights
+  const _bossAlive = zombies.some(z => z.boss && z.hp > 0);
   const triggerRange = 350;   // range to START combat music
   const sustainRange = 600;   // wider range to KEEP combat music going
   const range = inCombat ? sustainRange : triggerRange;
@@ -6030,6 +6033,7 @@ function updateAmbientAudio() {
     const d = Math.sqrt((z.x-lp.x)**2 + (z.y-lp.y)**2);
     if (d < range && z.aware) nearAwareCount++;
   }
+  if (_bossAlive) nearAwareCount = Math.max(nearAwareCount, 3); // ensure combat music stays on
   if (!inCombat && nearAwareCount > 2) {
     const track = pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack);
     _lastCombatTrack = track;
@@ -11158,7 +11162,24 @@ function dropZombieLoot(z) {
   // Siege mode: no enemy health drops — all items come from scheduled spawns
   if (gameMode === 'siege') return;
   if (z.boss) {
-    pickups.push({ type: 'health', amount: 30, x: z.x + (Math.random()-0.5)*30, y: z.y + (Math.random()-0.5)*30, bobTimer: Math.random() * Math.PI * 2 });
+    // Dramatic boss death: massive particle explosion, screen shake, glitch, drops
+    const _bossColor = z.color || '#f0f';
+    // 40+ particles in boss color radiating outward
+    for(let i=0;i<45;i++){const a=Math.random()*Math.PI*2,s=4+Math.random()*10;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:35+Math.random()*25,maxLife:60,size:4+Math.random()*5,color:_bossColor,type:'spark'});}
+    // White flash particles
+    for(let i=0;i<20;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*8;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20+Math.random()*15,maxLife:35,size:3+Math.random()*4,color:'#fff',type:'spark'});}
+    // Screen shake and glitch surge
+    screenShake.intensity=Math.max(screenShake.intensity,18);
+    triggerGlitchSurge(0.7,80);
+    // Boss death freeze
+    _bossDeathFreeze = 30;
+    // 3 health pickups of 15 HP each
+    for(let i=0;i<3;i++){const a=Math.random()*Math.PI*2,d=20+Math.random()*40;pickups.push({type:'health',amount:15,x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
+    // 6-8 bits pickups scattered outward
+    const _bitsCount=6+Math.floor(Math.random()*3);
+    for(let i=0;i<_bitsCount;i++){const a=(i/_bitsCount)*Math.PI*2+Math.random()*0.5,d=30+Math.random()*50;pickups.push({type:'bits',amount:5+Math.floor(Math.random()*4),x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
+    // Floating text
+    addFloatingText(z.x,z.y-z.radius-30,'BOSS DEFEATED',_bossColor);
     return;
   }
   if (Math.random() < 0.06) {
@@ -11365,6 +11386,8 @@ function update() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
   gameTime++;
   if (gameState === 'shell') { updateShell(); return; }
+  // Boss death dramatic freeze
+  if (_bossDeathFreeze > 0) { _bossDeathFreeze--; return; }
   // Update ambient audio and dynamic music every frame
   updateAmbientAudio();
 
@@ -12905,11 +12928,42 @@ function update() {
             z._shotTimer=0;
             bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*8,vy:Math.sin(z.angle)*8,damage:z.damage*0.6,color:'#ff0',size:4,knockback:4,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
           }
+          // Phase 2+: sweep attack — wall of bullets across stage height every 180 frames
+          z._sweepTimer=(z._sweepTimer||0)+1;
+          if(z._sweepTimer%180===0&&phase>=2){
+            const sweepX=z.x-100;
+            for(let si=0;si<10;si++){
+              const sy=(1+si*(TRENCH_HEIGHT-2)/9)*CELL_SIZE;
+              // Leave a gap near the player so they can dodge through
+              if(Math.abs(sy-np.y)<CELL_SIZE*2)continue;
+              bullets.push({x:sweepX,y:sy,vx:-4,vy:0,damage:Math.floor(z.damage*0.3),color:'#f80',size:5,knockback:3,pierce:0,pierced:0,life:120,maxLife:120,flame:false,explosive:false,explosionRadius:0,tracer:false,chain:false,chainRange:0,chainCount:0,laserGlow:false,grenade:false,owner:'zombie',ownerId:z.zid,trail:[],crit:false});
+            }
+            screenShake.intensity=Math.max(screenShake.intensity,6);playZombieAttackSound();
+            addFloatingText(z.x,z.y-z.radius-16,'FIREWALL SWEEP','#f80');
+          }
           // Phase transition
           if(!z._lastPhase)z._lastPhase=1;
           if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
             addFloatingText(z.x,z.y-z.radius-20,phase===2?'FIREWALL ADAPTING':'FIREWALL CRITICAL',phase===2?'#f80':'#f44');
-            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:phase===2?'#f80':'#f44',type:'spark'});}}
+            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:phase===2?'#f80':'#f44',type:'spark'});}
+            // Spawn henchmen on phase transition
+            if(!z._henchmenSpawned)z._henchmenSpawned={};
+            if(!z._henchmenSpawned[phase]){z._henchmenSpawned[phase]=true;
+              const _tsec=trenchSections[trenchSection];
+              const _types=_tsec?_tsec.types:['normal'];
+              const _secX=_tsec?_tsec.x:z.x-200;
+              const _TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
+              const _hCount=2+Math.floor(Math.random()*2); // 2-3
+              for(let hi=0;hi<_hCount;hi++){
+                const _type=_types[Math.floor(Math.random()*_types.length)];
+                const _zt=ZOMBIE_TYPES[_type];if(!_zt)continue;
+                const _sx=_secX+(0.2+Math.random()*0.6)*_TW;
+                const _sy=(2+Math.random()*(TRENCH_HEIGHT-4))*CELL_SIZE;
+                zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:_zt.hp,maxHp:_zt.hp,speed:_zt.speed,radius:_zt.radius,color:_zt.color,damage:_zt.damage,score:_zt.score||50,type:_type,attackCooldown:0,hitFlash:0,ranged:_zt.ranged||false,fireRate:_zt.fireRate||0,lastFired:0,explodeOnDeath:_zt.explodeOnDeath||false,explosionRadius:_zt.explosionRadius||0,angle:0,staggerTimer:0,aware:true,wanderAngle:Math.random()*Math.PI*2,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:30,_spawnAnimMax:30});
+                particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f80',type:'lightning',tx:_sx,ty:_sy});
+              }
+            }
+          }
         }
         // ---- BOSS: ARCHIVIST (Domain 3) — artillery + summons small packs ----
         else if(zt?.archivist){
@@ -12940,7 +12994,23 @@ function update() {
           if(!z._lastPhase)z._lastPhase=1;
           if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
             addFloatingText(z.x,z.y-z.radius-20,'ARCHIVIST ENRAGED','#4ef');
-            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:'#4ef',type:'spark'});}}
+            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:'#4ef',type:'spark'});}
+            // Phase 2 transition: spawn 3 regular enemies as henchmen
+            if(phase===2&&!z._phase2Spawned){z._phase2Spawned=true;
+              const _tsec=trenchSections[trenchSection];
+              const _types=_tsec?_tsec.types:['normal'];
+              const _secX=_tsec?_tsec.x:z.x-200;
+              const _TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
+              for(let hi=0;hi<3;hi++){
+                const _type=_types[Math.floor(Math.random()*_types.length)];
+                const _zt=ZOMBIE_TYPES[_type];if(!_zt)continue;
+                const _sx=_secX+(0.2+Math.random()*0.6)*_TW;
+                const _sy=(2+Math.random()*(TRENCH_HEIGHT-4))*CELL_SIZE;
+                zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:_zt.hp,maxHp:_zt.hp,speed:_zt.speed,radius:_zt.radius,color:_zt.color,damage:_zt.damage,score:_zt.score||50,type:_type,attackCooldown:0,hitFlash:0,ranged:_zt.ranged||false,fireRate:_zt.fireRate||0,lastFired:0,explodeOnDeath:_zt.explodeOnDeath||false,explosionRadius:_zt.explosionRadius||0,angle:0,staggerTimer:0,aware:true,wanderAngle:Math.random()*Math.PI*2,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:30,_spawnAnimMax:30});
+                particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ef',type:'lightning',tx:_sx,ty:_sy});
+              }
+            }
+          }
         }
         // ---- BOSS: WATCHDOG (Domain 4) — fast, aggressive, dash attacks ----
         else if(zt?.watchdog){
@@ -12960,14 +13030,35 @@ function update() {
             z._wdTimer++;
             for(let pi=0;pi<2;pi++){particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10,maxLife:10,size:4,color:'#f44',type:'spark'});}
             if(z._wdTimer>=12){z._wdState='recover';z._wdTimer=0;z.vx=0;z.vy=0;
-              // Landing slam
-              for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<60)damagePlayerObj(p,z.damage);}
+              // Landing slam — damage + shockwave pushback
+              for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<60)damagePlayerObj(p,z.damage);
+                // Shockwave pushback — push nearby players outward
+                if(pd<120&&pd>0.1){const pushStr=8*(1-pd/120);const pdx=(p.x-z.x)/pd,pdy=(p.y-z.y)/pd;p.x+=pdx*pushStr;p.y+=pdy*pushStr;}}
               screenShake.intensity=Math.max(screenShake.intensity,8);
-              for(let si=0;si<12;si++){const sa=si/12*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*40,y:z.y+Math.sin(sa)*40,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:16,maxLife:16,size:4,color:'#f44',type:'spark'});}
+              // 16 outward shockwave particles
+              for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*40,y:z.y+Math.sin(sa)*40,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:18,maxLife:18,size:5,color:'#f44',type:'spark'});}
+              // Ground crack particles
+              for(let gi=0;gi<8;gi++){const ga=Math.random()*Math.PI*2,gd=10+Math.random()*30;particles.push({x:z.x+Math.cos(ga)*gd,y:z.y+Math.sin(ga)*gd,vx:(Math.random()-0.5)*2,vy:-1-Math.random()*2,life:20,maxLife:20,size:3+Math.random()*3,color:'#a22',type:'spark'});}
               playExplosionSound();
             }
           } else if(z._wdState==='recover'){
             z.vx=0;z.vy=0;z._wdTimer++;
+            // Spawn 1-2 fast henchmen during recovery if zombie count is low
+            if(z._wdTimer===1&&zombies.length<6){
+              const _tsec=trenchSections[trenchSection];
+              const _types=_tsec?_tsec.types:['fast'];
+              const _secX=_tsec?_tsec.x:z.x-200;
+              const _TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
+              const _hCount=1+Math.floor(Math.random()*2); // 1-2
+              for(let hi=0;hi<_hCount;hi++){
+                const _type=_types[Math.floor(Math.random()*_types.length)];
+                const _zt=ZOMBIE_TYPES[_type];if(!_zt)continue;
+                const _sx=_secX+(0.2+Math.random()*0.6)*_TW;
+                const _sy=(2+Math.random()*(TRENCH_HEIGHT-4))*CELL_SIZE;
+                zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:_zt.hp,maxHp:_zt.hp,speed:_zt.speed,radius:_zt.radius,color:_zt.color,damage:_zt.damage,score:_zt.score||50,type:_type,attackCooldown:0,hitFlash:0,ranged:_zt.ranged||false,fireRate:_zt.fireRate||0,lastFired:0,explodeOnDeath:_zt.explodeOnDeath||false,explosionRadius:_zt.explosionRadius||0,angle:0,staggerTimer:0,aware:true,wanderAngle:Math.random()*Math.PI*2,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:30,_spawnAnimMax:30});
+                particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f44',type:'lightning',tx:_sx,ty:_sy});
+              }
+            }
             if(z._wdTimer>=30){z._wdState='chase';z._wdTimer=0;}
           }
           // Phase 2: also fires shots while chasing
