@@ -2437,6 +2437,7 @@ function resetDataLinkState() {
   _dlTrialActive = false;
   _dlTrialBonusPending = false;
   _dlFirstChoice = true;
+  _checkpointRoomActive = false;
 }
 
 // --- Should a Data Link choice appear after this section clear? ---
@@ -3563,6 +3564,7 @@ let trenchFadeAlpha = 0;
 let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
 let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
+let _checkpointRoomActive = false; // true while player is in the checkpoint safe room (after boss)
 
 // Pre-compute section widths from templates
 let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
@@ -3793,6 +3795,7 @@ function startTrench() {
   trenchSection = 0;
   _trenchPrevSection = 0;
   _trenchPendingNext = -1;
+  _checkpointRoomActive = false;
   trenchFadeAlpha = 0;
   trenchFadeDir = 0;
   decor = [];
@@ -3866,6 +3869,11 @@ function spawnTrenchWave(idx, waveIdx) {
 function spawnTrenchSection(idx) {
   const sec = trenchSections[idx];
   if (!sec || sec.spawned) return;
+  // Don't spawn enemies in checkpoint room — it's a safe zone
+  if (_checkpointRoomActive) {
+    sec.spawned = true;
+    return;
+  }
   sec.spawned = true;
   sec.currentWave = 0;
   sec.waveSpawnTimer = 0;
@@ -3958,12 +3966,76 @@ function spawnTrenchSection(idx) {
   }
 }
 
+function updateCheckpointRoom(sec, TW) {
+  if (!sec) return;
+  const lp = getLocalPlayer();
+  if (!lp) return;
+
+  // One-time setup on first frame
+  if (!sec._cpRoomInit) {
+    sec._cpRoomInit = true;
+    sec.cleared = true; // mark as cleared so door rendering works
+
+    // Full heal
+    lp.hp = lp.maxHp;
+    addFloatingText(lp.x, lp.y - 40, 'HP RESTORED', '#4f4');
+
+    // Save checkpoint
+    saveCheckpoint();
+
+    // Spawn mod terminal (boss reward) in the center of the room
+    const midX = sec.x + TW * 0.5;
+    const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+    _pendingBossShop = true;
+    _dlChoicePending = true; // lock door until shop is used
+    spawnShopChest(midX, midY);
+
+    // Big announcement
+    showSectionTitleCard('\u25C6 CHECKPOINT \u25C6', 'progress cached \u00B7 systems restored', false);
+    triggerGlitchSurge(0.3, 30);
+
+    // Celebration particles
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 3;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 30, maxLife: 30, size: 2, color: '#4f4', type: 'spark' });
+    }
+
+    playSound(800, 0.1, 'sine', 0.15);
+    playSound(1200, 0.08, 'sine', 0.1);
+  }
+
+  // Door logic: player can walk to the right wall door once shop is used
+  if (_trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
+    const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
+    const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
+    const rightWallX = sec.x + TW - CELL_SIZE;
+    const triggerX = rightWallX - PLAYER_RADIUS - 6;
+    for (const p of players) {
+      if (!p.alive) continue;
+      if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
+        _trenchPendingNext = trenchSection + 1;
+        _checkpointRoomActive = false;
+        startTrenchFade();
+        break;
+      }
+    }
+  }
+}
+
 function updateTrench() {
   if (!isHost || gameMode !== 'trench') return;
   if (trenchFadeDir !== 0) return; // mid-transition: don't process
   const sec = trenchSections[trenchSection];
   if (!sec) return;
   const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+
+  // Checkpoint safe room: skip normal section logic
+  if (_checkpointRoomActive) {
+    updateCheckpointRoom(sec, TW);
+    return;
+  }
+
   const xMin = sec.x, xMax = sec.x + TW;
   const sectionZombies = zombies.filter(z => z.x >= xMin && z.x < xMax);
   // Wave countdown: ticking down toward next wave's spawn
@@ -4024,10 +4096,9 @@ function updateTrench() {
         if (lp2) addFloatingText(lp2.x, lp2.y - 50, 'TRIAL COMPLETE', '#f44');
         setTimeout(() => { _pendingBossShop = true; spawnShopChest(lp2 ? lp2.x + 60 : sec.x + TW * 0.5, (TRENCH_HEIGHT / 2) * CELL_SIZE); }, 600);
       }
-      // Boss sections: spawn a rare+ mod terminal chest
+      // Boss sections: reward moves to checkpoint room (next section after door)
       else if (sec.isBoss) {
-        _dlChoicePending = true;
-        setTimeout(() => { _pendingBossShop = true; spawnShopChest(lp2 ? lp2.x + 60 : sec.x + TW * 0.5, (TRENCH_HEIGHT / 2) * CELL_SIZE); }, 800);
+        // No shop here — checkpoint room handles the boss reward
       }
       // Domain transition: spawn a rare+ mod terminal chest
       else if (_isDomainTransition(trenchSection)) {
@@ -4090,9 +4161,15 @@ function updateTrenchFade() {
       trenchFadeAlpha = 1;
       // At black: host performs the teleport + spawn
       if (isHost && _trenchPendingNext >= 0) {
+        const prevIdx = trenchSection;
+        const prevSec = trenchSections[prevIdx];
         const newIdx = _trenchPendingNext;
         const newSec = trenchSections[newIdx];
         if (newSec) {
+          // If we just left a boss section, activate checkpoint room
+          if (prevSec && prevSec.isBoss && !_checkpointRoomActive) {
+            _checkpointRoomActive = true;
+          }
           trenchSection = newIdx;
           _trenchPrevSection = newIdx;
           // Clear recall anchor on section transition
@@ -5909,6 +5986,7 @@ function resumeFromCheckpoint() {
   trenchSection = cp.section;
   _trenchPrevSection = cp.section;
   _trenchPendingNext = -1;
+  _checkpointRoomActive = false;
   trenchFadeAlpha = 0;
   trenchFadeDir = 0;
   for (let i = 0; i < cp.section; i++) {
@@ -9479,7 +9557,7 @@ function startMultiplayerGame() {
     generateTrenchMap(lobbySeed);
     initTrenchSections();
     exitPos = null;
-    trenchSection = 0; _trenchPrevSection = 0; _trenchPendingNext = -1;
+    trenchSection = 0; _trenchPrevSection = 0; _trenchPendingNext = -1; _checkpointRoomActive = false;
     trenchFadeAlpha = 0; trenchFadeDir = 0;
   } else if (gameMode === 'siege') {
     generateSiegeArena(lobbySeed);
@@ -11962,13 +12040,7 @@ function dropZombieLoot(z) {
     for(let i=0;i<_bitsCount;i++){const a=(i/_bitsCount)*Math.PI*2+Math.random()*0.5,d=30+Math.random()*50;pickups.push({type:'bits',amount:5+Math.floor(Math.random()*4),x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
     // Floating text
     addFloatingText(z.x,z.y-z.radius-30,'BOSS DEFEATED',_bossColor);
-    // Auto-save checkpoint after boss kill (after death freeze clears)
-    setTimeout(() => {
-      saveCheckpoint();
-      // Full heal at checkpoint
-      const _cpLp = getLocalPlayer();
-      if (_cpLp) { _cpLp.hp = _cpLp.maxHp; addFloatingText(_cpLp.x, _cpLp.y - 40, 'HP RESTORED', '#4f4'); }
-    }, 1000);
+    // Checkpoint save + heal moved to checkpoint room (appears after walking through door)
     return;
   }
   if (Math.random() < 0.06) {
@@ -14658,7 +14730,7 @@ function update() {
     const sWave = gameMode === 'siege' ? (siegeWave || 0) : 0;
     const sWaveSt = gameMode === 'siege' ? (siegeWaveState || 'rest') : null;
     const sWaveTimer = gameMode === 'siege' ? (siegeWaveTimer || 0) : 0;
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
   }
 
   updateHUD();
@@ -14670,6 +14742,26 @@ function applyHostState(msg) {
   if (msg.hordeTimer !== undefined) { hordeTimer = msg.hordeTimer; if (msg.hordeCircleTimer !== undefined) hordeCircleTimer = msg.hordeCircleTimer; }
   if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
   if (msg.trenchSection !== undefined) { trenchSection = msg.trenchSection; }
+  if (msg.cpRoom !== undefined) {
+    const _wasCp = _checkpointRoomActive;
+    _checkpointRoomActive = msg.cpRoom;
+    // Non-host: first time seeing checkpoint room → show announcement + heal VFX
+    if (!_wasCp && msg.cpRoom) {
+      const _cpLp = getLocalPlayer();
+      if (_cpLp) {
+        addFloatingText(_cpLp.x, _cpLp.y - 40, 'HP RESTORED', '#4f4');
+        for (let i = 0; i < 20; i++) {
+          const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 3;
+          particles.push({ x: _cpLp.x, y: _cpLp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+            life: 30, maxLife: 30, size: 2, color: '#4f4', type: 'spark' });
+        }
+      }
+      showSectionTitleCard('\u25C6 CHECKPOINT \u25C6', 'progress cached \u00B7 systems restored', false);
+      triggerGlitchSurge(0.3, 30);
+      playSound(800, 0.1, 'sine', 0.15);
+      playSound(1200, 0.08, 'sine', 0.1);
+    }
+  }
   if (msg.elemZones) { elementZones = msg.elemZones; }
   // Siege wall HP sync
   if (msg.sLHp && siegeWallLeft.length) {
@@ -16259,6 +16351,48 @@ function render() {
       ctx.fillText('// TRIAL: OVERCLOCKED //',_tSec.x+_tTW/2,20);
       ctx.shadowBlur=0;ctx.globalAlpha=1;
     }
+  }
+  // Checkpoint room visuals
+  if(_checkpointRoomActive&&gameMode==='trench'&&trenchSections[trenchSection]){
+    const cpSec=trenchSections[trenchSection];
+    const cpTW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
+    const cpMidX=cpSec.x+cpTW*0.5;
+    const cpMidY=(TRENCH_HEIGHT/2)*CELL_SIZE;
+    const cpT=performance.now();
+    // Green ambient glow — safe room feeling
+    ctx.globalAlpha=0.06+Math.sin(cpT*0.003)*0.02;
+    ctx.fillStyle='#0f0';
+    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
+    ctx.globalAlpha=1;
+    // "CHECKPOINT" text pulsing at top center
+    const cpPulse=0.6+Math.sin(cpT*0.004)*0.3;
+    ctx.globalAlpha=cpPulse;
+    ctx.font='bold 16px monospace';ctx.textAlign='center';
+    ctx.fillStyle='#0f0';ctx.shadowColor='#0f0';ctx.shadowBlur=14;
+    ctx.fillText('\u25C6 CHECKPOINT \u25C6',cpMidX,28);
+    ctx.font='10px monospace';ctx.fillStyle='#8f8';
+    ctx.fillText('progress saved \u00B7 hp restored',cpMidX,44);
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+    // Domain info — what's coming next
+    const cpNextDomain=getTrenchDomain(trenchSection);
+    if(cpNextDomain){
+      ctx.globalAlpha=0.7;ctx.font='10px monospace';
+      ctx.fillStyle=cpNextDomain.accentColor||'#aaa';
+      ctx.shadowColor=cpNextDomain.accentColor||'#aaa';ctx.shadowBlur=6;
+      ctx.fillText('NEXT: '+cpNextDomain.name,cpMidX,TRENCH_HEIGHT*CELL_SIZE-20);
+      ctx.shadowBlur=0;ctx.globalAlpha=1;
+    }
+    // Green corner brackets (safe zone markers)
+    const bx1=cpSec.x+CELL_SIZE*2,by1=CELL_SIZE*2;
+    const bx2=cpSec.x+cpTW-CELL_SIZE*2,by2=(TRENCH_HEIGHT-2)*CELL_SIZE;
+    const bLen=20;
+    ctx.strokeStyle='#0f0';ctx.lineWidth=2;ctx.globalAlpha=0.4*cpPulse;
+    ctx.shadowColor='#0f0';ctx.shadowBlur=8;
+    ctx.beginPath();ctx.moveTo(bx1,by1+bLen);ctx.lineTo(bx1,by1);ctx.lineTo(bx1+bLen,by1);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(bx2-bLen,by1);ctx.lineTo(bx2,by1);ctx.lineTo(bx2,by1+bLen);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(bx1,by2-bLen);ctx.lineTo(bx1,by2);ctx.lineTo(bx1+bLen,by2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(bx2-bLen,by2);ctx.lineTo(bx2,by2);ctx.lineTo(bx2,by2-bLen);ctx.stroke();
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
   // Trench door
   if(gameMode==='trench'&&trenchSections[trenchSection]){
