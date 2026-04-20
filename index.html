@@ -27,7 +27,6 @@ canvas#game { display: block; position: fixed; top: 0; left: 0; outline: none; z
 #hud-topleft { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: calc(4px + env(safe-area-inset-left) * 0.5); z-index: 25; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; pointer-events: none; font-family: 'Courier New', monospace; }
 #hud-topleft > * { pointer-events: auto; }
 #btn-menu { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: calc(4px + env(safe-area-inset-right) * 0.5); width: 46px; height: 46px; border-radius: 12px; border: 2px solid #0ff8; background: transparent; color: #0ff; display: none; align-items: center; justify-content: center; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; box-shadow: 0 0 12px rgba(0,255,255,0.25); transition: transform 0.08s, box-shadow 0.15s; z-index: 25; }
-body.mobile #btn-menu, body.desktop #btn-menu { display: flex; }
 #btn-menu:active { transform: scale(0.92); box-shadow: 0 0 18px rgba(0,255,255,0.6); }
 #btn-menu svg { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px rgba(0,255,255,0.4)); }
 #hp-chip { display: flex; flex-direction: column; width: 128px; padding: 6px 8px 6px 10px; background: transparent; border: 1px solid #0f03; border-radius: 8px; box-shadow: 0 0 6px rgba(0,255,0,0.15); pointer-events: none; }
@@ -7431,7 +7430,7 @@ function showScreen(id) {
   // Hide in-game HUD on menu screens, show when playing
   const inGame = !id || id === 'pause-screen' || id === 'wave-summary-screen' || id === 'perk-screen';
   const hudVis = inGame ? '' : 'none';
-  ['hud-topleft','mobile-buttons','center-hud','effects-bar'].forEach(h => { const el=document.getElementById(h); if(el) el.style.display = hudVis === 'none' ? 'none' : (h === 'hud-topleft' ? 'flex' : ''); });
+  ['hud-topleft','mobile-buttons','center-hud','effects-bar','btn-menu'].forEach(h => { const el=document.getElementById(h); if(el) el.style.display = hudVis === 'none' ? 'none' : (h === 'hud-topleft' || h === 'btn-menu' ? 'flex' : ''); });
 }
 
 function showLobbyScreen() { showScreen('lobby-screen'); document.getElementById('lobby-code').textContent = lobbyCode; updateLobbyUI(); }
@@ -8896,6 +8895,97 @@ function shellInteract(terminal) {
   }
 }
 
+// Cyber circuit-board background drawn behind the shell room so the area
+// outside the walkable floor reads as "you're inside a CRT terminal", not
+// pure black void. Grid + L-shaped traces + glowing nodes + animated data
+// pulses traveling along the lines.
+function _renderShellVoidBackground(vL, vR, vT, vB) {
+  const t = performance.now();
+  // Dark blue base (not pure black) — the void now has depth.
+  ctx.fillStyle = '#030a18';
+  ctx.fillRect(vL, vT, vR - vL, vB - vT);
+  // Snap to 80px tile grid so the pattern tiles seamlessly.
+  const TS = 80;
+  const sx = Math.floor(vL / TS) * TS;
+  const sy = Math.floor(vT / TS) * TS;
+  const ex = Math.ceil(vR / TS) * TS;
+  const ey = Math.ceil(vB / TS) * TS;
+  // Grid lines
+  ctx.strokeStyle = '#0af';
+  ctx.globalAlpha = 0.10;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let y = sy; y <= ey; y += TS) { ctx.moveTo(sx, y); ctx.lineTo(ex, y); }
+  for (let x = sx; x <= ex; x += TS) { ctx.moveTo(x, sy); ctx.lineTo(x, ey); }
+  ctx.stroke();
+  // L-shaped circuit traces per tile (seeded from tile coords so they're stable)
+  ctx.strokeStyle = '#0af';
+  ctx.shadowColor = '#0af';
+  ctx.shadowBlur = 3;
+  ctx.lineWidth = 1.5;
+  for (let y = sy; y < ey; y += TS) {
+    for (let x = sx; x < ex; x += TS) {
+      const seed = (x * 73 + y * 151);
+      const r1 = Math.abs(Math.sin(seed * 0.013) * 4837.5) % 1;
+      const r2 = Math.abs(Math.sin(seed * 0.019 + 1.7) * 1842.3) % 1;
+      const r3 = Math.abs(Math.sin(seed * 0.029 + 3.1) * 2942.3) % 1;
+      if (r1 < 0.45) continue; // only ~55% of tiles get traces
+      ctx.globalAlpha = 0.18 + r1 * 0.18;
+      ctx.beginPath();
+      if (r2 > 0.5) {
+        ctx.moveTo(x + 8,  y + TS*0.5);
+        ctx.lineTo(x + TS*0.5, y + TS*0.5);
+        ctx.lineTo(x + TS*0.5, y + TS - 8);
+      } else {
+        ctx.moveTo(x + TS*0.5, y + 8);
+        ctx.lineTo(x + TS*0.5, y + TS*0.5);
+        ctx.lineTo(x + TS - 8, y + TS*0.5);
+      }
+      ctx.stroke();
+      // Dead-end terminator on some traces
+      if (r3 > 0.7) {
+        ctx.fillStyle = '#0af';
+        ctx.beginPath();
+        ctx.arc(x + TS*0.5, y + TS*0.5, 1.5 + r3, 0, Math.PI*2); ctx.fill();
+      }
+    }
+  }
+  ctx.shadowBlur = 0;
+  // Glowing nodes at grid intersections (sparse)
+  for (let y = sy; y <= ey; y += TS) {
+    for (let x = sx; x <= ex; x += TS) {
+      const seed = x * 17 + y * 31;
+      const r = Math.abs(Math.sin(seed * 0.021 + 0.5) * 74361.2) % 1;
+      if (r < 0.7) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 0.003 + seed);
+      ctx.globalAlpha = 0.35 + pulse * 0.3;
+      ctx.fillStyle = '#0ff';
+      ctx.shadowColor = '#0ff';
+      ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(x, y, 1.5 + r, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.shadowBlur = 0;
+  // Animated data pulses travelling along horizontal lines — give the board life
+  const linesH = Math.ceil((ey - sy) / TS);
+  for (let p = 0; p < 10; p++) {
+    const phase = (t * 0.08 + p * 173) % ((ex - sx) + TS);
+    const lineY = sy + ((p * 3 + 1) % linesH) * TS;
+    const px = sx + phase - TS * 0.5;
+    if (px < vL - 4 || px > vR + 4) continue;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#0ff';
+    ctx.shadowColor = '#0ff';
+    ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(px, lineY, 2, 0, Math.PI*2); ctx.fill();
+    // Trail
+    ctx.globalAlpha = 0.3;
+    ctx.fillRect(px - 16, lineY - 0.5, 16, 1);
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
 function renderShellOverlays() {
   const lp = getLocalPlayer(); // may be null during spawn sequence — overlays still render
   const t = performance.now();
@@ -8922,15 +9012,31 @@ function renderShellOverlays() {
       ctx.beginPath(); ctx.arc(gx*CELL_SIZE + off, gy*CELL_SIZE, 1.5, 0, Math.PI*2); ctx.fill();
     }
   }
-  // Horizontal scan lines (CRT monitor effect)
-  ctx.globalAlpha = 0.025;
+  // Horizontal scan lines (CRT monitor effect) — bumped up so the CRT identity reads clearly
+  ctx.globalAlpha = 0.12;
   ctx.strokeStyle = '#0af';
-  ctx.lineWidth = 0.5;
-  for (let sy = CELL_SIZE; sy < ARENA_H - CELL_SIZE; sy += 6) {
+  ctx.lineWidth = 1;
+  for (let sy = CELL_SIZE; sy < ARENA_H - CELL_SIZE; sy += 4) {
     ctx.beginPath(); ctx.moveTo(CELL_SIZE, sy); ctx.lineTo(ARENA_W - CELL_SIZE, sy); ctx.stroke();
   }
+  // Moving bright scanline — sweeps down the screen every ~5s for unmistakable CRT feel
+  const _sweepY = CELL_SIZE + ((t * 0.08) % (ARENA_H - 2 * CELL_SIZE));
+  const _sweepGrad = ctx.createLinearGradient(0, _sweepY - 6, 0, _sweepY + 6);
+  _sweepGrad.addColorStop(0, 'rgba(0,200,255,0)');
+  _sweepGrad.addColorStop(0.5, 'rgba(140,230,255,0.35)');
+  _sweepGrad.addColorStop(1, 'rgba(0,200,255,0)');
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = _sweepGrad;
+  ctx.fillRect(CELL_SIZE, _sweepY - 6, (ARENA_W/CELL_SIZE - 2)*CELL_SIZE, 12);
+  // Occasional glitch tear — a brighter band jumps across
+  if (gameTime % 240 < 3 || gameTime % 600 < 2) {
+    const _tearY = CELL_SIZE + Math.random() * (ARENA_H - 2 * CELL_SIZE);
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = '#0ff';
+    ctx.fillRect(CELL_SIZE, _tearY - 1, (ARENA_W/CELL_SIZE - 2)*CELL_SIZE, 2);
+  }
   // Ambient glow
-  ctx.globalAlpha = 0.04;
+  ctx.globalAlpha = 0.05;
   ctx.fillStyle = '#0af';
   ctx.fillRect(CELL_SIZE, CELL_SIZE, (ARENA_W/CELL_SIZE - 2)*CELL_SIZE, (ARENA_H/CELL_SIZE - 2)*CELL_SIZE);
   ctx.restore();
@@ -14958,6 +15064,10 @@ function render() {
       _domainGridColor = _dom.wallStroke;
     }
   }
+  // ---- Shell-only cyber void background ----
+  // Instead of black beyond the shell walls, render a neon circuit board —
+  // grid lines, L-shaped traces, glowing nodes, and traveling data pulses.
+  if (gameState === 'shell') _renderShellVoidBackground(vL, vR, vT, vB);
   // Batch grid strokes: collect all visible floor cell rects into one Path2D and stroke once.
   const _floorPath = new Path2D();
   let _gridStrokeColor = _domainGridColor || _corridorTheme.grid;
