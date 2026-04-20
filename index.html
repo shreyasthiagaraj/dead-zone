@@ -10527,6 +10527,8 @@ const PAYLOAD_COOLDOWN = 150;  // 2.5 seconds
 let activeGrenade = null;
 
 let _payloadAiming = false; // true while holding the special button to aim payload
+let _payloadAimAlpha = 0;  // smooth fade for aim line
+let _deadshotAimAlpha = 0; // smooth fade for aim line
 
 function activatePayload() {
   const lp = getLocalPlayer();
@@ -12556,7 +12558,7 @@ function update() {
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
       // Cannot move while firing. Must release to reposition.
       if (isMobile && shootButtonHeld) moveSpeed = 0;
-      if (_deadshotCharging) moveSpeed = 0; // freeze while charging deadshot — joystick aims only
+      if (_deadshotCharging || _payloadAiming) moveSpeed = 0; // freeze while aiming specials — joystick aims only
       const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -12568,8 +12570,8 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;
-      // Deadshot: joystick aims instead of moves
-      if (_deadshotCharging && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
+      // Deadshot / Payload: joystick aims instead of moves
+      if ((_deadshotCharging || _payloadAiming) && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
     }
     // ---- DASH OVERRIDE ----
     // When the dash is active, slam velocity to the dash direction × dash speed and spawn
@@ -16421,56 +16423,54 @@ function render() {
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     ctx.restore();
   }
-  // Deadshot charge indicator + aim line
-  if (_deadshotCharging) {
+  // Deadshot charge indicator + aim line — fades in/out
+  _deadshotAimAlpha = lerp(_deadshotAimAlpha, _deadshotCharging ? 1 : 0, 0.15);
+  if (_deadshotAimAlpha > 0.01) {
     const lp2 = getLocalPlayer();
     if (lp2) {
       const _m2 = runMods || {};
-      const _dc = _m2.dominantClass ? (_ELEM_COLOR[_m2.dominantClass] || '#f44') : '#f44';
+      const _dc = (_m2.beaconElement || _m2.dominantClass) ? (_ELEM_COLOR[_m2.beaconElement || _m2.dominantClass] || '#f44') : '#f44';
       const chPct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
       const mx = lp2.x + Math.cos(lp2.angle)*22, my = lp2.y + Math.sin(lp2.angle)*22;
       ctx.save();
-      // AIM LINE — extends from muzzle across the screen
+      const fadeAlpha = _deadshotAimAlpha;
+      // AIM LINE — extends from muzzle
       const aimLen = 400 + chPct * 200;
       const aimEndX = mx + Math.cos(lp2.angle)*aimLen, aimEndY = my + Math.sin(lp2.angle)*aimLen;
-      ctx.globalAlpha = 0.15 + chPct * 0.25;
+      ctx.globalAlpha = (0.15 + chPct * 0.25) * fadeAlpha;
       ctx.strokeStyle = _dc; ctx.lineWidth = 1; ctx.shadowColor = _dc; ctx.shadowBlur = 6;
       ctx.setLineDash([8, 6]);
       ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(aimEndX, aimEndY); ctx.stroke();
       ctx.setLineDash([]);
-      // Crosshair dot at aim end
-      ctx.globalAlpha = 0.3 + chPct * 0.4;
-      ctx.fillStyle = _dc;
-      ctx.beginPath(); ctx.arc(mx + Math.cos(lp2.angle)*120, my + Math.sin(lp2.angle)*120, 3 + chPct*2, 0, Math.PI*2); ctx.fill();
       // Muzzle charge glow
-      ctx.globalAlpha = 0.3 + chPct * 0.5;
+      ctx.globalAlpha = (0.3 + chPct * 0.5) * fadeAlpha;
+      ctx.fillStyle = _dc;
       ctx.shadowBlur = 8 + chPct * 20;
       ctx.beginPath(); ctx.arc(mx, my, 3 + chPct*6, 0, Math.PI*2); ctx.fill();
       // Charge ring
       ctx.shadowBlur = 4; ctx.strokeStyle = _dc; ctx.lineWidth = 2;
+      ctx.globalAlpha = fadeAlpha;
       ctx.beginPath(); ctx.arc(mx, my, 14, -Math.PI/2, -Math.PI/2 + Math.PI*2*chPct); ctx.stroke();
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       ctx.restore();
     }
   }
-  // Payload aim line while holding to aim
-  if (_payloadAiming) {
+  // Payload aim line — fades in/out smoothly
+  _payloadAimAlpha = lerp(_payloadAimAlpha, _payloadAiming ? 1 : 0, 0.15);
+  if (_payloadAimAlpha > 0.01) {
     const lp2 = getLocalPlayer();
     if (lp2) {
       const _m2 = runMods || {};
       const _pc2 = (_m2.beaconElement || _m2.dominantClass) ? (_ELEM_COLOR[_m2.beaconElement || _m2.dominantClass] || '#fa0') : '#fa0';
       const mx = lp2.x + Math.cos(lp2.angle)*22, my = lp2.y + Math.sin(lp2.angle)*22;
-      const aimLen = 200;
+      const aimLen = 140;
       const aimEndX = mx + Math.cos(lp2.angle)*aimLen, aimEndY = my + Math.sin(lp2.angle)*aimLen;
       ctx.save();
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = 0.4 * _payloadAimAlpha;
       ctx.strokeStyle = _pc2; ctx.lineWidth = 2; ctx.shadowColor = _pc2; ctx.shadowBlur = 6;
       ctx.setLineDash([6, 5]);
       ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(aimEndX, aimEndY); ctx.stroke();
       ctx.setLineDash([]);
-      // Impact circle at aim end
-      ctx.globalAlpha = 0.2;
-      ctx.beginPath(); ctx.arc(aimEndX, aimEndY, 30, 0, Math.PI*2); ctx.stroke();
       ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       ctx.restore();
     }
