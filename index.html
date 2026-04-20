@@ -3568,14 +3568,18 @@ let _sectionTemplateNames = []; // template name per section (set once in genera
 function generateTrenchMap(seed) {
   // SELECT TEMPLATES FIRST — this is the single source of truth for section widths.
   // Templates are selected here and stored so initTrenchSections doesn't re-roll them.
-  _sectionWidths = [];
-  _sectionTemplateNames = [];
-  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
-    const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
-    const tmplName = selectTrenchTemplate(['normal'], si, isBoss);
-    const tmpl = TRENCH_TEMPLATES[tmplName];
-    _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
-    _sectionTemplateNames.push(tmplName);
+  // If templates already set (checkpoint resume), use them. Otherwise generate new.
+  const _usePreset = _sectionTemplateNames.length === TRENCH_NUM_SECTIONS && _sectionWidths.length === TRENCH_NUM_SECTIONS;
+  if (!_usePreset) {
+    _sectionWidths = [];
+    _sectionTemplateNames = [];
+    for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+      const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
+      const tmplName = selectTrenchTemplate(['normal'], si, isBoss);
+      const tmpl = TRENCH_TEMPLATES[tmplName];
+      _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
+      _sectionTemplateNames.push(tmplName);
+    }
   }
   // Compute cumulative X positions
   _sectionXPositions = [];
@@ -3993,6 +3997,7 @@ function updateTrench() {
     if (trenchSection >= TRENCH_NUM_SECTIONS - 1) {
       const lp = getLocalPlayer();
       score += 5000;
+      clearCheckpoint(); // clear checkpoint on victory
       if (lp) {
         addFloatingText(lp.x, lp.y - 50, 'YOU ESCAPED!', '#f0c040');
         addFloatingText(lp.x, lp.y - 25, '+5000 BONUS', '#4f4');
@@ -5819,6 +5824,201 @@ function saveMeta() {
     localStorage.setItem('necrowave_stats', JSON.stringify(metaStats));
   } catch {}
 }
+
+// ---- CHECKPOINT SAVE/RESUME (trench mode) ----
+const CHECKPOINT_KEY = 'necrowave_checkpoint';
+
+function saveCheckpoint() {
+  const lp = getLocalPlayer();
+  if (!lp || gameMode !== 'trench') return;
+  const data = {
+    version: 1,
+    timestamp: Date.now(),
+    section: trenchSection,
+    seed: window._currentLevelSeed,
+    templateNames: _sectionTemplateNames,
+    sectionWidths: _sectionWidths,
+    // Player state
+    hp: lp.hp,
+    maxHp: lp.maxHp,
+    // Build state
+    runUpgrades: { ...runUpgrades },
+    runLevel: runLevel,
+    runXP: runXP,
+    runXPNeeded: runXPNeeded,
+    // Economy
+    metaShards: metaShards,
+    runBitsEarned: runBitsEarned,
+    // Progression
+    score: score,
+    kills: kills,
+    // Data Link state
+    dlHistory: _dlChoiceHistory,
+    dlSinceChoice: _dlSectionsSinceChoice,
+    dlModDrought: _dlModDrought,
+    dlFirstChoice: _dlFirstChoice,
+    // Special weapon
+    selectedSpecial: selectedSpecial,
+  };
+  try {
+    localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
+  } catch (e) {}
+}
+
+function loadCheckpoint() {
+  try {
+    const raw = localStorage.getItem(CHECKPOINT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+
+function clearCheckpoint() {
+  try { localStorage.removeItem(CHECKPOINT_KEY); } catch (e) {}
+}
+
+function hasCheckpoint() {
+  return !!localStorage.getItem(CHECKPOINT_KEY);
+}
+
+function resumeFromCheckpoint() {
+  const cp = loadCheckpoint();
+  if (!cp) return false;
+
+  initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
+
+  // Set up game mode
+  gameMode = 'trench';
+
+  // Restore template data BEFORE generating the map
+  _sectionTemplateNames = cp.templateNames || [];
+  _sectionWidths = cp.sectionWidths || [];
+
+  // Generate the dungeon using saved templates
+  window._currentLevelSeed = cp.seed;
+  generateTrenchMap(cp.seed);
+
+  // Initialize trench sections (wave data, enemy types, etc.)
+  initTrenchSections();
+
+  // Mark all sections up to checkpoint as cleared
+  trenchSection = cp.section;
+  _trenchPrevSection = cp.section;
+  _trenchPendingNext = -1;
+  trenchFadeAlpha = 0;
+  trenchFadeDir = 0;
+  for (let i = 0; i < cp.section; i++) {
+    if (trenchSections[i]) {
+      trenchSections[i].spawned = true;
+      trenchSections[i].cleared = true;
+    }
+  }
+
+  // Restore build
+  runUpgrades = cp.runUpgrades || {};
+  runLevel = cp.runLevel || 1;
+  runXP = cp.runXP || 0;
+  runXPNeeded = cp.runXPNeeded || 10;
+  rebuildRunMods();
+
+  // Restore economy
+  metaShards = cp.metaShards || 0;
+  runBitsEarned = cp.runBitsEarned || 0;
+  score = cp.score || 0;
+  kills = cp.kills || 0;
+
+  // Restore Data Link state
+  _dlChoiceHistory = cp.dlHistory || [];
+  _dlSectionsSinceChoice = cp.dlSinceChoice || 0;
+  _dlModDrought = cp.dlModDrought || 0;
+  _dlFirstChoice = cp.dlFirstChoice || false;
+  _dlChoicePending = false;
+  _dlTrialActive = false;
+  _dlTrialBonusPending = false;
+
+  // Restore special weapon
+  if (cp.selectedSpecial) selectedSpecial = cp.selectedSpecial;
+
+  // Set up game state
+  gameState = 'playing';
+  gameTime = 0;
+  score = cp.score || 0;
+  kills = cp.kills || 0;
+  runBitsEarned = cp.runBitsEarned || 0;
+  gamePaused = false;
+  level = 1;
+  spawnTimer = 0;
+
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
+  _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
+  _gunAmmo = GUN_MAG_SIZE + (runMods.magBonus || 0);
+  _gunReloading = false; _gunReloadTimer = 0; _gunIdleTimer = 0;
+
+  // Create player with restored stats
+  const spawnSec = trenchSections[cp.section];
+  const spawnX = spawnSec ? spawnSec.x + CELL_SIZE * 4 : 100;
+  const spawnY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+  players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], spawnX, spawnY)];
+  localPlayerIdx = 0;
+  const lp = getLocalPlayer();
+  if (lp) {
+    lp.hp = Math.min(cp.hp || lp.maxHp, cp.maxHp || lp.maxHp);
+    lp.maxHp = cp.maxHp || lp.maxHp;
+    lp.invincible = 60; // brief spawn protection
+  }
+
+  // Reset transient state
+  zombies = []; bullets = []; pickups = []; barrels = [];
+  particles = []; decals = []; floatingTexts = [];
+  explosions = []; xpOrbs = [];
+  _nextZombieId = 1;
+  _bossDeathFreeze = 0;
+  pendingLevelUps = 0; levelUpChoices = null;
+  _seenGlitchTypes = new Set();
+  _whisperCooldown = 600;
+  memoryFragments = [];
+
+  // Spawn the checkpoint section
+  spawnTrenchSection(cp.section);
+
+  // Camera
+  camera.x = spawnX; camera.y = spawnY;
+  cameraOffset.x = 0; cameraOffset.y = 0;
+  window._camLerp = 0.08; window._camSettleFrames = 30;
+
+  // Restore HUD
+  showScreen(null);
+  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'];
+  hudEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+  const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
+
+  // Announcement
+  const domain = getTrenchDomain(cp.section);
+  showSectionTitleCard('CHECKPOINT RESTORED', domain ? domain.name : 'resuming...', false);
+  triggerGlitchSurge(0.4, 30);
+
+  // Show run start splash
+  showRunStartSplash();
+
+  // Reset joysticks
+  leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
+  rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;
+  for(const k in keys) delete keys[k];
+
+  // Init run stats
+  runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
+
+  // Audio
+  ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
+  playMusic(pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  document.activeElement?.blur(); canvas.focus();
+
+  // Hide siege repair button
+  { const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = 'none'; }
+
+  return true;
+}
+
 function progValueFromMode() {
   if (gameMode === 'trench') return (trenchSection || 0) + 1;
   if (gameMode === 'descent') return (descentSection || 0) + 1;
@@ -6642,6 +6842,15 @@ function generateShellRoom() {
     { x: 4 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'codex', label: 'CODEX', color: '#0ff', icon: '\u25C8' },
     { x: 14 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'armory', label: 'ARMORY', color: '#f80', icon: '\u2694' },
   ];
+  // Add resume terminal if a checkpoint exists
+  if (hasCheckpoint()) {
+    const cp = loadCheckpoint();
+    shellTerminals.push({
+      x: 14 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'checkpoint',
+      label: 'RESUME \u00B7 SEC ' + ((cp && cp.section || 0) + 1),
+      color: '#0f0', icon: '\u25B6'
+    });
+  }
   shellGatewayPos = { x: (SW - 1.5) * CELL_SIZE, y: 5.5 * CELL_SIZE };
   shellPlayerSpawn = { x: 9 * CELL_SIZE, y: 6 * CELL_SIZE };
   memoryFragments = [];
@@ -8583,6 +8792,17 @@ function shellInteract(terminal) {
   if (terminal.type === 'crypt') openCryptMenu();
   else if (terminal.type === 'codex') openCodex();
   else if (terminal.type === 'armory') openArmory();
+  else if (terminal.type === 'checkpoint') {
+    // Resume from checkpoint — fade to black, then restore
+    if (_shellTransitioning) return;
+    _shellTransitioning = true;
+    triggerGlitchSurge(0.6, 60);
+    screenShake.intensity = 10;
+    _shellFadeAlpha = 0;
+    _shellFadeDir = 1; // fade to black
+    // Override _executeRunStart to resume instead of starting fresh
+    window._checkpointResumeQueued = true;
+  }
 }
 
 function renderShellOverlays() {
@@ -8770,9 +8990,20 @@ function _executeRunStart() {
   _shellFadeAlpha = 0; _shellFadeDir = 0;
   // Reset camera offset so there's no jarring pan from Shell's fixed camera
   cameraOffset.x = 0; cameraOffset.y = 0;
+  // Check for checkpoint resume
+  if (window._checkpointResumeQueued) {
+    window._checkpointResumeQueued = false;
+    if (resumeFromCheckpoint()) {
+      clearCheckpoint(); // clear after successful resume — re-saved at next boss
+      return;
+    }
+    // If resume failed, fall through to normal start
+  }
   // Restore HUD elements hidden by enterShell
   ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
+  // Clear checkpoint when starting a fresh run from the gateway
+  clearCheckpoint();
   gameMode = 'trench';
   startSoloGame();
 }
@@ -8812,6 +9043,7 @@ function showDeathToShell() {
   window._deathBeatPlaying = true;
   gameState = 'dying';
   stopSunbeamLoop(); stopWeaponLoop();
+  clearCheckpoint(); // clear checkpoint on death
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
   _shellDeathStats = calculateDeathStats();
   // ---- PHASE 1: FREEZE + GLITCH OUT (1.5s) ----
@@ -11461,6 +11693,13 @@ function dropZombieLoot(z) {
     for(let i=0;i<_bitsCount;i++){const a=(i/_bitsCount)*Math.PI*2+Math.random()*0.5,d=30+Math.random()*50;pickups.push({type:'bits',amount:5+Math.floor(Math.random()*4),x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
     // Floating text
     addFloatingText(z.x,z.y-z.radius-30,'BOSS DEFEATED',_bossColor);
+    // Auto-save checkpoint after boss kill (after death freeze clears)
+    setTimeout(() => {
+      saveCheckpoint();
+      // Full heal at checkpoint
+      const _cpLp = getLocalPlayer();
+      if (_cpLp) { _cpLp.hp = _cpLp.maxHp; addFloatingText(_cpLp.x, _cpLp.y - 40, 'HP RESTORED', '#4f4'); }
+    }, 1000);
     return;
   }
   if (Math.random() < 0.06) {
