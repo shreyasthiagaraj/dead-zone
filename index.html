@@ -4243,20 +4243,35 @@ function updateCheckpointRoom(sec, TW) {
     // Save checkpoint
     saveCheckpoint();
 
-    // Spawn mod terminal (boss reward) in the center of the room
-    const midX = sec.x + TW * 0.5;
-    const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+    // Clear any obstacles inside the checkpoint section — it's a safe room and
+    // the generator template left dark blocks that looked like scenery. Open
+    // the whole interior so the player can freely walk to either terminal.
+    {
+      const _gxStart = Math.floor(sec.x / CELL_SIZE);
+      const _gxEnd = Math.floor((sec.x + TW) / CELL_SIZE);
+      for (let _gy = 1; _gy < TRENCH_HEIGHT - 1; _gy++) {
+        if (!dungeonGrid[_gy]) continue;
+        for (let _gx = _gxStart + 1; _gx < _gxEnd - 1; _gx++) {
+          dungeonGrid[_gy][_gx] = true;
+        }
+      }
+    }
+
+    // Place terminals in a horizontal row, centered below the CHECKPOINT/HP
+    // RESTORED label stack so the player sees them on entry and can walk down
+    // to either one. Signal Lab on the left, Mod Terminal on the right.
     _pendingBossShop = true;
     _dlChoicePending = true; // lock door until shop is used
-    spawnShopChest(midX, midY);
-
-    // Signal Lab — player can change research focus at checkpoints
-    const labX = sec.x + TW * 0.25;
-    const labY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+    const midX = sec.x + TW * 0.5;
+    const termY = (TRENCH_HEIGHT / 2) * CELL_SIZE + 130;
+    const termGap = 90;
+    // Signal Lab — research focus swap
     barrels.push({
-        x: labX, y: labY, radius: 20, hp: 9999, maxHp: 9999,
+        x: midX - termGap, y: termY, radius: 20, hp: 9999, maxHp: 9999,
         _signalLab: true, _bobTimer: 0, _spawnAnim: 30, _spawnAnimMax: 30,
     });
+    // Mod Terminal — boss-reward shop chest
+    spawnShopChest(midX + termGap, termY);
 
     // Big announcement
     showSectionTitleCard('\u25C6 CHECKPOINT \u25C6', 'progress cached \u00B7 systems restored', false);
@@ -16478,6 +16493,22 @@ function render() {
     ctx.globalAlpha = 1;
   }
 
+  // Checkpoint background tint — drawn BEFORE barrels so the safe-room glow
+  // sits under the Signal Lab / Mod Terminal instead of fading them out. The
+  // text + brackets are drawn later in the render pipeline (on top of barrels).
+  if(_checkpointRoomActive&&gameMode==='trench'&&trenchSections[trenchSection]){
+    const cpSec=trenchSections[trenchSection];
+    const cpTW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
+    const cpT=performance.now();
+    ctx.globalAlpha=0.85;
+    ctx.fillStyle='#030a12';
+    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
+    ctx.globalAlpha=0.10+Math.sin(cpT*0.003)*0.04;
+    ctx.fillStyle='#0f0';
+    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
+    ctx.globalAlpha=1;
+  }
+
   // Barrels + chests
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
     // ---- MOD TERMINAL: computer terminal visual (replaces chest) ----
@@ -17428,23 +17459,14 @@ function render() {
       ctx.shadowBlur=0;ctx.globalAlpha=1;
     }
   }
-  // Checkpoint room visuals — Shell-like void with green color scheme
+  // Checkpoint room text + brackets — the background tint has already been
+  // drawn before barrels (see above); this pass is on top of the whole scene.
   if(_checkpointRoomActive&&gameMode==='trench'&&trenchSections[trenchSection]){
     const cpSec=trenchSections[trenchSection];
     const cpTW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
     const cpMidX=cpSec.x+cpTW*0.5;
     const cpMidY=(TRENCH_HEIGHT/2)*CELL_SIZE;
     const cpT=performance.now();
-    // Dark blue-green void background (Shell-like)
-    ctx.globalAlpha=0.85;
-    ctx.fillStyle='#030a12';
-    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
-    ctx.globalAlpha=1;
-    // Green ambient glow — safe room feeling (stronger)
-    ctx.globalAlpha=0.10+Math.sin(cpT*0.003)*0.04;
-    ctx.fillStyle='#0f0';
-    ctx.fillRect(cpSec.x,0,cpTW,TRENCH_HEIGHT*CELL_SIZE);
-    ctx.globalAlpha=1;
     // CRT boost during checkpoint — periodic glitch for atmosphere
     if (gameTime % 90 < 3) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.10);
     if (gameTime % 240 < 2) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.20);
