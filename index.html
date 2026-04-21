@@ -18763,7 +18763,36 @@ function renderMinimap(){
 // ============================================================
 // GAME LOOP
 // ============================================================
-function gameLoop(){try{update();}catch(e){console.error('UPDATE ERROR:',e);}render();requestAnimationFrame(gameLoop);}
+// Fixed-timestep loop pinned at 60 Hz. Previously the loop ran update() once
+// per requestAnimationFrame, which meant gameplay ran at the display refresh
+// rate — so 120 Hz mobile (iPhone ProMotion, Galaxy/Pixel high-refresh) and
+// 120/144/165 Hz desktop monitors ran the simulation 2–2.75× faster than
+// 60 Hz. Player speed, zombie AI, cooldowns, everything scaled with refresh
+// rate. Now update() ticks at a fixed cadence; render() still fires every
+// rAF so high-refresh displays get smoother visuals without speeding up play.
+const _FIXED_DT_MS = 1000 / 60;
+let _loopLastTime = 0;
+let _loopAccumMs = 0;
+function gameLoop(now) {
+  if (!_loopLastTime) _loopLastTime = now || performance.now();
+  const t = now || performance.now();
+  let delta = t - _loopLastTime;
+  _loopLastTime = t;
+  // Clamp: tab hidden / debugger paused can produce multi-second deltas.
+  // Capping at 250 ms prevents a catch-up burst from spamming update().
+  if (delta > 250) delta = 250;
+  _loopAccumMs += delta;
+  // Hard cap at 4 updates per render so a spike can't cascade into a hang.
+  let steps = 0;
+  while (_loopAccumMs >= _FIXED_DT_MS && steps < 4) {
+    try { update(); } catch(e) { console.error('UPDATE ERROR:', e); }
+    _loopAccumMs -= _FIXED_DT_MS;
+    steps++;
+  }
+  if (steps === 4) _loopAccumMs = 0; // drop the rest to recover cleanly
+  render();
+  requestAnimationFrame(gameLoop);
+}
 // Preload audio on page load so the very first user interaction can play music immediately.
 // AudioContext is created in suspended state (allowed without user gesture in modern browsers);
 // audio files decode in parallel so the music buffer is ready by the time the user clicks.
