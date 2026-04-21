@@ -9374,11 +9374,12 @@ function updateShell() {
   {
     pollGamepad();
     let dx = 0, dy = 0;
-    if (keys['w']||keys['arrowup']) dy -= 1;
-    if (keys['s']||keys['arrowdown']) dy += 1;
-    if (keys['a']||keys['arrowleft']) dx -= 1;
-    if (keys['d']||keys['arrowright']) dx += 1;
-    if (isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
+    // Arrow-key fallback only — WASD removed so A/S can be bound to shoot/special.
+    if (keys['arrowup']) dy -= 1;
+    if (keys['arrowdown']) dy += 1;
+    if (keys['arrowleft']) dx -= 1;
+    if (keys['arrowright']) dx += 1;
+    if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
     if (gamepad.lx !== 0 || gamepad.ly !== 0) { dx = gamepad.lx; dy = gamepad.ly; }
     const mag = Math.sqrt(dx*dx + dy*dy);
     let moveSpeed = 5;
@@ -9388,14 +9389,9 @@ function updateShell() {
     pushOutOfObstacles(lp, PLAYER_RADIUS);
     lp.x = Math.max(PLAYER_RADIUS, Math.min(ARENA_W - PLAYER_RADIUS, lp.x));
     lp.y = Math.max(PLAYER_RADIUS, Math.min(ARENA_H - PLAYER_RADIUS, lp.y));
-    // Face movement direction on mobile, mouse on desktop
-    if (isMobile) {
-      const _moveMag = Math.sqrt(lp.vx*lp.vx + lp.vy*lp.vy);
-      if (_moveMag > 0.3) lp.angle = Math.atan2(lp.vy, lp.vx);
-    } else if (!isMobile && mouse) {
-      const ox = -camera.x + canvas.width/2, oy = -camera.y + canvas.height/2;
-      lp.angle = Math.atan2(mouse.y - oy - lp.y, mouse.x - ox - lp.x);
-    }
+    // Face movement direction on both platforms — desktop uses click-joystick too.
+    const _moveMag = Math.sqrt(lp.vx*lp.vx + lp.vy*lp.vy);
+    if (_moveMag > 0.3) lp.angle = Math.atan2(lp.vy, lp.vx);
   }
   // ---- Camera — fixed at room center (room is small enough to fit on screen) ----
   camera.x = ARENA_W / 2;
@@ -10101,26 +10097,63 @@ function handleKeyDown(e) {
     if (e.key === '0') switchWeapon(9);
     if (e.key === 'e') tryPickup(true);
     if (e.key === ' ') { e.preventDefault(); dash(); }
-    if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); activateSpecial(); }
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); activateSpecial(); }
     if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
   }
 }
-function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 'q' || e.key === 'Q') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 'q' || e.key === 'Q') && selectedSpecial === 'payload') releasePayload(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
+function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'payload') releasePayload(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 document.addEventListener('keydown', handleKeyDown);
 document.addEventListener('keyup', handleKeyUp);
 // Reset all keys when window loses focus (prevents stuck keys)
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+window.addEventListener('blur', () => {
+  for (const k in keys) keys[k] = false;
+  if (!isMobile) {
+    mouse.down = false;
+    leftJoystick.active = false;
+    leftJoystick.dx = 0; leftJoystick.dy = 0;
+    leftJoystick.nx = 0; leftJoystick.ny = 0;
+  }
+});
 // Clear stuck keys on hide. Audio resume on visibility/touch/focus/pageshow is
 // handled centrally by the _onAppForeground pipeline in the audio engine section.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { for (const k in keys) keys[k] = false; }
 });
 document.addEventListener('click', _onAppForeground);
-window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-window.addEventListener('mousedown', e => { if (e.button === 0) mouse.down = true; });
-window.addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
+window.addEventListener('mousemove', e => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  // Desktop virtual joystick: pivot around the click point to steer.
+  if (!isMobile && leftJoystick.active) {
+    let dx = e.clientX - leftJoystick.cx, dy = e.clientY - leftJoystick.cy;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d > JOYSTICK_LEFT_MAX) { dx = dx/d*JOYSTICK_LEFT_MAX; dy = dy/d*JOYSTICK_LEFT_MAX; }
+    leftJoystick.dx = dx; leftJoystick.dy = dy;
+    leftJoystick.nx = dx/JOYSTICK_LEFT_MAX; leftJoystick.ny = dy/JOYSTICK_LEFT_MAX;
+  }
+});
+window.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  mouse.down = true;
+  if (isMobile) return;
+  if (gameState !== 'playing' && gameState !== 'shell') return;
+  // Don't start the joystick if the click targeted a HUD element (buttons, weapon slots, menus).
+  const el = e.target;
+  if (el && el !== canvas && el !== document.body && el.tagName !== 'HTML') return;
+  leftJoystick.active = true;
+  leftJoystick.cx = e.clientX; leftJoystick.cy = e.clientY;
+  leftJoystick.dx = 0; leftJoystick.dy = 0;
+  leftJoystick.nx = 0; leftJoystick.ny = 0;
+});
+window.addEventListener('mouseup', e => {
+  if (e.button !== 0) return;
+  mouse.down = false;
+  if (isMobile) return;
+  leftJoystick.active = false;
+  leftJoystick.dx = 0; leftJoystick.dy = 0;
+  leftJoystick.nx = 0; leftJoystick.ny = 0;
+});
 window.addEventListener('wheel', e => { if (gameState !== 'playing') return; const lp = getLocalPlayer(); if (!lp) return; switchWeapon((lp.currentWeapon + (e.deltaY > 0 ? 1 : -1) + lp.weapons.length) % lp.weapons.length); });
 window.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', () => canvas.focus());
@@ -13009,8 +13042,14 @@ function update() {
     // Poll gamepad each frame
     pollGamepad();
     let dx=0,dy=0;
-    // Keyboard input always works
-    if(keys['w']||keys['arrowup'])dy-=1;if(keys['s']||keys['arrowdown'])dy+=1;if(keys['a']||keys['arrowleft'])dx-=1;if(keys['d']||keys['arrowright'])dx+=1;
+    // Desktop: click-and-drag virtual joystick. Keyboard WASD removed so A/S can
+    // map to shoot/special without conflicting with movement. Arrow keys kept as
+    // a keyboard-only fallback for players without a mouse.
+    if (!isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
+    if (keys['arrowup']) dy -= 1;
+    if (keys['arrowdown']) dy += 1;
+    if (keys['arrowleft']) dx -= 1;
+    if (keys['arrowright']) dx += 1;
     // Mobile: AIM ASSIST — player must face the enemy, system nudges aim.
     // Press shoot → lock nearest enemy in facing cone → fire until dead or overheat.
     // Release shoot → clear lock. Must re-press to pick new target.
@@ -13091,7 +13130,7 @@ function update() {
       // Cannot move while firing. Must release to reposition.
       if (isMobile && shootButtonHeld) moveSpeed = 0;
       if (_deadshotCharging || _payloadAiming) moveSpeed = 0; // freeze while aiming specials — joystick aims only
-      const usingAnalog = isMobile || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
+      const usingAnalog = isMobile || (!isMobile && leftJoystick.active) || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
         // Speed ramp: reach near-top-speed with less stick deflection.
@@ -13565,7 +13604,15 @@ function update() {
     }
     if(isMobile){/* angle set by movement/aim code above — no override needed */}
     else if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){lp.angle=Math.atan2(gamepad.ry,gamepad.rx);}
-    else{mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;lp.angle=Math.atan2(mouse.worldY-lp.y,mouse.worldX-lp.x);}
+    else{
+      // Desktop: aim follows click-joystick direction when active; preserves the
+      // last aim when the joystick is released so the player keeps facing where
+      // they last moved. Still track mouse world-pos for HUD/menu consumers.
+      mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;
+      if(leftJoystick.active&&(leftJoystick.nx!==0||leftJoystick.ny!==0)){
+        lp.angle=Math.atan2(leftJoystick.ny,leftJoystick.nx);
+      }
+    }
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
@@ -13708,7 +13755,7 @@ function update() {
 
     const w=lp.weapons[lp.currentWeapon];
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
-    const shouldFire=isMobile?rightJoystick.firing:(mouse.down||gamepad.fire);
+    const shouldFire=isMobile?rightJoystick.firing:(keys['a']||gamepad.fire);
     lp._firing=shouldFire;
     // Reload ticks even when not firing
     if (_gunReloading) { _gunReloadTimer--; if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); floatingTexts.push({x:lp.x,y:lp.y-30,text:'RELOADED',color:'#0ff',vy:0,life:30,maxLife:30,_follow:lp,_followOffY:-30}); playSound(1200,0.08,'sine',0.06); } }
@@ -13729,7 +13776,7 @@ function update() {
     // visually carry over the correct element. Indexes: [fire, ice, chain, wind, shock]
     const _sm = runMods || {};
     const smLvs = [_sm.fireSmashLv||0, _sm.iceSmashLv||0, _sm.chainSmashLv||0, _sm.windSmashLv||0, _sm.shockDashLv||0];
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (mouse.down || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, smLvs, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (keys['a'] || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, smLvs, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -15505,8 +15552,16 @@ function update() {
     cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.018);
     cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.018);
   }
-  camera.x = lerp(camera.x, camTarget.x + cameraOffset.x, 0.1);
-  camera.y = lerp(camera.y, camTarget.y + cameraOffset.y, 0.1);
+  if (isMobile) {
+    camera.x = lerp(camera.x, camTarget.x + cameraOffset.x, 0.1);
+    camera.y = lerp(camera.y, camTarget.y + cameraOffset.y, 0.1);
+  } else {
+    // Desktop: hold the camera at the map center so the whole arena is visible
+    // without the frame panning. Region-specific clamp below refines for
+    // descent/trench modes where playable bounds differ from the raw arena.
+    camera.x = ARENA_W / 2;
+    camera.y = ARENA_H / 2;
+  }
   // Clamp camera to playable region, with some wiggle room past the edge so the
   // player doesn't end up glued to the far side of the screen. Without wiggle the
   // camera hard-stops at the wall and the player slides off-center; with wiggle
@@ -18600,7 +18655,7 @@ function render() {
     ctx.restore();
   }
 
-  if(isMobile&&(gameState==='playing'||gameState==='shell'))renderJoysticks();
+  if(leftJoystick.active&&(gameState==='playing'||gameState==='shell'))renderJoysticks();
   renderMinimap();
 
   // Trench transition fade — drawn last so it covers the entire viewport (HUD included)
