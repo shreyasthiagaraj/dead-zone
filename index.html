@@ -6547,22 +6547,25 @@ let musicBus = null;
 // 4. Loop must be true so the session never ends
 // 5. Must be triggered from a user gesture (touchstart/click)
 //
-// The data URI is a 0.5s near-silent WAV (8kHz mono, 4000 samples of near-zero).
+// The data URI is a 0.5s true-silent WAV (8kHz mono). Previously this WAV
+// alternated ±1 every sample, which at 8kHz produced an audible 4kHz square
+// wave — the "recurring beep" reported on mobile. Fill with 128 (exact PCM
+// center for 8-bit unsigned) so there is no waveform energy at all; iOS still
+// treats the playing element as a valid audio session because the WAV has a
+// full data chunk of `numSamples` bytes, which is what matters for the silent
+// switch override, not the audio content itself.
 const _SILENT_URI = (() => {
-  // Generate a 0.5s WAV with near-inaudible content (value 128±1 = ~0.4% amplitude)
   const sampleRate = 8000, duration = 0.5, numSamples = Math.floor(sampleRate * duration);
   const buffer = new ArrayBuffer(44 + numSamples);
   const view = new DataView(buffer);
-  // WAV header
   const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
   writeStr(0, 'RIFF'); view.setUint32(4, 36 + numSamples, true); writeStr(8, 'WAVE');
   writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
   view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
   writeStr(36, 'data'); view.setUint32(40, numSamples, true);
-  // Fill with near-silence (128 = center for 8-bit, ±1 = barely audible)
   const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < numSamples; i++) bytes[44 + i] = 128 + (i % 2 === 0 ? 1 : -1);
+  for (let i = 0; i < numSamples; i++) bytes[44 + i] = 128; // true silence (PCM midpoint)
   return 'data:audio/wav;base64,' + btoa(String.fromCharCode(...bytes));
 })();
 let _silentLoopEl = null;
@@ -6658,9 +6661,24 @@ function _resumeAudioFully() {
 // Single foreground handler — all paths funnel here.
 function _onAppForeground() { _resumeAudioFully(); }
 
+// Release the audio session when the app goes to the background so other apps
+// (music, podcasts, calls) don't compete with the silent-switch loop or with a
+// suspended WebAudio context. Pauses the silent <audio> element and suspends
+// the AudioContext; both are re-activated in _resumeAudioFully on foreground.
+function _onAppBackground() {
+  try { if (_silentLoopEl && !_silentLoopEl.paused) _silentLoopEl.pause(); } catch(e) {}
+  if (audioCtx && audioCtx.state === 'running') {
+    try { audioCtx.suspend(); } catch(e) {}
+  }
+}
+
 // Primary triggers: tab/app visibility, window focus, bfcache restore.
+// Only visibilitychange (and Capacitor appStateChange below) trigger the
+// background release — window blur is too aggressive on desktop where brief
+// focus loss (alt-tab, floating window) shouldn't silence the game.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') _onAppForeground();
+  else if (document.visibilityState === 'hidden') _onAppBackground();
 });
 window.addEventListener('focus', _onAppForeground);
 window.addEventListener('pageshow', _onAppForeground);
@@ -6684,6 +6702,7 @@ try {
   if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
     window.Capacitor.Plugins.App.addListener('appStateChange', (state) => {
       if (state && state.isActive) _onAppForeground();
+      else _onAppBackground();
     });
   }
 } catch(e) {}
@@ -15556,11 +15575,24 @@ function update() {
     camera.x = lerp(camera.x, camTarget.x + cameraOffset.x, 0.1);
     camera.y = lerp(camera.y, camTarget.y + cameraOffset.y, 0.1);
   } else {
-    // Desktop: hold the camera at the map center so the whole arena is visible
-    // without the frame panning. Region-specific clamp below refines for
-    // descent/trench modes where playable bounds differ from the raw arena.
-    camera.x = ARENA_W / 2;
-    camera.y = ARENA_H / 2;
+    // Desktop: hold the camera at the center of the active section so the
+    // player sees the whole current section without the frame panning. Trench
+    // and descent modes scroll through many sections of the full arena — the
+    // arena center would leave the player stranded off-screen. Other modes
+    // share a single arena, so arena center is correct there.
+    let _camTX = ARENA_W / 2, _camTY = ARENA_H / 2;
+    if (gameMode === 'trench' && trenchSections && trenchSections[trenchSection]) {
+      const _sec = trenchSections[trenchSection];
+      _camTX = _sec.x + _sec.width / 2;
+      _camTY = (TRENCH_HEIGHT * CELL_SIZE) / 2;
+    } else if (gameMode === 'descent' && descentSections && descentSections[descentSection]) {
+      const _sec = descentSections[descentSection];
+      const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
+      _camTX = (_mx + DESCENT_WIDTH / 2) * CELL_SIZE;
+      _camTY = _sec.y + _sec.height / 2;
+    }
+    camera.x = _camTX;
+    camera.y = _camTY;
   }
   // Clamp camera to playable region, with some wiggle room past the edge so the
   // player doesn't end up glued to the far side of the screen. Without wiggle the
