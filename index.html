@@ -1627,9 +1627,9 @@ const UPGRADE_POOL = [
   { id:'cascade', name:'CASCADE', rarity:'epic', max:1, icon:'◈', color:'#f80',
     descs:['Enemies killed by discharge emit a mini shockwave (50% radius, 50% dmg).'],
     flavor:'recursive signal propagation' },
-  { id:'reflux', name:'REFLUX', rarity:'rare', max:1, icon:'⟲', color:'#f80',
-    descs:['Wave bounces off walls and returns (40% dmg, 60% width). Hits enemies twice.'],
-    flavor:'echo protocol — signal returns' },
+  { id:'residual_field', name:'RESIDUAL FIELD', rarity:'rare', max:2, icon:'◌', color:'#f80',
+    descs:['LEVEL 1: Wave leaves a lingering damage zone for 2s (30% dmg + stagger).','LEVEL 2: Zone lasts 3s, applies element status.'],
+    flavor:'energy dissipates slowly — the field remains' },
   // ---- PAYLOAD MODS (special weapon cards) ----
   { id:'cluster_bomb', name:'CLUSTER BOMB', rarity:'rare', max:2, icon:'⁂', color:'#fa0',
     descs:['LEVEL 1: Explosion spawns 3 mini-blasts (40% dmg, 50% radius).','LEVEL 2: 5 mini-blasts.'],
@@ -1659,9 +1659,9 @@ const UPGRADE_POOL = [
   { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#f44',
     descs:['Full charge: wide piercing beam (3x width). Damages everything in line.'],
     flavor:'electromagnetic acceleration — maximum yield' },
-  { id:'ricochet', name:'RICOCHET', rarity:'common', max:2, icon:'↗', color:'#f44',
-    descs:['LEVEL 1: Shot bounces off walls once.','LEVEL 2: Bounces twice, 80% dmg per bounce.'],
-    flavor:'calculated deflection trajectory' },
+  { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:2, icon:'⚯', color:'#f44',
+    descs:['LEVEL 1: Kill with deadshot fires a bolt at nearest enemy (60% dmg).','LEVEL 2: Chains to 2 enemies.'],
+    flavor:'execution protocol — one kill leads to another' },
   // ---- UTILITY (common) ----
   { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:3, icon:'»', color:'#0ff',
     descs:[
@@ -1743,11 +1743,11 @@ function rebuildRunMods() {
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
     // Discharge mods
-    wideArc: 0, surgeRange: 0, aftershock: 0, cascade: false, reflux: false,
+    wideArc: 0, surgeRange: 0, aftershock: 0, cascade: false, residualField: 0,
     // Payload mods
     clusterBomb: 0, stickyCharge: false, napalmZone: 0, concussiveBlast: 0, rapidPayload: 0,
     // Deadshot mods
-    quickDraw: 0, armorPierce: false, tracerRound: false, railgun: false, ricochet: 0,
+    quickDraw: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -1834,7 +1834,7 @@ function rebuildRunMods() {
       case 'surge_range':     m.surgeRange += n; break;
       case 'aftershock':      m.aftershock += n; break;
       case 'cascade':         m.cascade = true; break;
-      case 'reflux':          m.reflux = true; break;
+      case 'residual_field':  m.residualField += n; break;
       // Payload mods
       case 'cluster_bomb':    m.clusterBomb += n; break;
       case 'sticky_charge':   m.stickyCharge = true; break;
@@ -1846,7 +1846,7 @@ function rebuildRunMods() {
       case 'armor_pierce':    m.armorPierce = true; break;
       case 'tracer_round':    m.tracerRound = true; break;
       case 'railgun':         m.railgun = true; break;
-      case 'ricochet':        m.ricochet += n; break;
+      case 'chain_kill':      m.chainKill += n; break;
     }
   }
   // Compute damage/fire rate from generic weapon cards
@@ -1987,11 +1987,11 @@ const _SPECIAL_CARD_MAP = {
   recall_anchor: 'beacon', rapid_turret: 'beacon', multi_beacon: 'beacon', beacon_range: 'beacon',
   beacon_thermal: 'beacon', beacon_cryo: 'beacon', beacon_arc: 'beacon', beacon_corrupt: 'beacon',
   // Discharge-specific
-  wide_arc: 'discharge', surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', reflux: 'discharge',
+  wide_arc: 'discharge', surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', residual_field: 'discharge',
   // Payload-specific
   cluster_bomb: 'payload', sticky_charge: 'payload', napalm_zone: 'payload', concussive_blast: 'payload', rapid_payload: 'payload',
   // Deadshot-specific
-  quick_draw: 'deadshot', armor_pierce: 'deadshot', tracer_round: 'deadshot', railgun: 'deadshot', ricochet: 'deadshot',
+  quick_draw: 'deadshot', armor_pierce: 'deadshot', tracer_round: 'deadshot', railgun: 'deadshot', chain_kill: 'deadshot',
 };
 
 // Draft N cards from rare+ pool only (for boss/domain/trial rewards)
@@ -10748,20 +10748,35 @@ function updateDischarge() {
     if (w._lingerFrames <= 0) w.radius = w.maxRadius; // release to cleanup
   }
   if (w.radius >= w.maxRadius) {
-    // REFLUX: wave bounces back on reaching max range
-    if (!w._reflected && _m.reflux) {
-      _dischargeWave = {
-        x: w.x, y: w.y, angle: w.angle + Math.PI,
-        radius: 20, maxRadius: w.maxRadius * 0.7,
-        waveAngle: (w.waveAngle || DISCHARGE_ANGLE) * 0.6,
-        waveRange: w.maxRadius * 0.7,
+    // Dissolve particles — wave breaks apart as it fades
+    const _halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
+    for (let _di = 0; _di < 10; _di++) {
+      const _da = w.angle + (_di / 10 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+      const _dr = w.maxRadius * (0.85 + Math.random() * 0.15);
+      particles.push({ x: w.x + Math.cos(_da)*_dr, y: w.y + Math.sin(_da)*_dr,
+        vx: Math.cos(_da)*1.5 + (Math.random()-0.5)*2, vy: Math.sin(_da)*1.5 + (Math.random()-0.5)*2,
+        life: 14 + Math.random()*8, maxLife: 22, size: 3 + Math.random()*3, color: w.color, type: 'spark' });
+    }
+    // Bright flash fragments at the leading edge
+    for (let _di = 0; _di < 5; _di++) {
+      const _da = w.angle + (_di / 5 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE) * 0.8;
+      particles.push({ x: w.x + Math.cos(_da)*w.maxRadius, y: w.y + Math.sin(_da)*w.maxRadius,
+        vx: Math.cos(_da)*0.5, vy: Math.sin(_da)*0.5,
+        life: 10, maxLife: 10, size: 5, color: '#fff', type: 'spark' });
+    }
+    // RESIDUAL FIELD: leave a lingering damage zone
+    if (_m.residualField > 0) {
+      const _rfDur = _m.residualField >= 2 ? 180 : 120; // 3s or 2s
+      const _rfApplyElem = _m.residualField >= 2;
+      window._residualFields = window._residualFields || [];
+      window._residualFields.push({
+        x: w.x, y: w.y, angle: w.angle,
+        halfAngle: _halfA, radius: w.maxRadius,
+        timer: _rfDur, maxTimer: _rfDur,
         color: w.color, classId: w.classId,
-        hitSet: new Set(), _reflected: true,
-        _refluxDmgMult: 0.4,
-      };
-      _dischargeActive = true;
-      playSound(200, 0.08, 'sine', 0.06);
-      return;
+        dmg: 40, applyElem: _rfApplyElem,
+        hitCd: {}, // per-zombie cooldown to prevent damage every frame
+      });
     }
     _dischargeActive = false;
     _dischargeWave = null;
@@ -10770,7 +10785,7 @@ function updateDischarge() {
   const halfAngle = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
   const waveFront = w.radius;
   const waveBack = Math.max(0, w.radius - 30); // wave thickness ~30px
-  const _dmgMult = w._refluxDmgMult || 1;
+  const _dmgMult = 1;
   // Damage enemies in the wave band
   if (isHost) {
     for (const z of zombies) {
@@ -10833,6 +10848,48 @@ function updateDischarge() {
     particles.push({ x: w.x + Math.cos(pa)*pr, y: w.y + Math.sin(pa)*pr,
       vx: Math.cos(pa)*2 + (Math.random()-0.5), vy: Math.sin(pa)*2 + (Math.random()-0.5),
       life: 8, maxLife: 8, size: 3 + Math.random()*2, color: w.color, type: 'spark' });
+  }
+}
+
+// Residual field zones left by discharge (RESIDUAL FIELD mod)
+function updateResidualFields() {
+  if (!window._residualFields || window._residualFields.length === 0) return;
+  for (let fi = window._residualFields.length - 1; fi >= 0; fi--) {
+    const rf = window._residualFields[fi];
+    rf.timer--;
+    if (rf.timer <= 0) { window._residualFields.splice(fi, 1); continue; }
+    // Damage enemies inside the zone every 20 frames
+    if (isHost && gameTime % 20 === 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - rf.x, dy = z.y - rf.y, d = Math.sqrt(dx*dx+dy*dy);
+        if (d > rf.radius + z.radius) continue;
+        const a = Math.atan2(dy, dx);
+        let da = a - rf.angle; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
+        if (Math.abs(da) > rf.halfAngle) continue;
+        // Per-zombie cooldown (don't hit same zombie every tick)
+        if (rf.hitCd[z.zid] && rf.hitCd[z.zid] > 0) { rf.hitCd[z.zid]--; continue; }
+        rf.hitCd[z.zid] = 10;
+        damageZombie(z, Math.floor(rf.dmg * 0.3), 0, 0, true);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 8);
+        if (rf.applyElem && rf.classId) {
+          if (rf.classId === 'fire') applyOverheat(z, 4, 1);
+          if (rf.classId === 'ice') applyChill(z, 1);
+          if (rf.classId === 'chain') applyCharged(z);
+          if (rf.classId === 'wind') applyExposed(z);
+          if (rf.classId === 'corrupt') applyCorrupt(z, 1);
+        }
+      }
+    }
+    // Zone VFX: faint shimmering particles inside the arc
+    if (gameTime % 3 === 0) {
+      const fadePct = rf.timer / rf.maxTimer;
+      const pa = rf.angle + (Math.random() - 0.5) * rf.halfAngle * 2;
+      const pr = Math.random() * rf.radius;
+      particles.push({ x: rf.x + Math.cos(pa)*pr, y: rf.y + Math.sin(pa)*pr,
+        vx: (Math.random()-0.5)*0.8, vy: -0.5 - Math.random()*0.5,
+        life: 10, maxLife: 10, size: 2 + Math.random(), color: rf.color, type: 'spark' });
+    }
   }
 }
 
@@ -11083,8 +11140,6 @@ function _fireDeadshot(lp) {
   const isRailgun = _m.railgun && chargePct >= 1.0;
   const bulletSize = isRailgun ? (3 + chargePct*3) * 3 : (3 + chargePct*3);
   const bulletLife = isRailgun ? 120 : 60;
-  // RICOCHET: bounces off walls
-  const bounces = _m.ricochet || 0;
   // Fire the shot — arrow-shaped projectile with trail
   bullets.push({
     x: lp.x + Math.cos(a)*24, y: lp.y + Math.sin(a)*24,
@@ -11093,11 +11148,11 @@ function _fireDeadshot(lp) {
     pierce: pierce, pierced: 0, life: bulletLife, maxLife: bulletLife,
     flame: false, explosive: false, explosionRadius: 0,
     tracer: false, chain: false, chainRange: 0, chainCount: 0, laserGlow: false, grenade: false,
-    owner: 'player', ownerId: lp.id, trail: [], crit: false, // no guaranteed crit — use crit window cards
-    _element: classId || null, _homing: false, _bouncing: bounces, _angVel: 0,
+    owner: 'player', ownerId: lp.id, trail: [], crit: false,
+    _element: classId || null, _homing: false, _bouncing: 0, _angVel: 0,
     _beaconBullet: false, _deadshotRound: true, _deadshotColor: bColor,
     _armorPierce: !!_m.armorPierce, _tracerMark: !!_m.tracerRound,
-    _ricochetDmgMult: 1.0,
+    _chainKill: _m.chainKill || 0,
   });
   // Muzzle flash — compact
   for (let i = 0; i < 6; i++) {
@@ -13467,6 +13522,7 @@ function update() {
     if(lp._beaconCooldown>0)lp._beaconCooldown--;
     updateBeacon();
     updateDischarge();
+    updateResidualFields();
     updatePayload();
     updateDeadshot();
     if(isMobile&&gameTime%2===0)tryPickup();
@@ -14032,6 +14088,25 @@ function update() {
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
                   // Arcade system: run kills + streak (check ownerId matches local player)
                   if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
+                  // CHAIN KILL: deadshot kills fire bolts at nearby enemies
+                  if (b._chainKill > 0 && b._deadshotRound) {
+                    const _ckMax = b._chainKill >= 2 ? 2 : 1;
+                    const _ckDmg = Math.floor(b.damage * 0.6);
+                    const _ckHit = new Set([z.zid]);
+                    let _ckLast = z;
+                    for (let _ci = 0; _ci < _ckMax; _ci++) {
+                      let _ckBest = null, _ckBestD = 200;
+                      for (const _cz of zombies) { if (_cz.hp <= 0 || _ckHit.has(_cz.zid)) continue; const _cd = Math.sqrt((_cz.x-_ckLast.x)**2+(_cz.y-_ckLast.y)**2); if (_cd < _ckBestD) { _ckBestD = _cd; _ckBest = _cz; } }
+                      if (!_ckBest) break;
+                      _ckHit.add(_ckBest.zid);
+                      damageZombie(_ckBest, _ckDmg, 0, 0);
+                      // Lightning bolt VFX from corpse to target
+                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 1, color: b._deadshotColor || '#f44', type: 'lightning', tx: _ckBest.x, ty: _ckBest.y });
+                      for (let _ck = 0; _ck < 4; _ck++) { const _ca = Math.random()*Math.PI*2; particles.push({x:_ckBest.x,y:_ckBest.y,vx:Math.cos(_ca)*3,vy:Math.sin(_ca)*3,life:8,maxLife:8,size:2,color:b._deadshotColor||'#f44',type:'spark'}); }
+                      _ckLast = _ckBest;
+                    }
+                    if (_ckHit.size > 1) playSound(800, 0.06, 'sine', 0.04);
+                  }
                   // 5% chance to drop a small health orb
                   if(isHost&&Math.random()<0.05)pickups.push({type:'health',amount:5,x:z.x+(Math.random()-0.5)*10,y:z.y+(Math.random()-0.5)*10,bobTimer:Math.random()*Math.PI*2});
                   // Enrage nearby zombies on death — ONLY in horde mode (defend-the-circle mechanic)
@@ -16993,6 +17068,30 @@ function render() {
     ctx.stroke();
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     ctx.restore();
+  }
+  // Residual field zones (from RESIDUAL FIELD mod)
+  if (window._residualFields) {
+    for (const rf of window._residualFields) {
+      const rfFade = rf.timer / rf.maxTimer;
+      const rfPulse = 0.5 + Math.sin(performance.now() * 0.006) * 0.2;
+      ctx.save();
+      // Faint arc fill — the lingering energy
+      ctx.globalAlpha = rfFade * 0.08 * rfPulse;
+      ctx.fillStyle = rf.color;
+      ctx.beginPath();
+      ctx.arc(rf.x, rf.y, rf.radius, rf.angle - rf.halfAngle, rf.angle + rf.halfAngle);
+      ctx.arc(rf.x, rf.y, rf.radius * 0.3, rf.angle + rf.halfAngle, rf.angle - rf.halfAngle, true);
+      ctx.closePath();
+      ctx.fill();
+      // Pulsing boundary arc
+      ctx.globalAlpha = rfFade * 0.25 * rfPulse;
+      ctx.strokeStyle = rf.color; ctx.lineWidth = 1.5; ctx.shadowColor = rf.color; ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(rf.x, rf.y, rf.radius, rf.angle - rf.halfAngle, rf.angle + rf.halfAngle);
+      ctx.stroke();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    }
   }
   // Active beacon rendering
   const _renderBeacons = _beacons.length > 0 ? _beacons : (activeBeacon ? [activeBeacon] : []);
