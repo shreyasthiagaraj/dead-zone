@@ -10432,7 +10432,7 @@ function activateNova() {
 // DISCHARGE — short-range cone spray, inherits element
 // ============================================================
 const DISCHARGE_COOLDOWN = 120;  // 2 seconds
-const DISCHARGE_RANGE = 160;     // max wave reach
+const DISCHARGE_RANGE = 200;     // max wave reach
 const DISCHARGE_ANGLE = Math.PI * 0.5; // 90° arc
 let _dischargeActive = false;
 let _dischargeWave = null; // { x, y, angle, radius, maxRadius, color, classId, hitSet }
@@ -10486,9 +10486,9 @@ function updateDischarge() {
       const pushDir = d > 0.1 ? 1 : 0;
       const pushX = pushDir ? (dx/d)*10 : Math.cos(w.angle)*10;
       const pushY = pushDir ? (dy/d)*10 : Math.sin(w.angle)*10;
-      damageZombie(z, 60, pushX*0.3, pushY*0.3);
-      z.vx += pushX; z.vy += pushY;
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+      damageZombie(z, 80, pushX*0.4, pushY*0.4);
+      z.vx += pushX * 1.5; z.vy += pushY * 1.5;
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 25);
       if (w.classId === 'fire') applyOverheat(z, 8, 1);
       if (w.classId === 'ice') applyChill(z, 2);
       if (w.classId === 'chain') applyCharged(z);
@@ -16475,27 +16475,43 @@ function render() {
       ctx.restore();
     }
   }
-  // Discharge wave — expanding arc
+  // Discharge wave — expanding arc with solid barrier front
   if (_dischargeActive && _dischargeWave) {
     const w = _dischargeWave;
     const halfA = DISCHARGE_ANGLE * 0.5;
-    const fadePct = w.radius / w.maxRadius; // 0→1 as wave expands
-    const alpha = 0.4 * (1 - fadePct); // fades as it travels
+    const fadePct = w.radius / w.maxRadius;
+    const alpha = 0.5 * (1 - fadePct * 0.7); // stays visible longer
     ctx.save();
-    // Filled arc band (wave front)
-    const innerR = Math.max(0, w.radius - 30);
-    ctx.globalAlpha = alpha;
+    // Trailing wake — faint fill behind the wave
+    const trailR = Math.max(0, w.radius - 50);
+    ctx.globalAlpha = alpha * 0.15;
     ctx.fillStyle = w.color;
     ctx.beginPath();
     ctx.arc(w.x, w.y, w.radius, w.angle - halfA, w.angle + halfA);
-    ctx.arc(w.x, w.y, innerR, w.angle + halfA, w.angle - halfA, true);
+    ctx.arc(w.x, w.y, trailR, w.angle + halfA, w.angle - halfA, true);
     ctx.closePath();
     ctx.fill();
-    // Bright leading edge
-    ctx.globalAlpha = alpha * 1.5;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.shadowColor = w.color; ctx.shadowBlur = 12;
+    // Solid barrier band — the main visible shockwave wall
+    const barrierOuter = w.radius;
+    const barrierInner = Math.max(0, w.radius - 16);
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.fillStyle = w.color;
     ctx.beginPath();
-    ctx.arc(w.x, w.y, w.radius, w.angle - halfA, w.angle + halfA);
+    ctx.arc(w.x, w.y, barrierOuter, w.angle - halfA, w.angle + halfA);
+    ctx.arc(w.x, w.y, barrierInner, w.angle + halfA, w.angle - halfA, true);
+    ctx.closePath();
+    ctx.fill();
+    // Bright white leading edge — the energy crest
+    ctx.globalAlpha = alpha * 1.2;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.shadowColor = w.color; ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, barrierOuter, w.angle - halfA, w.angle + halfA);
+    ctx.stroke();
+    // Inner glow line
+    ctx.globalAlpha = alpha * 0.5;
+    ctx.strokeStyle = w.color; ctx.lineWidth = 2; ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, barrierInner, w.angle - halfA, w.angle + halfA);
     ctx.stroke();
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     ctx.restore();
