@@ -794,10 +794,9 @@ let shellPlayerSpawn = null;  // { x, y }
 // Player picks a special in the Shell before starting. Each has its own activation + card pool.
 const SPECIAL_DEFS = {
   beacon:    { id:'beacon',    name:'BEACON',       icon:'\u25CE', color:'#0ff', desc:'Deploy a turret that auto-fires at enemies' },
-  nova:      { id:'nova',      name:'PULSE NOVA',   icon:'\u25C9', color:'#cef', desc:'Radial burst that knocks back enemies and clears projectiles' },
-  discharge: { id:'discharge', name:'DISCHARGE',    icon:'\u2301', color:'#f80', desc:'Short-range energy cone — hold to spray, inherits your element' },
-  payload:   { id:'payload',   name:'PAYLOAD',      icon:'\u25C6', color:'#fa0', desc:'Lob a grenade that bounces once then detonates' },
-  deadshot:  { id:'deadshot',  name:'DEADSHOT',     icon:'\u25C8', color:'#f44', desc:'Charge a piercing long-range shot — full charge = massive damage' },
+  discharge: { id:'discharge', name:'DISCHARGE',    icon:'\u2301', color:'#f80', desc:'Expanding energy wave — pushes enemies and absorbs projectiles' },
+  payload:   { id:'payload',   name:'PAYLOAD',      icon:'\u25C6', color:'#fa0', desc:'Hold to aim, release to lob a grenade — tap again to detonate' },
+  deadshot:  { id:'deadshot',  name:'DEADSHOT',     icon:'\u25C8', color:'#f44', desc:'Hold to charge a piercing long-range shot — release to fire' },
 };
 let selectedSpecial = 'beacon'; // default
 let _shellNearTerminal = null;
@@ -8016,19 +8015,20 @@ function openArmory() {
       <div style="font-size:9px;color:#888;line-height:1.3">${s.desc}</div>
       ${isSelected ? '<div style="font-size:9px;color:#0f0;letter-spacing:2px;margin-top:4px">EQUIPPED</div>' : ''}
     `;
-    card.addEventListener('click', (e) => { e.stopPropagation(); selectedSpecial = key; openArmory(); playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1); });
-    card.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); selectedSpecial = key; openArmory(); playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1); }, { passive: false });
+    const _selectAndClose = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      selectedSpecial = key;
+      playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1);
+      closeArmory();
+      // Show selected weapon label in the shell
+      const lp = getLocalPlayer();
+      if (lp) addFloatingText(lp.x, lp.y - 40, `${s.icon} ${s.name} EQUIPPED`, s.color);
+    };
+    card.addEventListener('click', _selectAndClose);
+    card.addEventListener('touchend', _selectAndClose, { passive: false });
     grid.appendChild(card);
   }
   el.appendChild(grid);
-  // Back button
-  const back = document.createElement('button');
-  back.className = 'menu-btn';
-  back.style.cssText = 'margin-top:10px;padding:8px 24px;font-size:12px;letter-spacing:3px';
-  back.textContent = 'BACK';
-  back.addEventListener('click', (e) => { e.stopPropagation(); closeArmory(); });
-  back.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); closeArmory(); });
-  el.appendChild(back);
 }
 function closeArmory() {
   const el = document.getElementById('armory-screen');
@@ -9986,7 +9986,7 @@ function activateSpecial() {
   if (gameState === 'shell') return;
   switch (selectedSpecial) {
     case 'beacon': deployBeacon(); break;
-    case 'nova': activateNova(); break;
+    case 'nova': deployBeacon(); break; // nova removed — fallback to beacon
     case 'discharge': activateDischarge(); break;
     case 'payload': activatePayload(); break;
     case 'deadshot': activateDeadshot(); break;
