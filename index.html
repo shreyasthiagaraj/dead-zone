@@ -1603,19 +1603,19 @@ const UPGRADE_POOL = [
     flavor:'expanded buffer cache' },
   // Beacon element cards — mutually exclusive, explicitly set beacon/mine element
   { id:'beacon_thermal', name:'THERMAL PROTOCOL', rarity:'rare', max:1, icon:'🔥', color:'#f80',
-    descs:['Special weapon applies OVERHEAT. Adds thermal element to all special attacks.'],
+    descs:['Special weapon applies OVERHEAT. Adds thermal element to all special attacks. +15% weapon damage.'],
     flavor:'overheating the local grid.' },
   { id:'beacon_cryo', name:'CRYO PROTOCOL', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
-    descs:['Special weapon applies CHILL. Adds cryo element to all special attacks.'],
+    descs:['Special weapon applies CHILL. Adds cryo element to all special attacks. +15% weapon damage.'],
     flavor:'flash-freezing the perimeter.' },
   { id:'beacon_arc', name:'ARC PROTOCOL', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['Special weapon applies CHARGED. Adds arc element to all special attacks.'],
+    descs:['Special weapon applies CHARGED. Adds arc element to all special attacks. +15% weapon damage.'],
     flavor:'electrified killzone.' },
   { id:'beacon_corrupt', name:'CORRUPT PROTOCOL', rarity:'rare', max:1, icon:'☣', color:'#a4f',
-    descs:['Special weapon applies CORRUPT. Adds corrupt element to all special attacks.'],
+    descs:['Special weapon applies CORRUPT. Adds corrupt element to all special attacks. +15% weapon damage.'],
     flavor:'infection spreader deployed.' },
   { id:'beacon_pulse', name:'PULSE PROTOCOL', rarity:'rare', max:1, icon:'💨', color:'#cef',
-    descs:['Special weapon applies EXPOSED. Adds pulse element to all special attacks.'],
+    descs:['Special weapon applies EXPOSED. Adds pulse element to all special attacks. +15% weapon damage.'],
     flavor:'kinetic resonance amplified.' },
   // ---- DISCHARGE MODS (special weapon cards) ----
   { id:'wide_arc', name:'WIDE ARC', rarity:'common', max:3, icon:'◠', color:'#f80',
@@ -1825,11 +1825,15 @@ function rebuildRunMods() {
       case 'hazard_zone':  m.hazardZone  += n; break;
       case 'extended_uptime': m.extendedUptime += n; break;
       case 'rapid_turret':    m.rapidTurret    += n; break;
-      case 'beacon_thermal': m.beaconElement = 'fire'; break;
-      case 'beacon_cryo':    m.beaconElement = 'ice'; break;
-      case 'beacon_arc':     m.beaconElement = 'chain'; break;
-      case 'beacon_corrupt': m.beaconElement = 'corrupt'; break;
-      case 'beacon_pulse':   m.beaconElement = 'wind'; break;
+      // Protocol cards: element for specials AND a damage boost. The elemental
+      // effect alone wasn't enough incentive at rare rarity — each protocol now
+      // also grants +15% weapon damage so the pick feels like a commitment to
+      // a class, not just a cosmetic reskin of the special.
+      case 'beacon_thermal': m.beaconElement = 'fire';    m.damageMult += 0.15; break;
+      case 'beacon_cryo':    m.beaconElement = 'ice';     m.damageMult += 0.15; break;
+      case 'beacon_arc':     m.beaconElement = 'chain';   m.damageMult += 0.15; break;
+      case 'beacon_corrupt': m.beaconElement = 'corrupt'; m.damageMult += 0.15; break;
+      case 'beacon_pulse':   m.beaconElement = 'wind';    m.damageMult += 0.15; break;
       case 'multi_beacon':   m.multiBeacon += n; break;
       case 'beacon_range':   m.beaconRangeMult = 1 + n * 0.25; break;
       case 'extended_clip':  m.magBonus = n * 5; break;
@@ -10236,8 +10240,8 @@ function fireWeaponForPlayer(p) {
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
   let sp = (Math.random()-0.5) * gun.spread * 2;
-  // Auto-aim magnetism
-  if (isMobile && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
+  // Auto-aim magnetism (applies whenever an aim-assist lock is active — both platforms)
+  if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
     const _magDx = _autoAimTarget.x - p.x, _magDy = _autoAimTarget.y - p.y;
     const _magA = Math.atan2(_magDy, _magDx);
     let _magDiff = _magA - (p.angle + sp);
@@ -13069,16 +13073,17 @@ function update() {
     if (keys['arrowdown']) dy += 1;
     if (keys['arrowleft']) dx -= 1;
     if (keys['arrowright']) dx += 1;
-    // Mobile: AIM ASSIST — player must face the enemy, system nudges aim.
+    // AIM ASSIST (mobile + desktop) — player faces the enemy, system nudges aim.
     // Press shoot → lock nearest enemy in facing cone → fire until dead or overheat.
-    // Release shoot → clear lock. Must re-press to pick new target.
-    if (isMobile) {
-      if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
+    // Release shoot → clear lock. Must re-press to pick new target. Desktop uses
+    // the A key as the shoot input; mobile uses the on-screen shoot button.
+    const _shootHeld = isMobile ? shootButtonHeld : !!keys['a'];
+    {
+      if (isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
       let _desiredAngle = _autoAimAngle;
-      if (shootButtonHeld) {
-        rightJoystick.aiming = true;
-        rightJoystick.firing = true; // always fire while shoot held — don't wait for lock
+      if (_shootHeld) {
+        if (isMobile) { rightJoystick.aiming = true; rightJoystick.firing = true; }
         // If locked target is dead or gone, immediately retarget
         if (_autoAimTarget && _autoAimTarget.hp <= 0 && !_autoAimTarget.alive) {
           _autoAimTarget = null;
@@ -13113,17 +13118,17 @@ function update() {
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
         }
         // Stop firing if magazine empty (reloading)
-        if (_gunReloading) rightJoystick.firing = false;
+        if (isMobile && _gunReloading) rightJoystick.firing = false;
       } else {
         // Released shoot — clear everything
-        rightJoystick.aiming = false; rightJoystick.firing = false;
+        if (isMobile) { rightJoystick.aiming = false; rightJoystick.firing = false; }
         _autoAimTarget = null;
         const moveMag = Math.sqrt(dx*dx+dy*dy);
         if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
       }
 
       // Angle: smooth nudge when locked, instant when moving
-      if (_autoAimTarget && shootButtonHeld) {
+      if (_autoAimTarget && _shootHeld) {
         _autoAimAngle = lerpAngle(_autoAimAngle, _desiredAngle, 0.15); // gentle assist nudge
         lp._wasAutoAiming = true;
       } else if (lp._wasAutoAiming) {
@@ -13146,8 +13151,9 @@ function update() {
       // (ghost/frenzy speed boosts removed — auto-aim rebalance)
       // Slipstream: speed boost after dash
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
-      // Cannot move while firing. Must release to reposition.
-      if (isMobile && shootButtonHeld) moveSpeed = 0;
+      // Cannot move while firing. Must release to reposition. Applies to desktop
+      // (A key) and mobile (on-screen shoot button) alike — same _shootHeld source.
+      if (_shootHeld) moveSpeed = 0;
       if (_deadshotCharging || _payloadAiming) moveSpeed = 0; // freeze while aiming specials — joystick aims only
       const usingAnalog = isMobile || (!isMobile && leftJoystick.active) || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
@@ -13621,17 +13627,12 @@ function update() {
       // Freeze movement while fading (trench transitions only)
       if (gameMode === 'trench' && trenchFadeDir !== 0) { lp.vx = 0; lp.vy = 0; }
     }
-    if(isMobile){/* angle set by movement/aim code above — no override needed */}
-    else if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){lp.angle=Math.atan2(gamepad.ry,gamepad.rx);}
-    else{
-      // Desktop: aim follows click-joystick direction when active; preserves the
-      // last aim when the joystick is released so the player keeps facing where
-      // they last moved. Still track mouse world-pos for HUD/menu consumers.
-      mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;
-      if(leftJoystick.active&&(leftJoystick.nx!==0||leftJoystick.ny!==0)){
-        lp.angle=Math.atan2(leftJoystick.ny,leftJoystick.nx);
-      }
+    // Gamepad right stick explicitly overrides aim assist for players using one.
+    if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){
+      lp.angle=Math.atan2(gamepad.ry,gamepad.rx);
     }
+    // Keep mouse world-pos current for HUD / menu consumers (no longer drives aim).
+    if(!isMobile){mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
@@ -18212,7 +18213,7 @@ function render() {
   ctx.globalAlpha=1;
 
   // ---- AUTO-AIM RETICLE — only on the active target ----
-  if (isMobile && gameState === 'playing' && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive) && shootButtonHeld) {
+  if (gameState === 'playing' && _autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive) && (isMobile ? shootButtonHeld : !!keys['a'])) {
     const z = _autoAimTarget;
     const _aaT = performance.now();
     const _rSize = (z.radius || 14) + 14;
