@@ -10295,13 +10295,15 @@ function deployBeacon() {
   }
   // (Trap Mine manual detonation removed — mines now auto-explode on enemy proximity)
   const maxBeacons = (_m.multiBeacon > 0) ? 2 : 1;
-  if (_beacons.length >= maxBeacons) return; // max beacons deployed
-  // Multi-beacon: skip cooldown check if deploying 2nd beacon (allow rapid double-tap)
-  if (lp._beaconCooldown > 0 && !(_m.multiBeacon > 0 && _beacons.length > 0 && _beacons.length < maxBeacons)) return;
-  // Beacon element: only from dedicated beacon element cards (not inherited)
-  // Trap Mine shortens the beacon cooldown — mines are single-use, so placements should rotate faster.
+  if (_beacons.length >= maxBeacons) return;
+  if (lp._beaconCooldown > 0) return; // on cooldown
   const _isRecall = _m.recallAnchor > 0;
-  lp._beaconCooldown = _isRecall ? 180 : (_m.trapMine > 0 ? 240 : BEACON_COOLDOWN); // recall: 3s cooldown
+  // Multi-beacon: first deploy has NO cooldown — window stays open for 2nd
+  // Single beacon or 2nd deploy: start cooldown
+  if (maxBeacons <= 1 || _beacons.length > 0) {
+    lp._beaconCooldown = _isRecall ? 180 : (_m.trapMine > 0 ? 240 : BEACON_COOLDOWN);
+  }
+  // else: first deploy with multi-beacon — no cooldown yet (wait for 2nd or expiry)
   const classId = _m.beaconElement || null;
   const _beaconDur = _isRecall ? 600 : (BEACON_DURATION + (_m.extendedUptime || 0) * 120); // recall: 10s
   const _newBeacon = { x: lp.x, y: lp.y, timer: _beaconDur, maxTimer: _beaconDur, angle: 0, fireCd: 0, classId, _armTimer: 60, _recall: _isRecall };
@@ -10460,7 +10462,16 @@ function updateBeacon() {
   const _bm = runMods || {};
   const bColor = b.classId === 'fire' ? '#f80' : b.classId === 'ice' ? '#8ef' : b.classId === 'chain' ? '#4ff' : b.classId === 'corrupt' ? '#a4f' : '#0ff';
   b.timer--;
-  if (b.timer <= 0) { _beaconExpire(b); _beacons.splice(_bi, 1); activeBeacon = _beacons[0] || null; continue; }
+  if (b.timer <= 0) {
+    _beaconExpire(b); _beacons.splice(_bi, 1); activeBeacon = _beacons[0] || null;
+    // Multi-beacon cooldown: start cooldown when ALL beacons have expired
+    const _lp2 = getLocalPlayer();
+    if (_lp2 && _beacons.length === 0 && _lp2._beaconCooldown <= 0) {
+      const _isRec = (_bm.recallAnchor || 0) > 0;
+      _lp2._beaconCooldown = _isRec ? 180 : ((_bm.trapMine || 0) > 0 ? 240 : BEACON_COOLDOWN);
+    }
+    continue;
+  }
   // Find nearest enemy
   let best = null, bestD = BEACON_RANGE * (_bm.beaconRangeMult || 1);
   for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2); if (d < bestD) { bestD = d; best = z; } }
@@ -15850,19 +15861,46 @@ function updateHUD() {
       db.style.opacity = '';
     }
   }
-  // Beacon button state
+  // Special button state
   const mb2=document.getElementById('btn-mark');
   if (mb2) {
     const _specDef = SPECIAL_DEFS[selectedSpecial] || SPECIAL_DEFS.beacon;
-    const _specActive = (selectedSpecial === 'beacon' && (activeBeacon || _beacons.length > 0)) || _dischargeActive || _deadshotCharging || activeGrenade;
-    const _specCanInteract = _specActive && ((runMods||{}).recallAnchor > 0 || (runMods||{}).trapMine > 0 || selectedSpecial === 'deadshot' || (selectedSpecial === 'payload' && activeGrenade));
-    // Multi-beacon: button stays ready if there's room for another beacon
     const _maxB = ((runMods||{}).multiBeacon > 0) ? 2 : 1;
-    const _canDeployMore = selectedSpecial === 'beacon' && _beacons.length < _maxB;
-    if (_canDeployMore) { mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
-    else if (_specActive && _specCanInteract) { mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = _specDef.color; mb2.style.color = _specDef.color; mb2.style.boxShadow = '0 0 12px ' + _specDef.color + '88'; }
-    else if (_specActive || lp._beaconCooldown > 0) { mb2.className = 'mobile-btn mark-cooldown'; mb2.style.opacity = '0.3'; mb2.style.pointerEvents = 'none'; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
-    else { mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = ''; mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = ''; }
+    if (selectedSpecial === 'beacon') {
+      // Beacon button states:
+      // 1. READY: no beacons deployed, no cooldown → can deploy
+      // 2. READY (2nd): multi-beacon, 1 deployed, no cooldown → can deploy 2nd
+      // 3. ACTIVE: beacon deployed with recall/trap interaction available
+      // 4. DISABLED: beacons at max OR on cooldown
+      const _canDeploy = _beacons.length < _maxB && lp._beaconCooldown <= 0;
+      const _hasInteraction = _beacons.length > 0 && ((runMods||{}).recallAnchor > 0 || (runMods||{}).trapMine > 0);
+      if (_canDeploy) {
+        mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = '';
+        mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = '';
+      } else if (_hasInteraction) {
+        mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; mb2.style.pointerEvents = '';
+        mb2.style.borderColor = _specDef.color; mb2.style.color = _specDef.color;
+        mb2.style.boxShadow = '0 0 12px ' + _specDef.color + '88';
+      } else {
+        mb2.className = 'mobile-btn mark-cooldown'; mb2.style.opacity = '0.3'; mb2.style.pointerEvents = 'none';
+        mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = '';
+      }
+    } else {
+      // Non-beacon specials: discharge, payload, deadshot
+      const _specActive = _dischargeActive || _deadshotCharging || activeGrenade || _payloadAiming;
+      const _specCanInteract = (selectedSpecial === 'deadshot' && _deadshotCharging) || (selectedSpecial === 'payload' && activeGrenade);
+      if (_specCanInteract) {
+        mb2.className = 'mobile-btn mark-active'; mb2.style.opacity = ''; mb2.style.pointerEvents = '';
+        mb2.style.borderColor = _specDef.color; mb2.style.color = _specDef.color;
+        mb2.style.boxShadow = '0 0 12px ' + _specDef.color + '88';
+      } else if (_specActive || lp._beaconCooldown > 0) {
+        mb2.className = 'mobile-btn mark-cooldown'; mb2.style.opacity = '0.3'; mb2.style.pointerEvents = 'none';
+        mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = '';
+      } else {
+        mb2.className = 'mobile-btn mark-ready'; mb2.style.opacity = ''; mb2.style.pointerEvents = '';
+        mb2.style.borderColor = ''; mb2.style.color = ''; mb2.style.boxShadow = '';
+      }
+    }
   }
   // Shoot button — show reloading state
   const _shootBtn = document.getElementById('btn-shoot');
