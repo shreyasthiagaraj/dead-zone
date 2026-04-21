@@ -13468,7 +13468,30 @@ function update() {
         if (lp._dashBuffer) { lp._dashBuffer = false; setTimeout(dash, 0); }
       }
     }
-    lp.x+=lp.vx;lp.y+=lp.vy;
+    // Substep collision so a dash (DASH_SPEED=16, >= player radius) can't
+    // tunnel through walls in a single frame. Split the translation into
+    // chunks smaller than the player radius and halt in an axis the moment
+    // that axis would enter a wall. X and Y are tested independently so the
+    // player naturally slides along walls when the dash is angled.
+    {
+      const _maxStep = PLAYER_RADIUS * 0.5;
+      const _mag = Math.max(Math.abs(lp.vx), Math.abs(lp.vy));
+      const _steps = Math.max(1, Math.ceil(_mag / _maxStep));
+      let _sx = lp.vx / _steps, _sy = lp.vy / _steps;
+      for (let _si = 0; _si < _steps; _si++) {
+        if (_sx !== 0) {
+          const _nx = lp.x + _sx;
+          if (!obstacleCollision(_nx, lp.y, PLAYER_RADIUS)) lp.x = _nx;
+          else { lp.vx = 0; _sx = 0; }
+        }
+        if (_sy !== 0) {
+          const _ny = lp.y + _sy;
+          if (!obstacleCollision(lp.x, _ny, PLAYER_RADIUS)) lp.y = _ny;
+          else { lp.vy = 0; _sy = 0; }
+        }
+        if (_sx === 0 && _sy === 0) break;
+      }
+    }
     lp.x=clamp(lp.x,PLAYER_RADIUS,ARENA_W-PLAYER_RADIUS);lp.y=clamp(lp.y,PLAYER_RADIUS,ARENA_H-PLAYER_RADIUS);pushOutOfObstacles(lp,PLAYER_RADIUS);
     // Siege: hard clamp player between the two walls — no crossing even through breaches
     if (gameMode === 'siege' && siegeWallLeftX > 0 && siegeWallRightX > 0) {
