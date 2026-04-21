@@ -4421,6 +4421,7 @@ function updateTrench() {
       const lp = getLocalPlayer();
       score += 5000;
       clearCheckpoint(); // clear checkpoint on victory
+      clearMidRunSession();
       if (lp) {
         addFloatingText(lp.x, lp.y - 50, 'YOU ESCAPED!', '#f0c040');
         addFloatingText(lp.x, lp.y - 25, '+5000 BONUS', '#4f4');
@@ -4543,6 +4544,12 @@ function updateTrenchFade() {
           // Clear leftover zombie projectiles from prev section so nothing lingers
           bullets = bullets.filter(b => b.owner !== 'zombie');
           spawnTrenchSection(newIdx);
+          // Extra safety: snapshot the run each time the player reaches a new
+          // section. iOS/Android sometimes kills a background app without
+          // firing our visibilitychange hook, so leaning solely on exit
+          // handlers can lose a run; section boundaries are stable resume
+          // points that cost nothing to write.
+          try { saveMidRunSession(); } catch(e) {}
         }
         _trenchPendingNext = -1;
       }
@@ -6482,6 +6489,155 @@ function resumeFromCheckpoint() {
   return true;
 }
 
+// ---- MID-RUN SESSION SAVE ----
+// Separate from checkpoint. A mid-run session persists the player's exact
+// state when the app is backgrounded / exited so the next launch can resume
+// right where they left off. One-shot: cleared on death-without-continues,
+// victory, or when a fresh run is started from the Shell gateway. Unlike
+// checkpoint, this is NOT a respawn point — it simply resumes the live run.
+const SESSION_KEY = 'necrowave_session';
+function saveMidRunSession() {
+  if (gameMode !== 'trench') return;
+  if (gameState !== 'playing' && gameState !== 'paused') return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  const weapons = lp.weapons ? lp.weapons.map(w => ({ type: w.type, ammo: w.ammo, reserveAmmo: w.reserveAmmo })) : [];
+  const data = {
+    version: 1,
+    timestamp: Date.now(),
+    section: trenchSection,
+    seed: window._currentLevelSeed,
+    templateNames: _sectionTemplateNames,
+    sectionWidths: _sectionWidths,
+    px: lp.x, py: lp.y, angle: lp.angle || 0,
+    hp: lp.hp, maxHp: lp.maxHp,
+    dashCooldown: lp.dashCooldown || 0,
+    dashCharges: lp._dashCharges != null ? lp._dashCharges : 1,
+    weapons,
+    currentWeapon: lp.currentWeapon || 0,
+    runUpgrades: { ...runUpgrades },
+    runLevel, runXP, runXPNeeded,
+    metaShards, runBitsEarned,
+    score, kills,
+    dlHistory: _dlChoiceHistory,
+    dlSinceChoice: _dlSectionsSinceChoice,
+    dlModDrought: _dlModDrought,
+    dlFirstChoice: _dlFirstChoice,
+    selectedSpecial,
+    researchFocus: _researchFocus,
+    continues: _checkpointContinues,
+    checkpointActive: !!_checkpointRoomActive,
+  };
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch(e) {}
+}
+function loadMidRunSession() {
+  try { const raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
+}
+function hasMidRunSession() { return !!localStorage.getItem(SESSION_KEY); }
+function clearMidRunSession() { try { localStorage.removeItem(SESSION_KEY); } catch(e) {} }
+
+function resumeMidRunSession() {
+  const sess = loadMidRunSession();
+  if (!sess || sess.version !== 1) { clearMidRunSession(); return false; }
+  initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
+  gameMode = 'trench';
+  _sectionTemplateNames = sess.templateNames || [];
+  _sectionWidths = sess.sectionWidths || [];
+  window._currentLevelSeed = sess.seed;
+  generateTrenchMap(sess.seed);
+  initTrenchSections();
+  trenchSection = sess.section || 0;
+  _trenchPrevSection = trenchSection;
+  _trenchPendingNext = -1;
+  _checkpointRoomActive = !!sess.checkpointActive;
+  trenchFadeAlpha = 0; trenchFadeDir = 0;
+  for (let i = 0; i < trenchSection; i++) {
+    if (trenchSections[i]) { trenchSections[i].spawned = true; trenchSections[i].cleared = true; }
+  }
+  runUpgrades = sess.runUpgrades || {};
+  runLevel = sess.runLevel || 1;
+  runXP = sess.runXP || 0;
+  runXPNeeded = sess.runXPNeeded || 10;
+  rebuildRunMods();
+  metaShards = sess.metaShards || 0;
+  runBitsEarned = sess.runBitsEarned || 0;
+  score = sess.score || 0;
+  kills = sess.kills || 0;
+  _dlChoiceHistory = sess.dlHistory || [];
+  _dlSectionsSinceChoice = sess.dlSinceChoice || 0;
+  _dlModDrought = sess.dlModDrought || 0;
+  _dlFirstChoice = sess.dlFirstChoice || false;
+  _dlChoicePending = false;
+  _dlTrialActive = false;
+  _dlTrialBonusPending = false;
+  if (sess.selectedSpecial) selectedSpecial = sess.selectedSpecial;
+  _researchFocus = sess.researchFocus || null;
+  _checkpointContinues = sess.continues != null ? sess.continues : 2;
+  gameState = 'playing';
+  gameTime = 0;
+  gamePaused = false;
+  level = 1;
+  spawnTimer = 0;
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
+  _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = sess.angle || 0; _autoAimDragX = 0; _autoAimDragY = 0;
+  _gunAmmo = GUN_MAG_SIZE + (runMods.magBonus || 0);
+  _gunReloading = false; _gunReloadTimer = 0; _gunIdleTimer = 0;
+  zombies = []; bullets = []; pickups = []; barrels = [];
+  particles = []; decals = []; floatingTexts = [];
+  explosions = []; xpOrbs = [];
+  _nextZombieId = 1;
+  _bossDeathFreeze = 0;
+  pendingLevelUps = 0; levelUpChoices = null;
+  _seenGlitchTypes = new Set();
+  _whisperCooldown = 600;
+  memoryFragments = [];
+  const spawnX = sess.px, spawnY = sess.py;
+  players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], spawnX, spawnY)];
+  localPlayerIdx = 0;
+  const lp = getLocalPlayer();
+  if (lp) {
+    lp.maxHp = sess.maxHp || lp.maxHp;
+    lp.hp = Math.min(sess.hp || lp.maxHp, lp.maxHp);
+    lp.angle = sess.angle || 0;
+    lp.dashCooldown = sess.dashCooldown || 0;
+    lp._dashCharges = sess.dashCharges != null ? sess.dashCharges : 1;
+    lp.invincible = 120; // 2 sec of safety on resume
+    // Restore weapon inventory if we saved it (only overwrite matching slots)
+    if (sess.weapons && sess.weapons.length > 0 && lp.weapons) {
+      for (let wi = 0; wi < Math.min(sess.weapons.length, lp.weapons.length); wi++) {
+        const sw = sess.weapons[wi];
+        if (sw && sw.type) {
+          lp.weapons[wi].type = sw.type;
+          if (sw.ammo != null) lp.weapons[wi].ammo = sw.ammo;
+          if (sw.reserveAmmo != null) lp.weapons[wi].reserveAmmo = sw.reserveAmmo;
+        }
+      }
+      lp.currentWeapon = Math.min(sess.currentWeapon || 0, lp.weapons.length - 1);
+    }
+  }
+  spawnTrenchSection(trenchSection);
+  camera.x = spawnX; camera.y = spawnY;
+  cameraOffset.x = 0; cameraOffset.y = 0;
+  window._camLerp = 0.08; window._camSettleFrames = 30;
+  showScreen(null);
+  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'];
+  hudEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+  const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
+  const domain = getTrenchDomain(trenchSection);
+  showSectionTitleCard('SESSION RESUMED', domain ? domain.name : 'continuing run...', false);
+  triggerGlitchSurge(0.4, 30);
+  showRunStartSplash();
+  leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;
+  rightJoystick.active=false;rightJoystick.dx=0;rightJoystick.dy=0;rightJoystick.nx=0;rightJoystick.ny=0;rightJoystick.aiming=false;rightJoystick.firing=false;
+  for(const k in keys) delete keys[k];
+  runStats = { shotsFired: 0, shotsHit: 0, damageDealt: 0, damageTaken: 0, bestStreak: 0, shockwavesUsed: 0, elemKills: { fire: 0, ice: 0, lightning: 0 }, startTime: Date.now() };
+  ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
+  playMusic(pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  document.activeElement?.blur(); canvas.focus();
+  { const rb = document.getElementById('btn-repair'); if (rb) rb.style.display = 'none'; }
+  return true;
+}
+
 function progValueFromMode() {
   if (gameMode === 'trench') return (trenchSection || 0) + 1;
   if (gameMode === 'descent') return (descentSection || 0) + 1;
@@ -6762,6 +6918,9 @@ function _onAppBackground() {
   if (audioCtx && audioCtx.state === 'running') {
     try { audioCtx.suspend(); } catch(e) {}
   }
+  // Persist mid-run session so the player can resume on next launch.
+  // saveMidRunSession() no-ops outside of active trench gameplay.
+  try { if (typeof saveMidRunSession === 'function') saveMidRunSession(); } catch(e) {}
 }
 
 // Primary triggers: tab/app visibility, window focus, bfcache restore.
@@ -7438,14 +7597,21 @@ function generateShellRoom() {
     { x: 14 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'armory', label: 'ARMORY', color: '#f80', icon: '\u2694' },
     { x: 9 * CELL_SIZE, y: 3 * CELL_SIZE, type: 'signal_lab', label: 'SIGNAL LAB', color: '#a8f', icon: '\u25C8' },
   ];
-  // Add resume terminal if a checkpoint exists
+  // Add resume terminal if a checkpoint exists AND still has continues left.
+  // A checkpoint with zero continues is a spent respawn — treat it as invalid
+  // so the Shell doesn't advertise a path that can't be taken.
   if (hasCheckpoint()) {
     const cp = loadCheckpoint();
-    shellTerminals.push({
-      x: 14 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'checkpoint',
-      label: 'RESUME \u00B7 SEC ' + ((cp && cp.section || 0) + 1),
-      color: '#0f0', icon: '\u25B6'
-    });
+    if (cp && (cp.continues == null || cp.continues > 0)) {
+      shellTerminals.push({
+        x: 14 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'checkpoint',
+        label: 'RESUME \u00B7 SEC ' + ((cp.section || 0) + 1),
+        color: '#0f0', icon: '\u25B6'
+      });
+    } else {
+      // Purge the spent checkpoint so it never reappears.
+      clearCheckpoint();
+    }
   }
   shellGatewayPos = { x: (SW - 1.5) * CELL_SIZE, y: 5.5 * CELL_SIZE };
   shellPlayerSpawn = { x: 9 * CELL_SIZE, y: 6 * CELL_SIZE };
@@ -7941,6 +8107,8 @@ function showScreen(id) {
   document.getElementById('pause-screen').style.display = 'none'; document.getElementById('pause-screen').classList.remove('visible'); gamePaused = false;
   // Fade in new screen
   if (id) {
+    // Refresh PLAY / CONTINUE label whenever the main menu becomes visible
+    if (id === 'start-screen' && typeof _refreshPlayButton === 'function') _refreshPlayButton();
     const el = document.getElementById(id);
     const delay = (_currentScreen && _currentScreen !== id) ? 180 : 0;
     setTimeout(() => {
@@ -8215,8 +8383,31 @@ function addBtn(id, fn) {
   }, {passive: false});
   el.addEventListener('touchcancel', () => { el.classList.remove('tapped'); });
 }
-// New main menu hooks — PLAY goes straight into Trench (the flagship mode)
-addBtn('btn-play', () => { isMultiplayer = false; gameMode = 'trench'; enterShell(false); });
+// New main menu hooks — PLAY goes straight into Trench (the flagship mode).
+// If a mid-run session is saved (app was exited mid-run), resume it directly
+// instead of returning to the Shell. Button label is updated in
+// _refreshPlayButton() so the user sees CONTINUE when a session is waiting.
+addBtn('btn-play', () => {
+  isMultiplayer = false;
+  if (hasMidRunSession()) {
+    if (resumeMidRunSession()) return;
+    // Resume failed (corrupt save) — fall through to fresh start
+    clearMidRunSession();
+  }
+  gameMode = 'trench';
+  enterShell(false);
+});
+function _refreshPlayButton() {
+  const btn = document.getElementById('btn-play');
+  if (!btn) return;
+  if (hasMidRunSession()) {
+    btn.innerHTML = '\u25B6 CONTINUE';
+  } else {
+    btn.innerHTML = '\u25B6 PLAY';
+  }
+}
+// Refresh label whenever the start screen is about to show
+_refreshPlayButton();
 addBtn('btn-challenges', () => { openSoloPicker(); });
 addBtn('btn-crypt', () => { openCryptMenu(); });
 addBtn('btn-back-crypt', () => {
@@ -8716,6 +8907,12 @@ function renderPauseContent() {
   _wire('btn-pause-codex', () => openCodex());
   _wire('btn-quit-trigger', () => { document.getElementById('pause-quit-confirm').style.display = 'flex'; });
   _wire('btn-quit-yes', () => {
+    // Persist the run so the main menu's CONTINUE button can bring the
+    // player right back — unless they're only in the Shell, where there's
+    // nothing mid-run to save.
+    if (!isMultiplayer && gameMode === 'trench' && _pausePrevState === 'playing') {
+      try { saveMidRunSession(); } catch(e) {}
+    }
     document.getElementById('pause-screen').style.display = 'none';
     document.getElementById('pause-screen').classList.remove('visible');
     gamePaused = false; gameState = 'menu';
@@ -9880,6 +10077,7 @@ function _executeRunStart() {
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   // Clear checkpoint when starting a fresh run from the gateway
   clearCheckpoint();
+  clearMidRunSession();
   gameMode = 'trench';
   startSoloGame();
 }
@@ -9937,6 +10135,12 @@ function showDeathToShell() {
     }, 2000);
     return; // don't proceed with normal death-to-shell
   }
+  // No continues left (or never had a checkpoint) — the run is over. Wipe
+  // the checkpoint so the Shell's RESUME terminal doesn't advertise a stale
+  // respawn point, and drop the mid-run session so the main menu reverts
+  // from CONTINUE back to PLAY.
+  clearCheckpoint();
+  clearMidRunSession();
   window._deathBeatPlaying = true;
   gameState = 'dying';
   stopSunbeamLoop(); stopWeaponLoop();
