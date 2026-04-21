@@ -278,6 +278,18 @@ body.mobile #mobile-buttons { display: block; }
 #reforge-screen.visible { opacity:1; }
 #signallab-screen { opacity:0; transition:opacity 0.4s ease-out; }
 #signallab-screen.visible { opacity:1; }
+#pause-screen { opacity:0; transition:opacity 0.25s ease-out; }
+#pause-screen.visible { opacity:1; }
+.pause-section { border:1px solid #0ff2; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:rgba(0,255,255,0.02); }
+.pause-section-hdr { font-size:9px; letter-spacing:3px; color:#0ff; opacity:0.5; margin-bottom:8px; text-transform:uppercase; }
+.pause-hp-bar { height:6px; border-radius:3px; background:rgba(255,255,255,0.08); overflow:hidden; margin:4px 0; }
+.pause-hp-fill { height:100%; border-radius:3px; transition:width 0.3s; }
+.pause-stat { display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:11px; color:#aab; }
+.pause-stat-val { color:#fff; font-weight:bold; }
+.pause-mod { display:inline-flex; align-items:center; gap:4px; padding:5px 8px; margin:3px; border-radius:6px; border:1px solid; font-size:10px; font-weight:bold; letter-spacing:1px; }
+.pause-btn { padding:12px 20px; font-size:12px; font-weight:bold; letter-spacing:3px; font-family:'Courier New',monospace; border-radius:10px; cursor:pointer; -webkit-tap-highlight-color:transparent; border:2px solid; background:transparent; min-width:90px; transition:transform 0.08s,box-shadow 0.15s; }
+.pause-btn:active { transform:scale(0.96); }
+.pause-quit-confirm { display:none; margin-top:10px; padding:12px; border:1px solid #f442; border-radius:8px; background:rgba(255,68,68,0.06); text-align:center; }
 .dl-option { flex:1;max-width:220px;min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px 12px;border-radius:14px;border:2px solid rgba(255,255,255,0.15);background:rgba(10,10,20,0.85);cursor:pointer;transition:transform 0.2s,border-color 0.3s,box-shadow 0.3s,opacity 0.3s;-webkit-tap-highlight-color:transparent;user-select:none }
 .dl-option:active { transform:scale(0.96); }
 .dl-option.selected { transform:scale(1.05);opacity:1; }
@@ -606,17 +618,9 @@ body.mobile #mobile-buttons { display: block; }
   <button id="btn-signallab-clear" style="margin-top:14px;padding:8px 24px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,255,0.04);border:1px solid #5568;border-radius:8px;color:#889;cursor:pointer">CLEAR FOCUS</button>
 </div>
 
-<!-- ---- PAUSE MENU ---- -->
-<div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;background:rgba(3,3,12,0.92);font-family:'Courier New',monospace;text-align:center">
-  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:350px">
-    <div style="color:#0ff;font-size:clamp(18px,4vw,28px);font-weight:bold;letter-spacing:4px;margin-bottom:18px;text-shadow:0 0 12px rgba(0,255,255,0.5)">PAUSED</div>
-    <div style="display:flex;flex-direction:row;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap">
-      <button class="menu-btn success" id="btn-resume">RESUME</button>
-      <button class="menu-btn" id="btn-pause-mods" style="display:none">⬢ MODS</button>
-      <button class="menu-btn codex" id="btn-pause-codex">CODEX</button>
-      <button class="menu-btn danger" id="btn-quit-game">QUIT</button>
-    </div>
-  </div>
+<!-- ---- PAUSE MENU (Command Console) ---- -->
+<div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;background:rgba(3,3,12,0.94);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-family:'Courier New',monospace;overflow-y:auto;-webkit-overflow-scrolling:touch">
+  <div id="pause-content" style="max-width:500px;margin:0 auto;padding:calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));box-sizing:border-box"></div>
 </div>
 
 <!-- ---- CODEX (encyclopedia) ---- -->
@@ -7647,7 +7651,7 @@ function showScreen(id) {
   screens.forEach(s => { if (s !== _currentScreen && s !== id) document.getElementById(s).style.display = 'none'; });
   document.getElementById('perk-screen').style.display = 'none'; perkSelectionActive = false;
   document.getElementById('wave-summary-screen').style.display = 'none'; waveSummaryActive = false; if(waveSummaryTimer){clearTimeout(waveSummaryTimer);waveSummaryTimer=0;}
-  document.getElementById('pause-screen').style.display = 'none'; gamePaused = false;
+  document.getElementById('pause-screen').style.display = 'none'; document.getElementById('pause-screen').classList.remove('visible'); gamePaused = false;
   // Fade in new screen
   if (id) {
     const el = document.getElementById(id);
@@ -8106,7 +8110,7 @@ function purchaseCryptNode(nodeId) {
 // Legacy SOLO button (no longer shown, but keep the handler so the code doesn't break if reused elsewhere)
 addBtn('btn-solo', () => { openSoloPicker(); });
 addBtn('btn-codex', () => { openCodex(); });
-addBtn('btn-pause-codex', () => { openCodex(); });
+// btn-pause-codex is now wired dynamically in renderPauseContent()
 addBtn('btn-codex-back', () => { closeCodex(); });
 // ---- Mode picker ----
 const MODE_CARDS = [
@@ -8189,7 +8193,7 @@ addBtn('btn-restart', () => {
   else { startSoloGame(); }
 });
 addBtn('btn-menu', () => { togglePauseMenu(); });
-addBtn('btn-resume', () => { togglePauseMenu(); });
+// btn-resume is now wired dynamically in renderPauseContent()
 addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
 addBtn('btn-shop-leave', () => { closeShop(); });
 // Equipped-mods loadout panel. Opened from the pause menu (not a HUD badge).
@@ -8250,7 +8254,7 @@ function _closeModsView() {
   if (_modsOpenedFromPause) {
     _modsOpenedFromPause = false;
     const pauseEl = document.getElementById('pause-screen');
-    if (pauseEl) pauseEl.style.display = 'block';
+    if (pauseEl) { pauseEl.style.display = 'block'; pauseEl.classList.add('visible'); renderPauseContent(); }
   } else if (gameState === 'mods_view') {
     gameState = 'playing';
   }
@@ -8259,13 +8263,7 @@ function _closeModsView() {
 // Close button inside the panel
 addBtn('btn-mods-close', () => { _closeModsView(); });
 addBtn('btn-shop-confirm', () => { confirmShopCard(); });
-addBtn('btn-quit-game', () => {
-  document.getElementById('pause-screen').style.display = 'none';
-  gameState = 'menu';
-  if (ws) ws.close();
-  showScreen('start-screen');
-  playMusic('music_menu', 2.0);
-});
+// btn-quit-game is now wired dynamically in renderPauseContent()
 
 let gamePaused = false;
 function _resetJoysticks() {
@@ -8275,37 +8273,198 @@ function _resetJoysticks() {
 }
 let _pausePrevState = null; // state we came from — restored on resume
 function togglePauseMenu() {
-  // Allow pausing from gameplay OR the shell hub (so the button is always usable).
   if (!gamePaused && gameState !== 'playing' && gameState !== 'shell') return;
   const pauseEl = document.getElementById('pause-screen');
   if (gamePaused) {
-    // Resume — clear any joystick state so a stuck (mid-touch) joystick doesn't carry over
     _resetJoysticks();
     gamePaused = false;
-    pauseEl.style.display = 'none';
+    pauseEl.classList.remove('visible');
+    setTimeout(() => { pauseEl.style.display = 'none'; }, 250);
     gameState = _pausePrevState || 'playing';
     _pausePrevState = null;
     canvas.focus();
   } else {
-    // Pause — clear joystick state so the player isn't still "moving" in the background
     _resetJoysticks();
-    _pausePrevState = gameState; // remember 'playing' or 'shell' for resume
+    _pausePrevState = gameState;
     gamePaused = true;
     pauseEl.style.display = 'block';
-    // Show the MODS button only during an actual run — not in the Shell hub
-    // (mods are earned via cache nodes; they don't exist in the shell).
-    const _modsBtn = document.getElementById('btn-pause-mods');
-    if (_modsBtn) _modsBtn.style.display = (_pausePrevState === 'shell') ? 'none' : '';
-    // Only actually freeze the game loop in single player
+    void pauseEl.offsetWidth;
+    pauseEl.classList.add('visible');
+    renderPauseContent();
     if (!isMultiplayer) gameState = 'paused';
   }
 }
-// Pause-menu MODS button opens the equipped-loadout panel (overlaying the pause screen).
-// Closing it returns to the pause screen so the player can still Resume/Quit from there.
-try { const _pmb = document.getElementById('btn-pause-mods'); if (_pmb) _pmb.addEventListener('click', () => {
-  document.getElementById('pause-screen').style.display = 'none';
-  openModsView(true);
-}); } catch(e) {}
+// ---- Command Console: renderPauseContent() ----
+// Generates all pause menu HTML dynamically as an immersive diagnostic readout.
+function renderPauseContent() {
+  const container = document.getElementById('pause-content');
+  if (!container) return;
+  const lp = getLocalPlayer();
+  const inShell = _pausePrevState === 'shell';
+
+  // -- Elapsed time --
+  const elapsed = runStats && runStats.startTime ? Math.floor((Date.now() - runStats.startTime) / 1000) : 0;
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  const timeStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+  // -- Domain info --
+  const domain = (gameMode === 'trench' && trenchSections[trenchSection]) ? getTrenchDomain(trenchSection) : null;
+  const domainName = domain ? domain.name : '';
+  const domainColor = domain ? (domain.accentColor || '#0ff') : '#0ff';
+
+  // -- HP bar --
+  const hp = lp ? lp.hp : 0;
+  const maxHp = lp ? lp.maxHp : 100;
+  const hpPct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  const hpColor = hpPct > 60 ? '#0f0' : hpPct > 30 ? '#ff0' : '#f44';
+  const barrier = lp ? (lp.barrier || 0) : 0;
+  const barrierPct = Math.max(0, Math.min(100, (barrier / 50) * 100));
+
+  // -- Special weapon --
+  const specDef = SPECIAL_DEFS[selectedSpecial] || SPECIAL_DEFS.beacon;
+
+  // -- Research focus --
+  const focusColors = { thermal: '#f80', cryo: '#8ef', arc: '#4ff', pulse: '#cef', corrupt: '#a4f' };
+  const focusIcons = { thermal: '\uD83D\uDD25', cryo: '\uD83E\uDDCA', arc: '\u26A1', pulse: '\uD83D\uDCA8', corrupt: '\u2623' };
+
+  // -- Equipped mods --
+  let modsHtml = '';
+  const ownedIds = Object.keys(runUpgrades).filter(id => runUpgrades[id] > 0);
+  if (ownedIds.length === 0) {
+    modsHtml = '<div style="color:#556;font-size:10px;padding:8px;text-align:center">NO MODS EQUIPPED</div>';
+  } else {
+    for (const id of ownedIds) {
+      const u = UPGRADE_POOL.find(c => c.id === id);
+      if (!u) continue;
+      const lv = runUpgrades[id];
+      // Level pips: filled for current, empty for remaining
+      let pips = '';
+      if (u.max > 1) {
+        for (let p = 0; p < u.max; p++) pips += p < lv ? '\u25CF' : '\u25CB';
+        pips = ` <span style="font-size:7px;opacity:0.6">${pips}</span>`;
+      }
+      modsHtml += `<span class="pause-mod" style="border-color:${u.color}44;color:${u.color};background:${u.color}0a">${u.icon} ${u.name}${pips}</span>`;
+    }
+  }
+
+  // -- Build the full HTML --
+  let html = '';
+
+  // Header
+  html += `<div style="text-align:center;margin-bottom:14px">`;
+  html += `<div style="color:#0ff;font-size:9px;letter-spacing:4px;opacity:0.4">// SYSTEM DIAGNOSTIC //</div>`;
+  html += `<div style="color:#fff;font-size:20px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.3);margin-top:4px">COMMAND CONSOLE</div>`;
+  html += `</div>`;
+
+  // Only show run stats during gameplay (not in shell)
+  if (!inShell) {
+    // Status section
+    html += `<div class="pause-section">`;
+    html += `<div class="pause-section-hdr">\u25B8 STATUS READOUT</div>`;
+    // HP bar
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">`;
+    html += `<span style="font-size:10px;color:${hpColor};font-weight:bold;min-width:20px">HP</span>`;
+    html += `<div class="pause-hp-bar" style="flex:1"><div class="pause-hp-fill" style="width:${hpPct}%;background:${hpColor};box-shadow:0 0 6px ${hpColor}"></div></div>`;
+    html += `<span style="font-size:11px;color:#fff;font-weight:bold">${Math.round(hp)}/${maxHp}</span>`;
+    html += `</div>`;
+    // Barrier bar (if any)
+    if (barrier > 0) {
+      html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">`;
+      html += `<span style="font-size:10px;color:#4ff;font-weight:bold;min-width:20px">\u25C7</span>`;
+      html += `<div class="pause-hp-bar" style="flex:1"><div class="pause-hp-fill" style="width:${barrierPct}%;background:#4ff;box-shadow:0 0 6px #4ff"></div></div>`;
+      html += `<span style="font-size:11px;color:#4ff;font-weight:bold">${barrier} BARRIER</span>`;
+      html += `</div>`;
+    }
+    // Stats grid
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;margin-top:8px">`;
+    html += `<div class="pause-stat"><span>BITS</span><span class="pause-stat-val" style="color:#ff0">\u25C6 ${metaShards}</span></div>`;
+    html += `<div class="pause-stat"><span>EARNED</span><span class="pause-stat-val" style="color:#ff0">+${runBitsEarned}</span></div>`;
+    html += `<div class="pause-stat"><span>SECTION</span><span class="pause-stat-val">${trenchSection + 1}</span></div>`;
+    html += `<div class="pause-stat"><span>KILLS</span><span class="pause-stat-val">${kills}</span></div>`;
+    html += `<div class="pause-stat"><span>TIME</span><span class="pause-stat-val">${timeStr}</span></div>`;
+    if (domainName) html += `<div class="pause-stat"><span>DOMAIN</span><span class="pause-stat-val" style="color:${domainColor}">${domainName}</span></div>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    // Loadout section
+    html += `<div class="pause-section">`;
+    html += `<div class="pause-section-hdr">\u25B8 LOADOUT</div>`;
+    html += `<div class="pause-stat"><span>SPECIAL</span><span class="pause-stat-val" style="color:${specDef.color}">${specDef.icon} ${specDef.name}</span></div>`;
+    if (_researchFocus) {
+      html += `<div class="pause-stat"><span>FOCUS</span><span class="pause-stat-val" style="color:${focusColors[_researchFocus] || '#fff'}">${focusIcons[_researchFocus] || ''} ${_researchFocus.toUpperCase()}</span></div>`;
+    } else {
+      html += `<div class="pause-stat"><span>FOCUS</span><span style="font-size:10px;color:#556">NONE</span></div>`;
+    }
+    html += `</div>`;
+
+    // Equipped mods section
+    html += `<div class="pause-section">`;
+    html += `<div class="pause-section-hdr">\u25B8 EQUIPPED MODS (${ownedIds.length})</div>`;
+    html += `<div style="display:flex;flex-wrap:wrap;justify-content:center">${modsHtml}</div>`;
+    html += `</div>`;
+  }
+
+  // Action buttons
+  html += `<div style="display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap">`;
+  html += `<button class="pause-btn" id="btn-resume" style="color:#0ff;border-color:#0ff;box-shadow:0 0 8px #0ff3">\u25B6 RESUME</button>`;
+  if (!inShell) html += `<button class="pause-btn" id="btn-pause-codex" style="color:#a8f;border-color:#a8f;box-shadow:0 0 8px #a8f3">\u25C7 CODEX</button>`;
+  html += `<button class="pause-btn" id="btn-quit-trigger" style="color:#f44;border-color:#f44;box-shadow:0 0 8px #f443">\u2715 QUIT</button>`;
+  html += `</div>`;
+
+  // Quit confirmation (hidden by default)
+  html += `<div class="pause-quit-confirm" id="pause-quit-confirm">`;
+  html += `<div style="color:#f44;font-size:11px;font-weight:bold;letter-spacing:2px;margin-bottom:10px">ABANDON RUN?</div>`;
+  html += `<div style="color:#889;font-size:10px;margin-bottom:12px">Progress will be lost. Checkpoint data preserved.</div>`;
+  html += `<div style="display:flex;gap:10px;justify-content:center">`;
+  html += `<button class="pause-btn" id="btn-quit-yes" style="color:#f44;border-color:#f44;font-size:11px;padding:10px 16px">YES, QUIT</button>`;
+  html += `<button class="pause-btn" id="btn-quit-no" style="color:#0ff;border-color:#0ff;font-size:11px;padding:10px 16px">CANCEL</button>`;
+  html += `</div></div>`;
+
+  // Scan line overlay (subtle horizontal lines across the entire pause screen)
+  html += `<div style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,255,0.015) 2px,rgba(0,255,255,0.015) 4px);z-index:1"></div>`;
+
+  container.innerHTML = html;
+
+  // Wire up buttons
+  const resumeBtn = document.getElementById('btn-resume');
+  if (resumeBtn) {
+    resumeBtn.addEventListener('click', () => togglePauseMenu());
+    resumeBtn.addEventListener('touchend', (e) => { e.preventDefault(); togglePauseMenu(); }, { passive: false });
+  }
+  const codexBtn = document.getElementById('btn-pause-codex');
+  if (codexBtn) {
+    codexBtn.addEventListener('click', () => openCodex());
+    codexBtn.addEventListener('touchend', (e) => { e.preventDefault(); openCodex(); }, { passive: false });
+  }
+  const quitTrigger = document.getElementById('btn-quit-trigger');
+  if (quitTrigger) {
+    const showConfirm = (e) => { e.preventDefault(); document.getElementById('pause-quit-confirm').style.display = 'block'; };
+    quitTrigger.addEventListener('click', showConfirm);
+    quitTrigger.addEventListener('touchend', showConfirm, { passive: false });
+  }
+  const quitYes = document.getElementById('btn-quit-yes');
+  if (quitYes) {
+    const doQuit = (e) => {
+      e.preventDefault();
+      document.getElementById('pause-screen').style.display = 'none';
+      document.getElementById('pause-screen').classList.remove('visible');
+      gamePaused = false;
+      gameState = 'menu';
+      if (ws) ws.close();
+      showScreen('start-screen');
+      playMusic('music_menu', 2.0);
+    };
+    quitYes.addEventListener('click', doQuit);
+    quitYes.addEventListener('touchend', doQuit, { passive: false });
+  }
+  const quitNo = document.getElementById('btn-quit-no');
+  if (quitNo) {
+    const hideConfirm = (e) => { e.preventDefault(); document.getElementById('pause-quit-confirm').style.display = 'none'; };
+    quitNo.addEventListener('click', hideConfirm);
+    quitNo.addEventListener('touchend', hideConfirm, { passive: false });
+  }
+}
 
 // ============================================================
 // LEVEL-UP CARD PICKER
