@@ -6518,29 +6518,51 @@ let sfxBus = null;
 let musicBus = null;
 
 // iOS silent-switch override.
-// A persistent looping silent HTMLAudio element flips Safari's audio category to
-// "playback" — which ignores the hardware mute switch. A one-shot play isn't
-// enough; as soon as the element ends or is GC'd, iOS can revert the category.
-// So we keep ONE looping silent element alive for the life of the session, and
-// we re-kick it (play() again) whenever the app comes back to foreground or we
-// detect it was paused by an audio-session handoff.
+// iOS Safari mutes WebAudio when the hardware mute switch is on. The workaround:
+// keep a looping HTMLAudio element playing near-silent audio. This forces Safari
+// to categorize the audio session as "playback" (like music apps) instead of
+// "ambient" (like notification sounds), which ignores the mute switch.
 //
-// The data URI is a 1-sample silent WAV. Loop=true means iOS never sees it end.
-// volume=0.01 (not 0) because some iOS versions treat volume=0 as "don't bother
-// initializing the audio session" which defeats the point.
-const _SILENT_URI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+// Key requirements for iOS to respect this:
+// 1. The audio must be >0 volume (volume=0 is ignored)
+// 2. The element must be in the DOM (some iOS versions require this)
+// 3. The WAV must have actual audio data (not just a header)
+// 4. Loop must be true so the session never ends
+// 5. Must be triggered from a user gesture (touchstart/click)
+//
+// The data URI is a 0.5s near-silent WAV (8kHz mono, 4000 samples of near-zero).
+const _SILENT_URI = (() => {
+  // Generate a 0.5s WAV with near-inaudible content (value 128±1 = ~0.4% amplitude)
+  const sampleRate = 8000, duration = 0.5, numSamples = Math.floor(sampleRate * duration);
+  const buffer = new ArrayBuffer(44 + numSamples);
+  const view = new DataView(buffer);
+  // WAV header
+  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + numSamples, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+  writeStr(36, 'data'); view.setUint32(40, numSamples, true);
+  // Fill with near-silence (128 = center for 8-bit, ±1 = barely audible)
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < numSamples; i++) bytes[44 + i] = 128 + (i % 2 === 0 ? 1 : -1);
+  return 'data:audio/wav;base64,' + btoa(String.fromCharCode(...bytes));
+})();
 let _silentLoopEl = null;
 function _bypassIOSSilentSwitch(force) {
   try {
     if (!_silentLoopEl) {
-      const a = new Audio(_SILENT_URI);
+      const a = document.createElement('audio');
+      a.src = _SILENT_URI;
       a.setAttribute('playsinline', '');
+      a.setAttribute('webkit-playsinline', '');
       a.loop = true;
       a.volume = 0.01;
       a.muted = false;
-      // Some iOS versions respect the 'webkitPreservesPitch' hint — we don't care
-      // about pitch for silence, but setting it signals "long-form media" intent.
       if ('preservesPitch' in a) a.preservesPitch = true;
+      // Attach to DOM — some iOS versions require this for audio session to activate
+      a.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0;pointer-events:none';
+      document.body.appendChild(a);
       _silentLoopEl = a;
     }
     if (_silentLoopEl.paused || force) {
