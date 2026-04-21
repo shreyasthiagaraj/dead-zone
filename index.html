@@ -811,7 +811,7 @@ const CELL_SIZE = 40;
 const DEFAULT_ARENA_W = 3600, DEFAULT_ARENA_H = 3600;
 let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
-function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); }
+function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); gapGrid = null; }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
 const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 16;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
@@ -3860,6 +3860,11 @@ function generateTrenchMap(seed) {
   setArenaDimensions(totalW, totalH);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  // Parallel gap grid — walkable space tile that walkers can't cross but
+  // projectiles fly over. Populated per-section below after BFS confirms the
+  // base template is pathable.
+  gapGrid = [];
+  for (let y = 0; y < GRID_H; y++) { gapGrid[y] = []; for (let x = 0; x < GRID_W; x++) gapGrid[y][x] = false; }
   rooms = [];
   // Each section: carve interior using its own width, then apply the PRE-SELECTED template
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
@@ -3921,6 +3926,65 @@ function generateTrenchMap(seed) {
           for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
             if (dy >= 1 && dy < TRENCH_HEIGHT - 1 && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
           }
+        }
+      }
+    }
+    // ---- GAP STRIPS ---- occasional impassable-but-see-through pits that
+    // split the room into two halves. Walkers route around; bullets and LOS
+    // carry over. Skip boss sections and the checkpoint section that follows
+    // each boss so safe rooms and boss arenas stay clean. Warm-up sections
+    // also skipped so the first few minutes teach core mechanics.
+    {
+      const _isBossIdx = (idx) => idx === 10 || idx === 20 || idx === 30 || idx === 40 || (idx > 40 && (idx - 40) % 10 === 0);
+      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.35) {
+        const _spawnCx = baseX + 3, _doorCx = baseX + secW - 2;
+        for (let _try = 0; _try < 6; _try++) {
+          const _horiz = Math.random() < 0.5;
+          const _len = 2 + Math.floor(Math.random() * 2); // 2 or 3 cells
+          const _minLocalX = 7, _maxLocalX = secW - 5 - (_horiz ? _len : 0);
+          const _minLocalY = 3, _maxLocalY = TRENCH_HEIGHT - 3 - (_horiz ? 0 : _len);
+          if (_maxLocalX <= _minLocalX || _maxLocalY <= _minLocalY) break;
+          const _lx = _minLocalX + Math.floor(Math.random() * (_maxLocalX - _minLocalX));
+          const _ly = _minLocalY + Math.floor(Math.random() * (_maxLocalY - _minLocalY));
+          const _placed = [];
+          let _ok = true;
+          for (let _k = 0; _k < _len; _k++) {
+            const _cx = _lx + (_horiz ? _k : 0);
+            const _cy = _ly + (_horiz ? 0 : _k);
+            const _abs = baseX + _cx;
+            if (_cx < 1 || _cx >= secW - 1 || _cy < 1 || _cy >= TRENCH_HEIGHT - 1 || _abs >= GRID_W) { _ok = false; break; }
+            if (!dungeonGrid[_cy] || !dungeonGrid[_cy][_abs]) { _ok = false; break; } // would replace template wall
+            _placed.push([_cy, _abs]);
+          }
+          if (!_ok) continue;
+          for (const [_gyy, _gxx] of _placed) gapGrid[_gyy][_gxx] = true;
+          // Validate pathability with gaps treated as walls
+          const _gbVisited = new Set();
+          const _gbQueue = [];
+          for (let _sy = 1; _sy < TRENCH_HEIGHT - 1; _sy++) {
+            if (_spawnCx < GRID_W && dungeonGrid[_sy] && dungeonGrid[_sy][_spawnCx] && !gapGrid[_sy][_spawnCx]) {
+              const _k = _spawnCx + ',' + _sy;
+              if (!_gbVisited.has(_k)) { _gbVisited.add(_k); _gbQueue.push([_spawnCx, _sy]); }
+            }
+          }
+          let _gbReach = false;
+          while (_gbQueue.length > 0) {
+            const [_cxx, _cyy] = _gbQueue.shift();
+            if (_cxx >= _doorCx) { _gbReach = true; break; }
+            const _neighbors = [[_cxx-1,_cyy],[_cxx+1,_cyy],[_cxx,_cyy-1],[_cxx,_cyy+1]];
+            for (const [_nx, _ny] of _neighbors) {
+              if (_nx < baseX + 1 || _nx >= baseX + secW - 1 || _ny < 1 || _ny >= TRENCH_HEIGHT - 1) continue;
+              if (_nx >= GRID_W) continue;
+              const _nk = _nx + ',' + _ny;
+              if (!_gbVisited.has(_nk) && dungeonGrid[_ny] && dungeonGrid[_ny][_nx] && !gapGrid[_ny][_nx]) {
+                _gbVisited.add(_nk);
+                _gbQueue.push([_nx, _ny]);
+              }
+            }
+          }
+          if (_gbReach) break; // keep the gap placement
+          // Revert — roll the next attempt or give up
+          for (const [_gyy, _gxx] of _placed) gapGrid[_gyy][_gxx] = false;
         }
       }
     }
@@ -6427,6 +6491,11 @@ function progValueFromMode() {
   return level || 1;
 }
 let dungeonGrid = null, rooms = [], roomDetails = [], roomGrid = null; // roomGrid[y][x] = room index or -1
+// Gap cells are walkable-space tiles that block walkers but let bullets /
+// LOS / projectiles pass through. Populated only for modes that use them
+// (trench for now). When null or missing, every check safely returns "no gap".
+let gapGrid = null;
+function isGapCell(gy, gx) { return !!(gapGrid && gapGrid[gy] && gapGrid[gy][gx]); }
 
 // Room visual themes — each defines floor color, grid color, wall accent, and a name
 const ROOM_THEMES = [
@@ -6540,13 +6609,13 @@ const ZOMBIE_TYPES = {
   beam:     { hp: 250, speed: 3.5, radius: 22, color: '#f44', damage: 6, score: 300, beamArray: true },
   // Legacy compat
   brute:    { hp: 350, speed: 2.0, radius: 20, color: '#f80', damage: 20, score: 250 }, // neon orange
-  stalker:  { hp: 80,  speed: 2.0, radius: 16, color: '#08f', damage: 15, score: 200 }, // neon blue
+  stalker:  { hp: 80,  speed: 2.0, radius: 16, color: '#08f', damage: 15, score: 200, canCrossGaps: true }, // neon blue — ghost/phase, ignores gaps
   drone:     { hp: 30, speed: 3.5, radius: 8, color: '#0f8', damage: 4, score: 50 }, // stays small
-  leaper:    { hp: 130, speed: 2.0, radius: 18, color: '#af0', damage: 22, score: 200, leaper: true },
+  leaper:    { hp: 130, speed: 2.0, radius: 18, color: '#af0', damage: 22, score: 200, leaper: true, canCrossGaps: true },
   mortar:    { hp: 180, speed: 0.6, radius: 20, color: '#a33', damage: 18, score: 250, mortar: true, fireRate: 2200 },
   strafe:    { hp: 110, speed: 3.0, radius: 16, color: '#fc0', damage: 12, score: 200, ranged: true, fireRate: 1800, strafe: true },
   shieldbot: { hp: 90, speed: 2.4, radius: 16, color: '#4af', damage: 0, score: 250, support: true },
-  phaser:    { hp: 100, speed: 2.2, radius: 16, color: '#eef', damage: 20, score: 250, phaser: true },
+  phaser:    { hp: 100, speed: 2.2, radius: 16, color: '#eef', damage: 20, score: 250, phaser: true, canCrossGaps: true },
   anchor:    { hp: 350, speed: 0.4, radius: 24, color: '#c6f', damage: 0, score: 300, anchor: true },
   caster:    { hp: 160, speed: 1.2, radius: 18, color: '#f4f', damage: 25, score: 250, caster: true, fireRate: 3000 },
 };
@@ -7407,16 +7476,29 @@ function getRandomFloorPos() {
   return { x: (r.x+1+Math.random()*(r.w-2))*CELL_SIZE, y: (r.y+1+Math.random()*(r.h-2))*CELL_SIZE };
 }
 
-function obstacleCollision(ox, oy, r) {
-  const mnx=Math.max(0,Math.floor((ox-r)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((ox+r)/CELL_SIZE));
-  const mny=Math.max(0,Math.floor((oy-r)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((oy+r)/CELL_SIZE));
-  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(ox,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(oy,wy+CELL_SIZE)); const dx=ox-cx,dy=oy-cy; if (dx*dx+dy*dy<r*r) return true; } }
+// Walker-blocking cell predicate — walls always block; gap cells block
+// ground entities but not fliers (canCrossGaps true, e.g. leaper/phaser/stalker).
+function _isWalkerBlocked(gy, gx, canCrossGaps) {
+  if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) return true;
+  if (!canCrossGaps && gapGrid && gapGrid[gy] && gapGrid[gy][gx]) return true;
   return false;
 }
-function pushOutOfObstacles(e, r) {
+function obstacleCollision(ox, oy, r, canCrossGaps) {
+  const mnx=Math.max(0,Math.floor((ox-r)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((ox+r)/CELL_SIZE));
+  const mny=Math.max(0,Math.floor((oy-r)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((oy+r)/CELL_SIZE));
+  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (_isWalkerBlocked(gy,gx,canCrossGaps)) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(ox,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(oy,wy+CELL_SIZE)); const dx=ox-cx,dy=oy-cy; if (dx*dx+dy*dy<r*r) return true; } }
+  return false;
+}
+function pushOutOfObstacles(e, r, canCrossGaps) {
+  // Auto-derive canCrossGaps from entity.type so every zombie push-out site
+  // doesn't have to remember to pass the flag — leaper/phaser/stalker fall out
+  // of ZOMBIE_TYPES lookup as true; everyone else stays grounded.
+  if (canCrossGaps === undefined && e && e.type && typeof ZOMBIE_TYPES !== 'undefined' && ZOMBIE_TYPES[e.type]) {
+    canCrossGaps = !!ZOMBIE_TYPES[e.type].canCrossGaps;
+  }
   const mnx=Math.max(0,Math.floor((e.x-r-CELL_SIZE)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((e.x+r+CELL_SIZE)/CELL_SIZE));
   const mny=Math.max(0,Math.floor((e.y-r-CELL_SIZE)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((e.y+r+CELL_SIZE)/CELL_SIZE));
-  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
+  for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (_isWalkerBlocked(gy,gx,canCrossGaps)) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
 }
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy); const steps=Math.min(50,Math.ceil(dist/(CELL_SIZE*0.5))); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) return false; } return true; }
 // Raycast from (ax,ay) in direction angle until hitting a wall or reaching maxDist.
@@ -11096,7 +11178,7 @@ function updatePayload() {
     g.x += g.vx; g.y += g.vy;
     g.timer--;
     // Explode on wall/obstacle contact
-    if (obstacleCollision(g.x, g.y, 5) || g.x < 4 || g.x > ARENA_W - 4 || g.y < 4 || g.y > ARENA_H - 4) {
+    if (obstacleCollision(g.x, g.y, 5, true) || g.x < 4 || g.x > ARENA_W - 4 || g.y < 4 || g.y > ARENA_H - 4) {
       g.timer = 0;
     }
     // Explode (or stick) on enemy contact
@@ -13944,13 +14026,13 @@ function update() {
     }
     const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
     // Bouncing behavior: ricochet off walls
-    if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size)){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
+    if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size,true)){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size,true))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size,true))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
     const _bAH=ARENA_H;
     if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}bullets[i]=bullets[bullets.length-1],bullets.pop();continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
-    if(!_bfast&&!b.grenade&&obstacleCollision(b.x,b.y,b.size)){
+    if(!_bfast&&!b.grenade&&obstacleCollision(b.x,b.y,b.size,true)){
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
       // Wall splash — sparks bounce back along the incoming trajectory
       if (b.owner === 'player' && !b.explosive) {
@@ -16197,11 +16279,64 @@ function render() {
   // Instead of black beyond the shell walls, render a neon circuit board —
   // grid lines, L-shaped traces, glowing nodes, and traveling data pulses.
   if (gameState === 'shell') _renderShellVoidBackground(vL, vR, vT, vB);
+  // Gap cell accent color — per-domain neon edge that frames each void/grate
+  // tile. Bullets fly over gaps, walkers can't cross them (unless flagged).
+  let _gapAccent = '#a8f';
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    const _dom = trenchSections[trenchSection].domain;
+    if (_dom && _dom.accentColor) _gapAccent = _dom.accentColor;
+  }
+  const _gapT = performance.now();
   // Batch grid strokes: collect all visible floor cell rects into one Path2D and stroke once.
   const _floorPath = new Path2D();
   let _gridStrokeColor = _domainGridColor || _corridorTheme.grid;
   for(let cy=mny;cy<=mxy;cy++)for(let cx=mnx;cx<=mxx;cx++){
     if(dungeonGrid&&dungeonGrid[cy]&&dungeonGrid[cy][cx]){
+      // ---- GAP CELL ---- walkable-space tile that walkers can't cross but
+      // projectiles / LOS pass over. Rendered as a dark pit with a neon inner
+      // rim in the current domain's accent color. The pit pulses subtly so
+      // the player can spot it on mobile at a glance.
+      if (gapGrid && gapGrid[cy] && gapGrid[cy][cx]) {
+        const _gx = cx*CELL_SIZE, _gy = cy*CELL_SIZE;
+        // Deep black well
+        ctx.fillStyle = '#000';
+        ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
+        // Inner shadow gradient — suggests depth by darkening edges
+        const _gg = ctx.createRadialGradient(_gx+CELL_SIZE/2, _gy+CELL_SIZE/2, 2, _gx+CELL_SIZE/2, _gy+CELL_SIZE/2, CELL_SIZE*0.7);
+        _gg.addColorStop(0, 'rgba(0,0,0,0)');
+        _gg.addColorStop(1, 'rgba(0,0,0,0.85)');
+        ctx.fillStyle = _gg;
+        ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
+        // Neon rim only on edges that border floor (not gap), so adjoining
+        // gaps read as one continuous pit rather than a grid of framed squares.
+        const _rimPulse = 0.45 + Math.sin(_gapT*0.003 + cx*0.4 + cy*0.4) * 0.18;
+        ctx.strokeStyle = _gapAccent;
+        ctx.shadowColor = _gapAccent;
+        ctx.shadowBlur = 8;
+        ctx.globalAlpha = _rimPulse;
+        ctx.lineWidth = 1.5;
+        const _floorN = cy>0 && dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx] && !(gapGrid[cy-1]&&gapGrid[cy-1][cx]);
+        const _floorS = cy<GRID_H-1 && dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx] && !(gapGrid[cy+1]&&gapGrid[cy+1][cx]);
+        const _floorW = cx>0 && dungeonGrid[cy][cx-1] && !(gapGrid[cy]&&gapGrid[cy][cx-1]);
+        const _floorE = cx<GRID_W-1 && dungeonGrid[cy][cx+1] && !(gapGrid[cy]&&gapGrid[cy][cx+1]);
+        ctx.beginPath();
+        if (_floorN) { ctx.moveTo(_gx, _gy+0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+0.5); }
+        if (_floorS) { ctx.moveTo(_gx, _gy+CELL_SIZE-0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+CELL_SIZE-0.5); }
+        if (_floorW) { ctx.moveTo(_gx+0.5, _gy); ctx.lineTo(_gx+0.5, _gy+CELL_SIZE); }
+        if (_floorE) { ctx.moveTo(_gx+CELL_SIZE-0.5, _gy); ctx.lineTo(_gx+CELL_SIZE-0.5, _gy+CELL_SIZE); }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+        // Sparse traveling spark inside the pit — helps it read as alive void
+        if (((cx*7 + cy*13 + Math.floor(_gapT*0.05)) & 31) === 0) {
+          const _sp = ((_gapT*0.12) % CELL_SIZE);
+          ctx.globalAlpha = 0.6;
+          ctx.fillStyle = _gapAccent;
+          ctx.fillRect(_gx + 4 + _sp * 0.5, _gy + CELL_SIZE/2 - 1, 2, 2);
+          ctx.globalAlpha = 1;
+        }
+        continue;
+      }
       // Floor cell — dark with neon grid lines
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
