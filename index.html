@@ -3945,36 +3945,103 @@ function generateTrenchMap(seed) {
         }
       }
     }
-    // ---- GAP STRIPS ---- occasional impassable-but-see-through pits that
-    // split the room into two halves. Walkers route around; bullets and LOS
-    // carry over. Skip boss sections and the checkpoint section that follows
-    // each boss so safe rooms and boss arenas stay clean. Warm-up sections
-    // also skipped so the first few minutes teach core mechanics.
+    // ---- GAP FORMATIONS ---- impassable-but-see-through pits comparable in
+    // scale to wall/obstacle templates. Walkers route around; bullets and LOS
+    // carry over. Skip boss, post-boss, and early sections.
     {
       const _isBossIdx = (idx) => idx === 10 || idx === 20 || idx === 30 || idx === 40 || (idx > 40 && (idx - 40) % 10 === 0);
-      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.55) {
+      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.45) {
         const _spawnCx = baseX + 3, _doorCx = baseX + secW - 2;
-        for (let _try = 0; _try < 6; _try++) {
-          const _horiz = Math.random() < 0.5;
-          const _len = 2 + Math.floor(Math.random() * 3); // 2-4 cells
-          const _minLocalX = 7, _maxLocalX = secW - 5 - (_horiz ? _len : 0);
-          const _minLocalY = 3, _maxLocalY = TRENCH_HEIGHT - 3 - (_horiz ? 0 : _len);
-          if (_maxLocalX <= _minLocalX || _maxLocalY <= _minLocalY) break;
-          const _lx = _minLocalX + Math.floor(Math.random() * (_maxLocalX - _minLocalX));
-          const _ly = _minLocalY + Math.floor(Math.random() * (_maxLocalY - _minLocalY));
-          const _placed = [];
+        // Gap formation templates — return local cell offsets [{x,y}, ...]
+        // Scale with section size: small sections get smaller formations
+        const _isSmall = secW <= 18;
+        const _gapFormations = [
+          // Trench — long horizontal strip (like corridor walls)
+          () => {
+            const len = _isSmall ? 5 : 6 + Math.floor(Math.random() * 3); // 5-8
+            const sx = 7 + Math.floor(Math.random() * Math.max(1, secW - 12 - len));
+            const sy = 4 + Math.floor(Math.random() * (TRENCH_HEIGHT - 8));
+            const cells = [];
+            for (let i = 0; i < len; i++) cells.push({ x: sx + i, y: sy });
+            return cells;
+          },
+          // Vertical wall — tall gap strip (like split template walls)
+          () => {
+            const len = _isSmall ? 4 : 5 + Math.floor(Math.random() * 3); // 5-7
+            const sx = 7 + Math.floor(Math.random() * Math.max(1, secW - 12));
+            const sy = 3 + Math.floor(Math.random() * Math.max(1, TRENCH_HEIGHT - 6 - len));
+            const cells = [];
+            for (let i = 0; i < len; i++) cells.push({ x: sx, y: sy + i });
+            return cells;
+          },
+          // L-shape pit — creates routing decisions
+          () => {
+            const hLen = _isSmall ? 3 : 4 + Math.floor(Math.random() * 2);
+            const vLen = _isSmall ? 3 : 4 + Math.floor(Math.random() * 2);
+            const sx = 7 + Math.floor(Math.random() * Math.max(1, secW - 12 - hLen));
+            const sy = 3 + Math.floor(Math.random() * Math.max(1, TRENCH_HEIGHT - 6 - vLen));
+            const cells = [];
+            for (let i = 0; i < hLen; i++) cells.push({ x: sx + i, y: sy });
+            for (let i = 1; i < vLen; i++) cells.push({ x: sx, y: sy + i });
+            return cells;
+          },
+          // Islands — two 2x2 pit blocks (like pillar template obstacles)
+          () => {
+            const cells = [];
+            const ax = 7 + Math.floor(Math.random() * Math.max(1, (secW / 2) - 8));
+            const ay = 4 + Math.floor(Math.random() * Math.max(1, TRENCH_HEIGHT - 10));
+            for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: ax + dx, y: ay + dy });
+            const bx = ax + 4 + Math.floor(Math.random() * 4);
+            const by = ay + 3 + Math.floor(Math.random() * 3);
+            if (bx + 2 < secW - 3 && by + 2 < TRENCH_HEIGHT - 2) {
+              for (let dx = 0; dx < 2; dx++) for (let dy = 0; dy < 2; dy++) cells.push({ x: bx + dx, y: by + dy });
+            }
+            return cells;
+          },
+          // Parallel strips — two horizontal gaps creating lanes (like corridor)
+          () => {
+            const len = _isSmall ? 4 : 5 + Math.floor(Math.random() * 2);
+            const sx = 7 + Math.floor(Math.random() * Math.max(1, secW - 12 - len));
+            const gap = 3 + Math.floor(Math.random() * 2); // 3-4 cells between strips
+            const y1 = 3 + Math.floor(Math.random() * Math.max(1, TRENCH_HEIGHT - 8 - gap));
+            const y2 = y1 + gap;
+            if (y2 >= TRENCH_HEIGHT - 2) return []; // bail if no room
+            const cells = [];
+            for (let i = 0; i < len; i++) { cells.push({ x: sx + i, y: y1 }); cells.push({ x: sx + i, y: y2 }); }
+            return cells;
+          },
+          // Cross — + shape pit (creates 4-way routing)
+          () => {
+            const arm = _isSmall ? 2 : 2 + Math.floor(Math.random() * 2);
+            const cx = 8 + Math.floor(Math.random() * Math.max(1, secW - 14));
+            const cy = 5 + Math.floor(Math.random() * Math.max(1, TRENCH_HEIGHT - 10));
+            const cells = [];
+            for (let i = -arm; i <= arm; i++) {
+              if (cx + i >= 1 && cx + i < secW - 1) cells.push({ x: cx + i, y: cy });
+            }
+            for (let i = -arm; i <= arm; i++) {
+              if (i !== 0 && cy + i >= 2 && cy + i < TRENCH_HEIGHT - 2) cells.push({ x: cx, y: cy + i });
+            }
+            return cells;
+          },
+        ];
+        for (let _try = 0; _try < 8; _try++) {
+          const _formation = _gapFormations[Math.floor(Math.random() * _gapFormations.length)];
+          const _cells = _formation();
+          if (_cells.length === 0) continue;
+          // Validate all cells are walkable floor (not walls, not out of bounds)
           let _ok = true;
-          for (let _k = 0; _k < _len; _k++) {
-            const _cx = _lx + (_horiz ? _k : 0);
-            const _cy = _ly + (_horiz ? 0 : _k);
-            const _abs = baseX + _cx;
-            if (_cx < 1 || _cx >= secW - 1 || _cy < 1 || _cy >= TRENCH_HEIGHT - 1 || _abs >= GRID_W) { _ok = false; break; }
-            if (!dungeonGrid[_cy] || !dungeonGrid[_cy][_abs]) { _ok = false; break; } // would replace template wall
-            _placed.push([_cy, _abs]);
+          const _placed = [];
+          for (const c of _cells) {
+            const _abs = baseX + c.x;
+            if (c.x < 1 || c.x >= secW - 1 || c.y < 1 || c.y >= TRENCH_HEIGHT - 1 || _abs >= GRID_W) { _ok = false; break; }
+            if (!dungeonGrid[c.y] || !dungeonGrid[c.y][_abs]) { _ok = false; break; }
+            _placed.push([c.y, _abs]);
           }
           if (!_ok) continue;
+          // Place gaps
           for (const [_gyy, _gxx] of _placed) gapGrid[_gyy][_gxx] = true;
-          // Validate pathability with gaps treated as walls
+          // BFS pathability — spawn zone must reach door zone
           const _gbVisited = new Set();
           const _gbQueue = [];
           for (let _sy = 1; _sy < TRENCH_HEIGHT - 1; _sy++) {
@@ -3987,10 +4054,8 @@ function generateTrenchMap(seed) {
           while (_gbQueue.length > 0) {
             const [_cxx, _cyy] = _gbQueue.shift();
             if (_cxx >= _doorCx) { _gbReach = true; break; }
-            const _neighbors = [[_cxx-1,_cyy],[_cxx+1,_cyy],[_cxx,_cyy-1],[_cxx,_cyy+1]];
-            for (const [_nx, _ny] of _neighbors) {
-              if (_nx < baseX + 1 || _nx >= baseX + secW - 1 || _ny < 1 || _ny >= TRENCH_HEIGHT - 1) continue;
-              if (_nx >= GRID_W) continue;
+            for (const [_nx, _ny] of [[_cxx-1,_cyy],[_cxx+1,_cyy],[_cxx,_cyy-1],[_cxx,_cyy+1]]) {
+              if (_nx < baseX + 1 || _nx >= baseX + secW - 1 || _ny < 1 || _ny >= TRENCH_HEIGHT - 1 || _nx >= GRID_W) continue;
               const _nk = _nx + ',' + _ny;
               if (!_gbVisited.has(_nk) && dungeonGrid[_ny] && dungeonGrid[_ny][_nx] && !gapGrid[_ny][_nx]) {
                 _gbVisited.add(_nk);
@@ -3998,8 +4063,7 @@ function generateTrenchMap(seed) {
               }
             }
           }
-          if (_gbReach) break; // keep the gap placement
-          // Revert — roll the next attempt or give up
+          if (_gbReach) break; // keep the formation
           for (const [_gyy, _gxx] of _placed) gapGrid[_gyy][_gxx] = false;
         }
       }
