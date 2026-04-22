@@ -3841,7 +3841,9 @@ let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
 let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
 let _checkpointRoomActive = false; // true while player is in the checkpoint safe room (after boss)
-let _checkpointContinues = 2; // number of continues remaining from checkpoint (decremented on death)
+let _checkpointContinues = 2; // legacy — unused now (unlimited checkpoint continues)
+let _sectionContinues = 2; // per-section continues (reset on entering a new section)
+let _sectionRewardsClaimed = false; // true once rewards (shop/DL chests/stride) were given this section
 
 // Pre-compute section widths from templates
 let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
@@ -4539,7 +4541,9 @@ function updateTrench() {
     playExitFoundSound();
     // ---- DATA LINK CHOICE or BONUS REWARD ----
     // ALL rewards spawn as physical objects — never auto-open UI.
-    if (!isMultiplayer) {
+    // Skip if rewards were already claimed (section continue after death).
+    if (!isMultiplayer && !_sectionRewardsClaimed) {
+      _sectionRewardsClaimed = true;
       // Trial bonus: spawn a rare+ mod terminal chest
       if (_dlTrialBonusPending) {
         _dlTrialBonusPending = false;
@@ -4635,6 +4639,9 @@ function updateTrenchFade() {
           }
           trenchSection = newIdx;
           _trenchPrevSection = newIdx;
+          // Reset per-section continues and reward tracking
+          _sectionContinues = 2;
+          _sectionRewardsClaimed = false;
           // Clear recall anchor on section transition
           if (activeBeacon && activeBeacon._recall) { _beacons = _beacons.filter(_b => !_b._recall); activeBeacon = _beacons[0] || null; }
           const spawnX = newSec.x + 2.5 * CELL_SIZE;
@@ -10552,23 +10559,71 @@ function calculateDeathStats() {
   return { shardsEarned, survivalTime, survivalMin, survivalSec, kills, progLabel, progValue, isNewBest, runBitsEarned };
 }
 
+function _resumeFromSection() {
+  // Resume current section: reset enemies, keep mods, heal player
+  const sec = trenchSections[trenchSection];
+  if (!sec) return;
+  // Reset section wave state
+  sec.spawned = false;
+  sec.cleared = false;
+  sec.currentWave = 0;
+  sec.waveSpawnTimer = 0;
+  // Clear all enemies, projectiles, and hazards from this section
+  zombies = [];
+  bullets = bullets.filter(b => b.owner !== 'zombie');
+  explosions = [];
+  // Reset hazard spawners
+  if (sec.hazards) sec.hazards.forEach(h => { if (h.type === 'spawner') { h.alive = true; h.hp = h.maxHp; } });
+  // Revive and heal the player at spawn position
+  const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+  const spawnX = sec.x + 2.5 * CELL_SIZE;
+  const spawnY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
+  for (const p of players) {
+    p.alive = true;
+    p.hp = p.maxHp;
+    p.x = spawnX; p.y = spawnY;
+    p.vx = 0; p.vy = 0;
+    p.invincible = 120; // brief i-frames
+  }
+  camera.x = spawnX; camera.y = spawnY;
+  // Re-spawn the section enemies
+  spawnTrenchSection(trenchSection);
+  gameState = 'playing';
+  screenShake.intensity = 0;
+  _dlChoicePending = false;
+}
+
 function showDeathToShell() {
-  // Check if we can continue from checkpoint instead of going to Shell
-  if (hasCheckpoint()) {
-    // Show continue message
+  // TIER 1: Per-section continues (2 per section)
+  if (gameMode === 'trench' && _sectionContinues > 0) {
+    _sectionContinues--;
     const lp = getLocalPlayer();
-    if (lp) addFloatingText(lp.x, lp.y - 40, 'CONTINUE', '#ff0');
-    // Brief death effects before resume
+    if (lp) addFloatingText(lp.x, lp.y - 40, `RETRY (${_sectionContinues} LEFT)`, '#ff0');
     window._deathBeatPlaying = true;
     gameState = 'dying';
     triggerGlitchSurge(0.5, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
-    // Resume from checkpoint after death animation
+    setTimeout(() => {
+      window._deathBeatPlaying = false;
+      _resumeFromSection();
+    }, 2000);
+    return;
+  }
+  // TIER 2: Fall back to checkpoint (unlimited continues)
+  if (hasCheckpoint()) {
+    _sectionContinues = 2; // reset section continues at checkpoint
+    _sectionRewardsClaimed = false;
+    const lp = getLocalPlayer();
+    if (lp) addFloatingText(lp.x, lp.y - 40, 'CHECKPOINT', '#f80');
+    window._deathBeatPlaying = true;
+    gameState = 'dying';
+    triggerGlitchSurge(0.5, 60);
+    screenShake.intensity = Math.max(screenShake.intensity, 12);
     setTimeout(() => {
       window._deathBeatPlaying = false;
       resumeFromCheckpoint();
     }, 2000);
-    return; // don't proceed with normal death-to-shell
+    return;
   }
   // No continues left (or never had a checkpoint) — the run is over. Wipe
   // the checkpoint so the Shell's RESUME terminal doesn't advertise a stale
@@ -10789,6 +10844,7 @@ function startMultiplayerGame() {
     initTrenchSections();
     exitPos = null;
     trenchSection = 0; _trenchPrevSection = 0; _trenchPendingNext = -1; _checkpointRoomActive = false;
+    _sectionContinues = 2; _sectionRewardsClaimed = false;
     trenchFadeAlpha = 0; trenchFadeDir = 0;
   } else if (gameMode === 'siege') {
     generateSiegeArena(lobbySeed);
