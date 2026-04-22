@@ -3952,11 +3952,11 @@ function generateTrenchMap(seed) {
     // also skipped so the first few minutes teach core mechanics.
     {
       const _isBossIdx = (idx) => idx === 10 || idx === 20 || idx === 30 || idx === 40 || (idx > 40 && (idx - 40) % 10 === 0);
-      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.35) {
+      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.55) {
         const _spawnCx = baseX + 3, _doorCx = baseX + secW - 2;
         for (let _try = 0; _try < 6; _try++) {
           const _horiz = Math.random() < 0.5;
-          const _len = 2 + Math.floor(Math.random() * 2); // 2 or 3 cells
+          const _len = 2 + Math.floor(Math.random() * 3); // 2-4 cells
           const _minLocalX = 7, _maxLocalX = secW - 5 - (_horiz ? _len : 0);
           const _minLocalY = 3, _maxLocalY = TRENCH_HEIGHT - 3 - (_horiz ? 0 : _len);
           if (_maxLocalX <= _minLocalX || _maxLocalY <= _minLocalY) break;
@@ -16807,27 +16807,28 @@ function render() {
       // the player can spot it on mobile at a glance.
       if (gapGrid && gapGrid[cy] && gapGrid[cy][cx]) {
         const _gx = cx*CELL_SIZE, _gy = cy*CELL_SIZE;
+        const _gcx = _gx + CELL_SIZE/2, _gcy = _gy + CELL_SIZE/2;
         // Deep black well
         ctx.fillStyle = '#000';
         ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
-        // Inner shadow gradient — suggests depth by darkening edges
-        const _gg = ctx.createRadialGradient(_gx+CELL_SIZE/2, _gy+CELL_SIZE/2, 2, _gx+CELL_SIZE/2, _gy+CELL_SIZE/2, CELL_SIZE*0.7);
-        _gg.addColorStop(0, 'rgba(0,0,0,0)');
-        _gg.addColorStop(1, 'rgba(0,0,0,0.85)');
+        // Depth gradient — darker at edges, hint of color at center
+        const _gg = ctx.createRadialGradient(_gcx, _gcy, 1, _gcx, _gcy, CELL_SIZE*0.65);
+        _gg.addColorStop(0, 'rgba(30,10,40,0.25)');
+        _gg.addColorStop(0.6, 'rgba(0,0,0,0.1)');
+        _gg.addColorStop(1, 'rgba(0,0,0,0.9)');
         ctx.fillStyle = _gg;
         ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
         // Neon rim only on edges that border floor (not gap), so adjoining
         // gaps read as one continuous pit rather than a grid of framed squares.
-        const _rimPulse = 0.45 + Math.sin(_gapT*0.003 + cx*0.4 + cy*0.4) * 0.18;
-        ctx.strokeStyle = _gapAccent;
-        ctx.shadowColor = _gapAccent;
-        ctx.shadowBlur = 8;
-        ctx.globalAlpha = _rimPulse;
-        ctx.lineWidth = 1.5;
+        const _rimPulse = 0.55 + Math.sin(_gapT*0.003 + cx*0.4 + cy*0.4) * 0.2;
         const _floorN = cy>0 && dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx] && !(gapGrid[cy-1]&&gapGrid[cy-1][cx]);
         const _floorS = cy<GRID_H-1 && dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx] && !(gapGrid[cy+1]&&gapGrid[cy+1][cx]);
         const _floorW = cx>0 && dungeonGrid[cy][cx-1] && !(gapGrid[cy]&&gapGrid[cy][cx-1]);
         const _floorE = cx<GRID_W-1 && dungeonGrid[cy][cx+1] && !(gapGrid[cy]&&gapGrid[cy][cx+1]);
+        // Bright glow under rim edges
+        ctx.shadowColor = _gapAccent; ctx.shadowBlur = 14;
+        ctx.strokeStyle = _gapAccent; ctx.lineWidth = 2;
+        ctx.globalAlpha = _rimPulse;
         ctx.beginPath();
         if (_floorN) { ctx.moveTo(_gx, _gy+0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+0.5); }
         if (_floorS) { ctx.moveTo(_gx, _gy+CELL_SIZE-0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+CELL_SIZE-0.5); }
@@ -16835,13 +16836,19 @@ function render() {
         if (_floorE) { ctx.moveTo(_gx+CELL_SIZE-0.5, _gy); ctx.lineTo(_gx+CELL_SIZE-0.5, _gy+CELL_SIZE); }
         ctx.stroke();
         ctx.shadowBlur = 0;
+        // Inner glow haze — faint color emanating from the pit
+        ctx.globalAlpha = 0.06 * _rimPulse;
+        ctx.fillStyle = _gapAccent;
+        ctx.fillRect(_gx + 4, _gy + 4, CELL_SIZE - 8, CELL_SIZE - 8);
         ctx.globalAlpha = 1;
-        // Sparse traveling spark inside the pit — helps it read as alive void
-        if (((cx*7 + cy*13 + Math.floor(_gapT*0.05)) & 31) === 0) {
-          const _sp = ((_gapT*0.12) % CELL_SIZE);
-          ctx.globalAlpha = 0.6;
+        // Traveling spark inside the pit
+        if (((cx*7 + cy*13 + Math.floor(_gapT*0.04)) & 15) === 0) {
+          const _sp = ((_gapT*0.1) % CELL_SIZE);
+          ctx.globalAlpha = 0.7;
           ctx.fillStyle = _gapAccent;
-          ctx.fillRect(_gx + 4 + _sp * 0.5, _gy + CELL_SIZE/2 - 1, 2, 2);
+          ctx.shadowColor = _gapAccent; ctx.shadowBlur = 4;
+          ctx.fillRect(_gx + 4 + _sp * 0.5, _gcy - 1, 3, 3);
+          ctx.shadowBlur = 0;
           ctx.globalAlpha = 1;
         }
         continue;
