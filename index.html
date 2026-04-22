@@ -1559,8 +1559,8 @@ const UPGRADE_POOL = [
     descs:['LEVEL 1: CHARGED enemies take burn DoT. COMBO: OVERHEATED + CHARGED = arc discharge burst on hit.'],
     flavor:'the current carries heat.', prereqs:['thermal_rounds|burnout_wake','arc_rounds|static_wake'] },
   { id:'syn_heat_wave', name:'HEAT WAVE', rarity:'epic', max:1, icon:'🔥', color:'#fc8',
-    descs:['LEVEL 1: EXPOSED = 2x OVERHEAT damage. COMBO: EXPOSED + OVERHEATED explode on death.'],
-    flavor:'vulnerability amplifies the burn.', prereqs:['thermal_rounds|burnout_wake','pulse_shot|kinetic_wake'] },
+    descs:['LEVEL 1: EXPOSED = 2x OVERHEAT damage. COMBO: killing EXPOSED + OVERHEATED emits a hot shockwave — knockback + EXPOSED applied to everyone caught in it.'],
+    flavor:'pressurized heat bursts outward.', prereqs:['thermal_rounds|burnout_wake','pulse_shot|kinetic_wake'] },
   { id:'syn_viral_burn', name:'VIRAL BURN', rarity:'epic', max:1, icon:'☢', color:'#f64',
     descs:['LEVEL 1: COMPROMISED enemies burn. COMBO: COMPROMISED + OVERHEATED erupt on death, spreading CORRUPT.'],
     flavor:'malware ignites the core.', prereqs:['thermal_rounds|burnout_wake','viral_payload|glitch_wake'] },
@@ -13144,11 +13144,38 @@ function dropZombieLoot(z) {
     // (Lv3 Viral death-spread removed — base Compromised death-spread above handles this now.
     //  Lv3 now spreads stacks on hit-to-Compromised — see bullet hit path.)
     // ---- SYNERGY COMBO DEATH EFFECTS ----
-    // HEAT WAVE combo: Exposed + Overheated → AoE explosion on death
+    // HEAT WAVE combo: killing Exposed + Overheated releases a hot pressure
+    // shockwave — moderate damage but big knockback, and every enemy caught
+    // in the blast is marked EXPOSED so the pressure chains into the next
+    // kill. Distinct role from Thermal Rounds' "explode on death" (which
+    // does raw AoE damage); Heat Wave sets up a follow-on instead.
     if (mods.synHeatWave && z._exposed && (z._overheat > 0 || z._burning > 0)) {
-      createExplosion(z.x, z.y, 100, 60, 'player');
-      for(let i=0;i<16;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:20,maxLife:20,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#cef',type:'explosion'});}
+      const _hwR = 130;
+      const _hwR2 = _hwR * _hwR;
+      if (isHost) {
+        for (const oz of zombies) {
+          if (oz === z || oz.hp <= 0) continue;
+          const _hdx = oz.x - z.x, _hdy = oz.y - z.y;
+          const _hd2 = _hdx*_hdx + _hdy*_hdy;
+          if (_hd2 > _hwR2) continue;
+          const _hd = Math.sqrt(_hd2) || 1;
+          const _close = 1 - _hd / _hwR;
+          // Knockback scales with how central the enemy was — edge pops are light.
+          const _kb = 14 + 22 * _close;
+          oz.vx += (_hdx/_hd) * _kb;
+          oz.vy += (_hdy/_hd) * _kb;
+          oz.staggerTimer = Math.max(oz.staggerTimer || 0, 20);
+          // Modest damage — the point is CC + EXPOSED, not the kill itself.
+          damageZombie(oz, Math.floor(22 * _close), 0, 0);
+          applyExposed(oz);
+        }
+      }
+      // Expanding shockwave ring — outer orange + inner cream, plus ember motes
+      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 22, maxLife: 22, size: _hwR, color: '#f80', type: 'wakering' });
+      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 18, maxLife: 18, size: _hwR * 0.72, color: '#fc8', type: 'wakering' });
+      for(let i=0;i<18;i++){const a=Math.random()*Math.PI*2,s=4+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fc8',type:'explosion'});}
       screenShake.intensity=Math.max(screenShake.intensity,8);
+      playSfx('blast_default', 0.3) || playSound(180, 0.14, 'sine', 0.15);
     }
     // VIRAL BURN combo: Compromised + Overheated → eruption spreads Corrupt
     if (mods.synViralBurn && z._compromised && (z._overheat > 0 || z._burning > 0)) {
