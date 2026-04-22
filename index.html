@@ -4273,6 +4273,8 @@ function spawnTrenchSection(idx) {
       barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
     }
   }
+  // ---- DESTRUCTIBLE PROPS ----
+  spawnSectionProps(idx);
   // Corrupted memory fragments — ghostly floor text
   const _fragCount = 1 + Math.floor(Math.random() * 2);
   for (let fi = 0; fi < _fragCount; fi++) {
@@ -4652,6 +4654,110 @@ let activeElement = null; // { id, timer }
 let burnoutPuddles = []; // { x, y, radius, life, maxLife } — Burnout Wake Lv2 fire trail
 
 // ============================================================
+// ============================================================
+// DESTRUCTIBLE PROP SYSTEM
+// Environment props that can be shot and destroyed. Stored in barrels[] with _prop flag.
+// Each prop type has unique visuals, HP tier, destruction VFX, and optional drops.
+// Domain-aware — different types fit different visual domains.
+// ============================================================
+const PROP_DEFS = {
+  // ---- FRAGILE (1 HP) ----
+  swivel_chair:     { hp: 1, radius: 10, tier: 'fragile', icon: '◎', material: 'metal',   label: 'CHAIR' },
+  instrument_tray:  { hp: 1, radius: 8,  tier: 'fragile', icon: '▬', material: 'metal',   label: 'TRAY' },
+  holo_sign:        { hp: 1, radius: 9,  tier: 'fragile', icon: '⚐', material: 'holo',    label: 'SIGN' },
+  vent_grate:       { hp: 1, radius: 11, tier: 'fragile', icon: '≡', material: 'metal',   label: 'VENT' },
+  emergency_beacon: { hp: 1, radius: 8,  tier: 'fragile', icon: '◉', material: 'electric', label: 'BEACON' },
+  // ---- STANDARD (2-3 HP) ----
+  holo_desk:        { hp: 2, radius: 16, tier: 'standard', icon: '▭', material: 'holo',    label: 'DESK' },
+  supply_crate:     { hp: 2, radius: 13, tier: 'standard', icon: '▣', material: 'metal',   label: 'CRATE', dropBits: true },
+  cable_bundle:     { hp: 2, radius: 12, tier: 'standard', icon: '⚡', material: 'electric', label: 'CABLES' },
+  monitor_bank:     { hp: 3, radius: 14, tier: 'standard', icon: '▩', material: 'glass',   label: 'MONITORS' },
+  sample_canister:  { hp: 2, radius: 10, tier: 'standard', icon: '⬡', material: 'glass',   label: 'CANISTER' },
+  overhead_pipe:    { hp: 2, radius: 12, tier: 'standard', icon: '═', material: 'metal',   label: 'PIPE' },
+  // ---- HEAVY (4-5 HP) ----
+  server_rack_d:    { hp: 4, radius: 16, tier: 'heavy', icon: '▦', material: 'metal',   label: 'SERVER' },
+  power_conduit:    { hp: 4, radius: 12, tier: 'heavy', icon: '⏛', material: 'electric', label: 'CONDUIT' },
+  stasis_pod:       { hp: 5, radius: 15, tier: 'heavy', icon: '⬬', material: 'glass',   label: 'POD' },
+  cooling_unit:     { hp: 4, radius: 18, tier: 'heavy', icon: '▤', material: 'metal',   label: 'COOLER' },
+};
+
+// Domain color palettes for props
+const _PROP_DOMAIN_COLORS = [
+  { primary: '#a8f', secondary: '#0ff', accent: '#c6f', body: '#0a0612' },  // Entry Cache
+  { primary: '#f80', secondary: '#f44', accent: '#fa0', body: '#120804' },  // Corrupted Subnet
+  { primary: '#4af', secondary: '#8ef', accent: '#4cf', body: '#040810' },  // Deep Storage
+  { primary: '#f4a', secondary: '#f44', accent: '#f80', body: '#100408' },  // Kernel Boundary
+  { primary: '#fff', secondary: '#ff0', accent: '#eef', body: '#101010' },  // The Core
+];
+
+// Which prop types appear in each domain
+function _pickPropsForDomain(domainIdx) {
+  const pools = [
+    // Entry Cache — sterile, lab-like, intact
+    ['holo_desk','swivel_chair','server_rack_d','monitor_bank','sample_canister','cooling_unit','supply_crate','holo_sign','instrument_tray'],
+    // Corrupted Subnet — damaged, sparking, hazardous
+    ['cable_bundle','overhead_pipe','supply_crate','emergency_beacon','instrument_tray','monitor_bank','power_conduit','vent_grate'],
+    // Deep Storage — preservation, cold, eerie
+    ['stasis_pod','cooling_unit','sample_canister','supply_crate','server_rack_d','vent_grate','overhead_pipe'],
+    // Kernel Boundary — hostile, burning, industrial
+    ['power_conduit','cable_bundle','overhead_pipe','emergency_beacon','supply_crate','server_rack_d','vent_grate'],
+    // The Core — abstract, digital, minimal
+    ['power_conduit','holo_sign','holo_desk','server_rack_d','sample_canister','monitor_bank'],
+  ];
+  return pools[Math.max(0, Math.min(4, domainIdx))];
+}
+
+// Spawn destructible props in a trench section
+function spawnSectionProps(idx) {
+  const sec = trenchSections[idx];
+  if (!sec || sec.isBoss || sec._propsSeeded) return;
+  sec._propsSeeded = true;
+  const domain = sec.domain || getTrenchDomain(idx);
+  const domainIdx = TRENCH_DOMAINS.indexOf(domain);
+  const pool = _pickPropsForDomain(domainIdx);
+  const colors = _PROP_DOMAIN_COLORS[Math.max(0, Math.min(4, domainIdx))];
+  const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
+  // 3-6 props per section
+  const count = 3 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i++) {
+    const propType = pool[Math.floor(Math.random() * pool.length)];
+    const def = PROP_DEFS[propType];
+    if (!def) continue;
+    // Find walkable spot, avoid spawn zone (5 cells from left) and door zone (3 cells from right)
+    let placed = false;
+    for (let tries = 0; tries < 15; tries++) {
+      const secCellX = Math.floor(sec.x / CELL_SIZE);
+      const gx = secCellX + 6 + Math.floor(Math.random() * ((((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W)) - 10));
+      const gy = 3 + Math.floor(Math.random() * (TRENCH_HEIGHT - 6));
+      if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
+      const px = gx * CELL_SIZE + CELL_SIZE / 2;
+      const py = gy * CELL_SIZE + CELL_SIZE / 2;
+      // Don't overlap existing barrels/props
+      let tooClose = false;
+      for (const br of barrels) {
+        if (Math.abs(br.x - px) < 36 && Math.abs(br.y - py) < 36) { tooClose = true; break; }
+      }
+      if (tooClose) continue;
+      // Don't spawn too close to player
+      const lp = getLocalPlayer();
+      if (lp && Math.abs(px - lp.x) < 80 && Math.abs(py - lp.y) < 80) continue;
+      barrels.push({
+        x: px, y: py,
+        radius: def.radius,
+        hp: def.hp, maxHp: def.hp,
+        _prop: true,
+        _propType: propType,
+        _propColors: colors,
+        _hitFlash: 0,
+        _bobTimer: Math.random() * Math.PI * 2,
+        _seed: Math.floor(Math.random() * 100000),
+      });
+      placed = true;
+      break;
+    }
+  }
+}
+
 // AMBIENT DECOR SYSTEM
 // Procedural stationary objects populate sections with atmosphere. No sprite assets —
 // all geometry, particles, and gradients. Rendered between decals and entities.
@@ -5570,7 +5676,7 @@ function applyElementOnHit(z, damage, srcX, srcY) {
       lastZ = bestZ;
     }
     // Lightning chains detonate nearby barrels
-    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];const bd=Math.sqrt((br.x-z.x)**2+(br.y-z.y)**2);if(bd<100){explodeBarrel(br,bi);break;}}
+    for(let bi=barrels.length-1;bi>=0;bi--){const br=barrels[bi];if(br._prop||br._chest||br._shopChest||br._signalLab)continue;const bd=Math.sqrt((br.x-z.x)**2+(br.y-z.y)**2);if(bd<100){explodeBarrel(br,bi);break;}}
   } else if (el === 'wind') {
     // Slipstream gust: NO knockback. Instead, an AoE shockwave damages every nearby
     // zombie (50% bullet damage in a 70px radius). Bullets that fly with wind already
@@ -6164,7 +6270,7 @@ function _aaSelectTarget(lp) {
   }
   // Also target barrels (not shop chests) and spawners
   for (const br of barrels) {
-    if (!br || br.hp <= 0 || br._shopChest || br._chest || br._strideChest || br._signalLab) continue;
+    if (!br || br.hp <= 0 || br._shopChest || br._chest || br._strideChest || br._signalLab || br._prop) continue;
     const s = _aaScoreEnemy(br, lp);
     if (s > bestScore) { bestScore = s; bestZ = br; }
   }
@@ -12270,6 +12376,73 @@ function explodeBarrel(barrel, idx) {
   // retarget runs.
   barrel.hp = 0;
   if (_autoAimTarget === barrel) _autoAimTarget = null;
+  // ---- DESTRUCTIBLE PROP DESTRUCTION ----
+  if (barrel._prop) {
+    const _pd = PROP_DEFS[barrel._propType];
+    const _pdc = barrel._propColors || _PROP_DOMAIN_COLORS[0];
+    const _mat = _pd ? _pd.material : 'metal';
+    // Material-specific destruction VFX
+    const _pCount = _pd && _pd.tier === 'heavy' ? 20 : _pd && _pd.tier === 'standard' ? 14 : 8;
+    if (_mat === 'glass') {
+      // Glass shatter — white/blue shards flying outward
+      for (let k = 0; k < _pCount; k++) {
+        const a = (k / _pCount) * Math.PI * 2 + Math.random() * 0.3;
+        const s = 2 + Math.random() * 5;
+        particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+          life: 20 + Math.random() * 15, maxLife: 35, size: 2 + Math.random() * 3,
+          color: Math.random() > 0.3 ? _pdc.secondary : '#fff', type: 'spark' });
+      }
+      playSound(1200, 0.06, 'sine', 0.08);
+      playSound(800, 0.04, 'triangle', 0.06);
+    } else if (_mat === 'electric') {
+      // Electric arc burst — cyan/white sparks + brief arc lines
+      for (let k = 0; k < _pCount; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 1.5 + Math.random() * 4;
+        particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+          life: 15 + Math.random() * 12, maxLife: 27, size: 2 + Math.random() * 2,
+          color: Math.random() > 0.4 ? _pdc.primary : '#fff', type: 'spark' });
+      }
+      // Brief screen flash
+      screenShake.intensity = Math.max(screenShake.intensity, 3);
+      playSound(200, 0.05, 'sawtooth', 0.1);
+      playSound(600, 0.04, 'square', 0.06);
+    } else if (_mat === 'holo') {
+      // Holographic dissolve — data fragments fading
+      for (let k = 0; k < _pCount; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 0.5 + Math.random() * 2.5;
+        const _gc = '░▒▓█◆▪';
+        particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 0.5,
+          life: 20 + Math.random() * 20, maxLife: 40, size: 6 + Math.random() * 4,
+          color: _pdc.primary, type: 'glitchtext', text: _gc[Math.floor(Math.random() * _gc.length)] });
+      }
+      playSound(400, 0.03, 'sine', 0.12);
+    } else {
+      // Metal debris — orange sparks + chunks
+      for (let k = 0; k < _pCount; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 2 + Math.random() * 4;
+        particles.push({ x: barrel.x, y: barrel.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+          life: 18 + Math.random() * 14, maxLife: 32, size: 2 + Math.random() * 3,
+          color: Math.random() > 0.5 ? _pdc.primary : '#888', type: 'spark' });
+      }
+      playSound(300, 0.04, 'triangle', 0.08);
+      playSound(150, 0.05, 'sawtooth', 0.06);
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, _pd && _pd.tier === 'heavy' ? 5 : 2);
+    // Bit drops — ~30% chance for standard+, guaranteed for supply crates
+    if (_pd && (_pd.dropBits || (_pd.tier !== 'fragile' && Math.random() < 0.3))) {
+      const _bitsAmt = _pd.tier === 'heavy' ? 3 + Math.floor(Math.random() * 4) : 1 + Math.floor(Math.random() * 3);
+      for (let bi = 0; bi < _bitsAmt; bi++) {
+        const _ba = Math.random() * Math.PI * 2, _bd = 8 + Math.random() * 16;
+        pickups.push({ type: 'bits', amount: 1, x: barrel.x + Math.cos(_ba) * _bd, y: barrel.y + Math.sin(_ba) * _bd, bobTimer: Math.random() * Math.PI * 2 });
+      }
+    }
+    const newIdx = barrels.indexOf(barrel);
+    if (newIdx >= 0) barrels.splice(newIdx, 1);
+    return;
+  }
   // Data Link chest — claim reward and despawn the other
   if (barrel._dlChest) {
     claimDataLinkChest(barrel);
@@ -12363,7 +12536,7 @@ function explodeBarrel(barrel, idx) {
   // Chain reaction: explode nearby barrels
   for (let i = barrels.length - 1; i >= 0; i--) {
     const b2 = barrels[i];
-    if (b2._chest || b2._dlChest || b2._shopChest || b2._signalLab) continue; // don't chain to special chests
+    if (b2._chest || b2._dlChest || b2._shopChest || b2._signalLab || b2._prop) continue; // don't chain to special chests or props
     if (Math.sqrt((b2.x-barrel.x)**2+(b2.y-barrel.y)**2) < 120) {
       setTimeout(() => { const ci = barrels.indexOf(b2); if (ci >= 0) explodeBarrel(b2, ci); }, 80 + Math.random() * 120);
     }
@@ -16113,7 +16286,7 @@ function update() {
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,powerupId:p.powerupId,elementId:p.elementId,orbitalId:p.orbitalId,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
-    const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0,_signalLab:br._signalLab?1:0}));
+    const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0,_signalLab:br._signalLab?1:0,_prop:br._prop?1:0,_propType:br._propType||'',_propColors:br._propColors||null}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
     // Siege walls: only send HP arrays, positions are already known from map gen
     const sLHp = (gameMode === 'siege' && siegeWallLeft.length) ? siegeWallLeft.map(s => s.hp | 0) : null;
@@ -16340,7 +16513,7 @@ function applyHostState(msg) {
   // Sync pickups from host
   if (msg.pickups) { pickups = msg.pickups; }
   // Sync barrels from host — preserve chest flags so shop / stride chests render right on clients
-  if (msg.barrels) { barrels = msg.barrels.map(br => ({...br, hp: 1, _chest: !!br._chest, _strideChest: !!br._strideChest, _shopChest: !!br._shopChest, _signalLab: !!br._signalLab})); }
+  if (msg.barrels) { barrels = msg.barrels.map(br => ({...br, hp: br._prop ? (PROP_DEFS[br._propType]||{}).hp||1 : 1, maxHp: br._prop ? (PROP_DEFS[br._propType]||{}).hp||1 : 1, _chest: !!br._chest, _strideChest: !!br._strideChest, _shopChest: !!br._shopChest, _signalLab: !!br._signalLab, _prop: !!br._prop, _propType: br._propType||'', _propColors: br._propColors||null, _hitFlash: 0, _bobTimer: Math.random()*Math.PI*2, _seed: Math.floor(Math.random()*100000)})); }
   // Check game over
   if (!players.some(p => p.alive) && gameState === 'playing') showDeathScreen();
 }
@@ -17007,8 +17180,368 @@ function render() {
     ctx.globalAlpha=1;
   }
 
-  // Barrels + chests
+  // Barrels + chests + destructible props
   for(const br of barrels){ctx.save();ctx.translate(br.x,br.y);
+    // ---- DESTRUCTIBLE PROPS ----
+    if (br._prop) {
+      if (br._hitFlash > 0) br._hitFlash--;
+      const _pt = performance.now();
+      const _pc = br._propColors || _PROP_DOMAIN_COLORS[0];
+      const _pdef = PROP_DEFS[br._propType];
+      const _pAlpha = br._hitFlash > 0 ? 0.4 : 0;
+      const _pPulse = 0.5 + Math.sin(_pt * 0.003 + (br._bobTimer || 0)) * 0.15;
+      // Damage cracks overlay
+      const _pDmg = (br.maxHp || 1) - br.hp;
+      // Subtle ambient glow on ground
+      ctx.globalAlpha = 0.06 * _pPulse;
+      ctx.fillStyle = _pc.primary;
+      ctx.beginPath(); ctx.arc(0, 0, br.radius + 12, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      switch (br._propType) {
+        // ======== SWIVEL CHAIR — small circle seat with leg lines ========
+        case 'swivel_chair': {
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1.5;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 6;
+          ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.shadowBlur = 0;
+          // Legs
+          ctx.strokeStyle = _pc.secondary; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+          for (let li = 0; li < 4; li++) {
+            const la = (li / 4) * Math.PI * 2 + br._seed * 0.01;
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(la) * 10, Math.sin(la) * 10); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+          // Seat dot
+          ctx.fillStyle = _pc.primary; ctx.globalAlpha = 0.6;
+          ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== INSTRUMENT TRAY — small flat rectangle with tiny dots ========
+        case 'instrument_tray': {
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 4;
+          ctx.fillRect(-10, -5, 20, 10); ctx.strokeRect(-10, -5, 20, 10);
+          ctx.shadowBlur = 0;
+          // Instrument dots
+          ctx.fillStyle = _pc.secondary; ctx.globalAlpha = 0.7;
+          for (let di = 0; di < 3; di++) ctx.fillRect(-6 + di * 5, -1, 2, 2);
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== HOLO SIGN — floating translucent text panel ========
+        case 'holo_sign': {
+          const _hsBob = Math.sin(_pt * 0.004 + br._seed) * 3;
+          ctx.translate(0, _hsBob);
+          ctx.globalAlpha = 0.3 * _pPulse;
+          ctx.fillStyle = _pc.primary;
+          ctx.fillRect(-14, -8, 28, 16);
+          ctx.globalAlpha = 0.8;
+          ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 8;
+          ctx.strokeRect(-14, -8, 28, 16);
+          ctx.shadowBlur = 0;
+          // Text
+          ctx.fillStyle = _pc.primary; ctx.font = 'bold 7px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const _hsTxts = ['WARNING','EXIT','SECTOR','ALERT','SCAN','DATA','LOCK'];
+          ctx.fillText(_hsTxts[br._seed % _hsTxts.length], 0, 0);
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== VENT GRATE — floor panel with slats ========
+        case 'vent_grate': {
+          ctx.fillStyle = '#0a0a0a'; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 3;
+          ctx.fillRect(-12, -10, 24, 20); ctx.strokeRect(-12, -10, 24, 20);
+          ctx.shadowBlur = 0;
+          // Slats
+          ctx.strokeStyle = _pc.secondary; ctx.lineWidth = 0.8; ctx.globalAlpha = 0.4;
+          for (let si = 0; si < 5; si++) {
+            const sy = -7 + si * 3.5;
+            ctx.beginPath(); ctx.moveTo(-9, sy); ctx.lineTo(9, sy); ctx.stroke();
+          }
+          // Faint glow from below
+          ctx.globalAlpha = 0.15 * _pPulse;
+          ctx.fillStyle = _pc.secondary;
+          ctx.fillRect(-8, -6, 16, 12);
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== EMERGENCY BEACON — small rotating light ========
+        case 'emergency_beacon': {
+          const _ebAng = _pt * 0.008;
+          // Base
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.accent; ctx.lineWidth = 1.5;
+          ctx.shadowColor = _pc.accent; ctx.shadowBlur = 8;
+          ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.shadowBlur = 0;
+          // Rotating beam
+          ctx.globalAlpha = 0.25 * _pPulse;
+          ctx.fillStyle = _pc.accent;
+          ctx.beginPath(); ctx.moveTo(0, 0);
+          ctx.arc(0, 0, 20, _ebAng - 0.3, _ebAng + 0.3); ctx.closePath(); ctx.fill();
+          ctx.globalAlpha = 1;
+          // Center dot
+          ctx.fillStyle = _pc.accent;
+          ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        // ======== HOLO DESK — flat rectangle with holographic projection above ========
+        case 'holo_desk': {
+          // Desk body
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1.5;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 6;
+          ctx.fillRect(-16, -6, 32, 12); ctx.strokeRect(-16, -6, 32, 12);
+          ctx.shadowBlur = 0;
+          // Holographic grid projection above desk
+          ctx.globalAlpha = 0.2 * _pPulse;
+          ctx.fillStyle = _pc.secondary;
+          ctx.fillRect(-12, -18, 24, 10);
+          ctx.globalAlpha = 0.6;
+          ctx.strokeStyle = _pc.secondary; ctx.lineWidth = 0.5;
+          // Grid lines
+          for (let gi = 0; gi < 4; gi++) {
+            ctx.beginPath(); ctx.moveTo(-12, -18 + gi * 3); ctx.lineTo(12, -18 + gi * 3); ctx.stroke();
+          }
+          for (let gi = 0; gi < 5; gi++) {
+            ctx.beginPath(); ctx.moveTo(-12 + gi * 6, -18); ctx.lineTo(-12 + gi * 6, -8); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== SUPPLY CRATE — box with edge glow and stenciled marking ========
+        case 'supply_crate': {
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 2;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 8;
+          const _crW = 13, _crH = 11;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(-_crW, -_crH, _crW*2, _crH*2, 2); ctx.fill(); ctx.stroke(); }
+          else { ctx.fillRect(-_crW, -_crH, _crW*2, _crH*2); ctx.strokeRect(-_crW, -_crH, _crW*2, _crH*2); }
+          ctx.shadowBlur = 0;
+          // Cross strap
+          ctx.strokeStyle = _pc.accent; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
+          ctx.beginPath(); ctx.moveTo(-_crW, 0); ctx.lineTo(_crW, 0); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0, -_crH); ctx.lineTo(0, _crH); ctx.stroke();
+          ctx.globalAlpha = 1;
+          // Stencil icon
+          ctx.fillStyle = _pc.primary; ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 4;
+          ctx.fillText('▣', 0, 0);
+          ctx.shadowBlur = 0;
+          break;
+        }
+        // ======== CABLE BUNDLE — thick wires on floor with sparks ========
+        case 'cable_bundle': {
+          // 3-4 cable lines
+          ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+          const _cbColors = [_pc.primary, _pc.secondary, _pc.accent];
+          for (let ci = 0; ci < 3; ci++) {
+            ctx.strokeStyle = _cbColors[ci]; ctx.globalAlpha = 0.6;
+            ctx.shadowColor = _cbColors[ci]; ctx.shadowBlur = 4;
+            const _cOff = (ci - 1) * 4;
+            ctx.beginPath();
+            ctx.moveTo(-14, _cOff - 2);
+            ctx.quadraticCurveTo(-4, _cOff + (ci % 2 ? 5 : -5), 4, _cOff + 1);
+            ctx.quadraticCurveTo(10, _cOff + (ci % 2 ? -3 : 4), 14, _cOff);
+            ctx.stroke();
+          }
+          ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = 'butt';
+          // Occasional spark
+          if (Math.sin(_pt * 0.01 + br._seed) > 0.92) {
+            ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.8;
+            const _sx = -8 + Math.random() * 16, _sy = -4 + Math.random() * 8;
+            ctx.fillRect(_sx, _sy, 2, 2);
+            ctx.globalAlpha = 1;
+          }
+          break;
+        }
+        // ======== MONITOR BANK — multiple small screens in a cluster ========
+        case 'monitor_bank': {
+          // 3 monitors side by side
+          for (let mi = 0; mi < 3; mi++) {
+            const mx = -10 + mi * 10, my = -6;
+            ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1;
+            ctx.shadowColor = _pc.primary; ctx.shadowBlur = 4;
+            ctx.fillRect(mx, my, 8, 10); ctx.strokeRect(mx, my, 8, 10);
+            ctx.shadowBlur = 0;
+            // Screen content — static or text
+            const _mOk = (_pDmg < mi + 1); // screens crack as HP drops
+            if (_mOk) {
+              ctx.fillStyle = _pc.secondary; ctx.globalAlpha = 0.3 * _pPulse;
+              ctx.fillRect(mx + 1, my + 1, 6, 8);
+              ctx.globalAlpha = 0.7;
+              ctx.fillStyle = _pc.secondary; ctx.font = '4px monospace'; ctx.textAlign = 'center';
+              ctx.fillText('░', mx + 4, my + 5);
+            } else {
+              // Cracked screen
+              ctx.strokeStyle = '#444'; ctx.lineWidth = 0.5; ctx.globalAlpha = 0.6;
+              ctx.beginPath(); ctx.moveTo(mx + 1, my + 1); ctx.lineTo(mx + 7, my + 9); ctx.stroke();
+              ctx.beginPath(); ctx.moveTo(mx + 6, my + 2); ctx.lineTo(mx + 2, my + 8); ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+          }
+          break;
+        }
+        // ======== SAMPLE CANISTER — vertical tube with glowing liquid ========
+        case 'sample_canister': {
+          // Tube body
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 1.5;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 8;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(-5, -12, 10, 24, 4); ctx.fill(); ctx.stroke(); }
+          else { ctx.fillRect(-5, -12, 10, 24); ctx.strokeRect(-5, -12, 10, 24); }
+          ctx.shadowBlur = 0;
+          // Liquid fill
+          const _scFill = (br.hp / (br.maxHp || 1));
+          ctx.fillStyle = _pc.secondary; ctx.globalAlpha = 0.4 * _pPulse;
+          const _scH = 20 * _scFill;
+          ctx.fillRect(-3, 12 - _scH, 6, _scH);
+          ctx.globalAlpha = 1;
+          // Bubble
+          const _scBubY = Math.sin(_pt * 0.005 + br._seed) * 6;
+          ctx.fillStyle = _pc.secondary; ctx.globalAlpha = 0.5;
+          ctx.beginPath(); ctx.arc(0, _scBubY, 1.5, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== OVERHEAD PIPE — horizontal pipe segment with joints ========
+        case 'overhead_pipe': {
+          ctx.strokeStyle = _pc.primary; ctx.lineWidth = 5; ctx.lineCap = 'round';
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 4;
+          ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(14, 0); ctx.stroke();
+          ctx.shadowBlur = 0; ctx.lineCap = 'butt';
+          // Joints
+          ctx.strokeStyle = _pc.accent; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(-8, -4); ctx.lineTo(-8, 4); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(8, -4); ctx.lineTo(8, 4); ctx.stroke();
+          // Steam wisps
+          if (_pDmg >= 1) {
+            ctx.globalAlpha = 0.2 * _pPulse;
+            ctx.fillStyle = '#fff';
+            const _stY = -6 - Math.sin(_pt * 0.006 + br._seed) * 4;
+            ctx.beginPath(); ctx.arc(0, _stY, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(3, _stY - 3, 2, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          break;
+        }
+        // ======== SERVER RACK (destructible) — tall rect with LED strip ========
+        case 'server_rack_d': {
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 2;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 8;
+          ctx.fillRect(-10, -18, 20, 36); ctx.strokeRect(-10, -18, 20, 36);
+          ctx.shadowBlur = 0;
+          // LED strip
+          for (let li = 0; li < 8; li++) {
+            const _ledOn = Math.sin(_pt * 0.003 + li * 1.2 + br._seed) > 0;
+            ctx.fillStyle = _ledOn ? _pc.secondary : '#222';
+            ctx.globalAlpha = _ledOn ? 0.8 : 0.3;
+            ctx.fillRect(4, -15 + li * 4, 3, 2);
+          }
+          ctx.globalAlpha = 1;
+          // Vent lines
+          ctx.strokeStyle = _pc.primary; ctx.lineWidth = 0.5; ctx.globalAlpha = 0.3;
+          for (let vi = 0; vi < 4; vi++) {
+            const vy = -14 + vi * 8;
+            ctx.beginPath(); ctx.moveTo(-7, vy); ctx.lineTo(1, vy); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== POWER CONDUIT — vertical glowing tube with energy ========
+        case 'power_conduit': {
+          // Outer shell
+          ctx.strokeStyle = _pc.primary; ctx.lineWidth = 2;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 12;
+          ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(0, 16); ctx.stroke();
+          ctx.shadowBlur = 0;
+          // Energy core — bright pulsing inner line
+          ctx.strokeStyle = _pc.secondary; ctx.lineWidth = 4;
+          ctx.globalAlpha = 0.4 * _pPulse;
+          ctx.shadowColor = _pc.secondary; ctx.shadowBlur = 16;
+          ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(0, 14); ctx.stroke();
+          ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+          // Energy nodes at top and bottom
+          ctx.fillStyle = _pc.primary;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 6;
+          ctx.beginPath(); ctx.arc(0, -16, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(0, 16, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.shadowBlur = 0;
+          // Traveling energy pulse
+          const _epY = -14 + ((_pt * 0.04 + br._seed) % 28);
+          ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.7;
+          ctx.beginPath(); ctx.arc(0, _epY, 2, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        // ======== STASIS POD — upright capsule with occupant silhouette ========
+        case 'stasis_pod': {
+          // Capsule body
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 2;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 10;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(-10, -18, 20, 36, 8); ctx.fill(); ctx.stroke(); }
+          else { ctx.fillRect(-10, -18, 20, 36); ctx.strokeRect(-10, -18, 20, 36); }
+          ctx.shadowBlur = 0;
+          // Glass panel — translucent with occupant
+          ctx.fillStyle = _pc.secondary; ctx.globalAlpha = 0.12 * _pPulse;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(-6, -14, 12, 28, 4); ctx.fill(); }
+          else ctx.fillRect(-6, -14, 12, 28);
+          ctx.globalAlpha = 0.3;
+          // Silhouette figure
+          ctx.fillStyle = _pc.body;
+          ctx.beginPath(); ctx.arc(0, -8, 3, 0, Math.PI * 2); ctx.fill(); // head
+          ctx.fillRect(-2, -5, 4, 12); // body
+          ctx.globalAlpha = 1;
+          // Status light
+          const _spBlink = Math.sin(_pt * 0.004) > 0;
+          ctx.fillStyle = _spBlink ? _pc.accent : '#333';
+          ctx.beginPath(); ctx.arc(6, -14, 2, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        // ======== COOLING UNIT — wide box with vent slats and frost ========
+        case 'cooling_unit': {
+          ctx.fillStyle = _pc.body; ctx.strokeStyle = _pc.primary; ctx.lineWidth = 2;
+          ctx.shadowColor = _pc.primary; ctx.shadowBlur = 6;
+          ctx.fillRect(-18, -10, 36, 20); ctx.strokeRect(-18, -10, 36, 20);
+          ctx.shadowBlur = 0;
+          // Vent slats
+          ctx.strokeStyle = _pc.secondary; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+          for (let vi = 0; vi < 6; vi++) {
+            const vx = -14 + vi * 5.5;
+            ctx.beginPath(); ctx.moveTo(vx, -7); ctx.lineTo(vx, 7); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+          // Frost/steam wisps rising
+          ctx.globalAlpha = 0.15 * _pPulse;
+          ctx.fillStyle = _pc.secondary;
+          const _cuW1 = Math.sin(_pt * 0.003 + br._seed) * 5;
+          ctx.beginPath(); ctx.arc(_cuW1, -14, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(-_cuW1 + 3, -18, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+      }
+      // ---- DAMAGE CRACKS (all prop types) ----
+      if (_pDmg >= 1) {
+        ctx.strokeStyle = '#fff6'; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+        const _cr = br.radius;
+        ctx.beginPath(); ctx.moveTo(-_cr * 0.5, -_cr * 0.3); ctx.lineTo(0, _cr * 0.2); ctx.lineTo(_cr * 0.3, -_cr * 0.1); ctx.stroke();
+        if (_pDmg >= 2) {
+          ctx.beginPath(); ctx.moveTo(_cr * 0.4, -_cr * 0.5); ctx.lineTo(_cr * 0.1, _cr * 0.3); ctx.stroke();
+        }
+        if (_pDmg >= 3) {
+          ctx.beginPath(); ctx.moveTo(-_cr * 0.3, _cr * 0.4); ctx.lineTo(_cr * 0.2, _cr * 0.5); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+      // Hit flash overlay
+      if (br._hitFlash > 0) {
+        ctx.globalAlpha = 0.3; ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(0, 0, br.radius, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore(); continue;
+    }
     // ---- MOD TERMINAL: computer terminal visual (replaces chest) ----
     if (br._shopChest) {
       if (br._spawnAnim > 0) br._spawnAnim--;
