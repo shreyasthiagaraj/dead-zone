@@ -4158,23 +4158,23 @@ function initTrenchSections() {
       if (i >= 5) types.push('spitter');
       if (i >= 7) types.push('stalker');
     } else if (i <= 19) {
-      // Domain 2: Crossfire Zone — ranged pressure
-      types = ['strafe', 'brute', 'spitter', 'mortar'];
+      // Domain 2: Crossfire Zone — ranged pressure + melee filler
+      types = ['strafe', 'brute', 'spitter', 'mortar', 'normal', 'fast'];
       if (i >= 13) types.push('leaper');
       if (i >= 15) types.push('exploder', 'stalker');
     } else if (i <= 29) {
-      // Domain 3: Siege Zone — support + priority
-      types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster'];
+      // Domain 3: Siege Zone — support + priority + melee padding
+      types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster', 'fast', 'leaper'];
       if (i >= 23) types.push('tank');
       if (i >= 26) types.push('mortar');
     } else if (i <= 39) {
-      // Domain 4: Control Zone — movement denial
-      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster'];
+      // Domain 4: Control Zone — movement denial + melee pressure
+      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster', 'fast', 'exploder'];
       if (i >= 33) types.push('shieldbot');
       if (i >= 36) types.push('stalker');
     } else {
-      // Domain 5: Collapse Zone — everything
-      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker'];
+      // Domain 5: Collapse Zone — everything, with melee filler to prevent all-elite waves
+      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker', 'fast', 'exploder', 'leaper'];
     }
     const hazards = [];
     trenchSections.push({
@@ -4231,21 +4231,35 @@ function spawnTrenchWave(idx, waveIdx) {
   if (sec.modifier && sec.modifier.id === 'warden') speedBoost += 0.4;
   // TRIAL modifier: +30% HP, +20% speed
   if (sec._trialModified) { hpScale *= 1.3; speedBoost += 0.3; }
-  // Cap ranged enemies per wave: max 1 early, max 2 late. Prevents projectile spam
-  // since the player can't move and shoot simultaneously.
-  // Boss sections also exclude elite/ranged types entirely during phase 1 — the boss is
-  // already creating enough pressure without snipers and beam arrays piling on.
-  const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder']);
+  // Cap shooting enemies per wave — ALL types that fire projectiles at the player.
+  // Prevents unfair projectile density where every enemy is firing at once.
+  const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder', 'strafe', 'mortar', 'caster']);
   let _rangedCount = 0;
-  const _maxRanged = sec.isBoss ? 0 : (idx < 8 ? 1 : 2);
+  const _maxRanged = sec.isBoss ? 0 : (idx < 8 ? 1 : (idx < 20 ? 2 : 3));
+  // Cap elite/heavy enemies per wave — prevents the "wall of tanks" feeling.
+  // Elites are high-HP, high-threat targets that demand focused attention.
+  const _eliteTypes = new Set(['tank', 'brute', 'stalker', 'anchor', 'shieldbot']);
+  let _eliteCount = 0;
+  const _maxElite = sec.isBoss ? 0 : (idx < 15 ? 1 : (idx < 30 ? 2 : 3));
+  // Melee filler pool — when caps are hit, reroll to these approachable types.
+  // Keeps late waves feeling dense without being unfair.
+  const _meleeFillers = ['normal', 'fast', 'drone', 'leaper', 'exploder'];
   for (let ei = 0; ei < enemyCount; ei++) {
     let tk = sec.types[Math.floor(Math.random() * sec.types.length)];
-    // If we've hit the ranged cap, reroll to a melee type
+    // If we've hit the ranged cap, reroll to a non-ranged type
     if (_rangedTypes.has(tk) && _rangedCount >= _maxRanged) {
-      const meleeTypes = sec.types.filter(t => !_rangedTypes.has(t));
-      if (meleeTypes.length > 0) tk = meleeTypes[Math.floor(Math.random() * meleeTypes.length)];
+      const nonRanged = sec.types.filter(t => !_rangedTypes.has(t));
+      if (nonRanged.length > 0) tk = nonRanged[Math.floor(Math.random() * nonRanged.length)];
+      else tk = _meleeFillers[Math.floor(Math.random() * _meleeFillers.length)];
+    }
+    // If we've hit the elite cap, reroll to a non-elite type
+    if (_eliteTypes.has(tk) && _eliteCount >= _maxElite) {
+      const nonElite = sec.types.filter(t => !_eliteTypes.has(t));
+      if (nonElite.length > 0) tk = nonElite[Math.floor(Math.random() * nonElite.length)];
+      else tk = _meleeFillers[Math.floor(Math.random() * _meleeFillers.length)];
     }
     if (_rangedTypes.has(tk)) _rangedCount++;
+    if (_eliteTypes.has(tk)) _eliteCount++;
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     // Pick a spawn position that's walkable (not inside an obstacle/pillar)
     let ex, ey, _spawnAttempts = 0;
