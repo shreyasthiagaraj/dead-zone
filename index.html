@@ -4754,70 +4754,251 @@ const _PROP_DOMAIN_COLORS = [
   { primary: '#fff', secondary: '#ff0', accent: '#eef', body: '#101010' },  // The Core
 ];
 
-// Which prop types appear in each domain
-function _pickPropsForDomain(domainIdx) {
+// ---- VIGNETTE-BASED PROP PLACEMENT ----
+// Props are placed as logical clusters ("vignettes") that look like real rooms:
+// workstations, server bays, storage areas, lab benches, etc.
+// Each vignette is an anchor prop + satellite props with relative offsets.
+// Anchors go wall-adjacent; satellites cluster around them.
+
+// Vignette definitions per domain. Each vignette:
+//   anchor: prop type placed against a wall
+//   satellites: [{type, dx, dy}] — offsets in cells from anchor
+//   wallReq: true = anchor must be wall-adjacent (default), false = floor ok
+const _PROP_VIGNETTES = {
+  // ---- WORKSTATION: desk + chair + maybe monitor ----
+  workstation: {
+    anchor: 'holo_desk',
+    satellites: [
+      { type: 'swivel_chair', dx: 0, dy: 1 },
+    ],
+    wallReq: true,
+  },
+  workstation_full: {
+    anchor: 'monitor_bank',
+    satellites: [
+      { type: 'holo_desk', dx: 0, dy: 1 },
+      { type: 'swivel_chair', dx: 1, dy: 1 },
+    ],
+    wallReq: true,
+  },
+  // ---- SERVER BAY: rack + cables + cooling ----
+  server_bay: {
+    anchor: 'server_rack_d',
+    satellites: [
+      { type: 'cable_bundle', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  server_bay_full: {
+    anchor: 'server_rack_d',
+    satellites: [
+      { type: 'server_rack_d', dx: 1, dy: 0 },
+      { type: 'cable_bundle', dx: 0, dy: 1 },
+      { type: 'cooling_unit', dx: 1, dy: 1 },
+    ],
+    wallReq: true,
+  },
+  // ---- LAB BENCH: canister + tray + sign ----
+  lab_bench: {
+    anchor: 'sample_canister',
+    satellites: [
+      { type: 'instrument_tray', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  lab_full: {
+    anchor: 'sample_canister',
+    satellites: [
+      { type: 'sample_canister', dx: 1, dy: 0 },
+      { type: 'instrument_tray', dx: 0, dy: 1 },
+      { type: 'holo_sign', dx: 1, dy: -1 },
+    ],
+    wallReq: true,
+  },
+  // ---- STORAGE CORNER: crates stacked together ----
+  storage: {
+    anchor: 'supply_crate',
+    satellites: [
+      { type: 'supply_crate', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  storage_large: {
+    anchor: 'supply_crate',
+    satellites: [
+      { type: 'supply_crate', dx: 1, dy: 0 },
+      { type: 'supply_crate', dx: 0, dy: 1 },
+    ],
+    wallReq: true,
+  },
+  // ---- INFRASTRUCTURE: pipes + conduit along wall ----
+  infra_pipes: {
+    anchor: 'overhead_pipe',
+    satellites: [
+      { type: 'overhead_pipe', dx: 1, dy: 0 },
+      { type: 'vent_grate', dx: 0, dy: 1 },
+    ],
+    wallReq: true,
+  },
+  infra_power: {
+    anchor: 'power_conduit',
+    satellites: [
+      { type: 'cable_bundle', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  // ---- CRYO BAY: stasis pods + cooling ----
+  cryo_bay: {
+    anchor: 'stasis_pod',
+    satellites: [
+      { type: 'stasis_pod', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  cryo_bay_full: {
+    anchor: 'stasis_pod',
+    satellites: [
+      { type: 'stasis_pod', dx: 1, dy: 0 },
+      { type: 'cooling_unit', dx: 0, dy: 1 },
+      { type: 'sample_canister', dx: 2, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  // ---- MONITORING: monitors + beacon ----
+  monitoring: {
+    anchor: 'monitor_bank',
+    satellites: [
+      { type: 'emergency_beacon', dx: 1, dy: 0 },
+    ],
+    wallReq: true,
+  },
+  // ---- STANDALONE (floor items) ----
+  lone_crate: {
+    anchor: 'supply_crate',
+    satellites: [],
+    wallReq: false,
+  },
+  floor_vent: {
+    anchor: 'vent_grate',
+    satellites: [],
+    wallReq: false,
+  },
+};
+
+// Domain → which vignettes are appropriate
+function _pickVignettesForDomain(domainIdx) {
   const pools = [
-    // Entry Cache — sterile, lab-like, intact
-    ['holo_desk','swivel_chair','server_rack_d','monitor_bank','sample_canister','cooling_unit','supply_crate','holo_sign','instrument_tray'],
-    // Corrupted Subnet — damaged, sparking, hazardous
-    ['cable_bundle','overhead_pipe','supply_crate','emergency_beacon','instrument_tray','monitor_bank','power_conduit','vent_grate'],
-    // Deep Storage — preservation, cold, eerie
-    ['stasis_pod','cooling_unit','sample_canister','supply_crate','server_rack_d','vent_grate','overhead_pipe'],
-    // Kernel Boundary — hostile, burning, industrial
-    ['power_conduit','cable_bundle','overhead_pipe','emergency_beacon','supply_crate','server_rack_d','vent_grate'],
-    // The Core — abstract, digital, minimal
-    ['power_conduit','holo_sign','holo_desk','server_rack_d','sample_canister','monitor_bank'],
+    // Entry Cache — offices, labs, clean infrastructure
+    ['workstation','workstation_full','lab_bench','lab_full','server_bay','storage','monitoring','infra_pipes','lone_crate','floor_vent'],
+    // Corrupted Subnet — damaged infra, scattered storage
+    ['infra_power','infra_pipes','storage','storage_large','server_bay','monitoring','lone_crate','floor_vent'],
+    // Deep Storage — cryo pods, preservation, cold storage
+    ['cryo_bay','cryo_bay_full','storage_large','server_bay','lab_bench','infra_pipes','floor_vent'],
+    // Kernel Boundary — heavy infra, industrial
+    ['infra_power','infra_pipes','server_bay_full','storage_large','monitoring','lone_crate','floor_vent'],
+    // The Core — minimal, digital
+    ['server_bay','lab_bench','monitoring','infra_power','workstation','floor_vent'],
   ];
   return pools[Math.max(0, Math.min(4, domainIdx))];
 }
 
-// Spawn destructible props in a trench section
+// Find a wall-adjacent walkable cell in the section
+function _findWallAdjacentCell(sec, secW, usedCells) {
+  for (let tries = 0; tries < 25; tries++) {
+    const secCellX = Math.floor(sec.x / CELL_SIZE);
+    const gx = secCellX + 6 + Math.floor(Math.random() * Math.max(1, secW - 10));
+    const gy = 2 + Math.floor(Math.random() * (TRENCH_HEIGHT - 4));
+    if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
+    if (usedCells.has(gx + ',' + gy)) continue;
+    // Must have at least one non-walkable neighbor (wall)
+    const hasWall =
+      (!dungeonGrid[gy - 1] || !dungeonGrid[gy - 1][gx]) ||
+      (!dungeonGrid[gy + 1] || !dungeonGrid[gy + 1][gx]) ||
+      (!dungeonGrid[gy][gx - 1]) ||
+      (!dungeonGrid[gy][gx + 1]);
+    if (!hasWall) continue;
+    // Don't place in spawn or door zone
+    const localX = gx - secCellX;
+    if (localX < 5 || localX > secW - 4) continue;
+    return { gx, gy };
+  }
+  return null;
+}
+
+// Find a walkable floor cell (not necessarily wall-adjacent)
+function _findFloorCell(sec, secW, usedCells) {
+  for (let tries = 0; tries < 15; tries++) {
+    const secCellX = Math.floor(sec.x / CELL_SIZE);
+    const gx = secCellX + 6 + Math.floor(Math.random() * Math.max(1, secW - 10));
+    const gy = 3 + Math.floor(Math.random() * (TRENCH_HEIGHT - 6));
+    if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
+    if (usedCells.has(gx + ',' + gy)) continue;
+    const localX = gx - secCellX;
+    if (localX < 5 || localX > secW - 4) continue;
+    return { gx, gy };
+  }
+  return null;
+}
+
+function _placeProp(gx, gy, propType, colors) {
+  const def = PROP_DEFS[propType];
+  if (!def) return null;
+  const px = gx * CELL_SIZE + CELL_SIZE / 2;
+  const py = gy * CELL_SIZE + CELL_SIZE / 2;
+  // Check not overlapping existing barrels
+  for (const br of barrels) {
+    if (Math.abs(br.x - px) < 30 && Math.abs(br.y - py) < 30) return null;
+  }
+  const prop = {
+    x: px, y: py,
+    radius: def.radius,
+    hp: def.hp, maxHp: def.hp,
+    _prop: true,
+    _propType: propType,
+    _propColors: colors,
+    _hitFlash: 0,
+    _bobTimer: Math.random() * Math.PI * 2,
+    _seed: Math.floor(Math.random() * 100000),
+  };
+  barrels.push(prop);
+  return prop;
+}
+
+// Spawn destructible props as logical vignettes in a trench section
 function spawnSectionProps(idx) {
   const sec = trenchSections[idx];
   if (!sec || sec.isBoss || sec._propsSeeded) return;
   sec._propsSeeded = true;
   const domain = sec.domain || getTrenchDomain(idx);
   const domainIdx = TRENCH_DOMAINS.indexOf(domain);
-  const pool = _pickPropsForDomain(domainIdx);
+  const vigPool = _pickVignettesForDomain(domainIdx);
   const colors = _PROP_DOMAIN_COLORS[Math.max(0, Math.min(4, domainIdx))];
-  const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
-  // 3-6 props per section
-  const count = 3 + Math.floor(Math.random() * 4);
-  for (let i = 0; i < count; i++) {
-    const propType = pool[Math.floor(Math.random() * pool.length)];
-    const def = PROP_DEFS[propType];
-    if (!def) continue;
-    // Find walkable spot, avoid spawn zone (5 cells from left) and door zone (3 cells from right)
-    let placed = false;
-    for (let tries = 0; tries < 15; tries++) {
-      const secCellX = Math.floor(sec.x / CELL_SIZE);
-      const gx = secCellX + 6 + Math.floor(Math.random() * ((((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W)) - 10));
-      const gy = 3 + Math.floor(Math.random() * (TRENCH_HEIGHT - 6));
-      if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
-      const px = gx * CELL_SIZE + CELL_SIZE / 2;
-      const py = gy * CELL_SIZE + CELL_SIZE / 2;
-      // Don't overlap existing barrels/props
-      let tooClose = false;
-      for (const br of barrels) {
-        if (Math.abs(br.x - px) < 36 && Math.abs(br.y - py) < 36) { tooClose = true; break; }
+  const secW = (_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W;
+  const usedCells = new Set();
+  // 2-4 vignettes per section (more in larger sections)
+  const vigCount = secW >= 26 ? 3 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
+  for (let vi = 0; vi < vigCount; vi++) {
+    const vigName = vigPool[Math.floor(Math.random() * vigPool.length)];
+    const vig = _PROP_VIGNETTES[vigName];
+    if (!vig) continue;
+    // Find anchor position
+    const anchor = vig.wallReq !== false
+      ? _findWallAdjacentCell(sec, secW, usedCells)
+      : _findFloorCell(sec, secW, usedCells);
+    if (!anchor) continue;
+    // Place anchor
+    const placed = _placeProp(anchor.gx, anchor.gy, vig.anchor, colors);
+    if (!placed) continue;
+    usedCells.add(anchor.gx + ',' + anchor.gy);
+    // Place satellites relative to anchor
+    for (const sat of vig.satellites) {
+      const sgx = anchor.gx + sat.dx;
+      const sgy = anchor.gy + sat.dy;
+      if (!dungeonGrid[sgy] || !dungeonGrid[sgy][sgx]) continue;
+      if (usedCells.has(sgx + ',' + sgy)) continue;
+      if (_placeProp(sgx, sgy, sat.type, colors)) {
+        usedCells.add(sgx + ',' + sgy);
       }
-      if (tooClose) continue;
-      // Don't spawn too close to player
-      const lp = getLocalPlayer();
-      if (lp && Math.abs(px - lp.x) < 80 && Math.abs(py - lp.y) < 80) continue;
-      barrels.push({
-        x: px, y: py,
-        radius: def.radius,
-        hp: def.hp, maxHp: def.hp,
-        _prop: true,
-        _propType: propType,
-        _propColors: colors,
-        _hitFlash: 0,
-        _bobTimer: Math.random() * Math.PI * 2,
-        _seed: Math.floor(Math.random() * 100000),
-      });
-      placed = true;
-      break;
     }
   }
 }
