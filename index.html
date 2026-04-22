@@ -1431,8 +1431,8 @@ const UPGRADE_POOL = [
     flavor:'buffer overflow. two cycles in one clock.' },
   { id:'shield_dash', name:'SHIELD DASH', rarity:'rare', max:2, icon:'🛡', color:'#4ff',
     descs:[
-      'LEVEL 1: Gain 15 barrier after each dash.',
-      'LEVEL 2: 25 barrier with longer duration.',
+      'LEVEL 1: Gain 15 barrier for 2s after each dash.',
+      'LEVEL 2: 25 barrier for 2s after each dash.',
     ], flavor:'momentum converted to defense.' },
   { id:'predator_round', name:'PREDATOR ROUND', rarity:'rare', max:3, icon:'◆', color:'#f44',
     descs:[
@@ -11689,8 +11689,12 @@ function dash() {
   // for the local player's actual motion.
   lp.dashTimer = 150;   // 150ms of visible dash state (broadcasts to MP)
   lp._dashFrames = 8;   // 8 actual dash-motion frames
-  // Invincible for the dash + a brief recovery window
-  lp.invincible = Math.max(lp.invincible, 600);
+  // Invincible for the dash + a small recovery window. 350ms total — the
+  // dash motion itself eats ~133ms, leaving ~217ms of post-dash i-frames
+  // (roughly 13 frames at 60 Hz). Long enough to clear a grabber that
+  // latched on during the dash, short enough that the player can tell the
+  // protection has ended when they come to a stop.
+  lp.invincible = Math.max(lp.invincible, 350);
   // ---- GLITCH BURST: the Revenant briefly de-syncs from the simulation ----
   // The dash is reframed as a priority-override exploit that breaks physics
   // for ~10 frames. Visually, everything goes glitchy at the origin.
@@ -13792,15 +13796,21 @@ function update() {
         const _rm = runMods || {};
         lp._postDashTimer = 90;
         lp._postDashShotsLeft = 3;
-        // Shield Dash: grant barrier with BIG visual feedback
+        // Shield Dash: grant a temporary barrier. The SD portion is tracked
+        // separately in _sdBarrierAmt so it can expire after _sdTimer runs
+        // out without touching unrelated barrier sources (Emergency Buffer,
+        // Fail Safe). Visualized as a smaller version of the SHIELD power-up
+        // ring — see the player render block.
         if (_rm.shieldDash > 0) {
           const _shAmt = _rm.shieldDash >= 2 ? 25 : 15;
           lp.barrier = (lp.barrier || 0) + _shAmt;
+          lp._sdBarrierAmt = (lp._sdBarrierAmt || 0) + _shAmt;
+          lp._sdTimer = 120; // 2s at 60 Hz
           // Bright expanding shield ring
           for(let bi=0;bi<20;bi++){const ba=(bi/20)*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*10,y:lp.y+Math.sin(ba)*10,vx:Math.cos(ba)*4,vy:Math.sin(ba)*4,life:18,maxLife:18,size:3+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
           // Inner glow burst
           for(let bi=0;bi<8;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(ba)*1.5,vy:Math.sin(ba)*1.5-1,life:22,maxLife:22,size:4+Math.random()*3,color:'#4ff',type:'spark'});}
-          addFloatingText(lp.x, lp.y - 24, '+' + _shAmt + ' BARRIER', '#4ff');
+          addFloatingText(lp.x, lp.y - 24, '+' + _shAmt + ' BARRIER (2s)', '#4ff');
           playSound(800, 0.12, 'sine', 0.08); playSound(1200, 0.08, 'sine', 0.05);
         }
         // ---- FLASHPOINT: fire detonation at dash endpoint ----
@@ -14152,6 +14162,19 @@ function update() {
     // Barrier decay: 2 HP per second
     if (lp.barrier > 0 && gameTime % 30 === 0) lp.barrier = Math.max(0, lp.barrier - 1);
     if (lp.barrier > 50) lp.barrier = 50; // cap
+    // Shield Dash barrier: expires after _sdTimer frames. Keep the tracked SD
+    // amount capped to the actual barrier pool in case other sources added
+    // to it between frames. When the timer hits zero, drop just the SD
+    // portion — Emergency Buffer / Fail Safe stacks survive.
+    if (lp._sdBarrierAmt > 0) {
+      if (lp.barrier < lp._sdBarrierAmt) lp._sdBarrierAmt = lp.barrier; // clamp after damage absorption
+      if (lp._sdTimer > 0) lp._sdTimer--;
+      if (lp._sdTimer <= 0) {
+        lp.barrier = Math.max(0, lp.barrier - lp._sdBarrierAmt);
+        lp._sdBarrierAmt = 0;
+        lp._sdTimer = 0;
+      }
+    }
     // Emergency Buffer: grant barrier when below 25% HP (once per section)
     const _em = runMods || {};
     if (_em.emergencyBuffer > 0 && !lp._emergencyUsed && lp.hp > 0 && lp.hp < lp.maxHp * 0.25) {
@@ -18631,6 +18654,25 @@ function render() {
       ctx.beginPath();ctx.arc(p.x,p.y,60,0,Math.PI*2);ctx.stroke();
       ctx.globalAlpha=pulse*0.15;ctx.fillStyle='#4ff';ctx.beginPath();ctx.arc(p.x,p.y,60,0,Math.PI*2);ctx.fill();
       ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.restore();
+    }
+    // Shield Dash barrier — a smaller version of the SHIELD power-up ring.
+    // Alpha scales with remaining time so the player can see it weakening
+    // before it expires. Only drawn on the local player; remote Shield Dash
+    // state isn't synced (hp + barrier visuals already cover them).
+    else if (p === getLocalPlayer() && (p._sdBarrierAmt || 0) > 0 && (p._sdTimer || 0) > 0) {
+      const _sdPulse = 0.45 + Math.sin(performance.now() * 0.007) * 0.2;
+      const _sdFade = Math.min(1, p._sdTimer / 30); // last 0.5s fades alpha out
+      const _sdR = 40; // smaller than SHIELD's 60
+      ctx.save();
+      ctx.globalAlpha = _sdPulse * _sdFade;
+      ctx.strokeStyle = '#4ff'; ctx.lineWidth = 2.5;
+      ctx.shadowColor = '#4ff'; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.arc(p.x, p.y, _sdR, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = _sdPulse * _sdFade * 0.12;
+      ctx.fillStyle = '#4ff';
+      ctx.beginPath(); ctx.arc(p.x, p.y, _sdR, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
     }
   }
 
