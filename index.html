@@ -4050,7 +4050,7 @@ function generateTrenchMap(seed) {
     // carry over. Skip boss, post-boss, and early sections.
     {
       const _isBossIdx = (idx) => idx === 10 || idx === 20 || idx === 30 || idx === 40 || (idx > 40 && (idx - 40) % 10 === 0);
-      if (si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.45) {
+      if (false && si > 2 && !_isBossIdx(si) && !_isBossIdx(si - 1) && Math.random() < 0.45) { // DISABLED — holes removed
         const _spawnCx = baseX + 3, _doorCx = baseX + secW - 2;
         // Gap formation templates — return local cell offsets [{x,y}, ...]
         // Scale with section size: small sections get smaller formations
@@ -9341,13 +9341,13 @@ function renderPauseContent() {
     if (!inShell) {
       navHtml += `<button class="pause-nav-btn ${_pauseActiveTab === 'status' ? 'active' : ''}" data-tab="status">STATUS</button>`;
       navHtml += `<button class="pause-nav-btn ${_pauseActiveTab === 'mods' ? 'active' : ''}" data-tab="mods">MODS</button>`;
-      navHtml += `<button class="pause-nav-btn" id="btn-pause-codex">CODEX</button>`;
     }
     navEl.innerHTML = navHtml;
   }
   if (navActionsEl) {
     let actHtml = '';
     actHtml += `<button class="pause-nav-btn action" id="btn-resume">\u25B6 RESUME</button>`;
+    actHtml += `<button class="pause-nav-btn action" id="btn-pause-codex">\u25C8 CODEX</button>`;
     actHtml += `<button class="pause-nav-btn danger" id="btn-quit-trigger">\u2715 ABANDON</button>`;
     navActionsEl.innerHTML = actHtml;
   }
@@ -9437,7 +9437,9 @@ function renderPauseContent() {
       btn.addEventListener('touchend', handler, { passive: false });
     });
   }
-  // pause-close-x and btn-resume already have permanent handlers via addBtn — don't re-wire
+  // pause-close-x has a permanent addBtn handler (static HTML element).
+  // btn-resume is recreated via innerHTML each render — must re-wire.
+  _wire('btn-resume', () => togglePauseMenu());
   _wire('btn-pause-codex', () => openCodex());
   _wire('btn-quit-trigger', () => { document.getElementById('pause-quit-confirm').style.display = 'flex'; });
   _wire('btn-quit-yes', () => {
@@ -11837,6 +11839,8 @@ function updateDischarge() {
       if (w.classId === 'wind') applyExposed(z);
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
     }
+    // Damage barrels/props in the wave front
+    damageBarrelsInRadius(w.x + Math.cos(w.angle) * waveFront * 0.5, w.y + Math.sin(w.angle) * waveFront * 0.5, waveFront * 0.6);
     // Absorb enemy projectiles in the wave
     let _absorbCount = 0;
     for (let bi = bullets.length - 1; bi >= 0; bi--) {
@@ -12337,6 +12341,8 @@ function dash() {
 const DASH_TRAIL_RADIUS = 60;
 function applyDashTrailEffects(lp) {
   if (!lp || !lp.alive) return;
+  // Dash damages barrels/props the player passes through
+  damageBarrelsInRadius(lp.x, lp.y, PLAYER_RADIUS + 8);
   const _m = runMods || {};
   const hasBurnout = _m.burnoutWake > 0;
   const hasCryo    = _m.cryoWake > 0;
@@ -13877,8 +13883,22 @@ function spawnZombie() {
 }
 function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter');if(lv>=4)t.push('spitter','brute');if(lv>=5)t.push('exploder');if(lv>=6)t.push('stalker');if(lv<5){t.push('normal','normal');}return t; }
 
+// Damage barrels/props in radius from any source (specials, dash, explosions)
+function damageBarrelsInRadius(x, y, radius) {
+  for (let bi = barrels.length - 1; bi >= 0; bi--) {
+    const br = barrels[bi];
+    if (br._shopChest || br._signalLab || br._forge || br._armory) continue;
+    const bd = Math.sqrt((br.x - x) ** 2 + (br.y - y) ** 2);
+    if (bd < radius + (br.radius || 14)) {
+      br.hp--;
+      br._hitFlash = 8;
+      if (br.hp <= 0) explodeBarrel(br, bi);
+    }
+  }
+}
 function createExplosion(x,y,radius,damage,source='player') {
   explosions.push({x,y,radius,life:15,maxLife:15});playExplosionSound();
+  damageBarrelsInRadius(x, y, radius);
   // Source 'player' = friendly fire only damages zombies. 'any' = damages both. Anything else = enemies-only blast (damages players).
   if(isHost&&(source==='player'||source==='any')){for(const z of zombies){if(z.hp<=0)continue;const dx=z.x-x,dy=z.y-y,_maxR=radius+z.radius,_d2=dx*dx+dy*dy;if(_d2>_maxR*_maxR)continue;const d=Math.sqrt(_d2)||1;damageZombie(z,Math.floor(damage*(1-d/_maxR)),dx/d*10,dy/d*10);}}
   if(isHost&&source!=='player'){const _pR=radius+PLAYER_RADIUS;const _pR2=_pR*_pR;for(const p of players){if(!p.alive)continue;const dx=p.x-x,dy=p.y-y;if(dx*dx+dy*dy<_pR2)damagePlayerObj(p,damage*0.5);}}
