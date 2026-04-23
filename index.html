@@ -1713,6 +1713,28 @@ const _STATUS_COLORS = {
   CORRUPT: '#a4f', COMPROMISED: '#c8f',
 };
 
+// Glossary of game terms — shown on card back when tapped
+const _TERM_GLOSSARY = {
+  OVERHEAT:     { color: '#f80', desc: 'Thermal DOT. Burns the enemy over 3 seconds. Does not stack — refreshes timer.' },
+  OVERHEATED:   { color: '#f80', desc: 'Enemy is burning from Overheat. Takes fire damage every 15 frames.' },
+  CHILL:        { color: '#8ef', desc: 'Cryo slow. Each stack reduces enemy speed by 20%. At max stacks, enemy freezes.' },
+  CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
+  FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
+  CHARGED:      { color: '#4ff', desc: 'Arc conduit mark. Arc procs chain through Charged enemies at longer range.' },
+  EXPOSED:      { color: '#eaf', desc: 'Pulse vulnerability. 2x knockback, wall collision damage, +15% crit chance.' },
+  COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes +50% damage. Enemies deal 40% less while active.' },
+  CORRUPT:      { color: '#a4f', desc: 'Stacking poison (0-5). At threshold, becomes COMPROMISED for 5 seconds.' },
+  BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
+  DASH:         { color: '#0ff', desc: 'Short directional burst with brief invincibility. Can cross gaps. Cooldown: 800ms.' },
+  PIERCE:       { color: '#8cf', desc: 'Bullet passes through an enemy and hits the next one behind it.' },
+  KNOCKBACK:    { color: '#cef', desc: 'Force that pushes enemies away from the impact point.' },
+  BARRIER:      { color: '#4cc', desc: 'Temporary shield HP. Absorbs damage before health. Decays 2/sec. Max 50.' },
+  'CRIT':       { color: '#f0f', desc: 'Critical hit. 2x damage. Only from conditional sources (Exposed, Frozen, Predator Round).' },
+  SHOCKWAVE:    { color: '#cef', desc: 'AoE burst at dash endpoint. Damages and knocks back all nearby enemies.' },
+  'FIRE RATE':  { color: '#ff0', desc: 'How quickly your gun fires. Higher = more bullets per second.' },
+  STAGGER:      { color: '#fff', desc: 'Brief stun. Enemy stops moving and attacking for a few frames.' },
+};
+
 // Format a card description for display: highlight status keywords in their element color,
 // bold the LEVEL N prefix, and bold any "+N" damage / percentage callouts.
 function _formatCardDesc(text) {
@@ -1725,7 +1747,34 @@ function _formatCardDesc(text) {
   for (const [word, col] of Object.entries(_STATUS_COLORS)) {
     text = text.replace(new RegExp('\\b' + word + '\\b', 'g'), `<span style="color:${col};font-weight:900;text-shadow:0 0 5px ${col}">${word}</span>`);
   }
+  // Mechanic keywords — underline-dotted to hint "tap to learn more"
+  const _mechTerms = ['BEACON','DASH','PIERCE','KNOCKBACK','BARRIER','CRIT','SHOCKWAVE','STAGGER','FIRE RATE'];
+  for (const term of _mechTerms) {
+    const g = _TERM_GLOSSARY[term];
+    if (!g) continue;
+    text = text.replace(new RegExp('\\b' + term.replace(/\s+/g, '\\s+') + '\\b', 'g'),
+      `<span style="color:${g.color};font-weight:bold;border-bottom:1px dotted ${g.color}66">${term}</span>`);
+  }
   return text;
+}
+
+// Extract glossary terms referenced in a card's description text
+function _getCardGlossaryTerms(u, owned) {
+  const desc = (u.descs || []).join(' ').toUpperCase();
+  const terms = [];
+  const seen = new Set();
+  for (const [term, info] of Object.entries(_TERM_GLOSSARY)) {
+    if (seen.has(term)) continue;
+    // Match the term in the raw description text
+    if (desc.includes(term)) {
+      // Skip duplicates (OVERHEAT/OVERHEATED both map to similar)
+      const baseKey = term.replace(/ED$|ING$|E$/, '');
+      if (seen.has(baseKey)) continue;
+      seen.add(baseKey); seen.add(term);
+      terms.push({ term, color: info.color, desc: info.desc });
+    }
+  }
+  return terms;
 }
 
 // Pick the description text for the level the player is about to earn.
@@ -2339,26 +2388,66 @@ function _renderShopCards() {
         break;
       }
     }
+    // Build glossary terms for the back of this card
+    const _glossaryTerms = _getCardGlossaryTerms(u, owned);
+    let _backHtml = '';
+    if (_glossaryTerms.length > 0) {
+      _backHtml = _glossaryTerms.map(t =>
+        `<div style="margin-bottom:8px"><span style="color:${t.color};font-weight:bold;font-size:12px;letter-spacing:1px">${t.term}</span><div style="color:#9ab;font-size:11px;line-height:1.35;margin-top:2px">${t.desc}</div></div>`
+      ).join('');
+    } else {
+      _backHtml = '<div style="color:#556;font-size:11px;text-align:center;padding:20px 0">No special terms</div>';
+    }
+    // Front face
+    const _frontId = 'card-front-' + ci;
+    const _backId = 'card-back-' + ci;
     card.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:2px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${_rarityLabel}</span>
-        <span style="font-size:9px;letter-spacing:1px;color:#889">MOD ${String(ci+1).padStart(2,'0')}</span>
+      <div id="${_frontId}" style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:2px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${_rarityLabel}</span>
+          <span style="font-size:9px;letter-spacing:1px;color:#889">MOD ${String(ci+1).padStart(2,'0')}</span>
+        </div>
+        <div style="text-align:center;margin:4px 0">
+          <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
+        </div>
+        <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
+        <div style="font-size:12px;color:#eef;line-height:1.4;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
+        ${owned ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
+        ${_replacesHtml}
+        <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
+          <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
+        </div>
+        ${_glossaryTerms.length > 0 ? '<div style="font-size:8px;letter-spacing:2px;color:#4aa;text-align:center;margin-top:4px">TAP FOR INFO</div>' : ''}
       </div>
-      <div style="text-align:center;margin:4px 0">
-        <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
-      </div>
-      <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
-      <div style="font-size:12px;color:#eef;line-height:1.4;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
-      ${owned ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
-      ${_replacesHtml}
-      <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
-        <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
+      <div id="${_backId}" style="display:none;flex-direction:column;gap:2px">
+        <div style="font-size:10px;font-weight:bold;letter-spacing:2px;color:#4aa;margin-bottom:6px;text-align:center">GLOSSARY</div>
+        <div style="overflow-y:auto;flex:1">${_backHtml}</div>
+        <div style="font-size:8px;letter-spacing:2px;color:#4aa;text-align:center;margin-top:6px;padding-top:5px;border-top:1px solid rgba(0,255,255,0.15)">TAP TO FLIP BACK</div>
       </div>
     `;
-    if (canAfford) {
-      card.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectShopCard(u.id); });
-      card.addEventListener('touchend', (ev) => { ev.preventDefault(); ev.stopPropagation(); selectShopCard(u.id); }, { passive: false });
-    }
+    // Flip behavior: first tap = flip to glossary, second tap = flip back + select
+    let _isFlipped = false;
+    const _flipHandler = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      const front = card.querySelector('#' + _frontId);
+      const back = card.querySelector('#' + _backId);
+      if (!_isFlipped && _glossaryTerms.length > 0) {
+        // Flip to back
+        _isFlipped = true;
+        if (front) front.style.display = 'none';
+        if (back) back.style.display = 'flex';
+        card.style.borderColor = '#4aa';
+      } else {
+        // Flip to front + select if affordable
+        _isFlipped = false;
+        if (front) front.style.display = 'flex';
+        if (back) back.style.display = 'none';
+        card.style.borderColor = _synBorder;
+        if (canAfford) selectShopCard(u.id);
+      }
+    };
+    card.addEventListener('click', _flipHandler);
+    card.addEventListener('touchend', _flipHandler, { passive: false });
     wrap.appendChild(card);
     list.appendChild(wrap);
   }
