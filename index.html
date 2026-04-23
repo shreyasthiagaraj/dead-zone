@@ -16362,12 +16362,26 @@ function update() {
         else if(zt?.anchor){
           z.vx*=0.8;z.vy*=0.8; // barely moves
           if(zd>300){z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;}
-          // Gravity pull: slow player within 120px
+          // Gravity pull: drag player toward anchor + slow movement within 180px
+          const _anchorR = 180;
           for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);
-            if(pd<120&&pd>5){const pf=0.3*(1-pd/120);p.vx+=(z.x-p.x)/pd*pf;p.vy+=(z.y-p.y)/pd*pf;}}
-          // VFX: contracting rings
-          if(gameTime%4===0){const ra=(gameTime*0.03)%(Math.PI*2);
-            particles.push({x:z.x+Math.cos(ra)*100,y:z.y+Math.sin(ra)*100,vx:-Math.cos(ra)*2,vy:-Math.sin(ra)*2,life:16,maxLife:16,size:2,color:'#c6f',type:'spark'});}
+            if(pd<_anchorR&&pd>5){
+              const closeness = 1 - pd/_anchorR;
+              // Strong pull toward anchor
+              const pf = 1.2 * closeness;
+              p.vx += (z.x-p.x)/pd * pf;
+              p.vy += (z.y-p.y)/pd * pf;
+              // Speed reduction — movement feels sluggish near anchor
+              p.vx *= 0.92 - closeness * 0.1;
+              p.vy *= 0.92 - closeness * 0.1;
+            }}
+          // VFX: contracting rings — more particles, wider radius
+          if(gameTime%3===0){
+            const ra=(gameTime*0.04)%(Math.PI*2);
+            particles.push({x:z.x+Math.cos(ra)*_anchorR,y:z.y+Math.sin(ra)*_anchorR,vx:-Math.cos(ra)*3,vy:-Math.sin(ra)*3,life:20,maxLife:20,size:2.5,color:'#c6f',type:'spark'});
+            const ra2=ra+Math.PI;
+            particles.push({x:z.x+Math.cos(ra2)*_anchorR*0.6,y:z.y+Math.sin(ra2)*_anchorR*0.6,vx:-Math.cos(ra2)*2,vy:-Math.sin(ra2)*2,life:16,maxLife:16,size:2,color:'#a4f',type:'spark'});
+          }
         }
         // ---- DEFAULT: walk toward player (with persistent chase-offset target) ----
         else{
