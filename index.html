@@ -10222,7 +10222,7 @@ function updateShell() {
     for (let i = 0; i < particles.length; i++) { const p = particles[i]; p.x += p.vx; p.y += p.vy; if (p.gravity) p.vy += p.gravity; const drag = p.type === 'blood' ? 0.985 : 0.95; p.vx *= drag; p.vy *= drag; p.life--; if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; } }
     particles.length = _pw; if (particles.length > 300) particles.splice(0, particles.length - 300);
   }
-  { let _tw = 0; for (let i = 0; i < floatingTexts.length; i++) { const t = floatingTexts[i]; if (t._follow && t._follow.x !== undefined) { t.x = t._follow.x; t.y = t._follow.y + t._followOffY; } t.x += (t.vx||0); t.y += t.vy; t.life--; if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; } } floatingTexts.length = _tw; }
+  { let _tw = 0; for (let i = 0; i < floatingTexts.length; i++) { const t = floatingTexts[i]; if (t._follow && t._follow.x !== undefined) { if (t._dmgNum) { t._followOffX = (t._followOffX||0) + (t.vx||0); t._followOffY = (t._followOffY||0) + (t.vy||0); t.x = t._follow.x + t._followOffX; t.y = t._follow.y + t._followOffY; } else { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); } } else { t.x += (t.vx||0); t.y += (t.vy||0); } t.life--; if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; } } floatingTexts.length = _tw; }
   if (_shellFadeDir !== 0) {
     _shellFadeAlpha += _shellFadeDir * (1/15);
     if (_shellFadeDir === 1 && _shellFadeAlpha >= 1) { _shellFadeAlpha = 1; _shellFadeDir = 0; _executeRunStart(); }
@@ -13917,7 +13917,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     const _hfColor = _hfCrit ? '#f0f' : '#fff';
     const _hfSize = _hfExposed ? z.radius + 35 : z.radius + 20;
     const _hfLife = _hfExposed ? 13 : (_hfCrit ? 12 : 10);
-    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit });
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit, _followZ: z });
   }
   // Bosses resist stagger almost entirely — prevents stunlocking them with rapid fire
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
@@ -14062,14 +14062,17 @@ function addDamageNumber(z, dmg, isCrit) {
   if (!z || dmg < 1) return;
   // Each hit gets its own label — no combining. Drifts up and randomly left/right.
   const _dir = Math.random() < 0.5 ? -1 : 1;
-  const _spread = 1.0 + Math.random() * 1.2; // strong horizontal drift
+  const _spread = 1.0 + Math.random() * 1.2;
+  const _offX = _dir * (4 + Math.random() * 10);
+  const _offY = -(z.radius || 14) - 8 - Math.random() * 6;
   const label = {
-    x: z.x + _dir * (4 + Math.random() * 10), y: z.y - (z.radius || 14) - 8 - Math.random() * 6,
+    x: z.x + _offX, y: z.y + _offY,
     text: Math.floor(dmg) + '',
     color: isCrit ? '#f0f' : (dmg >= 100 ? '#f44' : dmg >= 40 ? '#fa0' : '#fff'),
     vx: _dir * _spread, vy: -1.0 - Math.random() * 0.6,
     life: 28, maxLife: 28,
     _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 6,
+    _follow: z, _followOffX: _offX, _followOffY: _offY,
   };
   floatingTexts.push(label);
 }
@@ -16618,8 +16621,7 @@ function update() {
     let _tw = 0;
     for (let i = 0; i < floatingTexts.length; i++) {
       const t = floatingTexts[i];
-      if (t._follow && t._follow.x !== undefined) { t.x = t._follow.x; t.y = t._follow.y + t._followOffY; }
-      t.y += t.vy;
+      if (t._follow && t._follow.x !== undefined) { if (t._dmgNum) { t._followOffX = (t._followOffX||0) + (t.vx||0); t._followOffY = (t._followOffY||0) + (t.vy||0); t.x = t._follow.x + t._followOffX; t.y = t._follow.y + t._followOffY; } else { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); } } else { t.y += (t.vy||0); t.x += (t.vx||0); }
       t.life--;
       if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; }
     }
@@ -19937,6 +19939,8 @@ function render() {
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
         if (useGlow) ctx.shadowBlur=0;
       } else if(p.type==='hitflash'){
+        // Track zombie position if still alive
+        if (p._followZ && p._followZ.x !== undefined) { p.x = p._followZ.x; p.y = p._followZ.y; }
         // Big expanding hollow ring — thick stroke, hollow center
         const _hfProg = 1 - p.life/p.maxLife; // 0→1 over lifetime
         const _hfR = 4 + p.size * _hfProg * 1.2; // smaller expansion
