@@ -13916,10 +13916,9 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const _exposedKbMult = z._exposed ? 2.0 : 1.0;
   const _preVx = z.vx, _preVy = z.vy;
   z.hp-=damage;z.hitFlash=6;z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
-  // Impact flash — bright filled burst on gun hits (skip DOT/silent for perf)
-  if (!silent && damage >= 3) {
-    const _ifCol = z._exposed ? '#eaf' : z._frozen ? '#8ef' : z._overheat > 0 ? '#f80' : '#fff';
-    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 8, maxLife: 8, size: z.radius * 0.9, color: _ifCol, type: 'hitflash' });
+  // Impact flash — big expanding hollow white ring on every gun hit
+  if (!silent) {
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: z.radius + 20, color: '#fff', type: 'hitflash' });
   }
   // Bosses resist stagger almost entirely — prevents stunlocking them with rapid fire
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
@@ -19930,25 +19929,16 @@ function render() {
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
         if (useGlow) ctx.shadowBlur=0;
       } else if(p.type==='hitflash'){
-        // Bright impact flash — filled circle that pops big then shrinks and fades
-        const _hfProg = 1 - p.life/p.maxLife; // 0→1
-        // Pops to 1.5x on frame 1, then shrinks to 0.5x
-        const _hfScale = _hfProg < 0.2 ? 1 + _hfProg * 2.5 : 1.5 - (_hfProg - 0.2) * 1.25;
-        const _hfR = Math.max(2, p.size * _hfScale);
-        const _hfAlpha = (p.life/p.maxLife);
-        // Bright white core
-        ctx.globalAlpha = _hfAlpha * 0.7;
-        ctx.fillStyle = '#fff';
-        ctx.shadowColor = p.color; ctx.shadowBlur = 18;
-        ctx.beginPath(); ctx.arc(p.x, p.y, _hfR * 0.5, 0, Math.PI*2); ctx.fill();
-        // Colored outer ring
-        ctx.globalAlpha = _hfAlpha * 0.5;
-        ctx.strokeStyle = p.color; ctx.lineWidth = 3;
+        // Big expanding hollow white ring — thick stroke, no fill
+        const _hfProg = 1 - p.life/p.maxLife; // 0→1 over lifetime
+        const _hfR = 4 + p.size * _hfProg * 1.8; // expands from small to large
+        const _hfAlpha = (p.life/p.maxLife); // fades out
+        const _hfLw = 4 + (1 - _hfProg) * 3; // stroke thins as it expands (7→4)
+        ctx.globalAlpha = _hfAlpha * 0.85;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = _hfLw;
+        ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
-        // Soft colored fill
-        ctx.globalAlpha = _hfAlpha * 0.2;
-        ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.fill();
         ctx.shadowBlur = 0;
       } else if(p.type==='wakering'){
         // Expanding ring — starts small, grows to p.size over lifetime, alpha
