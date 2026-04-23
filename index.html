@@ -14008,29 +14008,18 @@ function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,col
 // Accumulating damage label — combines rapid hits on the same zombie into a single pulsing number.
 function addDamageNumber(z, dmg, isCrit) {
   if (!z || dmg < 1) return;
-  const ex = z._dmgLabel;
-  if (ex && ex.life > 0 && ex._dmgNum) {
-    ex._dmgTotal = (ex._dmgTotal || 0) + dmg;
-    if (isCrit) ex._crit = true;
-    ex.text = Math.floor(ex._dmgTotal) + '';
-    const tot = ex._dmgTotal;
-    ex.color = ex._crit ? '#f0f' : (tot >= 100 ? '#f44' : tot >= 40 ? '#fa0' : '#fff');
-    // Extend life so label persists while combo continues
-    ex.life = Math.max(ex.life, 30);
-    ex.maxLife = Math.max(ex.maxLife, 30);
-    ex._pulse = 10;
-    return;
-  }
+  // Each hit gets its own label — no combining. Drifts up and randomly left/right.
+  const _dir = Math.random() < 0.5 ? -1 : 1;
+  const _spread = 0.4 + Math.random() * 0.8; // horizontal drift speed
   const label = {
-    x: z.x, y: z.y - (z.radius || 14) - 10,
+    x: z.x + (Math.random() - 0.5) * 12, y: z.y - (z.radius || 14) - 8 - Math.random() * 6,
     text: Math.floor(dmg) + '',
     color: isCrit ? '#f0f' : (dmg >= 100 ? '#f44' : dmg >= 40 ? '#fa0' : '#fff'),
-    vy: 0, life: 30, maxLife: 30,
-    _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 10,
-    _follow: z, _followOffY: -(z.radius || 14) - 22,
+    vx: _dir * _spread, vy: -1.0 - Math.random() * 0.6,
+    life: 28, maxLife: 28,
+    _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 6,
   };
   floatingTexts.push(label);
-  z._dmgLabel = label;
 }
 
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
@@ -19933,23 +19922,25 @@ function render() {
     ctx.shadowColor = ft.color;
     // Damage numbers: bigger for crits, smaller/subtler otherwise
     if (ft._dmgNum) {
-      // Pulse scale — peaks when _pulse resets, eases down
+      // Pulse scale — peaks on spawn, eases down
       let _dmgScale = 1;
       if (ft._pulse > 0) {
-        const _pt = ft._pulse / 10;
-        _dmgScale = 1 + _pt * 0.5; // 1.0 → 1.5 peak
+        const _pt = ft._pulse / 6;
+        _dmgScale = 1 + _pt * 0.4;
         ft._pulse--;
       }
-      const _baseSize = ft._crit ? 18 : 13;
-      // Crits get bigger glow; non-crits clamped low (invisible-difference on small text but expensive)
-      ctx.shadowBlur = ft._crit ? (10 + (ft._pulse > 0 ? 6 : 0)) : 4;
+      const _baseSize = ft._crit ? 20 : 16;
+      ctx.shadowBlur = ft._crit ? 12 : 6;
+      // Fade out in last 40% of life
+      const _lifeRatio = ft.life / ft.maxLife;
+      ctx.globalAlpha = _lifeRatio < 0.4 ? _lifeRatio / 0.4 : 1;
       ctx.fillStyle = ft.color;
-      // Cache font string on the floating text — font string allocation + parse is surprisingly hot
       const _dSz = Math.round(_baseSize * _dmgScale);
       if (ft._cachedSize !== _dSz) { ft._cachedFont = 'bold ' + _dSz + 'px monospace'; ft._cachedSize = _dSz; }
       ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
+      ctx.globalAlpha = 1;
     } else if (ft._bitsLabel) {
       // Accumulating bits pickup label — bigger, glowing, pulses when it grows
       let _bScale = 1;
