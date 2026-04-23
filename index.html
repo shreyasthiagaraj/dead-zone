@@ -13916,9 +13916,15 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const _exposedKbMult = z._exposed ? 2.0 : 1.0;
   const _preVx = z.vx, _preVy = z.vy;
   z.hp-=damage;z.hitFlash=6;z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
-  // Impact flash — big expanding hollow white ring on every gun hit
+  // Impact flash — big expanding hollow ring on every gun hit
+  // Exposed: even bigger. Crits (damage >= 50): magenta colored.
   if (!silent) {
-    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: z.radius + 20, color: '#fff', type: 'hitflash' });
+    const _hfExposed = z._exposed;
+    const _hfCrit = damage >= 50;
+    const _hfColor = _hfCrit ? '#f0f' : '#fff';
+    const _hfSize = _hfExposed ? z.radius + 35 : z.radius + 20;
+    const _hfLife = _hfExposed ? 13 : (_hfCrit ? 12 : 10);
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit });
   }
   // Bosses resist stagger almost entirely — prevents stunlocking them with rapid fire
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
@@ -14063,9 +14069,9 @@ function addDamageNumber(z, dmg, isCrit) {
   if (!z || dmg < 1) return;
   // Each hit gets its own label — no combining. Drifts up and randomly left/right.
   const _dir = Math.random() < 0.5 ? -1 : 1;
-  const _spread = 0.4 + Math.random() * 0.8; // horizontal drift speed
+  const _spread = 1.0 + Math.random() * 1.2; // strong horizontal drift
   const label = {
-    x: z.x + (Math.random() - 0.5) * 12, y: z.y - (z.radius || 14) - 8 - Math.random() * 6,
+    x: z.x + _dir * (4 + Math.random() * 10), y: z.y - (z.radius || 14) - 8 - Math.random() * 6,
     text: Math.floor(dmg) + '',
     color: isCrit ? '#f0f' : (dmg >= 100 ? '#f44' : dmg >= 40 ? '#fa0' : '#fff'),
     vx: _dir * _spread, vy: -1.0 - Math.random() * 0.6,
@@ -19929,15 +19935,15 @@ function render() {
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
         if (useGlow) ctx.shadowBlur=0;
       } else if(p.type==='hitflash'){
-        // Big expanding hollow white ring — thick stroke, no fill
+        // Big expanding hollow ring — thick stroke, hollow center
         const _hfProg = 1 - p.life/p.maxLife; // 0→1 over lifetime
-        const _hfR = 4 + p.size * _hfProg * 1.8; // expands from small to large
+        const _hfR = 4 + p.size * _hfProg * 2.0; // expands from small to large
         const _hfAlpha = (p.life/p.maxLife); // fades out
-        const _hfLw = 4 + (1 - _hfProg) * 3; // stroke thins as it expands (7→4)
-        ctx.globalAlpha = _hfAlpha * 0.85;
-        ctx.strokeStyle = '#fff';
+        const _hfLw = p._exposed ? 8 + (1 - _hfProg) * 4 : p._crit ? 6 + (1 - _hfProg) * 3 : 4 + (1 - _hfProg) * 3;
+        ctx.globalAlpha = _hfAlpha * 0.9;
+        ctx.strokeStyle = p.color;
         ctx.lineWidth = _hfLw;
-        ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
+        ctx.shadowColor = p.color; ctx.shadowBlur = p._exposed ? 20 : p._crit ? 16 : 12;
         ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
         ctx.shadowBlur = 0;
       } else if(p.type==='wakering'){
