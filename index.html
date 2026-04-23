@@ -13948,14 +13948,22 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       const bs = 6 + Math.random()*10; // fast!
       particles.push({x:z.x,y:z.y,vx:Math.cos(ba)*bs+kbx*0.4,vy:Math.sin(ba)*bs+kby*0.4,life:25+Math.random()*20,maxLife:45,size:3+Math.random()*4,color:['#f0f','#f4a','#d0f','#f08','#ff2fff'][Math.floor(Math.random()*5)],type:'blood'});
     }
-    // CASCADE: mini shockwave on discharge kills
+    // CASCADE: shockwave on discharge kills — big radius, solid damage, visible ring
     if (z._hitByDischarge && (runMods||{}).cascade) {
+      const _casR = 120;
       for (const oz of zombies) {
         if (oz === z || oz.hp <= 0) continue;
         const cdx = oz.x - z.x, cdy = oz.y - z.y, cd = Math.sqrt(cdx*cdx+cdy*cdy);
-        if (cd < 60) { damageZombie(oz, 40, (cdx/cd)*6, (cdy/cd)*6); oz.staggerTimer = Math.max(oz.staggerTimer||0, 10); }
+        if (cd < _casR) {
+          const _casClose = 1 - cd / _casR;
+          damageZombie(oz, Math.floor(80 * _casClose), (cdx/(cd||1))*10, (cdy/(cd||1))*10);
+          oz.staggerTimer = Math.max(oz.staggerTimer||0, 20);
+          oz._hitByDischarge = true; // chain cascades
+        }
       }
-      for (let ci = 0; ci < 8; ci++) { const ca = (ci/8)*Math.PI*2; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*4,vy:Math.sin(ca)*4,life:12,maxLife:12,size:3,color:'#f80',type:'spark'}); }
+      // Visible expanding ring + sparks
+      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_casR,color:'#f80',type:'wakering'});
+      for (let ci = 0; ci < 12; ci++) { const ca = (ci/12)*Math.PI*2, cs = 3+Math.random()*5; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#fa0',type:'spark'}); }
     }
   }
   // Overkill gibs — when damage far exceeds remaining HP
@@ -17331,22 +17339,25 @@ function render() {
         ctx.fillStyle = _lgr;
         ctx.fillRect(_gcx - _glowR, _gcy - _glowR, _glowR*2, _glowR*2);
         ctx.globalAlpha = 1;
-        // Deep black pit
+        // Deep pit with neon glow inside
         ctx.fillStyle = '#020206';
         ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
-        // Bright inner glow — light emanating upward from depth
-        const _ig = ctx.createRadialGradient(_gcx, _gcy, 0, _gcx, _gcy, CELL_SIZE*0.42);
-        _ig.addColorStop(0, _gapAccent);
-        _ig.addColorStop(0.5, _gapAccent);
+        // Bright neon core — obvious colored light from within
+        const _ig = ctx.createRadialGradient(_gcx, _gcy, 0, _gcx, _gcy, CELL_SIZE*0.48);
+        _ig.addColorStop(0, '#fff');
+        _ig.addColorStop(0.15, _gapAccent);
+        _ig.addColorStop(0.6, _gapAccent);
         _ig.addColorStop(1, 'transparent');
-        ctx.globalAlpha = 0.3 * _rimPulse;
+        ctx.globalAlpha = 0.45 * _rimPulse;
+        ctx.shadowColor = _gapAccent; ctx.shadowBlur = 24;
         ctx.fillStyle = _ig;
         ctx.fillRect(_gx, _gy, CELL_SIZE, CELL_SIZE);
+        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
         // Neon rim — only on edges bordering floor (continuous pits fuse)
-        ctx.shadowColor = _gapAccent; ctx.shadowBlur = 18;
-        ctx.strokeStyle = _gapAccent; ctx.lineWidth = 2.5;
-        ctx.globalAlpha = _rimPulse * 0.8;
+        ctx.shadowColor = _gapAccent; ctx.shadowBlur = 22;
+        ctx.strokeStyle = _gapAccent; ctx.lineWidth = 3;
+        ctx.globalAlpha = _rimPulse * 0.9;
         ctx.beginPath();
         if (_floorN) { ctx.moveTo(_gx, _gy+0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+0.5); }
         if (_floorS) { ctx.moveTo(_gx, _gy+CELL_SIZE-0.5); ctx.lineTo(_gx+CELL_SIZE, _gy+CELL_SIZE-0.5); }
