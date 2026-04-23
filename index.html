@@ -902,9 +902,9 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
 const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 20, spread: 0.02, bulletSize: 3, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
-const GUN_RELOAD_TIME = 50;       // frames (~0.8s reload)
+const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 22;      // bullet life in frames (~440px at speed 20)
-const GUN_AUTO_RELOAD_DELAY = 180; // frames (~3s) of not firing before auto-reload
+const GUN_AUTO_RELOAD_DELAY = 90;  // frames (~1.5s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
 let _gunReloadTimer = 0;
@@ -1619,9 +1619,9 @@ const UPGRADE_POOL = [
   { id:'beacon_range', name:'EXTENDED REACH', rarity:'common', max:3, icon:'◎', color:'#0ff',
     descs:['LEVEL 1: +25% beacon range.','LEVEL 2: +50% beacon range.','LEVEL 3: +75% beacon range.'],
     flavor:'signal amplification protocol' },
-  { id:'extended_clip', name:'EXTENDED CLIP', rarity:'common', max:5, icon:'▊', color:'#8cf',
-    descs:['LEVEL 1: +5 magazine size (20 rounds).','LEVEL 2: +10 magazine size (25 rounds).','LEVEL 3: +15 magazine size (30 rounds).','LEVEL 4: +20 magazine size (35 rounds).','LEVEL 5: +25 magazine size (40 rounds).'],
-    flavor:'expanded buffer cache' },
+  { id:'extended_clip', name:'HEAT SINK', rarity:'common', max:5, icon:'▊', color:'#8cf',
+    descs:['LEVEL 1: +5 heat capacity. Fire longer before overheating.','LEVEL 2: +10 heat capacity.','LEVEL 3: +15 heat capacity.','LEVEL 4: +20 heat capacity.','LEVEL 5: +25 heat capacity. Sustained fire without limits.'],
+    flavor:'thermal regulator installed' },
   // Beacon element cards — mutually exclusive, explicitly set beacon/mine element
   { id:'beacon_thermal', name:'THERMAL PROTOCOL', rarity:'rare', max:1, icon:'🔥', color:'#f80',
     descs:['Special weapon applies OVERHEAT. Adds thermal element to all special attacks. +12% weapon damage.'],
@@ -11107,26 +11107,19 @@ function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; 
 function fireWeaponForPlayer(p) {
   const gun = getScaledGun();
   const now = performance.now();
-  // ---- MAGAZINE SYSTEM ----
-  // Reload tick (runs even when not firing)
+  // ---- HEAT / COOLDOWN SYSTEM ----
+  // Gun heats up with each shot. When heat capacity is depleted = overheated.
+  // Cooldown starts after 1.5s of not firing. Firing during cooldown cancels it.
   if (_gunReloading) {
-    _gunReloadTimer--;
-    if (_gunReloadTimer <= 0) {
-      _gunReloading = false;
-      _gunAmmo = GUN_MAG_SIZE + ((runMods || {}).magBonus || 0);
-      floatingTexts.push({x:p.x,y:p.y-30,text:'RELOADED',color:'#0ff',vy:0,life:30,maxLife:30,_follow:p,_followOffY:-30});
-      playSound(1200, 0.08, 'sine', 0.06); playSound(800, 0.06, 'square', 0.04);
-    }
-    return; // can't fire while reloading
+    // Overheated — must cool down, can't fire
+    return;
   }
   if (_gunAmmo <= 0) {
-    // Empty — start reload
+    // Overheated — force cooldown
     _gunReloading = true;
     _gunReloadTimer = GUN_RELOAD_TIME;
-    // Mechanical reload sound: click + slide
-    playSound(300, 0.08, 'square', 0.06);
-    playSound(600, 0.05, 'sine', 0.12);
-    setTimeout(() => playSound(900, 0.04, 'sine', 0.04), 150);
+    playSound(200, 0.06, 'sawtooth', 0.08);
+    floatingTexts.push({x:p.x,y:p.y-30,text:'OVERHEATED',color:'#f80',vy:-1,life:24,maxLife:24});
     return;
   }
   // Fire rate check
@@ -14886,12 +14879,23 @@ function update() {
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
     const shouldFire=isMobile?rightJoystick.firing:(keys['a']||gamepad.fire);
     lp._firing=shouldFire;
-    // Reload ticks even when not firing
-    if (_gunReloading) { _gunReloadTimer--; if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); floatingTexts.push({x:lp.x,y:lp.y-30,text:'RELOADED',color:'#0ff',vy:0,life:30,maxLife:30,_follow:lp,_followOffY:-30}); playSound(1200,0.08,'sine',0.06); } }
-    // Auto-reload after 3s idle (not full mag, not already reloading)
+    // Cooldown tick — gun cools down when not firing
+    if (_gunReloading) {
+      // Forced overheat cooldown — can't interrupt
+      _gunReloadTimer--;
+      if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); floatingTexts.push({x:lp.x,y:lp.y-30,text:'COOLED',color:'#0ff',vy:-1,life:20,maxLife:20}); playSound(800,0.06,'sine',0.06); }
+    }
+    // Passive cooldown: after 1.5s idle, gun starts cooling (recovering ammo)
     if (!_gunReloading && _gunAmmo < GUN_MAG_SIZE + ((runMods||{}).magBonus||0)) {
-      _gunIdleTimer++;
-      if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY) { _gunReloading = true; _gunReloadTimer = GUN_RELOAD_TIME; _gunIdleTimer = 0; playSound(300, 0.06, 'square', 0.05); playSound(600, 0.04, 'sine', 0.1); }
+      if (shouldFire) {
+        _gunIdleTimer = 0; // firing resets the idle cooldown timer
+      } else {
+        _gunIdleTimer++;
+        if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY) {
+          // Cool down — restore ammo gradually (full restore over ~0.8s)
+          _gunReloading = true; _gunReloadTimer = GUN_RELOAD_TIME; _gunIdleTimer = 0;
+        }
+      }
     }
     if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
     else if(!shouldFire) stopWeaponLoop(); // stop loop sound when not firing
@@ -17131,7 +17135,7 @@ function updateHUD() {
       }
     }
   }
-  // Shoot button — show reloading state
+  // Shoot button — show cooling/overheated state
   const _shootBtn = document.getElementById('btn-shoot');
   if (_shootBtn) {
     if (_gunReloading) {
@@ -17144,13 +17148,9 @@ function updateHUD() {
       _shootBtn.style.color = '';
     }
   }
-  // Reload button — visible when magazine is empty and not already reloading
+  // Hide reload button (removed — cooldown is automatic)
   const _reloadBtn = document.getElementById('btn-reload');
-  if (_reloadBtn) {
-    const _maxAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0);
-    const _canReload = !_gunReloading && _gunAmmo < _maxAmmo && gameState === 'playing';
-    _reloadBtn.style.display = _canReload ? '' : 'none';
-  }
+  if (_reloadBtn) _reloadBtn.style.display = 'none';
   // Siege repair button — only enabled when the local player is near a damaged wall section
   if (gameMode === 'siege') {
     const rb2 = document.getElementById('btn-repair');
@@ -19834,7 +19834,7 @@ function render() {
     // Ammo ring — shows remaining shots as an arc around the player
     if(p===getLocalPlayer()){
       const _ammoPct = _gunAmmo / (GUN_MAG_SIZE + ((runMods||{}).magBonus||0));
-      const _ammoColor = _gunReloading ? '#ff0' : (_ammoPct > 0.3 ? '#0ff' : '#f44');
+      const _ammoColor = _gunReloading ? '#f80' : (_ammoPct > 0.5 ? '#0ff' : _ammoPct > 0.2 ? '#ff0' : '#f44');
       ctx.strokeStyle = _ammoColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.6;
       if (_gunReloading) {
         // Reload: spinning arc
