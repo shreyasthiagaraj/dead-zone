@@ -3547,6 +3547,7 @@ function maybeDropPickup(zombie) {
   if (kind === 'powerup') {
     const pw = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pw.id, x, y, bobTimer: Math.random() * Math.PI * 2 });
+    playSfxSpatial('powerup_spawn_loop', x, y, 0.35, 700);
   } else if (kind === 'health') {
     pickups.push({ type: 'health', amount: 20, x, y, bobTimer: Math.random() * Math.PI * 2 });
   }
@@ -6442,7 +6443,7 @@ function applyElementOnHit(z, damage, srcX, srcY) {
   } else if (el === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
     z._slowTimer = Math.max(z._slowTimer || 0, 120);
-    if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; }
+    if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; playSfxSpatial('ice_freeze', z.x, z.y, 0.5, 700); }
   } else if (el === 'lightning') {
     // Shock effect on primary target — visible sparks for 2 seconds
     z._shocked = 45; z.staggerTimer = Math.max(z.staggerTimer, 10);
@@ -6599,7 +6600,7 @@ function applyElementEffect(z, element, damage) {
   } else if (element === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
     z._slowTimer = Math.max(z._slowTimer || 0, 120); // 2 seconds slow
-    if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; } // frozen 2s
+    if (z._iceStacks >= 3) { z._frozenTimer = 120; z._iceStacks = 0; playSfxSpatial('ice_freeze', z.x, z.y, 0.5, 700); } // frozen 2s
   } else if (element === 'lightning') {
     // Chain to 2 nearby enemies
     let lastZ = z; const hitSet = new Set();
@@ -6726,6 +6727,7 @@ function trackWeaponKill(weaponType) {
 function evolveWeapon(player, slotIdx, baseType) {
   const evo = WEAPON_EVOLUTIONS[baseType];
   if (!evo) return;
+  playSfx('weapon_evolve', 0.7);
   const w = player.weapons[slotIdx];
   // Create evolved weapon def dynamically
   if (!WEAPON_DEFS[evo.to]) {
@@ -6927,6 +6929,7 @@ function activatePowerUp(id) {
   else { activePowerUps.push({ id, timer: def.duration }); }
   activePowerUp = activePowerUps[0] || null;
   addFloatingText(lp.x, lp.y-40, def.name+'!', def.color);
+  playSfx('powerup_activate', 0.55);
   // (frenzy, drone, giant power-ups removed)
 }
 function hasPowerUp(id) { return activePowerUps.some(p => p.id === id); }
@@ -7921,6 +7924,14 @@ const SFX_FILES = [
   'door_open', 'exit_found', 'ambient_drip',
   'health_low', 'health_pickup', 'armor_pickup', 'player_death',
   'menu_select', 'menu_hover', 'countdown', 'wave_start',
+  // Tier-1 additions (ElevenLabs generated)
+  'reload_light', 'reload_heavy', 'heal', 'level_up',
+  'zombie_groan_a', 'zombie_groan_b', 'zombie_groan_c', 'zombie_death',
+  'sniper_aim_loop', 'beam_charge', 'spitter_charge', 'tank_pound_windup',
+  'powerup_spawn_loop', 'powerup_activate', 'shield_break', 'powerup_expire_warning',
+  'ice_freeze', 'ice_shatter',
+  'barrel_explosion', 'exit_activate',
+  'card_legendary', 'weapon_evolve',
 ];
 const MUSIC_FILES = ['music_ambient', 'music_ambient2', 'music_combat4', 'music_combat5', 'music_combat6', 'music_combat7', 'music_combat8', 'music_combat9', 'music_combat10', 'music_menu', 'music_gameover'];
 const COMBAT_TRACKS = ['music_combat4', 'music_combat5', 'music_combat6', 'music_combat7', 'music_combat8', 'music_combat9', 'music_combat10'];
@@ -8144,12 +8155,12 @@ function updateAmbientAudio() {
     // Fog groans are creepier — play at lower volume with more reverb feel
     if (fogZombies.length > 0) {
       const pick = fogZombies[Math.floor(Math.random() * fogZombies.length)];
-      playSfxSpatial('zombie_groan', pick.z.x, pick.z.y, 0.12 + Math.random() * 0.08, 800);
+      playZombieGroanSpatial(pick.z.x, pick.z.y, 0.12 + Math.random() * 0.08, 800);
       // Occasional deep moan for atmosphere
       if (Math.random() < 0.3) playSound(60 + Math.random() * 40, 0.4, 'sawtooth', 0.03);
     } else if (nearZombies.length > 0) {
       const pick = nearZombies[Math.floor(Math.random() * nearZombies.length)];
-      playSfxSpatial('zombie_groan', pick.z.x, pick.z.y, 0.15 + Math.random() * 0.1, 500);
+      playZombieGroanSpatial(pick.z.x, pick.z.y, 0.15 + Math.random() * 0.1, 500);
     }
     zombieGroanTimer = 120 + Math.floor(Math.random() * 200); // every 2-5 seconds (more frequent)
   }
@@ -8162,7 +8173,7 @@ function updateAmbientAudio() {
     });
     if (offscreen.length > 0) {
       const z = offscreen[Math.floor(Math.random() * offscreen.length)];
-      playSfxSpatial('zombie_groan', z.x, z.y, 0.04 + Math.random() * 0.03, 700);
+      playZombieGroanSpatial(z.x, z.y, 0.04 + Math.random() * 0.03, 700);
       // Faint scratching/shuffling sound
       playSound(150 + Math.random() * 100, 0.06, 'sawtooth', 0.02);
     }
@@ -8225,13 +8236,22 @@ function playWeaponSound(weaponType, fallbackSound) {
 }
 
 function playHitSound() { if (!playSfx('zombie_hit', 0.3)) { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); } }
-function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); }
+function playDeathSound() { if (!playSfx('zombie_death', 0.5)) { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); } }
 function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } }
 function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); }
 function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); }
 function playExplosionSound() { if (!playSfx('explosion', 0.7)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } }
 function playIgniteSound() { if (!playSfx('ignite', 0.25)) { playSound(200,0.12,'sawtooth',0.08); playSound(120,0.18,'square',0.05); } }
-function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
+// Heavy reload weapons get the slower shell-by-shell sound; everything else uses the snappier light reload.
+const _RELOAD_HEAVY_TYPES = new Set(['shotgun', 'auto_shotgun', 'rpg', 'mirv', 'grenade_launcher', 'mortar', 'minigun', 'vulcan']);
+function playReloadSound(weaponType) {
+  if (weaponType && _RELOAD_HEAVY_TYPES.has(weaponType)) {
+    if (playSfx('reload_heavy', 0.4)) return;
+  } else {
+    if (playSfx('reload_light', 0.4)) return;
+  }
+  if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1);
+}
 function playRepairSound() {
   // Procedural welding sound — bright crackle + sizzle
   if (!audioCtx) return;
@@ -8263,13 +8283,22 @@ function playHeadshotSound() { if (!playSfx('headshot', 0.5)) playSound(1200,0.0
 function playEmptyClipSound() { if (!playSfx('empty_clip', 0.3)) playSound(200,0.03,'square',0.08); }
 function playWeaponSwitchSound() { if (!playSfx('weapon_switch', 0.3)) playSound(500,0.04,'sine',0.1); }
 function playKillstreakSound() { if (!playSfx('killstreak', 0.5)) { playSound(800,0.08,'square',0.12); playSound(1000,0.08,'square',0.1); } }
-function playZombieGroanSound() { if (!playSfx('zombie_groan', 0.15)) playSound(80,0.3,'sawtooth',0.04); }
+function playZombieGroanSound() {
+  const v = ['zombie_groan_a', 'zombie_groan_b', 'zombie_groan_c'][Math.floor(Math.random()*3)];
+  if (playSfx(v, 0.15)) return;
+  if (!playSfx('zombie_groan', 0.15)) playSound(80,0.3,'sawtooth',0.04);
+}
+function playZombieGroanSpatial(x, y, vol, maxDist) {
+  const v = ['zombie_groan_a', 'zombie_groan_b', 'zombie_groan_c'][Math.floor(Math.random()*3)];
+  if (playSfxSpatial(v, x, y, vol, maxDist)) return;
+  playSfxSpatial('zombie_groan', x, y, vol, maxDist);
+}
 function playZombieSpawnSound() { if (!playSfx('zombie_spawn', 0.3)) playSound(150,0.15,'square',0.06); }
 function playZombieBossSound() { if (!playSfx('zombie_boss', 0.6)) playSound(60,0.4,'sawtooth',0.15); }
 function playDoorOpenSound() { if (!playSfx('door_open', 0.4)) playSound(200,0.2,'sine',0.1); }
 function playExitFoundSound() { if (!playSfx('exit_found', 0.5)) { playSound(600,0.1,'sine',0.12); playSound(900,0.1,'sine',0.1); } }
 function playHealthLowSound() { if (!playSfx('health_low', 0.3)) playSound(400,0.1,'square',0.1); }
-function playHealthPickupSound() { if (!playSfx('health_pickup', 0.5)) playSound(700,0.1,'sine',0.12); }
+function playHealthPickupSound() { if (playSfx('heal', 0.5)) return; if (!playSfx('health_pickup', 0.5)) playSound(700,0.1,'sine',0.12); }
 function playPlayerDeathSound() { if (!playSfx('player_death', 0.6)) playSound(80,0.4,'sawtooth',0.2); }
 function playWaveStartSound() { if (!playSfx('wave_start', 0.5)) playSound(500,0.2,'square',0.12); }
 function playMenuSelectSound() { if (!playSfx('menu_select', 0.4)) playSound(800,0.04,'square',0.1); }
@@ -9914,6 +9943,10 @@ function triggerLevelUpPicker() {
     screenShake.intensity = Math.max(screenShake.intensity, 6);
   }
   playSfx('level_up', 0.3) || playSound(1600, 0.1, 'sine', 0.22);
+  // Legendary card sting — layered on top when any offered choice is legendary rarity
+  if (choices.some(c => c && c.rarity === 'legendary')) {
+    setTimeout(() => playSfx('card_legendary', 0.55), 250);
+  }
   // Freeze game in SP so the section is paused while picking
   if (!isMultiplayer) gameState = 'levelup';
   // Canvas pulls back slightly (scale 0.965) while the picker is up so the game
@@ -11513,7 +11546,7 @@ if (isMobile) {
 // GAME ACTIONS
 // ============================================================
 function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){stopWeaponLoop();lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
-function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
+function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(w.type); }
 
 function fireWeaponForPlayer(p) {
   const gun = getScaledGun();
@@ -13220,7 +13253,7 @@ function placeExit() {
 function advanceLevel() {
   level++;
   score += 500 * level;
-  playLevelCompleteSound(); playExitFoundSound();
+  playLevelCompleteSound(); playSfx('exit_activate', 0.6);
   addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, `LEVEL ${level}!`, '#f0c040');
   document.getElementById('wave-num').textContent = `LEVEL ${level}`;
   document.getElementById('wave-sub').textContent = 'Find the exit...';
@@ -13421,7 +13454,7 @@ function explodeBarrel(barrel, idx) {
       if (d < _barrelR + PLAYER_RADIUS) damagePlayerObj(p, 15);
     }
   }
-  createExplosion(barrel.x, barrel.y, _barrelR, 0, 'player'); // VFX only; damage handled above
+  createExplosion(barrel.x, barrel.y, _barrelR, 0, 'player', 'barrel_explosion'); // VFX only; damage handled above
   // Fire burst particles
   for (let k = 0; k < 24; k++) { const a = Math.random()*Math.PI*2, s = 2.5+Math.random()*6; particles.push({x:barrel.x,y:barrel.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:28+Math.random()*16,maxLife:44,size:4+Math.random()*5,color:Math.random()>0.4?'#f80':'#fa0',type:'explosion'}); }
   barrels.splice(idx, 1);
@@ -14345,8 +14378,9 @@ function damageBarrelsInRadius(x, y, radius) {
     }
   }
 }
-function createExplosion(x,y,radius,damage,source='player') {
-  explosions.push({x,y,radius,life:15,maxLife:15});playExplosionSound();
+function createExplosion(x,y,radius,damage,source='player',soundName=null) {
+  explosions.push({x,y,radius,life:15,maxLife:15});
+  if (soundName) { if (!playSfxSpatial(soundName, x, y, 0.6, 900)) playExplosionSound(); } else playExplosionSound();
   damageBarrelsInRadius(x, y, radius); // safe: only hits props, not explosive barrels
   // Source 'player' = friendly fire only damages zombies. 'any' = damages both. Anything else = enemies-only blast (damages players).
   if(isHost&&(source==='player'||source==='any')){for(const z of zombies){if(z.hp<=0)continue;const dx=z.x-x,dy=z.y-y,_maxR=radius+z.radius,_d2=dx*dx+dy*dy;if(_d2>_maxR*_maxR)continue;const d=Math.sqrt(_d2)||1;damageZombie(z,Math.floor(damage*(1-d/_maxR)),dx/d*10,dy/d*10);}}
@@ -15013,7 +15047,7 @@ function update() {
           // Always-visible ice crack burst at endpoint
           for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:16,maxLife:16,size:2.5,color:'#aef',type:'spark'});}
           // Shatter frozen enemies
-          if (isHost) { for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*0.3); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterStep>=2) { for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<50){damageZombie(oz,Math.floor(shD*0.4),0,0);applyChill(oz,1);}} } } } }
+          if (isHost) { for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*0.3); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); playSfxSpatial('ice_shatter',fz.x,fz.y,0.55,800); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterStep>=2) { for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<50){damageZombie(oz,Math.floor(shD*0.4),0,0);applyChill(oz,1);}} } } } }
         }
         // ---- DISCHARGE BURST: arc release at endpoint ----
         if (_rm.dischargeBurst > 0) {
@@ -15307,8 +15341,11 @@ function update() {
     // Tick all active power-ups
     for (let pi = activePowerUps.length - 1; pi >= 0; pi--) {
       activePowerUps[pi].timer--;
+      // Expire warning at 3s remaining (180 frames @ 60fps) — fires once per power-up
+      if (activePowerUps[pi].timer === 180) playSfx('powerup_expire_warning', 0.4);
       if (activePowerUps[pi].timer <= 0) {
         if (activePowerUps[pi].id === 'sunbeam') stopSunbeamLoop();
+        if (activePowerUps[pi].id === 'shield') playSfx('shield_break', 0.55);
         activePowerUps.splice(pi, 1);
       }
     }
@@ -15896,7 +15933,7 @@ function update() {
                   // Large blood pool + directional splatter trail
                   decals.push({x:z.x,y:z.y,size:z.radius+18+Math.random()*25,alpha:0.6+Math.random()*0.2,color:'#304'});
                   for(let k=0;k<8;k++){const a2=_ba+(Math.random()-0.5)*1.2,sd=15+Math.random()*40;decals.push({x:z.x+Math.cos(a2)*sd,y:z.y+Math.sin(a2)*sd,size:3+Math.random()*10,alpha:0.3+Math.random()*0.3,color:['#403','#304','#502','#602'][Math.floor(Math.random()*4)]});}
-                  playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;}dropZombieLoot(z);
+                  if(z._frozen||z._frozenTimer>0){playSfxSpatial('ice_shatter',z.x,z.y,0.55,800);}else{playDeathSound();}screenShake.intensity=Math.max(screenShake.intensity,5);if(gameMode==='survival'){survivalZombiesKilled++;}dropZombieLoot(z);
                   {const _kp=players.find(pp=>pp.id===b.ownerId);if(_kp&&_kp.alive&&playerHasPerk(_kp,'vampire')){
                     let healAmt=2*getPlayerPerkCount(_kp,'vampire');
                     // Blood Rage synergy: 5x heal at low HP
@@ -16154,8 +16191,8 @@ function update() {
       if(!z.aware){
         // Re-aggro: get within AGGRO_RANGE with line of sight, or very close.
         // Stagger LOS checks by zid so we only pay ~6 raycasts per frame, not 60 on every 10th frame.
-        if(((gameTime+z.zid)%10)===0&&zd<ZOMBIE_AGGRO_RANGE&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;z._deaggroTimer=0;if(Math.random()<0.3)playSfxSpatial('zombie_groan',z.x,z.y,0.2,500);for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200){oz.aware=true;oz._deaggroTimer=0;}}}
-        if(zd<120){if(!z.aware&&Math.random()<0.4)playSfxSpatial('zombie_groan',z.x,z.y,0.25,400);z.aware=true;z._deaggroTimer=0;}
+        if(((gameTime+z.zid)%10)===0&&zd<ZOMBIE_AGGRO_RANGE&&hasLineOfSight(z.x,z.y,np.x,np.y)){z.aware=true;z._deaggroTimer=0;if(Math.random()<0.3)playZombieGroanSpatial(z.x,z.y,0.2,500);for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200){oz.aware=true;oz._deaggroTimer=0;}}}
+        if(zd<120){if(!z.aware&&Math.random()<0.4)playZombieGroanSpatial(z.x,z.y,0.25,400);z.aware=true;z._deaggroTimer=0;}
       } else if (!_relentless) {
         // Deaggro: if the player is too far for too long, go back to wandering.
         // Produces scattered behavior when the player kites — enemies that fall
@@ -16233,7 +16270,9 @@ function update() {
           else if(zd<120){z.vx=-zdx/zd*z.speed*0.6;z.vy=-zdy/zd*z.speed*0.6;}else{z.vx*=0.9;z.vy*=0.9;}
           if(_now-z.lastFired>z.fireRate){
             // Telegraph: glow for 30 frames before firing
-            z._chargeUp = (z._chargeUp || 0) + 1;
+            const _wasCharge = z._chargeUp || 0;
+            z._chargeUp = _wasCharge + 1;
+            if (_wasCharge === 0) playSfxSpatial('spitter_charge', z.x, z.y, 0.45, 700);
             if (z._chargeUp >= 30) {
               z._chargeUp = 0; z.lastFired=_now;
               for(let si=-1;si<=1;si++){const sa=z.angle+si*0.25;bullets.push({x:z.x,y:z.y,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,damage:z.damage,color:'#5fa',size:4,knockback:0,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});}
@@ -16258,7 +16297,7 @@ function update() {
           else if(zd<200){z.vx=-zdx/zd*z.speed;z.vy=-zdy/zd*z.speed;} // retreat
           else{z.vx*=0.9;z.vy*=0.9;}
           if(!z._sniperState)z._sniperState='aim';
-          if(z._sniperState==='aim'){z._sniperCharge=(z._sniperCharge||0)+1;if(z._sniperCharge>=90){z._sniperState='fire';}}
+          if(z._sniperState==='aim'){const _wasC=z._sniperCharge||0;z._sniperCharge=_wasC+1;if(_wasC===0)playSfxSpatial('sniper_aim_loop',z.x,z.y,0.35,800);if(z._sniperCharge>=90){z._sniperState='fire';}}
           else if(z._sniperState==='fire'){
             bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*16,vy:Math.sin(z.angle)*16,damage:z.damage,color:'#f44',size:5,knockback:4,pierce:0,pierced:0,life:60,owner:'zombie',trail:[]});
             z._sniperState='cooldown';z._sniperCharge=0;z._sniperCooldown=120;}
@@ -16544,7 +16583,7 @@ function update() {
           if(z._leapState==='walk'){
             z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;
             // Start leap when in range and cooldown ready
-            if(zd<200&&zd>40&&_now-z.lastFired>3500){z._leapState='windup';z._leapTimer=40;z._leapTx=np.x;z._leapTy=np.y;}
+            if(zd<200&&zd>40&&_now-z.lastFired>3500){z._leapState='windup';z._leapTimer=40;z._leapTx=np.x;z._leapTy=np.y;playSfxSpatial('tank_pound_windup',z.x,z.y,0.55,900);}
           } else if(z._leapState==='windup'){
             // Wind up — visible shake, stops moving
             z.vx=0;z.vy=0;z._leapTimer--;
@@ -16610,6 +16649,7 @@ function update() {
               z._beamSweepAngle = _playerA - 0.3;
               z._beamSweepDir = Math.random() < 0.5 ? 1 : -1;
               z._beamPerchStuck = 0;
+              playSfxSpatial('beam_charge', z.x, z.y, 0.5, 900);
             }
             else{z.vx=(_bpdx/_bpd)*z.speed*1.5;z.vy=(_bpdy/_bpd)*z.speed*1.5;}
           } else if(z._beamState==='telegraph'){
@@ -16682,6 +16722,7 @@ function update() {
                 const _playerA2 = Math.atan2(zdy,zdx);
                 z._beamSweepAngle = _playerA2 - 0.3;
                 z._beamSweepDir = Math.random() < 0.5 ? 1 : -1;
+                playSfxSpatial('beam_charge', z.x, z.y, 0.5, 900);
               }
             }
           }

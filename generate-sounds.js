@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Generate game sound effects using the ElevenLabs Sound Effects API.
-// Usage: ELEVENLABS_API_KEY=your_key node generate-sounds.js
-//
-// Sounds are saved to the sounds/ directory as .mp3 files.
-// Re-running will skip files that already exist (delete a file to regenerate it).
+// Generate tier-1 game sound effects via ElevenLabs Sound Effects API.
+// Usage:
+//   ELEVENLABS_API_KEY=your_key node generate-sounds.js
+//   ELEVENLABS_API_KEY=your_key FORCE=1 node generate-sounds.js   # overwrite existing
+//   ELEVENLABS_API_KEY=your_key ONLY=pistol_fire,dash node generate-sounds.js  # subset
 
 const fs = require('fs');
 const path = require('path');
@@ -12,93 +12,158 @@ const https = require('https');
 const API_KEY = process.env.ELEVENLABS_API_KEY;
 if (!API_KEY) {
   console.error('Error: Set ELEVENLABS_API_KEY environment variable.');
-  console.error('  ELEVENLABS_API_KEY=your_key node generate-sounds.js');
   process.exit(1);
 }
 
+const FORCE = process.env.FORCE === '1';
+const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(',').map(s => s.trim())) : null;
 const SOUNDS_DIR = path.join(__dirname, 'sounds');
 
+// ElevenLabs sound-generation API minimum duration is 0.5s.
 // Each entry: [filename, prompt, duration_seconds, prompt_influence]
 const SOUND_DEFS = [
-  // --- Weapon fire sounds: per-shot (gritty, punchy, visceral) ---
-  ['pistol_fire', 'Snappy compact pistol gunshot, tight percussive handgun crack with sharp metallic bite, punchy close quarters pop', 0.5, 0.6],
-  ['revolver_fire', 'Heavy magnum revolver gunshot, deep booming handcannon blast with reverb, powerful single shot', 0.6, 0.5],
-  ['smg_fire', 'Short submachine gun burst, rapid metallic rattling gunfire, compact automatic weapon pop', 0.5, 0.5],
-  ['burst_fire', 'Three round burst fire, triple tap assault rifle shots, tactical burst with shell casings', 0.5, 0.5],
-  ['shotgun_fire', 'Loud pump shotgun blast, deep chunky bassy boom with pellet spread, devastating close range', 0.6, 0.5],
-  ['rifle_fire', 'High powered sniper rifle crack, sharp supersonic snap with heavy recoil thud, echoing shot', 0.6, 0.5],
-  ['lightning_fire', 'Loud violent electrical arc discharge, high voltage sparking with sharp crackling thunder snap, raw dangerous electricity jumping between conductors', 0.6, 0.6],
-  ['rpg_fire', 'Rocket launcher firing, deep whooshing rocket propulsion blast with backblast, heavy ordnance', 0.8, 0.5],
-  ['grenade_fire', 'Grenade launcher thump, hollow metallic tube launch thud, lobbed projectile whoosh', 0.5, 0.5],
+  // ============ A. WEAPONS — FIRING ============
+  ['pistol_fire',
+    'Sharp synthwave pistol shot, short snappy saw-wave pew with bright transient attack, thin body, light slapback delay tail, neon arcade character, punchy and readable',
+    0.5, 0.55],
+  ['shotgun_fire',
+    'Heavy arcade shotgun blast, deep sub thump layered with filter-swept white noise burst sweeping from high to low, metallic shell eject tick at end, chest-punching weight',
+    0.6, 0.55],
+  ['rifle_fire',
+    'Sharp synth rifle crack with clean metallic trigger click, short tight reverb tail, precise lethal cyberpunk marksman shot',
+    0.5, 0.55],
+  ['rpg_fire',
+    'Hissing rocket launch whoosh with doppler pitch descent, metallic launch tube resonance, smoky noise tail, analog chunky synthwave launch',
+    0.7, 0.55],
+  ['smg_loop',
+    'Continuous bitcrushed synth submachine gun chatter at very high rate, bright saw-wave pops with subtle pitch wobble, no reverb, sits like rapid hi-hat pattern, loopable',
+    4.0, 0.6],
+  ['minigun_loop',
+    'Dense rapid-fire synthwave minigun hum, rolling stuttered saw-wave pops at extreme high rate, subtle pitch LFO, filter opens as it sustains, muscular sustained, loopable',
+    4.0, 0.6],
+  ['laser_loop',
+    'Continuous modular synth laser beam, clean saw-wave with subtle tremolo and high shimmer overtone on top, slightly alive and unstable, sci-fi plasma stream, loopable',
+    4.0, 0.6],
+  ['flamethrower_loop',
+    'Continuous fiery flamethrower roar, rich filtered noise with breathy throat formant, slow natural pitch flicker, no tonal center, pure burning texture, loopable',
+    4.0, 0.6],
+  ['lightning_fire',
+    'Sharp electric synth zap, white noise burst through high-Q bandpass with descending pitched arc on top, crackling aggressive tesla coil discharge',
+    0.5, 0.6],
 
-  // --- Weapon loop sounds: sustained fire for high-RPM weapons ---
-  ['minigun_loop', 'Sustained heavy minigun barrage, continuous rotary cannon roaring with high speed mechanical whirring and brass casings raining, nonstop automatic fire', 4.0, 0.6],
-  ['minigun_spinup', 'Minigun barrel spinning up, accelerating mechanical whir getting faster and higher pitched, motor revving', 0.8, 0.6],
-  ['flamethrower_loop', 'Sustained flamethrower roaring fire stream, continuous intense rushing flames with hissing pressurized gas and crackling fire, burning inferno', 4.0, 0.6],
-  ['flamethrower_ignite', 'Flamethrower pilot light ignition, sharp gas hiss with clicking igniter then fire catching whoosh', 0.6, 0.5],
-  ['laser_loop', 'Sustained sci-fi laser beam firing, continuous buzzing energy beam with high pitched electrical hum and sizzling ionized air, plasma stream', 4.0, 0.6],
-  ['smg_loop', 'Sustained automatic submachine gun fire, continuous rapid rattling gunshots with metallic cycling and shell casings, nonstop compact automatic', 4.0, 0.6],
+  // ============ B. WEAPONS — ACTIONS ============
+  ['reload_light',
+    'Quick magazine eject click, mag slap insert, slide rack, two-tick mechanical pistol reload with subtle synth wubble underneath, tight and urgent',
+    0.7, 0.5],
+  ['reload_heavy',
+    'Shell-by-shell pump-action shotgun reload, four hollow plastic shell clicks racking into chamber, final forestock pump slide, mechanical and weighty',
+    1.5, 0.5],
+  ['weapon_switch',
+    'Holographic blip-swipe, FM bell arpeggio descending three notes with soft digital whoosh underneath, futuristic HUD weapon swap',
+    0.5, 0.55],
+  ['empty_clip',
+    'Short dry metallic trigger click with faint descending minor-third synth uh-uh tone, disappointing terse out-of-ammo cue',
+    0.5, 0.55],
 
-  // --- Combat feedback (visceral, satisfying) ---
-  ['hit', 'Wet flesh impact thud, bullet hitting meat with squelchy punch, gore splat', 0.5, 0.5],
-  ['death', 'Zombie death splatter, wet crunching body collapse with gurgling, bones snapping flesh tearing', 0.8, 0.5],
-  ['headshot', 'Critical headshot impact, skull cracking wet pop with splattering gore, devastating blow', 0.5, 0.5],
-  ['explosion', 'Heavy explosion blast, deep booming detonation with debris shrapnel flying, fire roaring outward', 1.0, 0.5],
-  ['killstreak', 'Dark rewarding kill combo chime, sinister ascending metallic tones, ominous power surge sound', 0.8, 0.5],
+  // ============ C. PLAYER ============
+  ['dash',
+    'Filtered white-noise whoosh with glitch stutter and downward pitch sweep, phase-shift teleport feel, synthwave blink, short and satisfying',
+    0.5, 0.55],
+  ['hurt',
+    'Meaty body-hit thud with filtered noise for flesh impact and brief digital glitch overlay, punchy synthetic-organic player damage hit',
+    0.5, 0.55],
+  ['player_death',
+    'Layered cinematic death stinger, descending minor synth brass scale with heartbeat flatline tone underneath, long reverse reverb tail, huge final synthwave tragedy',
+    1.5, 0.55],
+  ['heal',
+    'Bright FM bell sweep rising over warm synth pad swell, relieved uplifting synthwave recovery moment',
+    0.5, 0.5],
+  ['level_up',
+    'Synthwave power stab, major chord pad hit with ascending arpeggio bell and sub-bass drop, mini dopamine reward moment',
+    0.5, 0.55],
 
-  // --- Player sounds ---
-  ['hurt', 'Male pain grunt taking damage, short strained gasp with flesh impact thud, getting hit hard', 0.5, 0.5],
-  ['player_death', 'Player death collapse, pained groan falling to ground, body hitting floor with last breath', 1.0, 0.5],
-  ['dash', 'Quick combat dodge whoosh, fast body movement rush of air, tactical sprint burst', 0.5, 0.5],
-  ['footstep', 'Single boot footstep on concrete, gritty sole scrape on dungeon floor, indoor step', 0.5, 0.4],
-  ['health_low', 'Tense low health heartbeat, slow heavy pounding heart with labored breathing, critical condition', 1.5, 0.5],
+  // ============ D. ZOMBIES — CORE ============
+  ['zombie_groan_a',
+    'Wet guttural zombie moan at low pitch with slight vocoded digital corruption artifact, uncanny organic-synthetic horror',
+    0.8, 0.5],
+  ['zombie_groan_b',
+    'Raspy breathy zombie growl with higher pitched throat rattle and subtle bitcrushed digital corruption, menacing and cyber-infected',
+    0.8, 0.5],
+  ['zombie_groan_c',
+    'Deep chest-heavy zombie bellow with wet phlegm texture and formant-shifted mouth shape, digital static artifact underneath',
+    0.9, 0.5],
+  ['zombie_death',
+    'Body-fall thud of corpse hitting ground with wet gurgle and brief digital dissolve shimmer at end, organic-cyber zombie death',
+    0.6, 0.55],
+  ['zombie_attack',
+    'Wet splorch of flesh claws layered with whoosh of air passing, short aggressive organic-horror swipe',
+    0.5, 0.55],
+  ['headshot',
+    'Satisfying wet pop of exploding head layered with bright coin-like FM bell ping on top, arcade crit reward',
+    0.5, 0.55],
 
-  // --- Weapon interaction ---
-  ['reload', 'Gun magazine reload, metallic click clack of magazine insertion and slide rack, weapon ready', 0.7, 0.5],
-  ['empty_clip', 'Dry fire gun click, empty magazine trigger pull with hollow metallic click, no ammo', 0.5, 0.5],
-  ['weapon_switch', 'Quick weapon swap, metallic holster draw with fabric rustle, equipping new gun click', 0.5, 0.5],
+  // ============ E. ENEMY TELEGRAPHS (CRITICAL) ============
+  ['sniper_aim_loop',
+    'Sustained high laser-pointer sine tone with subtle sparkle overtone, tense continuous warning cue of enemy sniper taking aim, loopable',
+    1.5, 0.6],
+  ['beam_charge',
+    'Rising capacitor whine sweeping from low to high over one second, audibly ramping up, sci-fi weapon charging before deadly beam fires',
+    1.0, 0.6],
+  ['spitter_charge',
+    'Wet bubbly phlegm buildup rising in pitch then sharp hrrk-PTOO expulsion at end, gross organic ranged-attack telegraph',
+    0.7, 0.55],
+  ['tank_pound_windup',
+    'Rising deep mechanical hum with metallic clank, anticipatory telegraph before ground-pound impact, heavy enemy windup',
+    0.7, 0.55],
+  ['zombie_boss',
+    'Cinematic synth brass stab with low horn blast, room-shaking sub-bass rumble, reverse-reverb whoosh leading in, massive ominous boss entrance',
+    1.5, 0.55],
 
-  // --- Zombie sounds (creepy, unsettling, organic) ---
-  ['zombie_attack', 'Zombie bite attack, wet snarling chomp with tearing flesh, undead creature lunging', 0.6, 0.5],
-  ['zombie_groan', 'Creepy zombie moan, low guttural undead groan echoing in dark hallway, unsettling', 1.2, 0.5],
-  ['zombie_spawn', 'Zombie emerging from darkness, wet dragging flesh on concrete with distant guttural growl', 0.8, 0.5],
-  ['zombie_boss', 'Giant monster roar, deep rumbling creature howl shaking walls, massive undead boss approaching', 1.5, 0.5],
+  // ============ F. POWER-UPS ============
+  ['powerup_spawn_loop',
+    'Glittering arpeggio bell loop, subtle twinkling synthwave beacon advertising power-up waiting on floor, inviting and bright, loopable',
+    2.0, 0.55],
+  ['powerup_activate',
+    'Big rising synth sweep into bass hit with bright bell cascade on top, universal power-up activation moment, triumphant',
+    0.7, 0.55],
+  ['shield_break',
+    'Glass force-field shatter with digital dissolve shimmer tail, dramatic protection loss',
+    0.5, 0.55],
+  ['powerup_expire_warning',
+    'Descending pitch-wobble double-beep with subtle urgency cue, warning that buff is about to expire',
+    0.5, 0.6],
 
-  // --- Pickup sounds (satisfying but not too bright) ---
-  ['pickup', 'Weapon ammo pickup, quick metallic grab with subtle clicking, collecting equipment', 0.5, 0.4],
-  ['health_pickup', 'Medical item pickup, syringe injection hiss with relieved breath, healing sound', 0.6, 0.5],
-  ['armor_pickup', 'Armor equip sound, heavy metallic plates clicking into place, protective gear on', 0.6, 0.5],
+  // ============ G. ELEMENTAL ============
+  ['ice_freeze',
+    'Big satisfying crystallize sound with upward glass shimmer sweep, hard click-lock at top, sparkle shimmer tail, enemy going frozen moment',
+    0.6, 0.55],
+  ['ice_shatter',
+    'Glass shatter cluster with bright FM bell cascade on top, extremely satisfying ice-break arcade kill reward',
+    0.5, 0.55],
 
-  // --- Environment (atmospheric, tension-building) ---
-  ['door_open', 'Heavy metal door creaking open, rusty hinges grinding with echoing scrape, dungeon door', 1.0, 0.5],
-  ['exit_found', 'Eerie discovery reveal, low ominous chord with distant light shimmer sound, way out found', 1.0, 0.5],
-  ['ambient_drip', 'Single water drip in dark tunnel, echoing drop splashing in puddle, underground cave', 0.8, 0.4],
+  // ============ H. ENVIRONMENT ============
+  ['barrel_explosion',
+    'Big metallic boom with shrapnel whistle and ringing metal tail, industrial explosion distinct from organic flesh explosions',
+    0.8, 0.55],
+  ['door_open',
+    'Mechanical servo whir with lock-disengage click and room-ambient level drop, room-clear relief moment',
+    0.8, 0.5],
+  ['exit_activate',
+    'Rising whoosh with synthwave major chord bloom at peak, teleport-in-progress portal activation',
+    0.8, 0.55],
 
-  // --- Game state (dramatic, mood-setting) ---
-  ['level_complete', 'Dark level complete sting, ominous triumphant horn with relieved exhale, survived another floor', 2.0, 0.5],
-  ['game_over', 'Game over death sting, dark dramatic descending tones fading to silence, final defeat', 2.5, 0.5],
-  ['wave_start', 'Zombie horde incoming alarm, distant rumbling growing louder with growling undead, they are coming', 1.5, 0.5],
-
-  // --- UI (subtle, clean) ---
-  ['menu_select', 'Dark UI click confirm, subtle metallic button press with soft low tone, menu selection', 0.5, 0.4],
-  ['menu_hover', 'Soft UI hover tick, quiet subtle click, minimal interface sound', 0.5, 0.3],
-  ['countdown', 'Tense countdown tick, deep reverberant clock tick with ominous tone, time running', 0.5, 0.5],
-
-  // --- Background music loops ---
-  ['music_ambient', 'Dark horror ambient drone, deep low frequency humming with distant metallic scraping and eerie whispers, underground dungeon atmosphere, unsettling tension building pad, creepy', 10.0, 0.6],
-  ['music_combat', 'Intense dark electronic combat music, driving aggressive synth bass with pounding industrial drums and distorted guitar, action horror battle theme, fast tempo adrenaline', 10.0, 0.6],
-  ['music_menu', 'Dark atmospheric horror menu theme, slow haunting piano notes with deep reverberant drone and distant thunder rumble, ominous and foreboding, title screen music', 10.0, 0.6],
-  ['music_gameover', 'Somber dark game over music, slow mournful strings fading with deep reverberant echoes, melancholic defeat theme dissolving into silence', 8.0, 0.6],
+  // ============ I. PROGRESSION MOMENTS ============
+  ['card_legendary',
+    'Full synthwave major chord stab with choir hit, sparkle cascade arpeggio, sub-bass drop, maximum dopamine legendary card reveal',
+    0.8, 0.55],
+  ['weapon_evolve',
+    'Huge synthwave progression moment with sustained pad swell, FM bell cascade arpeggio rising, filter-sweep riser, satisfying downbeat thud with sub-bass drop, celebratory cinematic weapon evolution',
+    1.2, 0.6],
 ];
 
 function generateSound(text, duration_seconds, prompt_influence) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      text,
-      duration_seconds,
-      prompt_influence,
-    });
-
+    const body = JSON.stringify({ text, duration_seconds, prompt_influence });
     const options = {
       hostname: 'api.elevenlabs.io',
       path: '/v1/sound-generation',
@@ -109,7 +174,6 @@ function generateSound(text, duration_seconds, prompt_influence) {
         'Content-Length': Buffer.byteLength(body),
       },
     };
-
     const req = https.request(options, (res) => {
       if (res.statusCode !== 200) {
         let errBody = '';
@@ -121,7 +185,6 @@ function generateSound(text, duration_seconds, prompt_influence) {
       res.on('data', (chunk) => chunks.push(chunk));
       res.on('end', () => resolve(Buffer.concat(chunks)));
     });
-
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -131,30 +194,31 @@ function generateSound(text, duration_seconds, prompt_influence) {
 async function main() {
   if (!fs.existsSync(SOUNDS_DIR)) fs.mkdirSync(SOUNDS_DIR);
 
-  console.log(`Generating ${SOUND_DEFS.length} sound effects...\n`);
+  const queue = SOUND_DEFS.filter(([name]) => !ONLY || ONLY.has(name));
+  console.log(`Generating ${queue.length} of ${SOUND_DEFS.length} sound effects${FORCE ? ' (FORCE: overwriting existing)' : ''}\n`);
 
-  for (const [filename, prompt, duration, influence] of SOUND_DEFS) {
+  let done = 0, skipped = 0, failed = 0;
+  for (const [filename, prompt, duration, influence] of queue) {
     const filePath = path.join(SOUNDS_DIR, `${filename}.mp3`);
-
-    if (fs.existsSync(filePath)) {
-      console.log(`  [skip] ${filename}.mp3 (already exists)`);
+    if (!FORCE && fs.existsSync(filePath)) {
+      console.log(`  [skip] ${filename}.mp3`);
+      skipped++;
       continue;
     }
-
     process.stdout.write(`  [gen]  ${filename}.mp3 ... `);
     try {
       const audio = await generateSound(prompt, duration, influence);
       fs.writeFileSync(filePath, audio);
       console.log(`done (${(audio.length / 1024).toFixed(1)} KB)`);
+      done++;
     } catch (err) {
       console.log(`FAILED: ${err.message}`);
+      failed++;
     }
-
-    // Small delay to avoid rate limiting
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 400));
   }
 
-  console.log('\nDone! Sound files are in the sounds/ directory.');
+  console.log(`\nDone. generated=${done} skipped=${skipped} failed=${failed}`);
 }
 
 main();
