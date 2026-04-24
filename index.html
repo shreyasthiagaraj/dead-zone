@@ -4492,11 +4492,22 @@ function spawnTrenchSection(idx) {
       const ba = (bi / 40) * Math.PI * 2, bs = 3 + Math.random() * 6;
       particles.push({ x: _bossX, y: _bossY, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs, life: 36, maxLife: 36, size: 4 + Math.random()*3, color: Math.random()<0.5?bt.color:'#f44', type: 'spark' });
     }
-    // Boss title card
+    // Boss title card — defer if a domain transition is firing this section so the
+    // domain popup plays first, then the boss popup takes over.
     const _bossNameMap = { boss: 'THE WARDEN', boss_firewall: 'THE FIREWALL', boss_archivist: 'THE ARCHIVIST', boss_watchdog: 'THE WATCHDOG' };
     const _bossName = _bossNameMap[bossType] || 'THE WARDEN';
     const _bossSubMap = { boss: 'admin process detected', boss_firewall: 'firewall protocol active', boss_archivist: 'archive corruption spreading', boss_watchdog: 'watchdog process hunting' };
-    showSectionTitleCard(`⚠ ${_bossName} ⚠`, `${_bossSubMap[bossType] || 'eliminate to proceed'} — eliminate to proceed`, true);
+    const _bossTitle = `\u26A0 ${_bossName} \u26A0`;
+    const _bossSub = `${_bossSubMap[bossType] || 'eliminate to proceed'} — eliminate to proceed`;
+    const _curDomain = sec.domain || getTrenchDomain(idx);
+    const _prvDomain = idx > 0 ? getTrenchDomain(idx - 1) : null;
+    const _isDomainShift = _curDomain && (!_prvDomain || _curDomain.name !== _prvDomain.name);
+    if (_isDomainShift) {
+      // Domain popup runs in narrative block below; chain boss popup after it.
+      setTimeout(() => showSectionTitleCard(_bossTitle, _bossSub, true), 2000);
+    } else {
+      showSectionTitleCard(_bossTitle, _bossSub, true);
+    }
     playSound(80, 0.4, 'sawtooth', 0.2);
     playSound(120, 0.3, 'square', 0.15);
   }
@@ -4525,20 +4536,16 @@ function spawnTrenchSection(idx) {
     const fy = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
     spawnMemoryFragment(fx, fy);
   }
-  // ---- NARRATIVE: domain title + section lore + modifier announcement ----
+  // ---- NARRATIVE: domain transition announcement only ----
+  // Per-section "SECTOR N" popups are suppressed; the persistent center-HUD label
+  // carries the domain identity. Boss sections still fire their own boss popup at
+  // spawn time above, so no extra announcement is needed here.
   const _domain = sec.domain || getTrenchDomain(idx);
-  const _lore = TRENCH_SECTION_LORE[idx] || { name: `SECTOR ${idx + 1}`, sub: 'unknown territory' };
-  // If crossing into a new domain, announce it prominently
   const _prevDomain = idx > 0 ? getTrenchDomain(idx - 1) : null;
   if (_domain && (!_prevDomain || _domain.name !== _prevDomain.name)) {
     // Domain transition: big glitch + domain name
     triggerGlitchSurge(0.6, 50);
     showSectionTitleCard(_domain.name, 'new domain', false);
-    setTimeout(() => {
-      showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
-    }, 2000);
-  } else {
-    showSectionTitleCard(`SECTOR ${idx + 1}: ${_lore.name}`, _lore.sub, sec.isBoss);
   }
   if (sec.isDark) addFloatingText(cx, cy - 36, 'DARKNESS', '#888');
   if (sec.waves.length > 1) addFloatingText(cx, cy - 12, `${sec.waves.length} WAVES`, '#ff8040');
@@ -17157,17 +17164,32 @@ function updateHUD() {
   const _ch=document.getElementById('center-hud');
   if(_ch){
     let _label = null;
+    let _labelColor = '#f0f';
     if(gameMode==='horde'){const _s=Math.floor(hordeTimer/60),_m=Math.floor(_s/60),_ss=_s%60;_label=`${_m}:${_ss<10?'0':''}${_ss}`;}
     else if(gameMode==='descent'){_label=`SECTION ${descentSection+1}`;}
-    else if(gameMode==='trench'){_label=`SECTION ${trenchSection+1}`;}
+    else if(gameMode==='trench'){
+      // Show DOMAIN name persistently; switches to BOSS tag on boss sections.
+      const _tsec = trenchSections && trenchSections[trenchSection];
+      const _tdom = getTrenchDomain(trenchSection);
+      if (_tsec && _tsec.isBoss) {
+        _label = '\u26A0 BOSS \u26A0';
+        _labelColor = '#f44';
+      } else if (_tdom) {
+        _label = _tdom.name;
+        _labelColor = _tdom.accentColor || '#f0f';
+      } else {
+        _label = 'TRENCH';
+      }
+    }
     else if(gameMode==='survival'){_label=`WAVE ${survivalWave}`;}
     else if(gameMode==='siege'){if(siegeWaveState==='rest'&&siegeWave>0){const restLeft=Math.ceil((600-siegeWaveTimer)/60);_label=`NEXT WAVE IN ${restLeft}s`;}else if(siegeWaveState==='rest'){_label='GET READY';}else{_label=`WAVE ${siegeWave}`;}}
     if (_label === null) {
       if (_ch.style.display !== 'none') _ch.style.display = 'none';
     } else {
-      if (_ch._lastLabel !== _label) {
-        _ch.innerHTML = `<div style="font-size:18px;font-weight:bold;color:#f0f;text-shadow:0 0 10px #f0f,0 0 20px rgba(255,0,255,0.5);letter-spacing:3px;padding:4px 14px">${_label}</div>`;
-        _ch._lastLabel = _label;
+      const _cacheKey = _label + '|' + _labelColor;
+      if (_ch._lastLabel !== _cacheKey) {
+        _ch.innerHTML = `<div style="font-size:18px;font-weight:bold;color:${_labelColor};text-shadow:0 0 10px ${_labelColor},0 0 22px ${_labelColor};letter-spacing:3px;padding:4px 14px">${_label}</div>`;
+        _ch._lastLabel = _cacheKey;
       }
       if (_ch.style.display !== 'block') _ch.style.display = 'block';
     }
