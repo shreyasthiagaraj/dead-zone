@@ -14230,16 +14230,40 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // EXPOSED: 2x knockback + track pre-knockback speed for wall collision damage
   const _exposedKbMult = z._exposed ? 2.0 : 1.0;
   const _preVx = z.vx, _preVy = z.vy;
-  z.hp-=damage;z.hitFlash=6;z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
+  // Stronger hitFlash on crits so the 1-2 frame white flash actually reads.
+  const _critHit = damage >= 50;
+  z.hp-=damage;
+  z.hitFlash = _critHit ? 10 : 6;
+  z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
   // Impact flash — big expanding hollow ring on every gun hit
   // Exposed: even bigger. Crits (damage >= 50): magenta colored.
   if (!silent) {
     const _hfExposed = z._exposed;
-    const _hfCrit = damage >= 50;
+    const _hfCrit = _critHit;
     const _hfColor = _hfCrit ? '#f0f' : '#fff';
     const _hfSize = _hfExposed ? z.radius + 35 : z.radius + 20;
     const _hfLife = _hfExposed ? 13 : (_hfCrit ? 12 : 10);
     particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit, _followZ: z });
+    // Pixel-fragment shower on crits — square chunks spew with velocity,
+    // giving the big hits a distinct "chunk breaking off" feel.
+    if (_hfCrit) {
+      const _pfCount = 8 + Math.floor(Math.random() * 4);
+      for (let _pfi = 0; _pfi < _pfCount; _pfi++) {
+        const _pfa = Math.random() * Math.PI * 2;
+        const _pfs = 2 + Math.random() * 4;
+        particles.push({
+          x: z.x + (Math.random()-0.5) * z.radius,
+          y: z.y + (Math.random()-0.5) * z.radius,
+          vx: Math.cos(_pfa) * _pfs + kbx * 0.4,
+          vy: Math.sin(_pfa) * _pfs + kby * 0.4,
+          life: 18 + Math.random() * 8, maxLife: 26,
+          size: 2 + Math.random() * 2,
+          color: Math.random() < 0.5 ? '#fff' : '#f0f',
+          type: 'spark',
+          _pixel: true,
+        });
+      }
+    }
   }
   // Bosses resist stagger almost entirely — prevents stunlocking them with rapid fire
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
@@ -19920,19 +19944,52 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // Default bullet render — scales with travel distance + build glow from card stacks
+      // Default bullet render — scales with travel distance + build glow from card stacks.
+      // Neon-diamond silhouette oriented along velocity so bullets read as data-
+      // lances rather than round dots. Short motion streak behind for a
+      // tracer-lite feel without the full trail array cost.
       const _bRenderSize = b.size * _bSizeMult;
       const _glow = b._glowBoost || 0;
+      const _bPulse = 1 + Math.sin(performance.now() * 0.02 + b.x * 0.01) * 0.12;
+      const _bAng = Math.atan2(b.vy || 0, b.vx || 1);
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(_bAng);
       ctx.shadowColor = b.color;
-      ctx.shadowBlur = (14 + _glow * 20) * _bAlphaMult; // bigger glow with more damage stacks
+      ctx.shadowBlur = (14 + _glow * 20) * _bAlphaMult;
+      // Motion streak — short tapered line behind the bullet
+      ctx.globalAlpha = 0.35 * _bAlphaMult;
+      ctx.strokeStyle = b.color;
+      ctx.lineWidth = _bRenderSize * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-_bRenderSize * 3.2, 0);
+      ctx.lineTo(-_bRenderSize * 0.6, 0);
+      ctx.stroke();
+      // Outer diamond — bullet color glow
+      ctx.globalAlpha = (0.55 + _glow * 0.3) * _bAlphaMult;
+      ctx.fillStyle = b.color;
+      const _bd = _bRenderSize * 1.7 * _bPulse;
+      ctx.beginPath();
+      ctx.moveTo(_bd, 0);
+      ctx.lineTo(0, -_bd * 0.55);
+      ctx.lineTo(-_bd * 0.7, 0);
+      ctx.lineTo(0, _bd * 0.55);
+      ctx.closePath();
+      ctx.fill();
+      // Inner white core — crisp high-alpha hit point
       ctx.globalAlpha = _bAlphaMult;
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 0.6, 0, Math.PI*2); ctx.fill();
-      ctx.globalAlpha = (0.5 + _glow * 0.3) * _bAlphaMult; // more opaque outer ring with stacks
-      ctx.fillStyle = b.color;
-      ctx.beginPath(); ctx.arc(b.x, b.y, _bRenderSize * 1.5, 0, Math.PI*2); ctx.fill();
+      const _bc = _bRenderSize * 0.72;
+      ctx.beginPath();
+      ctx.moveTo(_bc, 0);
+      ctx.lineTo(0, -_bc * 0.55);
+      ctx.lineTo(-_bc * 0.6, 0);
+      ctx.lineTo(0, _bc * 0.55);
+      ctx.closePath();
+      ctx.fill();
       ctx.globalAlpha = 1;
       ctx.shadowBlur = 0;
+      ctx.restore();
     }
   }
 
@@ -20211,6 +20268,40 @@ function render() {
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
     ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();ctx.shadowBlur=0;
+    // ---- CORRUPTED-PROGRAM SCANLINES + GLITCH CHUNKS ----
+    // Makes every zombie look like a broken signal rather than a plain shape.
+    // Scanlines are clipped inside the body silhouette so the outline stays
+    // crisp. Missing chunks fire stochastically a few times a second.
+    {
+      ctx.save();
+      _drawZombieShape(ctx, z.type, _zr);
+      ctx.clip();
+      // Horizontal scanlines
+      ctx.globalAlpha = 0.32;
+      ctx.fillStyle = '#000';
+      const _slOff = Math.floor((performance.now() * 0.004 + z.x * 0.013) % 4);
+      for (let _sy = -_zr + _slOff; _sy < _zr; _sy += 4) {
+        ctx.fillRect(-_zr - 2, _sy, _zr * 2 + 4, 1);
+      }
+      // Missing-chunk glitches — occasional dark bars at the edge
+      if (Math.random() < 0.07) {
+        ctx.globalAlpha = 0.85;
+        const _cw = 4 + Math.random() * 6;
+        const _ch = 2 + Math.random() * 3;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-_zr + Math.random() * (_zr * 2 - _cw),
+                     -_zr + Math.random() * (_zr * 2 - _ch), _cw, _ch);
+      }
+      // Occasional color-shift band (chromatic aberration stripe)
+      if (Math.random() < 0.04) {
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = Math.random() < 0.5 ? '#f0f' : '#0ff';
+        const _bh = 2 + Math.random() * 2;
+        ctx.fillRect(-_zr - 2, -_zr + Math.random() * (_zr * 2), _zr * 2 + 4, _bh);
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
     // Tier 1+: inner colored fill — enemies look more saturated/dangerous
     if (_zt >= 1 && !z.boss) {
       ctx.globalAlpha = _zt >= 2 ? 0.15 : 0.08;
@@ -20702,8 +20793,23 @@ function render() {
         ctx.shadowBlur = 0;
       } else if(p.type==='explosion'||p.type==='spark'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=sz*2; }
-        ctx.fillStyle='#fff';ctx.globalAlpha=(p.life/p.maxLife)*0.7;ctx.beginPath();ctx.arc(p.x,p.y,sz*0.5,0,Math.PI*2);ctx.fill();
-        ctx.fillStyle=p.color;ctx.globalAlpha=p.life/p.maxLife*0.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();
+        if (p._pixel) {
+          // Pixel fragment — rotated square chunk, used on crit hits
+          const _pxT = Math.atan2(p.vy, p.vx) + (p.x + p.y) * 0.02;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(_pxT);
+          ctx.globalAlpha = p.life / p.maxLife;
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-sz * 0.5, -sz * 0.5, sz, sz);
+          ctx.globalAlpha = (p.life / p.maxLife) * 0.6;
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(-sz * 0.25, -sz * 0.25, sz * 0.5, sz * 0.5);
+          ctx.restore();
+        } else {
+          ctx.fillStyle='#fff';ctx.globalAlpha=(p.life/p.maxLife)*0.7;ctx.beginPath();ctx.arc(p.x,p.y,sz*0.5,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle=p.color;ctx.globalAlpha=p.life/p.maxLife*0.5;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.fill();
+        }
         if (useGlow) ctx.shadowBlur=0;
       } else if(p.type==='blood'){
         // Neon blood — bright core with magenta glow
