@@ -29,10 +29,33 @@ canvas#game { display: block; position: fixed; top: 0; left: 0; outline: none; z
 #btn-menu { position: fixed; top: calc(10px + env(safe-area-inset-top)); right: calc(4px + env(safe-area-inset-right) * 0.5); width: 46px; height: 46px; border-radius: 12px; border: 2px solid #0ff8; background: transparent; color: #0ff; display: none; align-items: center; justify-content: center; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; box-shadow: 0 0 12px rgba(0,255,255,0.25); transition: transform 0.08s, box-shadow 0.15s; z-index: 25; }
 #btn-menu:active { transform: scale(0.92); box-shadow: 0 0 18px rgba(0,255,255,0.6); }
 #btn-menu svg { filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px rgba(0,255,255,0.4)); }
-#hp-chip { display: flex; flex-direction: column; width: 160px; padding: 6px 10px 6px 12px; background: transparent; border: 1px solid #0f03; border-radius: 8px; box-shadow: 0 0 6px rgba(0,255,0,0.15); pointer-events: none; }
-#hp-chip .bar-bg { width: 100%; height: 7px; background: rgba(120,140,170,0.28); border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.45); position: relative; }
-#hp-chip .bar { height: 100%; background: #0f0; border-radius: 3px; transition: width 0.2s, background 0.2s; box-shadow: 0 0 8px currentColor; }
+#hp-chip { display: flex; flex-direction: column; width: 170px; padding: 6px 10px 6px 12px; background: transparent; border: 1px solid #0f03; border-radius: 8px; box-shadow: 0 0 6px rgba(0,255,0,0.15); pointer-events: none; }
+#hp-chip .bar-bg { width: 100%; height: 9px; background: rgba(120,140,170,0.28); border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.45); position: relative; }
+/* Segment dividers — 3 thin dark lines at 25/50/75% split the HP bar into 4 chunks.
+   Makes HP loss easier to count at a glance. */
+#hp-chip .bar-bg::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to right, transparent 0, transparent calc(25% - 1px), rgba(0,0,0,0.55) calc(25% - 1px), rgba(0,0,0,0.55) 25%, transparent 25%, transparent calc(50% - 1px), rgba(0,0,0,0.55) calc(50% - 1px), rgba(0,0,0,0.55) 50%, transparent 50%, transparent calc(75% - 1px), rgba(0,0,0,0.55) calc(75% - 1px), rgba(0,0,0,0.55) 75%, transparent 75%, transparent 100%); }
+#hp-chip .bar { height: 100%; background: #0f0; border-radius: 3px; transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), background 0.2s; box-shadow: 0 0 10px currentColor; position: relative; }
+/* Animated drain trail — a dimmer ghost of the bar that lags behind the real bar,
+   so HP loss reads as a "chunk coming off" rather than an instant cut. */
+#hp-chip .bar-trail { position: absolute; top: 0; left: 0; height: 100%; background: rgba(255,60,60,0.5); border-radius: 3px; transition: width 0.75s ease-out; }
 #hp-chip .hp-text { color: #0f0; font-size: 12px; font-weight: bold; margin-top: 4px; text-shadow: 0 0 5px rgba(0,255,0,0.45); letter-spacing: 1px; font-family: 'Courier New', monospace; white-space: nowrap; }
+/* ---- COOLDOWN RINGS on mobile action buttons ----
+   Uses a conic-gradient on a ::before pseudo that fills based on --cd-pct CSS var.
+   Masked into an annulus so the button face stays clean.
+   --cd-pct is 0-100 (% of cooldown complete = 0 ready). */
+.mobile-btn { --cd-pct: 0; --cd-color: currentColor; }
+.mobile-btn::before {
+  content: ''; position: absolute; inset: -5px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(from -90deg, var(--cd-color) 0%, var(--cd-color) calc(var(--cd-pct) * 1%), rgba(255,255,255,0.05) calc(var(--cd-pct) * 1%), rgba(255,255,255,0.05) 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  opacity: 0.85;
+  filter: drop-shadow(0 0 6px var(--cd-color));
+  transition: opacity 0.2s;
+}
+.mobile-btn.dash-ready::before,
+.mobile-btn.mark-ready::before,
+.mobile-btn.shoot-btn.firing::before { opacity: 0.3; }
 /* score-chip removed — bits are the score now */
 
 .joystick-zone { position: fixed; bottom: 0; width: 50%; height: 100%; z-index: 15; display: none; }
@@ -383,7 +406,7 @@ body.mobile #mobile-buttons { display: block; }
 
 <!-- Top-left column: HP -> Bits. Mod loadout is accessed from the pause menu. -->
 <div id="hud-topleft" style="display:none">
-  <div id="hp-chip"><div class="bar-bg"><div class="bar" id="health-bar"></div><div id="barrier-bar" style="position:absolute;top:0;left:0;height:100%;background:#4ff;border-radius:3px;box-shadow:0 0 6px #4ff;opacity:0.7;width:0%;transition:width 0.2s"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
+  <div id="hp-chip"><div class="bar-bg"><div class="bar-trail" id="health-trail"></div><div class="bar" id="health-bar"></div><div id="barrier-bar" style="position:absolute;top:0;left:0;height:100%;background:#4ff;border-radius:3px;box-shadow:0 0 6px #4ff;opacity:0.7;width:0%;transition:width 0.2s"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
   <div id="xp-chip" title="BITS"><div class="bit-icon">◆</div><div class="xp-label" id="xp-label">0</div></div>
   <div id="effects-bar" style="display:flex;gap:4px;flex-direction:column;align-items:flex-start;pointer-events:none"></div>
 </div>
@@ -4488,6 +4511,35 @@ function spawnTrenchSection(idx) {
   }
   // First wave
   spawnTrenchWave(idx, 0);
+  // ---- CORRUPTION HAZARD ZONES ----
+  // From domain 2 onward (section 10+), chance-based spawn of magenta static
+  // puddles that tick damage when stood on. Forces rotation instead of camping
+  // and adds visual variety to the arena floor. Skipped on boss sections so
+  // the boss fight has clean dance floor.
+  if (idx >= 10 && !sec.isBoss) {
+    const _corrChance = Math.min(0.75, 0.18 + (idx - 10) * 0.025);
+    if (Math.random() < _corrChance) {
+      const _numZones = 1 + (Math.random() < 0.35 ? 1 : 0);
+      for (let _czi = 0; _czi < _numZones; _czi++) {
+        let _czx = 0, _czy = 0, _ok = false;
+        for (let _cza = 0; _cza < 24; _cza++) {
+          _czx = sec.x + (0.3 + Math.random() * 0.55) * TW;
+          _czy = (3 + Math.random() * (TRENCH_HEIGHT - 6)) * CELL_SIZE;
+          const _cgx = Math.floor(_czx / CELL_SIZE), _cgy = Math.floor(_czy / CELL_SIZE);
+          if (dungeonGrid[_cgy] && dungeonGrid[_cgy][_cgx]) { _ok = true; break; }
+        }
+        if (!_ok) continue;
+        sec.hazards.push({
+          type: 'corruption',
+          x: _czx, y: _czy,
+          radius: 52 + Math.random() * 20,
+          pulsePhase: Math.random() * Math.PI * 2,
+          dmgCooldown: 0,
+          alive: true,
+        });
+      }
+    }
+  }
   // Boss spawns once with the first wave (uses the same per-section scaling)
   if (sec.isBoss) {
     // Domain-specific boss
@@ -5244,18 +5296,18 @@ function _decorRand(seed) {
 }
 
 function _pickDecorTypesForDomain(domainIdx, isBoss) {
-  if (isBoss) return ['server_rack','terminal','crt_monitor','hazard_stripes','slumped_body','hazard_beacon','holo_dialog'];
+  if (isBoss) return ['firewall_gate','server_rack','terminal','crt_monitor','hazard_stripes','slumped_body','hazard_beacon','holo_dialog','graffiti'];
   const pools = [
     // Entry Cache — sterile, mostly intact infrastructure
-    ['terminal','server_rack','crt_monitor','poster','cable','slumped_body','fluorescent','data_stream','ghost'],
+    ['terminal','server_rack','crt_monitor','poster','cable','cable_trench','slumped_body','fluorescent','data_stream','ghost','graffiti'],
     // Corrupted Subnet — damaged, alarming
-    ['crt_monitor','hazard_stripes','server_rack','poster','terminal','slumped_body','hazard_beacon','holo_dialog','ghost'],
+    ['crt_monitor','hazard_stripes','server_rack','poster','terminal','cable_trench','slumped_body','hazard_beacon','holo_dialog','ghost','graffiti','graffiti','firewall_gate'],
     // Deep Storage — preservation, calm dread
-    ['cryopod','cable','server_rack','crt_monitor','cryopod','slumped_body','ghost','data_stream'],
+    ['cryopod','cable','cable_trench','server_rack','crt_monitor','cryopod','slumped_body','ghost','data_stream','graffiti'],
     // Kernel Boundary — hostile, burning
-    ['hazard_stripes','terminal','server_rack','cable','slumped_body','hazard_beacon','holo_dialog'],
+    ['hazard_stripes','terminal','server_rack','cable','cable_trench','slumped_body','hazard_beacon','holo_dialog','graffiti','firewall_gate','firewall_gate'],
     // The Core — pure abstraction
-    ['wireframe_obj','terminal','server_rack','wireframe_obj','holo_dialog','data_stream'],
+    ['wireframe_obj','terminal','server_rack','wireframe_obj','holo_dialog','data_stream','cable_trench'],
   ];
   return pools[Math.max(0, Math.min(4, domainIdx))];
 }
@@ -5377,6 +5429,14 @@ function _createDecor(type, x, y, domain, seed) {
     case 'ghost':          return { type, x, y, w: 10, h: 14, color: '#8cf', accent: '#bdf', domain, seed, _phase: 'wait', _timer: 60 + Math.floor(Math.random() * 240), _alpha: 0, _vx: 0, _vy: 0, _ox: x, _oy: y };
     case 'hazard_beacon':  return { type, x, y, w: 10, h: 10, color: '#f44', accent: '#fff', domain, seed };
     case 'fluorescent':    return { type, x, y, w: 34, h: 9, color: '#ccf', accent: '#fff', domain, seed, _flickerPhase: 0, _brightness: 1 };
+    // Firewall gate — tall, imposing, vertical wall of neon bars that pulse
+    // in sync. Heavy presence, blocks LOS visually but is decorative.
+    case 'firewall_gate':  return { type, x, y, w: 8, h: 44, color: accent, accent, domain, seed, _barOffset: _decorRand(seed)*Math.PI*2 };
+    // Cable trench — long horizontal groove with glowing flow pulses running
+    // down it. Suggests power flow through the floor.
+    case 'cable_trench':   return { type, x, y, w: 90, h: 6, color: accent, accent, domain, seed, _flowPhase: _decorRand(seed)*10 };
+    // Error-code graffiti — typed glitched error messages on the floor/walls
+    case 'graffiti':       return { type, x, y, w: 60, h: 14, color: strokeColor, accent, domain, seed, _text: _genErrorCode(seed), _angle: (_decorRand(seed+5)-0.5)*0.3 };
   }
   return { type: 'terminal', x, y, w: 22, h: 14, color: strokeColor, accent, domain, seed, _flicker: 0, _text: 'SCAN', _textSwap: 0 };
 }
@@ -5505,8 +5565,91 @@ function renderDecor(ctx) {
       case 'ghost':          _renderGhost(ctx, d, t); break;
       case 'hazard_beacon':  _renderHazardBeacon(ctx, d, t); break;
       case 'fluorescent':    _renderFluorescent(ctx, d, t); break;
+      case 'firewall_gate':  _renderFirewallGate(ctx, d, t); break;
+      case 'cable_trench':   _renderCableTrench(ctx, d, t); break;
+      case 'graffiti':       _renderGraffiti(ctx, d, t); break;
     }
   }
+}
+
+// Firewall gate — tall vertical bars of neon that pulse in waves. Imposing
+// silhouette, hints at structure rather than just empty floor.
+function _renderFirewallGate(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  const _bars = 5;
+  const _barGap = d.h / _bars;
+  ctx.shadowColor = d.accent;
+  for (let bi = 0; bi < _bars; bi++) {
+    const _bp = 0.5 + Math.sin(t * 0.004 + (d._barOffset||0) + bi * 0.8) * 0.4;
+    ctx.globalAlpha = 0.5 + _bp * 0.35;
+    ctx.shadowBlur = 12 + _bp * 6;
+    ctx.fillStyle = d.accent;
+    const _by = -d.h/2 + bi * _barGap + 2;
+    ctx.fillRect(-d.w/2, _by, d.w, _barGap - 4);
+    // Bright center line
+    ctx.globalAlpha = 0.95 * _bp;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-d.w/4, _by + _barGap/2 - 1, d.w/2, 1.5);
+  }
+  // Frame uprights
+  ctx.globalAlpha = 0.7;
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = d.accent;
+  ctx.fillRect(-d.w/2 - 1, -d.h/2 - 2, 2, d.h + 4);
+  ctx.fillRect( d.w/2 - 1, -d.h/2 - 2, 2, d.h + 4);
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Cable trench — floor groove with pulses of light traveling down its length.
+function _renderCableTrench(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  // Groove outline
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = '#050510';
+  ctx.fillRect(-d.w/2, -d.h/2, d.w, d.h);
+  ctx.strokeStyle = d.accent;
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.45;
+  ctx.strokeRect(-d.w/2, -d.h/2, d.w, d.h);
+  // Three traveling pulses
+  ctx.shadowColor = d.accent;
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = d.accent;
+  for (let pi = 0; pi < 3; pi++) {
+    const phase = ((t * 0.0008 + (d._flowPhase||0) + pi * 0.33) % 1);
+    const px = -d.w/2 + phase * d.w;
+    ctx.globalAlpha = 0.9;
+    ctx.fillRect(px - 4, -d.h/2 + 1, 8, d.h - 2);
+    ctx.globalAlpha = 0.4;
+    ctx.fillRect(px - 12, -d.h/2 + 2, 24, d.h - 4);
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Error-code graffiti — typed glitched message scrawled on the floor.
+function _renderGraffiti(ctx, d, t) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.rotate(d._angle || 0);
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Color flickers between the accent and a dim "unreadable" red tint
+  const _gf = (t * 0.003 + d.seed) % 4 < 0.2 ? '#f44' : d.accent;
+  ctx.shadowColor = _gf;
+  ctx.shadowBlur = 7;
+  ctx.fillStyle = _gf;
+  ctx.globalAlpha = 0.6;
+  ctx.fillText(d._text || 'ERR_UNKNOWN', 0, 0);
+  // Faint outer halo
+  ctx.globalAlpha = 0.18;
+  ctx.fillText(d._text || 'ERR_UNKNOWN', 0.6, 0.6);
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function _renderHoloDialog(ctx, d, t) {
@@ -14830,6 +14973,39 @@ function update() {
                 lp._iceSlowed = 8; // 8-frame slow, refreshed each frame
               }
             }
+            // -- CORRUPTION ZONE: magenta static puddle, ticks damage while standing in it --
+            if (hz.type === 'corruption') {
+              if (hz.dmgCooldown > 0) hz.dmgCooldown--;
+              if (_hd2 < (hz.radius + PLAYER_RADIUS) ** 2) {
+                if (hz.dmgCooldown <= 0) {
+                  damagePlayerObj(lp, 3);
+                  hz.dmgCooldown = 22;
+                  lp.damageFlash = Math.max(lp.damageFlash || 0, 4);
+                  // Static burst when damage ticks
+                  for (let _cci = 0; _cci < 6; _cci++) {
+                    const _cca = Math.random() * Math.PI * 2;
+                    const _ccs = 1 + Math.random() * 2;
+                    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(_cca)*_ccs, vy: Math.sin(_cca)*_ccs,
+                      life: 14, maxLife: 14, size: 2, color: '#f0f', type: 'spark' });
+                  }
+                }
+              }
+              // Ambient static particles — regardless of player presence, so
+              // the zone has visible life on the floor.
+              if (gameTime % 8 === 0) {
+                const _cpA = Math.random() * Math.PI * 2;
+                const _cpR = Math.random() * hz.radius;
+                particles.push({
+                  x: hz.x + Math.cos(_cpA) * _cpR,
+                  y: hz.y + Math.sin(_cpA) * _cpR,
+                  vx: (Math.random()-0.5)*0.6, vy: -0.3 - Math.random()*0.4,
+                  life: 24 + Math.random()*12, maxLife: 36,
+                  size: 1 + Math.random()*1.5,
+                  color: Math.random() < 0.4 ? '#fff' : '#f0f',
+                  type: 'spark',
+                });
+              }
+            }
             // -- FLAME VENT (D4): periodic floor fire jets --
             if (hz.type === 'flamvent') {
               hz.timer++;
@@ -17293,9 +17469,31 @@ function updateHUD() {
     const _bitDisplay = _hudGlitching ? _corruptText(_bitStr) : _bitStr;
     if (xpLabel._lastText !== _bitDisplay) { xpLabel.textContent = _bitDisplay; xpLabel._lastText = _bitDisplay; }
   }
+  // HP drain trail — lags behind the main bar so HP loss reads as a chunk.
+  const _ht = document.getElementById('health-trail');
+  if (_ht) {
+    // Drive toward current hp but reset if hp increased (heal), so trail doesn't
+    // over-shoot backwards.
+    const _curHp = Math.max(0, Math.min(100, hp));
+    const _prev = _ht._prevHp || _curHp;
+    if (_curHp > _prev) {
+      _ht.style.transition = 'none';
+      _ht.style.width = _curHp + '%';
+      // Force reflow so subsequent frames use the slow transition again
+      void _ht.offsetWidth;
+      _ht.style.transition = '';
+    } else {
+      _ht.style.width = _curHp + '%';
+    }
+    _ht._prevHp = _curHp;
+  }
   // Blast cooldown indicator
   const db=document.getElementById('btn-dash');
   if (db) {
+    // Cooldown arc ring — fills as dash recharges, empty when ready
+    const _dcPct = Math.max(0, Math.min(100, 100 - (lp.dashCooldown / DASH_COOLDOWN) * 100));
+    db.style.setProperty('--cd-pct', String(_dcPct));
+    db.style.setProperty('--cd-color', '#0ff');
     if ((lp._dashCharges || 0) <= 0) {
       // No charges — dim while recharging
       db.className = 'mobile-btn dash-cooldown';
@@ -17314,6 +17512,10 @@ function updateHUD() {
   const mb2=document.getElementById('btn-mark');
   if (mb2) {
     const _specDef = SPECIAL_DEFS[selectedSpecial] || SPECIAL_DEFS.beacon;
+    // Cooldown arc — fills as beacon recharges
+    const _bcPct = Math.max(0, Math.min(100, 100 - (lp._beaconCooldown / BEACON_COOLDOWN) * 100));
+    mb2.style.setProperty('--cd-pct', String(_bcPct));
+    mb2.style.setProperty('--cd-color', _specDef.color || '#f44');
     const _maxB = ((runMods||{}).multiBeacon > 0) ? 2 : 1;
     if (selectedSpecial === 'beacon') {
       // Beacon button states:
@@ -18997,6 +19199,56 @@ function render() {
           }
           ctx.globalAlpha = 0.5; ctx.fillStyle = '#f80'; ctx.font = '8px monospace';
           ctx.textAlign = 'center'; ctx.fillText('VENT', hz.x, hz.y + 20);
+        }
+        // ======== CORRUPTION ZONE ========
+        // Magenta static puddle — obvious from far away. Wobbling boundary,
+        // dense spark noise inside, pulsing magenta core.
+        else if (hz.type === 'corruption') {
+          const _cpul = 0.55 + Math.sin(_hzt * 0.004 + (hz.pulsePhase||0)) * 0.25;
+          // Outer wobbling glow ring
+          ctx.globalAlpha = 0.4 * _cpul;
+          ctx.shadowColor = '#f0f'; ctx.shadowBlur = 28;
+          ctx.strokeStyle = '#f0f'; ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          const _segs = 22;
+          for (let _si = 0; _si <= _segs; _si++) {
+            const _sa = (_si / _segs) * Math.PI * 2;
+            const _sr = hz.radius + Math.sin(_hzt * 0.005 + _si * 0.7 + (hz.pulsePhase||0)) * 4;
+            const _sx = hz.x + Math.cos(_sa) * _sr, _sy = hz.y + Math.sin(_sa) * _sr;
+            if (_si === 0) ctx.moveTo(_sx, _sy); else ctx.lineTo(_sx, _sy);
+          }
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          // Inner fill — static magenta
+          ctx.globalAlpha = 0.16 + _cpul * 0.1;
+          ctx.fillStyle = '#f0f';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius * 0.92, 0, Math.PI * 2); ctx.fill();
+          // Noise speckles across the surface — drawn directly rather than
+          // via particles so they stay crisp and dense
+          ctx.globalAlpha = 0.55;
+          ctx.fillStyle = '#fff';
+          for (let _ni = 0; _ni < 14; _ni++) {
+            const _na = Math.random() * Math.PI * 2;
+            const _nr = Math.random() * hz.radius * 0.95;
+            ctx.fillRect(hz.x + Math.cos(_na) * _nr - 0.5, hz.y + Math.sin(_na) * _nr - 0.5, 1, 1);
+          }
+          ctx.fillStyle = '#f0f';
+          for (let _ni = 0; _ni < 10; _ni++) {
+            const _na = Math.random() * Math.PI * 2;
+            const _nr = Math.random() * hz.radius * 0.95;
+            ctx.fillRect(hz.x + Math.cos(_na) * _nr - 1, hz.y + Math.sin(_na) * _nr - 0.5, 2, 1);
+          }
+          // Central flickering core
+          ctx.globalAlpha = 0.8 * _cpul;
+          ctx.shadowColor = '#f0f'; ctx.shadowBlur = 14;
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(hz.x, hz.y, 3, 0, Math.PI * 2); ctx.fill();
+          ctx.shadowBlur = 0;
+          // Hazard label
+          ctx.globalAlpha = 0.55;
+          ctx.fillStyle = '#f0f'; ctx.font = 'bold 8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('CORRUPTION', hz.x, hz.y - hz.radius - 6);
         }
         // ======== DATA STORM (D5) — no positional render, it's screen-wide ========
         else if (hz.type === 'datastorm' && hz.active) {
