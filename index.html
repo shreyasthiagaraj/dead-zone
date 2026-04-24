@@ -867,6 +867,9 @@ let _nextZombieId = 1; // unique zombie IDs for multiplayer sync
 // ---- GAME STATE ----
 let gameState = 'menu'; // menu, multi_menu, lobby, playing, dead, shell
 let score = 0, kills = 0, rapidKills = 0, lastKillTime = 0;
+// Arcade combo tracker — rolling kill streak within a 2.5s window. Displays
+// at the top of the screen once >=2 kills chain and pops larger at milestones.
+let _comboCount = 0, _comboTimer = 0, _comboPulse = 0, _comboBest = 0;
 
 // ---- THE SHELL (staging area) ----
 const SHELL_THEME = { name:'shell', floor:'#0a1020', grid:'#141e30', accent:'#0af' };
@@ -4711,6 +4714,13 @@ function updateTrench() {
     }
     sec.cleared = true;
     score += 200 * (trenchSection + 1);
+    // ---- SECTION CLEAR BANNER ----
+    // Juicy "SYSTEM CLEANSED" moment — flash the screen-announce div and pulse
+    // the screen shake so room clears feel like an accomplishment, not just
+    // the door opening silently.
+    showSectionTitleCard('\u25C6 SYSTEM CLEANSED \u25C6', 'proceed through the gate', false);
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    triggerGlitchSurge(0.3, 20);
     if (trenchSection >= TRENCH_NUM_SECTIONS - 1) {
       const lp = getLocalPlayer();
       score += 5000;
@@ -14296,6 +14306,12 @@ function lerp(a,b,t){return a+(b-a)*t;}
 function update() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
   gameTime++;
+  // Combo timer decay — streak resets after 2.5s without a kill
+  if (_comboTimer > 0) {
+    _comboTimer--;
+    if (_comboTimer === 0) _comboCount = 0;
+  }
+  if (_comboPulse > 0) _comboPulse--;
   if (gameState === 'shell') { updateShell(); return; }
   // Boss death dramatic freeze
   if (_bossDeathFreeze > 0) { _bossDeathFreeze--; return; }
@@ -16644,6 +16660,28 @@ function update() {
     // Also catches NaN hp zombies (invincibility bug from simultaneous damage sources)
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<=0){
       score+=dz.score;kills++;if(gameMode==='survival'){survivalZombiesKilled++;}
+      // Combo tracking — 2.5s window between kills extends the streak
+      _comboCount++;
+      _comboTimer = 150;
+      _comboPulse = 14;
+      if (_comboCount > _comboBest) _comboBest = _comboCount;
+      // Elite kill flourish — radial burst + wake ring + stronger shake so the
+      // big kills hit different from the shamble fodder.
+      const _isElite = dz.boss || dz.type === 'boss' || dz.type === 'brute' ||
+        dz.type === 'tank' || dz.type === 'anchor' || dz.type === 'phaser' ||
+        dz.type === 'archivist' || dz.type === 'firewall' || dz.type === 'watchdog';
+      if (_isElite) {
+        screenShake.intensity = Math.max(screenShake.intensity, dz.boss ? 14 : 9);
+        for (let _efi = 0; _efi < 28; _efi++) {
+          const _efa = (_efi / 28) * Math.PI * 2;
+          const _efs = 3.5 + Math.random() * 3.5;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(_efa) * _efs, vy: Math.sin(_efa) * _efs,
+            life: 36, maxLife: 36, size: 3 + Math.random() * 2.5,
+            color: ['#fff','#ff0','#0ff'][Math.floor(Math.random() * 3)], type: 'spark' });
+        }
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 28, maxLife: 28,
+          size: dz.boss ? 160 : 100, color: '#fff', type: 'wakering' });
+      }
       // Death effects
       for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],type:'blood'});}
       decals.push({x:dz.x,y:dz.y,size:dz.radius+12+Math.random()*15,alpha:0.5,color:'#304'});
@@ -19370,6 +19408,46 @@ function render() {
     ctx.globalAlpha = 1; ctx.restore();
   } // end _renderBeacons loop
 
+  // ---- PICKUP MAGNET TRAILS ----
+  // Dotted attraction line from nearby pickups toward the player. Purely
+  // cosmetic (pickups aren't actually magnetized) but makes the proximity
+  // read as "you can grab this" from a glance.
+  {
+    const _lpM = getLocalPlayer();
+    if (_lpM && _lpM.alive) {
+      const _mrange = 170, _mr2 = _mrange * _mrange;
+      const _mt = performance.now();
+      for (const pk of pickups) {
+        if (pk.type === '_bomb') continue;
+        const _mdx = _lpM.x - pk.x, _mdy = _lpM.y - pk.y;
+        const _md2 = _mdx*_mdx + _mdy*_mdy;
+        if (_md2 > _mr2 || _md2 < 900) continue; // skip if already overlapping
+        const _md = Math.sqrt(_md2);
+        const _closeness = 1 - _md / _mrange;
+        const _trColor = pk.type === 'bits' ? '#ff0'
+          : pk.type === 'health' ? '#4f4'
+          : pk.type === 'powerup' ? '#f0f'
+          : pk.type === 'element' ? '#0ff'
+          : pk.type === 'orbital' ? '#a4f'
+          : '#0cf';
+        ctx.fillStyle = _trColor;
+        ctx.shadowColor = _trColor; ctx.shadowBlur = 5;
+        const _dotCount = 4;
+        const _mphase = (_mt * 0.0025) % 1;
+        for (let _di = 0; _di < _dotCount; _di++) {
+          const _dt = ((_di / _dotCount) + _mphase) % 1;
+          const _dx2 = pk.x + _mdx * _dt, _dy2 = pk.y + _mdy * _dt;
+          // Fade at both ends of the line for a smooth trail
+          const _edgeFade = 1 - Math.abs(_dt - 0.5) * 1.6;
+          ctx.globalAlpha = _closeness * 0.55 * Math.max(0, _edgeFade);
+          ctx.beginPath();
+          ctx.arc(_dx2, _dy2, 1.3 + _closeness * 1.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    }
+  }
   // Pickups (+ orbital pickup rendering)
   for(const p of pickups){if(p.type==='_bomb'){
     // Bomber bomb: pulsing red circle with expanding warning. Clamp bt into
@@ -20868,6 +20946,41 @@ function render() {
 
   if(leftJoystick.active&&(gameState==='playing'||gameState==='shell'))renderJoysticks();
   renderMinimap();
+
+  // ---- COMBO POPUP ----
+  // Kill-streak meter in the upper-right quadrant. Appears at 2+, pops and
+  // brightens on each new kill, and tints magenta at 10+/orange at 20+/gold at 40+.
+  if (_comboCount >= 2 && gameState === 'playing') {
+    const _cbx = canvas.width - 60;
+    const _cby = 96;
+    const _cbPulse = 1 + Math.min(0.6, _comboPulse / 14 * 0.6);
+    const _cbAlpha = Math.min(1, _comboTimer / 60);
+    const _cbColor = _comboCount >= 40 ? '#ff0' : _comboCount >= 20 ? '#f80' : _comboCount >= 10 ? '#f0f' : '#0ff';
+    ctx.save();
+    ctx.globalAlpha = _cbAlpha;
+    ctx.translate(_cbx, _cby);
+    ctx.scale(_cbPulse, _cbPulse);
+    ctx.textAlign = 'right';
+    // Main number
+    ctx.font = 'bold 30px monospace';
+    ctx.fillStyle = _cbColor;
+    ctx.shadowColor = _cbColor; ctx.shadowBlur = 14;
+    ctx.fillText(`x${_comboCount}`, 0, 0);
+    // Label under
+    ctx.font = 'bold 10px monospace';
+    ctx.shadowBlur = 6;
+    ctx.fillText('COMBO', 0, 14);
+    // Timer bar underneath
+    const _cbBarW = 54;
+    const _cbBarPct = _comboTimer / 150;
+    ctx.globalAlpha = _cbAlpha * 0.3;
+    ctx.fillStyle = _cbColor;
+    ctx.fillRect(-_cbBarW, 20, _cbBarW, 2);
+    ctx.globalAlpha = _cbAlpha * 0.9;
+    ctx.fillRect(-_cbBarW * _cbBarPct, 20, _cbBarW * _cbBarPct, 2);
+    ctx.restore();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
 
   // Trench transition fade — drawn last so it covers the entire viewport (HUD included)
   if(gameMode==='trench'&&trenchFadeAlpha>0){
