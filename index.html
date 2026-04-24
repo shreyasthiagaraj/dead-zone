@@ -21,7 +21,7 @@ html, body {
   top: 0; left: 0;
 }
 body.desktop { cursor: crosshair; }
-canvas#game { display: block; position: fixed; top: 0; left: 0; outline: none; z-index: 1; }
+canvas#game { display: block; position: fixed; top: 0; left: 0; outline: none; z-index: 1; filter: saturate(1.35) contrast(1.08) brightness(1.12); }
 
 /* ---- Consolidated top-left HUD: menu icon + HP bar + score ---- */
 #hud-topleft { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: calc(6px + env(safe-area-inset-left) * 0.5); z-index: 25; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; pointer-events: none; font-family: 'Courier New', monospace; }
@@ -771,6 +771,24 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
+
+// ---- NEON BOOST ----
+// Amplify every ctx.shadowBlur assignment on the main game canvas so existing
+// glow calls (hundreds of them across render code) become proper neon-sign
+// intensity without editing each site. Applied only to this ctx instance —
+// minimap and ancillary canvases keep their original values.
+(function setupNeonBoost() {
+  const proto = Object.getPrototypeOf(ctx);
+  const desc = proto && Object.getOwnPropertyDescriptor(proto, 'shadowBlur');
+  if (!desc || !desc.set || !desc.get) return;
+  const NEON_MULT = 2.1;
+  const NEON_MAX = 80; // cap so mobile doesn't melt on already-big blur calls
+  Object.defineProperty(ctx, 'shadowBlur', {
+    get() { return desc.get.call(this); },
+    set(v) { desc.set.call(this, v > 0 ? Math.min(NEON_MAX, v * NEON_MULT) : v); },
+    configurable: true,
+  });
+})();
 
 // Cached radial gradients for hot-path additive lighting (created on first render, reused every frame).
 // Barrels: radius 40 (constant). Burning zombies: radius 60 (fixed; was 60+rand). Translate CTM to draw.
@@ -20092,9 +20110,9 @@ function render() {
       ctx.stroke();ctx.shadowBlur=0;
     } else {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
-      // shadowBlur is the single most expensive op per particle on mobile. Gate aggressively:
-      // only particles that'd visibly benefit (sz >= 6) and not for sparks/smoke.
-      const useGlow = sz >= 6 && p.type !== 'spark' && p.type !== 'smoke';
+      // Neon feel: widen the glow gate so almost every particle emits light —
+      // smoke stays dim (by design), everything else glows including sparks.
+      const useGlow = sz >= 2 && p.type !== 'smoke';
       if(p.type==='dashtrail'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=10; }
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
