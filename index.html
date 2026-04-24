@@ -2867,50 +2867,61 @@ function generateDataLinkChoice() {
   const _dlCount = _dlChoiceHistory.length;
   const isCoreSection = _dlCount > 0 && _dlCount % 4 === 0;
 
-  // ---- Slot 1: always a class or core terminal ----
-  let slot1;
-  if (isCoreSection) {
-    slot1 = 'core';
-  } else {
-    slot1 = _pickClassTerminal(null);
+  // ---- Both slots drawn from one pool — always two different options ----
+  const _fullPool = {};
+
+  // Class terminals — weighted by build investment
+  const _classes = ['thermal','cryo','arc','pulse','corrupt'];
+  for (const cls of _classes) {
+    const count = _countClassCards(cls);
+    _fullPool[cls] = 12 + count * 8;
+    if (count === 0) _fullPool[cls] = 18; // branching bonus
+    if (_researchFocus === cls) _fullPool[cls] += 25;
   }
 
-  // ---- Slot 2: situational (class terminal, repair, reforge, or bits) ----
-  let slot2;
-  const _slot2Pool = {};
+  // CORE — weapon/generic cards, boosted every 4th offer
+  _fullPool.core = isCoreSection ? 50 : 15;
 
-  // Second class terminal — different from slot1
-  const slot2Class = _pickClassTerminal(new Set([slot1]));
-  _slot2Pool[slot2Class] = 40;
-
-  // REPAIR — if hurt
+  // REPAIR — only if hurt
   if (hpPct < 1.0) {
-    _slot2Pool.repair = 20;
-    if (hpPct < 0.5) _slot2Pool.repair += 25;
-    if (hpPct < 0.3) _slot2Pool.repair += 15;
-    if (lastChoice === 'repair') _slot2Pool.repair -= 15;
+    _fullPool.repair = 15;
+    if (hpPct < 0.5) _fullPool.repair += 25;
+    if (hpPct < 0.3) _fullPool.repair += 15;
+    if (lastChoice === 'repair') _fullPool.repair -= 12;
   }
 
   // REFORGE — if 2+ upgradeable cards
   if (upgradeableCards >= 2) {
-    _slot2Pool.reforge = 20;
-    if (_isBossSection(trenchSection)) _slot2Pool.reforge += 15;
+    _fullPool.reforge = 18;
+    if (_isBossSection(trenchSection)) _fullPool.reforge += 15;
   }
 
-  // BITS — always an option but lower weight
-  _slot2Pool.bits = 12;
-  if (lastChoice === 'bits') _slot2Pool.bits -= 8;
+  // BITS — always available, low weight
+  _fullPool.bits = 10;
+  if (lastChoice === 'bits') _fullPool.bits -= 6;
 
   // Clamp
-  for (const k in _slot2Pool) { _slot2Pool[k] = Math.max(0, _slot2Pool[k]); }
+  for (const k in _fullPool) { _fullPool[k] = Math.max(0, _fullPool[k]); }
 
-  // Weighted draw for slot 2
-  const s2Total = Object.values(_slot2Pool).reduce((s, w) => s + w, 0);
-  let s2Roll = Math.random() * s2Total;
-  slot2 = Object.keys(_slot2Pool)[0];
-  for (const [type, w] of Object.entries(_slot2Pool)) { s2Roll -= w; if (s2Roll <= 0) { slot2 = type; break; } }
+  // Draw 2 without replacement
+  const picks = [];
+  const remaining = { ..._fullPool };
+  for (let i = 0; i < 2; i++) {
+    const totalW = Object.values(remaining).reduce((s, w) => s + w, 0);
+    if (totalW <= 0) break;
+    let r = Math.random() * totalW;
+    for (const [type, w] of Object.entries(remaining)) {
+      r -= w;
+      if (r <= 0) { picks.push(type); delete remaining[type]; break; }
+    }
+  }
 
-  const picks = [slot1, slot2];
+  // Hard rule: at least one build-advancing option (class/core/reforge)
+  const _buildTypes = new Set([..._classes, 'core', 'reforge']);
+  if (!picks.some(p => _buildTypes.has(p))) {
+    picks[0] = _pickClassTerminal(null);
+  }
+  while (picks.length < 2) picks.push(_pickClassTerminal(picks.length > 0 ? new Set([picks[0]]) : null));
 
   // Track drought (any class terminal counts as "got a mod")
   const _classTypes = new Set(['thermal','cryo','arc','pulse','corrupt','core']);
