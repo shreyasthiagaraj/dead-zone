@@ -1521,11 +1521,11 @@ const UPGRADE_POOL = [
       'LEVEL 1: Elite kills restore 10 HP.',
       'LEVEL 2: Elite kills restore 15 HP.',
     ], flavor:'milestone repair. earned, not given.' },
-  { id:'emergency_buffer', name:'EMERGENCY BUFFER', rarity:'rare', max:2, icon:'🛡', color:'#ff4',
+  { id:'emergency_buffer', name:'ICE ARMOR', rarity:'rare', max:2, icon:'🧊', color:'#8ef',
     descs:[
-      'LEVEL 1: Below 25% HP → gain 20 barrier (once per section).',
-      'LEVEL 2: 30 barrier when triggered.',
-    ], flavor:'panic protocol. last line of defense.' },
+      'LEVEL 1: Below 25% HP → take 25% less damage.',
+      'LEVEL 2: Below 30% HP → take 35% less damage.',
+    ], flavor:'cryogenic hardening under pressure.' },
   { id:'fail_safe', name:'FAIL SAFE', rarity:'epic', max:1, icon:'☥', color:'#0f0',
     descs:['LEVEL 1: Survive lethal damage once per run. Left at 1 HP + 30 barrier.'],
     flavor:'one-time emergency rollback.' },
@@ -1555,6 +1555,11 @@ const UPGRADE_POOL = [
       'LEVEL 1: +25% crit chance vs COMPROMISED enemies.',
       'LEVEL 2: +40% crit chance vs COMPROMISED.',
     ], flavor:'execute the corrupted process.', prereqs:['viral_payload|glitch_wake'] },
+  { id:'parasitic_link', name:'PARASITIC LINK', rarity:'rare', max:2, icon:'☣', color:'#a4f',
+    descs:[
+      'LEVEL 1: Gain 1 HP per hit on COMPROMISED enemies.',
+      'LEVEL 2: Gain 2 HP per hit on COMPROMISED enemies.',
+    ], flavor:'the corruption feeds both ways.' },
   // ---- SYNERGY (epic, max 1) ----
   { id:'syn_flash_boil', name:'FLASH BOIL', rarity:'epic', max:1, icon:'♨', color:'#f84',
     descs:['LEVEL 1: OVERHEAT on CHILLED creates a steam burst. COMBO: OVERHEATED + FROZEN = massive AoE explosion.'],
@@ -1805,7 +1810,7 @@ function rebuildRunMods() {
     slipstream: 0, kineticWake: 0, // kineticWake absorbs the old shockwave + impulseWave cards
     glitchWake: 0, fatalException: 0,
     // Sustain
-    recoveryLoop: 0, emergencyBuffer: 0, failSafe: false,
+    recoveryLoop: 0, emergencyBuffer: 0, failSafe: false, parasiticLink: 0,
     // Crit windows
     precisionBreach: 0, shatterpoint: 0, meltdown: 0, surgeBreak: 0, killSwitch: 0,
     // Synergies (boolean)
@@ -1864,6 +1869,7 @@ function rebuildRunMods() {
       // Sustain
       case 'recovery_loop':    m.recoveryLoop    += n; break;
       case 'emergency_buffer': m.emergencyBuffer += n; break;
+      case 'parasitic_link':  m.parasiticLink  += n; break;
       case 'fail_safe':        m.failSafe = true; break;
       // Crit windows
       case 'precision_breach': m.precisionBreach += n; break;
@@ -2045,11 +2051,11 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 // Card-to-class mapping for affinity weighting
 const _CARD_CLASS_MAP = {};
 {
-  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown'];
-  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','freeze_pulse','shatter_step','beacon_cryo','shatterpoint'];
-  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse'];
-  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch'];
+  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','freeze_pulse','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift'];
+  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
   for (const id of _arc)     _CARD_CLASS_MAP[id] = 'arc';
@@ -14121,6 +14127,15 @@ function damagePlayerObj(p,damage,attacker) {
   if (p === getLocalPlayer() && runMods && runMods.dmgReduction > 0) {
     damage = damage * (1 - runMods.dmgReduction);
   }
+  // ICE ARMOR: damage reduction when at low HP
+  if (p === getLocalPlayer() && runMods && runMods.emergencyBuffer > 0) {
+    const _iaThreshold = runMods.emergencyBuffer >= 2 ? 0.30 : 0.25;
+    if (p.hp > 0 && p.hp < p.maxHp * _iaThreshold) {
+      const _iaReduction = runMods.emergencyBuffer >= 2 ? 0.35 : 0.25;
+      damage = damage * (1 - _iaReduction);
+    }
+  }
+  // PARASITIC LINK: gain 1 HP per hit on compromised enemies (applied in bullet hit, not here)
   // Barrier absorbs damage before HP
   if (p.barrier > 0) {
     if (damage <= p.barrier) { p.barrier -= damage; p.damageFlash = 6; return; }
@@ -14919,16 +14934,8 @@ function update() {
     // down here; damage consumption happens inside damagePlayerObj so the
     // shield absorbs the hit and shatters. Expires quietly at zero.
     if (lp._sdShieldTimer > 0) lp._sdShieldTimer--;
-    // Emergency Buffer: grant barrier when below 25% HP (once per section)
-    const _em = runMods || {};
-    if (_em.emergencyBuffer > 0 && !lp._emergencyUsed && lp.hp > 0 && lp.hp < lp.maxHp * 0.25) {
-      lp._emergencyUsed = true;
-      const _ebAmount = _em.emergencyBuffer >= 2 ? 30 : 20;
-      lp.barrier = (lp.barrier || 0) + _ebAmount;
-      addFloatingText(lp.x, lp.y - 30, 'EMERGENCY BUFFER', '#ff4');
-      for(let bi=0;bi<12;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*20,y:lp.y+Math.sin(ba)*20,vx:Math.cos(ba)*2,vy:-2,life:16,maxLife:16,size:3,color:'#ff4',type:'spark'});}
-      screenShake.intensity=Math.max(screenShake.intensity,4);
-    }
+    // Ice Armor: persistent damage reduction when at low HP (passive, always active)
+    // Tracked on player as _iceArmorActive for VFX
     // Compromised timer decay on all zombies — stacks reset when Compromised expires (vuln ends)
     for (const _cz of zombies) {
       if (_cz._compromised && _cz._compromisedTimer > 0) { _cz._compromisedTimer--; if (_cz._compromisedTimer <= 0) { _cz._compromised = false; _cz._corrupt = 0; } }
@@ -15231,6 +15238,11 @@ function update() {
                   if (b._armorPierce && b._deadshotRound) {
                     if (_savedArmor !== undefined) z._armor = _savedArmor;
                     if (_savedShield !== undefined) z._shielded_aura = _savedShield;
+                  }
+                  // PARASITIC LINK: heal on hit vs compromised
+                  if (_m.parasiticLink > 0 && z._compromised && _lp3) {
+                    const _plHeal = _m.parasiticLink >= 2 ? 2 : 1;
+                    _lp3.hp = Math.min(_lp3.maxHp, _lp3.hp + _plHeal);
                   }
                   // TRACER ROUND: mark enemy for gun bullet homing
                   if (b._tracerMark && b._deadshotRound && z.hp > 0) {
