@@ -2090,7 +2090,9 @@ function _draftBossCards(n) {
   return picks.length > 0 ? picks : draftShopCards(n);
 }
 
-function draftShopCards(n) {
+function draftShopCards(n, classFilter) {
+  // classFilter: 'thermal'|'cryo'|'arc'|'pulse'|'corrupt'|'core'|null
+  // When set, ALL cards are drawn from that class (or generic for 'core').
   n = n || 4;
   _shopVisitCount++;
   const cap = getShopTierCap();
@@ -2098,7 +2100,54 @@ function draftShopCards(n) {
   const picks = [];
   const attempted = new Set();
   let safety = 80;
-  // First shop visit of the run: guarantee at least 1 rare+ card (principle: teach the power curve)
+  const _classNames = ['thermal','cryo','arc','pulse','corrupt'];
+  // ---- CLASS-FILTERED TERMINAL: all cards from one class (or generic for 'core') ----
+  if (classFilter && classFilter !== 'mod') {
+    const _isCore = classFilter === 'core';
+    while (picks.length < n && safety-- > 0) {
+      const pool = UPGRADE_POOL.filter(u => {
+        if (attempted.has(u.id)) return false;
+        if ((runUpgrades[u.id] || 0) >= u.max) return false;
+        if (!_rarityAllowed(u.rarity, cap)) return false;
+        if (!_meetsPrereqs(u)) return false;
+        if (_SPECIAL_CARD_MAP[u.id] && _SPECIAL_CARD_MAP[u.id] !== selectedSpecial) return false;
+        if (_isCore) return !_CARD_CLASS_MAP[u.id]; // generic/weapon cards only
+        return _CARD_CLASS_MAP[u.id] === classFilter; // class-specific cards only
+      });
+      if (pool.length === 0) break;
+      // Also include synergy cards that have this class as a prereq
+      const synPool = _isCore ? [] : UPGRADE_POOL.filter(u =>
+        u.id.startsWith('syn_') && !attempted.has(u.id) &&
+        (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) &&
+        u.prereqs && u.prereqs.some(g => g.split('|').some(id => _CARD_CLASS_MAP[id] === classFilter))
+      );
+      const combined = [...pool, ...synPool.filter(s => !pool.includes(s))];
+      const totalW = combined.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
+      let roll = Math.random() * totalW;
+      let chosen = combined[0];
+      for (const u of combined) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
+      picks.push(chosen);
+      attempted.add(chosen.id);
+    }
+    // If class pool was too small, fill remaining from general pool
+    while (picks.length < n && safety-- > 0) {
+      const pool = UPGRADE_POOL.filter(u =>
+        !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max &&
+        _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
+        (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+      );
+      if (pool.length === 0) break;
+      const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
+      let roll = Math.random() * totalW;
+      let chosen = pool[0];
+      for (const u of pool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
+      picks.push(chosen);
+      attempted.add(chosen.id);
+    }
+    return picks;
+  }
+  // ---- GENERIC MOD TERMINAL (original logic) ----
+  // First shop visit of the run: guarantee at least 1 rare+ card
   const guaranteeRare = _shopVisitCount === 1 && _RARITY_ORDER.indexOf(cap) >= 1;
   if (guaranteeRare) {
     const rarePool = UPGRADE_POOL.filter(u =>
@@ -2120,82 +2169,61 @@ function draftShopCards(n) {
       const cls = _CARD_CLASS_MAP[id];
       if (cls) classCounts[cls] += runUpgrades[id];
     }
-    // Research focus: GUARANTEE at least 1 card from the focused class
     if (_researchFocus) {
       const classPool = UPGRADE_POOL.filter(u =>
-        _CARD_CLASS_MAP[u.id] === _researchFocus &&
-        !attempted.has(u.id) &&
-        (runUpgrades[u.id] || 0) < u.max &&
-        _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
+        _CARD_CLASS_MAP[u.id] === _researchFocus && !attempted.has(u.id) &&
+        (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
         (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
       );
       if (classPool.length > 0) {
         const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
-        let roll = Math.random() * totalW;
-        let chosen = classPool[0];
+        let roll = Math.random() * totalW; let chosen = classPool[0];
         for (const u of classPool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
-        picks.push(chosen);
-        attempted.add(chosen.id);
+        picks.push(chosen); attempted.add(chosen.id);
       }
     }
-    // Research focus: in the first 3 shop visits, try to add a SECOND focused card
     if (_researchFocus && _shopVisitCount <= 3 && picks.length < n) {
       const classPool2 = UPGRADE_POOL.filter(u =>
-        _CARD_CLASS_MAP[u.id] === _researchFocus &&
-        !attempted.has(u.id) &&
-        (runUpgrades[u.id] || 0) < u.max &&
-        _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
+        _CARD_CLASS_MAP[u.id] === _researchFocus && !attempted.has(u.id) &&
+        (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
         (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
       );
       if (classPool2.length > 0) {
         const totalW2 = classPool2.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
-        let roll2 = Math.random() * totalW2;
-        let chosen2 = classPool2[0];
+        let roll2 = Math.random() * totalW2; let chosen2 = classPool2[0];
         for (const u of classPool2) { roll2 -= (weights[u.rarity] || 1); if (roll2 <= 0) { chosen2 = u; break; } }
-        picks.push(chosen2);
-        attempted.add(chosen2.id);
+        picks.push(chosen2); attempted.add(chosen2.id);
       }
     }
-    // Natural affinity from owned cards (50% chance, only if no research focus already added one)
     if (!_researchFocus) {
       let bestClass = null, bestCount = 0;
       for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; bestClass = cls; } }
       if (bestClass && bestCount >= 2 && Math.random() < 0.50) {
         const classPool = UPGRADE_POOL.filter(u =>
-          _CARD_CLASS_MAP[u.id] === bestClass &&
-          !attempted.has(u.id) &&
-          (runUpgrades[u.id] || 0) < u.max &&
-          _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
+          _CARD_CLASS_MAP[u.id] === bestClass && !attempted.has(u.id) &&
+          (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
           (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
         );
         if (classPool.length > 0) {
           const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
-          let roll = Math.random() * totalW;
-          let chosen = classPool[0];
+          let roll = Math.random() * totalW; let chosen = classPool[0];
           for (const u of classPool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
-          picks.push(chosen);
-          attempted.add(chosen.id);
+          picks.push(chosen); attempted.add(chosen.id);
         }
       }
     }
   }
   while (picks.length < n && safety-- > 0) {
     const pool = UPGRADE_POOL.filter(u =>
-      !attempted.has(u.id) &&
-      (runUpgrades[u.id] || 0) < u.max &&
+      !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max &&
       _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
       (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
     );
     if (pool.length === 0) break;
     const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
-    let roll = Math.random() * totalW;
-    let chosen = pool[0];
-    for (const u of pool) {
-      roll -= (weights[u.rarity] || 1);
-      if (roll <= 0) { chosen = u; break; }
-    }
-    picks.push(chosen);
-    attempted.add(chosen.id);
+    let roll = Math.random() * totalW; let chosen = pool[0];
+    for (const u of pool) { roll -= (weights[u.rarity] || 1); if (roll <= 0) { chosen = u; break; } }
+    picks.push(chosen); attempted.add(chosen.id);
   }
   return picks;
 }
@@ -2216,7 +2244,10 @@ function openShop(chest) {
     _pendingBossShop = false;
     shopCards = _draftBossCards(3);
   } else {
-    shopCards = draftShopCards(3);
+    // Class-filtered terminal: pass the class filter from data link choice
+    const _cf = window._pendingClassFilter || null;
+    window._pendingClassFilter = null;
+    shopCards = draftShopCards(3, _cf);
   }
   _resetJoysticks();
   if (!isMultiplayer) gameState = 'shop';
@@ -2715,9 +2746,16 @@ function resetShopCadence() { _sectionsSinceLastShop = 0; }
 // --- Reward type definitions ---
 const DL_TYPES = {
   mod:     { id: 'mod',     label: 'MOD',     icon: '◆', color: '#0ff', desc: 'Open Mod Terminal (3 cards)' },
-  repair:  { id: 'repair',  label: 'REPAIR',  icon: '✚', color: '#4f4', desc: 'Restore 45 HP (or 15 barrier)' },
+  // Class-specific terminals — all cards from one element class
+  thermal: { id: 'thermal', label: 'THERMAL', icon: '🔥', color: '#f80', desc: '3 Thermal cards' },
+  cryo:    { id: 'cryo',    label: 'CRYO',    icon: '🧊', color: '#8ef', desc: '3 Cryo cards' },
+  arc:     { id: 'arc',     label: 'ARC',     icon: '⚡', color: '#4ff', desc: '3 Arc cards' },
+  pulse:   { id: 'pulse',   label: 'PULSE',   icon: '💨', color: '#cef', desc: '3 Pulse cards' },
+  corrupt: { id: 'corrupt', label: 'CORRUPT', icon: '☣', color: '#a4f', desc: '3 Corrupt cards' },
+  core:    { id: 'core',    label: 'CORE',    icon: '⚙', color: '#aaa', desc: '3 weapon/generic cards' },
+  repair:  { id: 'repair',  label: 'REPAIR',  icon: '✚', color: '#4f4', desc: 'Restore 45 HP' },
   reforge: { id: 'reforge', label: 'REFORGE', icon: '⚒', color: '#f80', desc: 'Upgrade an existing mod +1 level' },
-  bits:    { id: 'bits',    label: 'BITS',    icon: '⬡', color: '#ff0', desc: '' }, // desc set dynamically
+  bits:    { id: 'bits',    label: 'BITS',    icon: '⬡', color: '#ff0', desc: '' },
   trial:   { id: 'trial',   label: 'TRIAL',   icon: '☠', color: '#f44', desc: 'Harder section → guaranteed rare card' },
 };
 
@@ -2795,82 +2833,88 @@ function _dlBitsAmount() {
   return Math.max(30, Math.floor(30 + trenchSection * 1.2));
 }
 
+// --- Pick a class terminal type for data link ---
+function _pickClassTerminal(exclude) {
+  const classes = ['thermal','cryo','arc','pulse','corrupt'];
+  // Weight: classes the player has invested in get higher weight (deepen build)
+  // Classes not yet touched get moderate weight (encourage branching)
+  const weights = {};
+  let bestClass = null, bestCount = 0;
+  for (const cls of classes) {
+    if (exclude && exclude.has(cls)) continue;
+    const count = _countClassCards(cls);
+    weights[cls] = 10 + count * 8; // invested classes weigh more
+    if (count === 0) weights[cls] = 15; // untouched classes get a branching bonus
+    if (count > bestCount) { bestCount = count; bestClass = cls; }
+  }
+  // Research focus: heavy bias
+  if (_researchFocus && !exclude?.has(_researchFocus)) weights[_researchFocus] = (weights[_researchFocus] || 0) + 30;
+  const totalW = Object.values(weights).reduce((s, w) => s + w, 0);
+  if (totalW <= 0) return classes[Math.floor(Math.random() * classes.length)];
+  let roll = Math.random() * totalW;
+  for (const [cls, w] of Object.entries(weights)) { roll -= w; if (roll <= 0) return cls; }
+  return bestClass || classes[0];
+}
+
 // --- Generate the two Data Link options ---
 function generateDataLinkChoice() {
   const lp = getLocalPlayer();
   const hpPct = lp ? (lp.hp / lp.maxHp) : 1;
-  const totalCards = _countTotalCards();
   const upgradeableCards = _countUpgradeableCards();
   const lastChoice = _dlChoiceHistory.length > 0 ? _dlChoiceHistory[_dlChoiceHistory.length - 1] : null;
-  const hasClassCards = ['thermal', 'cryo', 'arc', 'pulse', 'corrupt'].some(c => _countClassCards(c) > 0);
 
-  // Build weight pool
-  const pool = {};
-  // MOD — always available
-  pool.mod = 55;
-  if (!hasClassCards) pool.mod += 20;
-  if (lastChoice === 'mod') pool.mod -= 15;
-  if (_dlModDrought >= 3) pool.mod += 30; // drought protection
+  // Every 4th eligible section: one slot is a CORE terminal (weapon/generic cards)
+  const _dlCount = _dlChoiceHistory.length;
+  const isCoreSection = _dlCount > 0 && _dlCount % 4 === 0;
 
-  // REPAIR — only if not at full health
+  // ---- Slot 1: always a class or core terminal ----
+  let slot1;
+  if (isCoreSection) {
+    slot1 = 'core';
+  } else {
+    slot1 = _pickClassTerminal(null);
+  }
+
+  // ---- Slot 2: situational (class terminal, repair, reforge, or bits) ----
+  let slot2;
+  const _slot2Pool = {};
+
+  // Second class terminal — different from slot1
+  const slot2Class = _pickClassTerminal(new Set([slot1]));
+  _slot2Pool[slot2Class] = 40;
+
+  // REPAIR — if hurt
   if (hpPct < 1.0) {
-    pool.repair = 30;
-    if (hpPct < 0.5) pool.repair += 25;
-    if (hpPct < 0.3) pool.repair += 15;
-    if (lastChoice === 'repair') pool.repair -= 20;
+    _slot2Pool.repair = 20;
+    if (hpPct < 0.5) _slot2Pool.repair += 25;
+    if (hpPct < 0.3) _slot2Pool.repair += 15;
+    if (lastChoice === 'repair') _slot2Pool.repair -= 15;
   }
 
-  // REFORGE — only if 2+ upgradeable cards
+  // REFORGE — if 2+ upgradeable cards
   if (upgradeableCards >= 2) {
-    pool.reforge = 25;
-    const maxClassCount = Math.max(...['thermal','cryo','arc','pulse','corrupt'].map(c => _countClassCards(c)));
-    if (maxClassCount >= 3) pool.reforge += 15;
-    // After boss kill — boost reforge
-    if (_isBossSection(trenchSection)) pool.reforge += 20;
+    _slot2Pool.reforge = 20;
+    if (_isBossSection(trenchSection)) _slot2Pool.reforge += 15;
   }
 
-  // BITS — always available
-  pool.bits = 20;
-  if (trenchSection >= 30) pool.bits -= 10;
-  if (lastChoice === 'bits') pool.bits -= 10;
+  // BITS — always an option but lower weight
+  _slot2Pool.bits = 12;
+  if (lastChoice === 'bits') _slot2Pool.bits -= 8;
 
-  // TRIAL — removed from reward pool
+  // Clamp
+  for (const k in _slot2Pool) { _slot2Pool[k] = Math.max(0, _slot2Pool[k]); }
 
-  // Clamp all weights to >= 0
-  for (const k in pool) { pool[k] = Math.max(0, pool[k]); }
+  // Weighted draw for slot 2
+  const s2Total = Object.values(_slot2Pool).reduce((s, w) => s + w, 0);
+  let s2Roll = Math.random() * s2Total;
+  slot2 = Object.keys(_slot2Pool)[0];
+  for (const [type, w] of Object.entries(_slot2Pool)) { s2Roll -= w; if (s2Roll <= 0) { slot2 = type; break; } }
 
-  // First choice of the run: always include MOD
-  if (_dlFirstChoice) {
-    pool.mod = 999; // guarantee MOD is picked first
-  }
+  const picks = [slot1, slot2];
 
-  // Draw 2 without replacement using weighted random
-  const picks = [];
-  const remaining = { ...pool };
-  for (let i = 0; i < 2; i++) {
-    const totalW = Object.values(remaining).reduce((s, w) => s + w, 0);
-    if (totalW <= 0) break;
-    let r = Math.random() * totalW;
-    for (const [type, w] of Object.entries(remaining)) {
-      r -= w;
-      if (r <= 0) {
-        picks.push(type);
-        delete remaining[type];
-        break;
-      }
-    }
-  }
-
-  // Hard rule: at least one build-advancing option (mod or reforge)
-  if (!picks.includes('mod') && !picks.includes('reforge')) {
-    picks[Math.floor(Math.random() * 2)] = 'mod';
-  }
-
-  // Ensure exactly 2
-  while (picks.length < 2) picks.push('mod');
-
-  // Track drought
-  if (picks.includes('mod')) _dlModDrought = 0;
+  // Track drought (any class terminal counts as "got a mod")
+  const _classTypes = new Set(['thermal','cryo','arc','pulse','corrupt','core']);
+  if (picks.some(p => _classTypes.has(p))) _dlModDrought = 0;
   else _dlModDrought++;
 
   return picks;
@@ -2977,13 +3021,18 @@ function claimDataLinkChest(barrel) {
   }
 
   // Spill out the reward as a physical pickup or object
+  const _classTerminalTypes = new Set(['thermal','cryo','arc','pulse','corrupt','core','mod']);
+  if (_classTerminalTypes.has(typeId)) {
+    // Class terminal or generic mod: spawn a shop chest with class filter
+    _dlChoicePending = true;
+    window._pendingClassFilter = (typeId === 'mod') ? null : typeId;
+    spawnShopChest(bx, by);
+    const _termLabel = typeId === 'mod' ? 'MOD TERMINAL' : (typeId === 'core' ? 'CORE TERMINAL' : (DL_TYPES[typeId]?.label || typeId.toUpperCase()) + ' TERMINAL');
+    addFloatingText(bx, by - 30, _termLabel, DL_TYPES[typeId]?.color || '#0ff');
+  }
   switch (typeId) {
-    case 'mod':
-      // Mod terminal materializes where the chest was — door stays locked until shop closes
-      _dlChoicePending = true;
-      spawnShopChest(bx, by);
-      addFloatingText(bx, by - 30, 'MOD TERMINAL', '#0ff');
-      break;
+    case 'mod': case 'thermal': case 'cryo': case 'arc': case 'pulse': case 'corrupt': case 'core':
+      break; // handled above
 
     case 'repair':
       // Spill health pickups — 1 large (25 HP) + 2 small (10 HP) = 45 HP total
