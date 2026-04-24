@@ -17418,6 +17418,118 @@ function renderMenuBackground() {
   ctx.globalAlpha=1;
 }
 
+// ---- PARALLAX BACKGROUND ----
+// Three visual layers at different virtual depths so the arena feels like a
+// cavernous cyber-space instead of a flat grid. Positions pre-generated once
+// and wrapped modulo a large virtual space so camera movement scrolls them
+// at a fraction of world speed.
+function _renderParallaxBackground() {
+  const w = canvas.width, h = canvas.height;
+  const t = performance.now();
+  // Lazy init
+  if (!window._pxInit) {
+    window._pxStars = [];
+    for (let i = 0; i < 140; i++) {
+      window._pxStars.push({
+        bx: Math.random() * 4000 - 2000,
+        by: Math.random() * 4000 - 2000,
+        phase: Math.random() * Math.PI * 2,
+        size: 0.7 + Math.random() * 0.7,
+      });
+    }
+    window._pxGlyphs = [];
+    const GG = '░▓▒{}◆╳█∆◇⌘';
+    for (let i = 0; i < 22; i++) {
+      window._pxGlyphs.push({
+        bx: Math.random() * 3200 - 1600,
+        by: Math.random() * 3200 - 1600,
+        ch: GG[Math.floor(Math.random() * GG.length)],
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    window._pxStreams = [];
+    for (let i = 0; i < 10; i++) {
+      window._pxStreams.push({
+        bx: Math.random() * 3600 - 1800,
+        by: Math.random() * 3600 - 1800,
+        speed: 0.015 + Math.random() * 0.025,
+        phase: Math.random() * 1000,
+      });
+    }
+    window._pxInit = true;
+  }
+  // Pick parallax accent color from domain so background matches theme
+  let _pxAccent = '#a4f';
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    const _pxd = trenchSections[trenchSection].domain;
+    if (_pxd && _pxd.accentColor) _pxAccent = _pxd.accentColor;
+  }
+  // Layer 1: FAR — dim pulsing stars at 0.12x parallax
+  {
+    const f = 0.12, TILE = 4000;
+    const oX = -camera.x * f, oY = -camera.y * f;
+    ctx.fillStyle = '#8ab';
+    ctx.shadowColor = '#aac'; ctx.shadowBlur = 4;
+    for (let i = 0; i < window._pxStars.length; i++) {
+      const s = window._pxStars[i];
+      let sx = ((s.bx + oX) % TILE + TILE) % TILE - TILE/2 + w/2;
+      let sy = ((s.by + oY) % TILE + TILE) % TILE - TILE/2 + h/2;
+      if (sx < -5 || sx > w + 5 || sy < -5 || sy > h + 5) continue;
+      const pulse = 0.3 + Math.sin(t * 0.001 + s.phase) * 0.35;
+      ctx.globalAlpha = pulse * 0.6;
+      ctx.beginPath();
+      ctx.arc(sx, sy, s.size, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+  // Layer 2: MID — vertical data streams at 0.35x parallax
+  {
+    const f = 0.35, TILE = 3600;
+    const oX = -camera.x * f, oY = -camera.y * f;
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = _pxAccent;
+    ctx.shadowColor = _pxAccent; ctx.shadowBlur = 4;
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < window._pxStreams.length; i++) {
+      const s = window._pxStreams[i];
+      let sx = ((s.bx + oX) % TILE + TILE) % TILE - TILE/2 + w/2;
+      const headY = (t * s.speed + s.phase) % (h + 400) - 200;
+      let syBase = ((s.by + oY + headY) % TILE + TILE) % TILE - TILE/2 + h/2;
+      if (sx < -20 || sx > w + 20) continue;
+      // Draw 6 chars fading upward
+      const chars = '10█▓░▒01';
+      for (let c = 0; c < 6; c++) {
+        ctx.globalAlpha = 0.28 * (1 - c * 0.16);
+        const sy = syBase - c * 14;
+        if (sy < -20 || sy > h + 20) continue;
+        ctx.fillText(chars[(i + c + Math.floor(t * 0.001)) % chars.length], sx, sy);
+      }
+    }
+    ctx.textBaseline = 'alphabetic';
+    ctx.shadowBlur = 0;
+  }
+  // Layer 3: NEAR — drifting cyber glyphs at 0.6x parallax
+  {
+    const f = 0.6, TILE = 3200;
+    const oX = -camera.x * f, oY = -camera.y * f;
+    ctx.font = '15px monospace';
+    ctx.fillStyle = _pxAccent;
+    ctx.shadowColor = _pxAccent; ctx.shadowBlur = 6;
+    for (let i = 0; i < window._pxGlyphs.length; i++) {
+      const g = window._pxGlyphs[i];
+      const drift = Math.sin(t * 0.0004 + g.phase) * 22;
+      let gx = ((g.bx + oX + drift) % TILE + TILE) % TILE - TILE/2 + w/2;
+      let gy = ((g.by + oY + Math.cos(t * 0.0005 + g.phase) * 18) % TILE + TILE) % TILE - TILE/2 + h/2;
+      if (gx < -20 || gx > w + 20 || gy < -20 || gy > h + 20) continue;
+      ctx.globalAlpha = 0.12 + Math.sin(t * 0.002 + g.phase) * 0.05;
+      ctx.fillText(g.ch, gx, gy);
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+}
+
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
@@ -17439,6 +17551,12 @@ function render() {
     }
   }
   const ox=-camera.x+canvas.width/2+screenShake.x,oy=-camera.y+canvas.height/2+screenShake.y;
+  // ---- PARALLAX BACKGROUND LAYERS ----
+  // Rendered in SCREEN space (before world translate) so each layer moves at
+  // its own fraction of camera speed. Far stars barely drift, mid glyphs drift
+  // more, giving the flat arena real depth. Skipped in shell (which has its own
+  // cyber-board background) and menus.
+  if (gameState === 'playing' && gameMode !== 'shell') _renderParallaxBackground();
   ctx.save();ctx.translate(ox,oy);
 
   // Floor + walls with room themes
@@ -19899,11 +20017,50 @@ function render() {
   // Players (all)
   for(const p of players){
     if(!p.alive)continue;
+    // ---- AFTERIMAGE TRAIL ----
+    // Persistent motion smear so the player's movement is legible from a glance.
+    // Sampled ~25Hz regardless of display refresh so the effect feels consistent
+    // on 60/120Hz screens.
+    if (!p._afterTrail) p._afterTrail = [];
+    const _atNow = performance.now();
+    if (!p._lastTrailT || _atNow - p._lastTrailT > 38) {
+      p._afterTrail.push({ x: p.x, y: p.y, t: _atNow });
+      if (p._afterTrail.length > 5) p._afterTrail.shift();
+      p._lastTrailT = _atNow;
+    }
+    // Draw trail BEFORE the body so the current frame sits on top
+    const _trailCol = p.damageFlash>0 ? '#f44' : p.color;
+    for (let ti = 0; ti < p._afterTrail.length; ti++) {
+      const _tp = p._afterTrail[ti];
+      const _age = (_atNow - _tp.t) / 260;
+      if (_age >= 1) continue;
+      const _aA = (1 - _age) * 0.18;
+      ctx.save();
+      ctx.globalAlpha = _aA;
+      ctx.translate(_tp.x, _tp.y);
+      ctx.shadowColor = _trailCol; ctx.shadowBlur = 10;
+      ctx.fillStyle = _trailCol;
+      ctx.beginPath(); ctx.arc(0, 0, PLAYER_RADIUS * (0.9 - _age * 0.3), 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
     // Gun rotates with aim angle
     ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
     if(p.invincible>0&&Math.floor(p.invincible/50)%2===0)ctx.globalAlpha=0.5;
     const w=p.weapons[p.currentWeapon],def=WEAPON_DEFS[w.type];
     ctx.shadowColor=def.color;ctx.shadowBlur=8;ctx.fillStyle=def.color;ctx.fillRect(PLAYER_RADIUS-2,-3,14,6);ctx.shadowBlur=0;
+    // Muzzle tip — always-visible pulsing glow at barrel end so the gun reads
+    // as "armed" even between shots. Brightens dramatically on muzzle flash.
+    const _muzT = performance.now() * 0.01;
+    const _muzPulse = 0.55 + Math.sin(_muzT) * 0.25;
+    ctx.shadowColor = def.color; ctx.shadowBlur = 12;
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = _muzPulse;
+    ctx.beginPath(); ctx.arc(PLAYER_RADIUS + 12, 0, 2, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = _muzPulse * 0.5;
+    ctx.fillStyle = def.color;
+    ctx.beginPath(); ctx.arc(PLAYER_RADIUS + 12, 0, 4, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     if(w.muzzleFlash>0){ctx.shadowColor=def.color;ctx.shadowBlur=20;ctx.fillStyle='#fff';ctx.globalAlpha=w.muzzleFlash/6;ctx.beginPath();ctx.arc(PLAYER_RADIUS+12,0,5+Math.random()*3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=w.muzzleFlash/6*0.5;ctx.fillStyle=def.color;ctx.beginPath();ctx.arc(PLAYER_RADIUS+12,0,10+Math.random()*4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     ctx.restore();
     // Body (not rotated with gun)
@@ -19996,9 +20153,56 @@ function render() {
     } else if(_elemColor){
       ctx.globalAlpha=0.25+Math.sin(performance.now()*0.008)*0.1;ctx.strokeStyle=_elemColor;ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS-3,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
     }
-    // Direction dot faces movement direction
-    const dotAngle=isMobile?(p.angle||0):(p.moveAngle||0);
-    ctx.shadowColor=_pc;ctx.shadowBlur=6;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(Math.cos(dotAngle)*PLAYER_RADIUS*0.5,Math.sin(dotAngle)*PLAYER_RADIUS*0.5,2.5,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+    // ---- TRIANGULAR AIM CORE ----
+    // Bright triangle pointing along aim. Replaces the direction dot with a
+    // shape that instantly reads as "this is you, you're aiming there."
+    {
+      ctx.save();
+      ctx.rotate(p.angle || 0);
+      const _triR = PLAYER_RADIUS * 0.72;
+      const _triColor = _isDashing ? '#fff' : (_elemColor || _pc);
+      ctx.shadowColor = _triColor; ctx.shadowBlur = 10;
+      // Outer white triangle
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.moveTo(_triR, 0);
+      ctx.lineTo(-_triR * 0.55, -_triR * 0.62);
+      ctx.lineTo(-_triR * 0.55, _triR * 0.62);
+      ctx.closePath();
+      ctx.fill();
+      // Inner colored core
+      ctx.fillStyle = _triColor;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.moveTo(_triR * 0.72, 0);
+      ctx.lineTo(-_triR * 0.32, -_triR * 0.44);
+      ctx.lineTo(-_triR * 0.32, _triR * 0.44);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+    // ---- ROTATING HEX SHIELD RING ----
+    // Six orbiting dots that signal the player is a unit/entity at a glance.
+    // Brighter + larger when barrier is active so shield pickups read visually.
+    {
+      const _hexT = performance.now() * 0.0009;
+      const _hexR = PLAYER_RADIUS + 6;
+      const _barrierPct = Math.min(1, (p.barrier || 0) / 50);
+      ctx.shadowColor = _bodyColor; ctx.shadowBlur = 4 + _barrierPct * 8;
+      ctx.fillStyle = _bodyColor;
+      for (let _hi = 0; _hi < 6; _hi++) {
+        const _ha = _hexT + (_hi / 6) * Math.PI * 2;
+        const _hx = Math.cos(_ha) * _hexR;
+        const _hy = Math.sin(_ha) * _hexR;
+        ctx.globalAlpha = 0.45 + _barrierPct * 0.45;
+        ctx.beginPath();
+        ctx.arc(_hx, _hy, 1.6 + _barrierPct * 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
     ctx.globalAlpha=1;ctx.restore();
 
     // Name tag — only show in multiplayer (solo player doesn't need "You" above their head)
