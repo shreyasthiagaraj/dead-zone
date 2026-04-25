@@ -1495,19 +1495,14 @@ const UPGRADE_POOL = [
   // ---- DASH: CRYO ----
   { id:'cryo_wake', name:'COLD FRONT', rarity:'common', max:2, icon:'🧊', color:'#6df',
     descs:[
-      'LEVEL 1: Dash endpoint blasts a frost cone AHEAD. Enemies in front get 3 CHILL stacks.',
-      'LEVEL 2: Wider cone, center enemies get 4 stacks (near-FROZEN).',
+      'LEVEL 1: Dash endpoint unleashes a blizzard AHEAD — wide cone, 3 CHILL stacks, 20 dmg.',
+      'LEVEL 2: Massive blizzard. Center enemies get 5 stacks (instant FROZEN). Edge get 3.',
     ], flavor:'the cold arrives before you do.' },
-  { id:'freeze_pulse', name:'FREEZE PULSE', rarity:'common', max:2, icon:'❆', color:'#8ef',
-    descs:[
-      'LEVEL 1: Dash endpoint applies CHILL in a radius.',
-      'LEVEL 2: Already-CHILLED enemies become FROZEN instantly.',
-    ], flavor:'flash freeze at the point of impact.' },
   { id:'shatter_step', name:'SHATTER STEP', rarity:'rare', max:2, icon:'❄', color:'#aef',
     descs:[
       'LEVEL 1: FROZEN enemies near dash end take 2x damage.',
       'LEVEL 2: Shatter creates a splash AoE.',
-    ], flavor:'walk through ice. it breaks.', prereqs:['cryo_rounds|cryo_wake|freeze_pulse'] },
+    ], flavor:'walk through ice. it breaks.', prereqs:['cryo_rounds|cryo_wake'] },
   // ---- DASH: ARC ----
   { id:'static_wake', name:'STORM DASH', rarity:'common', max:2, icon:'⚡', color:'#4ff',
     descs:[
@@ -1574,7 +1569,7 @@ const UPGRADE_POOL = [
     descs:[
       'LEVEL 1: Guaranteed crit vs FROZEN enemies.',
       'LEVEL 2: Critting FROZEN shatters ALL frozen enemies within 100px.',
-    ], flavor:'the fracture point. one clean hit.', prereqs:['cryo_rounds|freeze_pulse'] },
+    ], flavor:'the fracture point. one clean hit.', prereqs:['cryo_rounds|cryo_wake'] },
   { id:'meltdown', name:'HEAT TRANSFER', rarity:'rare', max:2, icon:'🔥', color:'#f80',
     descs:[
       'LEVEL 1: OVERHEATED enemies that die ignite 2 nearby enemies.',
@@ -2083,7 +2078,7 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 const _CARD_CLASS_MAP = {};
 {
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber'];
-  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','freeze_pulse','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link'];
@@ -14958,33 +14953,43 @@ function update() {
           // Detonate overheated enemies
           if (isHost) { for (const fz of zombies) { if (fz.hp<=0||fz._overheat<=0) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<fpR) { damageZombie(fz, 30+fz._overheat, 0, 0); fz._overheat=0; fz._overheatTimer=0; for(let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fs=3+Math.random()*4;particles.push({x:fz.x,y:fz.y,vx:Math.cos(fa)*fs,vy:Math.sin(fa)*fs,life:16,maxLife:16,size:3+Math.random()*3,color:'#f80',type:'explosion'});} } } }
         }
-        // ---- COLD FRONT: frost cone AHEAD of dash endpoint ----
+        // ---- COLD FRONT: massive blizzard cone AHEAD of dash endpoint ----
         if (_rm.cryoWake > 0) {
           const cfDir = lp.dashDirX !== undefined ? Math.atan2(lp.dashDirY||0, lp.dashDirX||1) : lp.angle;
-          const cfR = _rm.cryoWake >= 2 ? 110 : 80;
-          const cfHalfAngle = _rm.cryoWake >= 2 ? Math.PI * 0.45 : Math.PI * 0.35;
-          // VFX: frost cone burst ahead
-          for(let i=0;i<16;i++){const a=cfDir+(Math.random()-0.5)*cfHalfAngle*2,s=4+Math.random()*5;particles.push({x:lp.x+Math.cos(cfDir)*10,y:lp.y+Math.sin(cfDir)*10,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:3+Math.random()*3,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});}
-          for(let i=0;i<6;i++){const a=cfDir+(Math.random()-0.5)*cfHalfAngle,d=20+Math.random()*40;particles.push({x:lp.x+Math.cos(a)*d,y:lp.y+Math.sin(a)*d,vx:Math.cos(a)*0.5,vy:Math.sin(a)*0.5,life:30,maxLife:30,size:6+Math.random()*5,color:'#8ef',type:'smoke'});}
-          decals.push({x:lp.x+Math.cos(cfDir)*30,y:lp.y+Math.sin(cfDir)*30,size:cfR*0.5,alpha:0.2,color:'#245'});
-          playSound(1200, 0.08, 'sine', 0.06); playSound(800, 0.06, 'sine', 0.08);
-          // Apply chill to enemies in the cone AHEAD
+          const cfR = _rm.cryoWake >= 2 ? 180 : 140;
+          const cfHalfAngle = _rm.cryoWake >= 2 ? Math.PI * 0.55 : Math.PI * 0.45;
+          // VFX: massive blizzard burst — dense ice shards spraying forward
+          for(let i=0;i<28;i++){
+            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*2, s=3+Math.random()*7;
+            const d=Math.random()*cfR*0.3;
+            particles.push({x:lp.x+Math.cos(cfDir)*d,y:lp.y+Math.sin(cfDir)*d,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22+Math.floor(Math.random()*10),maxLife:32,size:3+Math.random()*4,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});
+          }
+          // Frost mist clouds filling the cone
+          for(let i=0;i<10;i++){
+            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*1.5, d=20+Math.random()*cfR*0.7;
+            particles.push({x:lp.x+Math.cos(a)*d,y:lp.y+Math.sin(a)*d,vx:Math.cos(a)*0.4,vy:Math.sin(a)*0.4,life:40,maxLife:40,size:10+Math.random()*8,color:'#8ef',type:'smoke'});
+          }
+          // Expanding frost ring
+          particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:cfR,color:'#8ef',type:'wakering'});
+          // Ice ground decals
+          for(let i=0;i<4;i++){const da=cfDir+(Math.random()-0.5)*cfHalfAngle,dd=30+Math.random()*60;decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:18+Math.random()*12,alpha:0.25,color:'#245'});}
+          playSound(900, 0.1, 'sine', 0.08); playSound(500, 0.08, 'sine', 0.1); playSound(1400, 0.06, 'square', 0.04);
+          // Apply chill/freeze to enemies in the blizzard cone
           if (isHost) { for (const fz of zombies) { if (fz.hp<=0) continue;
             const fdx=fz.x-lp.x, fdy=fz.y-lp.y, fd=Math.sqrt(fdx*fdx+fdy*fdy);
             if (fd>cfR) continue;
             let da = Math.atan2(fdy,fdx) - cfDir; while(da>Math.PI)da-=Math.PI*2; while(da<-Math.PI)da+=Math.PI*2;
             if (Math.abs(da) > cfHalfAngle) continue;
             const closeness = 1 - fd/cfR;
-            const stacks = closeness > 0.6 ? (_rm.cryoWake >= 2 ? 4 : 3) : (_rm.cryoWake >= 2 ? 2 : 1);
-            applyChill(fz, stacks);
-            damageZombie(fz, 15, 0, 0, true);
+            if (_rm.cryoWake >= 2 && closeness > 0.5) {
+              // Lv2: center enemies instantly FROZEN
+              applyChill(fz, 5); fz._frozen = true; fz._frozenTimer = Math.max(fz._frozenTimer||0, 150);
+            } else {
+              const stacks = closeness > 0.5 ? 3 : (closeness > 0.2 ? 2 : 1);
+              applyChill(fz, stacks);
+            }
+            damageZombie(fz, Math.floor(20 + closeness * 15), 0, 0, true);
           } }
-        }
-        // ---- FREEZE PULSE: additional cryo endpoint burst ----
-        if (_rm.freezePulse > 0) {
-          const fpR2 = 80;
-          for(let i=0;i<12;i++){const a=(i/12)*Math.PI*2,s=4+Math.random()*3;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:16,maxLife:16,size:2+Math.random()*2,color:'#8ef',type:'spark'});}
-          if (isHost) { for (const fz of zombies) { if (fz.hp<=0) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<fpR2) { applyChill(fz, (_rm.freezePulse>=2 && fz._chill>0) ? 2 : 1); } } }
         }
         // ---- BLIGHT ZONE: corruption pool at dash ENDPOINT ----
         if (_rm.glitchWake > 0) {
