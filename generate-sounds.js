@@ -67,8 +67,8 @@ const SOUND_DEFS = [
 
   // ============ C. PLAYER ============
   ['dash',
-    'Filtered white-noise whoosh with glitch stutter and downward pitch sweep, phase-shift teleport feel, synthwave blink, short and satisfying',
-    0.5, 0.55],
+    'Brief soft whoosh of air, simple quick swoosh sound, plain rushing air pass, no metallic or digital elements, no musical tones, just a short puff of air',
+    0.5, 0.4],
   ['hurt',
     'Meaty body-hit thud with filtered noise for flesh impact and brief digital glitch overlay, punchy synthetic-organic player damage hit',
     0.5, 0.55],
