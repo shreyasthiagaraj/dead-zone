@@ -5285,9 +5285,9 @@ function spawnTrenchSectionFloorDecals(idx) {
   };
 
   // ---- CIRCUIT TRACES ----
-  // 2-4 orthogonal polylines per section, each ~3-5 CELL segments long.
-  // Endpoints get node dots. Color = domain accent but dim.
-  const traceCount = 2 + Math.floor(Math.random() * 3);
+  // 4-6 orthogonal polylines per section, each ~3-5 CELL segments long.
+  // Bumped count + alpha so the floor reads as a working motherboard.
+  const traceCount = 4 + Math.floor(Math.random() * 3);
   for (let ti = 0; ti < traceCount; ti++) {
     const start = _floorSpot();
     if (!start) continue;
@@ -5297,14 +5297,12 @@ function spawnTrenchSectionFloorDecals(idx) {
     const segs = 3 + Math.floor(Math.random() * 3);
     let lastDir = -1;
     for (let si = 0; si < segs; si++) {
-      // Pick a cardinal direction different from the last (so path bends)
       let dir;
       do { dir = Math.floor(Math.random() * 4); } while (dir === lastDir);
       lastDir = dir;
       const len = CELL_SIZE * (1 + Math.floor(Math.random() * 3));
       const nx = cx + (dir === 0 ? len : dir === 2 ? -len : 0);
       const ny = cy + (dir === 1 ? len : dir === 3 ? -len : 0);
-      // Abandon if the new endpoint is off a walkable tile or out of section
       if (nx < sxMin || nx > sxMax || ny < syMin || ny > syMax) break;
       const _gx = Math.floor(nx / CELL_SIZE), _gy = Math.floor(ny / CELL_SIZE);
       if (!dungeonGrid[_gy] || !dungeonGrid[_gy][_gx]) break;
@@ -5314,13 +5312,14 @@ function spawnTrenchSectionFloorDecals(idx) {
     if (path.length >= 2) {
       nodes.push({ x: cx, y: cy });
       decals.push({ type: 'circuit', x: start.x, y: start.y, path, nodes,
-        color: accent, alpha: 0.28 + Math.random() * 0.12, size: 1 });
+        color: accent, alpha: 0.55 + Math.random() * 0.15, size: 1 });
     }
   }
 
   // ---- WARNING STENCILS ----
-  // 1-2 text markers per section: "SECTOR 03", "RESTRICTED", domain code.
-  const stencilCount = 1 + (Math.random() < 0.5 ? 1 : 0);
+  // 2-3 text markers per section: "SECTOR 03", "RESTRICTED", domain code.
+  // Bigger font + brighter alpha so they read like floor signage.
+  const stencilCount = 2 + Math.floor(Math.random() * 2);
   const stencilMsgs = [
     `SECTOR ${String(idx + 1).padStart(2, '0')}`,
     'RESTRICTED',
@@ -5328,57 +5327,59 @@ function spawnTrenchSectionFloorDecals(idx) {
     'CAUTION',
     `BLOCK ${String.fromCharCode(65 + (idx % 26))}-${(idx % 9) + 1}`,
     'PROCEED',
+    'NO ENTRY',
+    `MEM-${String(idx * 7 % 999).padStart(3, '0')}`,
   ];
   for (let si = 0; si < stencilCount; si++) {
     const spot = _floorSpot();
     if (!spot) continue;
     const text = stencilMsgs[Math.floor(Math.random() * stencilMsgs.length)];
     decals.push({ type: 'stencil', x: spot.x, y: spot.y,
-      text, size: 13, color: accent, alpha: 0.22,
+      text, size: 18, color: accent, alpha: 0.55,
       _angle: (Math.random() - 0.5) * 0.3 });
   }
 
   // ---- DIRECTIONAL ARROWS ----
-  // 2-3 arrows at door edge pointing toward the gate, for obvious flow.
+  // 4 arrows at door edge pointing toward the gate, brighter + bigger.
   const doorY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
   const arrowBaseX = sec.x + (secW - 4) * CELL_SIZE;
-  for (let ai = 0; ai < 3; ai++) {
-    const ax = arrowBaseX + ai * 22;
-    const ay = doorY + (ai - 1) * 14;
+  for (let ai = 0; ai < 4; ai++) {
+    const ax = arrowBaseX + ai * 26;
+    const ay = doorY + (ai % 2 === 0 ? 0 : (ai < 2 ? -16 : 16));
     if (ax > sxMax) continue;
     const _gx = Math.floor(ax / CELL_SIZE), _gy = Math.floor(ay / CELL_SIZE);
     if (!dungeonGrid[_gy] || !dungeonGrid[_gy][_gx]) continue;
-    decals.push({ type: 'arrow', x: ax, y: ay, size: 8,
-      color: accent, alpha: 0.6, _angle: 0 });
+    decals.push({ type: 'arrow', x: ax, y: ay, size: 11,
+      color: accent, alpha: 0.85, _angle: 0 });
   }
 
   // ---- HAZARD CHEVRONS ----
-  // Near gaps and destructible props — these areas are already dangerous.
-  // Spawn 1-2 chevron strips per section.
-  if (Math.random() < 0.65) {
+  // 1-2 chevron strips per section, brighter + slightly larger.
+  const chevronCount = 1 + (Math.random() < 0.55 ? 1 : 0);
+  for (let chi = 0; chi < chevronCount; chi++) {
     const spot = _floorSpot();
-    if (spot) decals.push({ type: 'chevron', x: spot.x, y: spot.y,
-      size: 20, color: '#cc0', alpha: 0.18,
+    if (!spot) continue;
+    decals.push({ type: 'chevron', x: spot.x, y: spot.y,
+      size: 22, color: '#ff0', alpha: 0.4,
       _angle: (Math.random() < 0.5 ? 0 : Math.PI / 2) + (Math.random() - 0.5) * 0.2 });
   }
 
   // ---- MAINTENANCE HATCHES ----
-  // 1-2 small hatches per section. Subtle, just break up the grid.
-  const hatchCount = 1 + Math.floor(Math.random() * 2);
+  // 2-3 small hatches per section. Brighter + bigger so they break up the floor.
+  const hatchCount = 2 + Math.floor(Math.random() * 2);
   for (let hi = 0; hi < hatchCount; hi++) {
     const spot = _floorSpot();
     if (!spot) continue;
     decals.push({ type: 'hatch', x: spot.x, y: spot.y,
-      size: 14 + Math.random() * 4, color: accent, alpha: 0.32 });
+      size: 16 + Math.random() * 5, color: accent, alpha: 0.55 });
   }
 
   // ---- CHALK OUTLINES ----
-  // 0-1 body outline per section — environmental storytelling. Only spawn
-  // from domain 1+ (section 3+) so opening sections don't feel too grim.
-  if (idx >= 3 && Math.random() < 0.4) {
+  // 0-1 body outline per section, brighter so the body reads. From section 3+.
+  if (idx >= 3 && Math.random() < 0.45) {
     const spot = _floorSpot();
     if (spot) decals.push({ type: 'chalk', x: spot.x, y: spot.y,
-      size: 14, color: '#8af', alpha: 0.22,
+      size: 14, color: '#8cf', alpha: 0.5,
       _angle: Math.random() * Math.PI * 2 });
   }
 }
@@ -18271,10 +18272,10 @@ function render() {
     }
   }
 
-  // Decals — viewport-culled dispatch on d.type. No shadowBlur anywhere in the
-  // decal loop; the global neon amplifier would double it for every on-screen
-  // decal and tank mobile. Rely on the CSS saturate/brightness filter + the
-  // decal color for "glow."
+  // Decals — viewport-culled dispatch on d.type. Static signage decals (circuit,
+  // stencil, arrow, hatch, chalk, chevron) get small shadowBlur halos so they
+  // read past the lighting pass. Dynamic high-volume decals (blood, scorch,
+  // pockmark, footprint, speckle, residue) skip shadowBlur to keep mobile fast.
   {
     const _dvL = camera.x - canvas.width/2 - 40, _dvR = camera.x + canvas.width/2 + 40;
     const _dvT = camera.y - canvas.height/2 - 40, _dvB = camera.y + canvas.height/2 + 40;
@@ -18287,8 +18288,9 @@ function render() {
         // Default: blood/gore stain — existing behavior, unchanged
         ctx.beginPath(); ctx.arc(d.x, d.y, d.size, 0, Math.PI*2); ctx.fill();
       } else if (d.type === 'circuit') {
-        // PCB-style trace: stroked polyline + node dots. Path baked on spawn.
-        ctx.strokeStyle = d.color; ctx.lineWidth = 1;
+        // PCB-style trace: glowing polyline with bright inner core + node dots.
+        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
+        ctx.strokeStyle = d.color; ctx.lineWidth = 2;
         ctx.beginPath();
         const _pp = d.path;
         for (let _ci = 0; _ci < _pp.length; _ci++) {
@@ -18296,68 +18298,110 @@ function render() {
           else ctx.lineTo(_pp[_ci].x, _pp[_ci].y);
         }
         ctx.stroke();
-        if (d.nodes) for (const n of d.nodes) ctx.fillRect(n.x - 1, n.y - 1, 2, 2);
+        ctx.shadowBlur = 0;
+        // Bright inner core line on top of the glowy stroke
+        ctx.globalAlpha = Math.min(1, d.alpha * 1.8);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+        // Glowing node dots at the endpoints
+        ctx.globalAlpha = Math.min(1, d.alpha * 2);
+        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
+        ctx.fillStyle = d.color;
+        if (d.nodes) for (const n of d.nodes) {
+          ctx.beginPath(); ctx.arc(n.x, n.y, 2.5, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.shadowBlur = 0;
       } else if (d.type === 'stencil') {
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
         ctx.font = `bold ${d.size}px monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        // Glowing colored pass behind, crisp white pass on top so the text
+        // stays readable through fog and the background grid.
+        ctx.shadowColor = d.color; ctx.shadowBlur = 8;
+        ctx.fillText(d.text || 'SECTOR', 0, 0);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = Math.min(1, d.alpha * 1.6);
+        ctx.fillStyle = '#fff';
         ctx.fillText(d.text || 'SECTOR', 0, 0);
         ctx.restore();
       } else if (d.type === 'chevron') {
-        // Hazard chevrons — alternating yellow/black diagonal bands
+        // Hazard chevrons — alternating bright/dark diagonal bands with glow
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
+        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
         for (let _ci = 0; _ci < 4; _ci++) {
           ctx.fillStyle = _ci % 2 === 0 ? d.color : '#0a0a0a';
-          ctx.fillRect(-d.size + _ci * (d.size * 0.5), -d.size * 0.3, d.size * 0.4, d.size * 0.6);
+          ctx.fillRect(-d.size + _ci * (d.size * 0.5), -d.size * 0.35, d.size * 0.4, d.size * 0.7);
         }
+        ctx.shadowBlur = 0;
         ctx.restore();
       } else if (d.type === 'arrow') {
-        const _pulse = 0.45 + Math.sin(_dt * 0.003 + d.x * 0.01) * 0.4;
+        const _pulse = 0.6 + Math.sin(_dt * 0.003 + d.x * 0.01) * 0.4;
         ctx.globalAlpha = d.alpha * _pulse;
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
+        // Outer glowing colored arrow
+        ctx.shadowColor = d.color; ctx.shadowBlur = 14;
         ctx.beginPath();
         ctx.moveTo(d.size, 0);
-        ctx.lineTo(-d.size * 0.5, -d.size * 0.55);
+        ctx.lineTo(-d.size * 0.5, -d.size * 0.6);
         ctx.lineTo(-d.size * 0.2, 0);
-        ctx.lineTo(-d.size * 0.5, d.size * 0.55);
+        ctx.lineTo(-d.size * 0.5, d.size * 0.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        // Bright white inner arrowhead
+        ctx.globalAlpha = d.alpha * _pulse;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(d.size * 0.7, 0);
+        ctx.lineTo(-d.size * 0.25, -d.size * 0.32);
+        ctx.lineTo(-d.size * 0.05, 0);
+        ctx.lineTo(-d.size * 0.25, d.size * 0.32);
         ctx.closePath();
         ctx.fill();
         ctx.restore();
       } else if (d.type === 'hatch') {
-        // Maintenance hatch — bolted metal plate
+        // Maintenance hatch — glowing bolted metal plate
+        ctx.shadowColor = d.color; ctx.shadowBlur = 5;
         ctx.fillRect(d.x - d.size/2, d.y - d.size/2, d.size, d.size);
-        ctx.globalAlpha = d.alpha * 1.6;
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = Math.min(1, d.alpha * 1.4);
         ctx.fillStyle = '#050508';
-        ctx.fillRect(d.x - d.size/2 + 2, d.y - d.size/2 + 2, d.size - 4, d.size - 4);
+        ctx.fillRect(d.x - d.size/2 + 2.5, d.y - d.size/2 + 2.5, d.size - 5, d.size - 5);
         ctx.globalAlpha = d.alpha;
         ctx.fillStyle = d.color;
-        // Corner bolts
+        // Corner bolts (bigger so they read at distance)
         for (const [bx, by] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
           ctx.beginPath();
-          ctx.arc(d.x + bx * (d.size/2 - 3), d.y + by * (d.size/2 - 3), 1.5, 0, Math.PI*2);
+          ctx.arc(d.x + bx * (d.size/2 - 3), d.y + by * (d.size/2 - 3), 1.8, 0, Math.PI*2);
           ctx.fill();
         }
+        // Center label dash
+        ctx.globalAlpha = d.alpha * 0.8;
+        ctx.fillRect(d.x - 5, d.y - 0.6, 10, 1.2);
       } else if (d.type === 'chalk') {
-        // Chalk outline — faint silhouette of a fallen uploader
+        // Chalk outline — silhouette of a fallen uploader, with subtle glow
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
-        ctx.strokeStyle = d.color; ctx.lineWidth = 1;
+        ctx.shadowColor = d.color; ctx.shadowBlur = 4;
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1.6;
         ctx.setLineDash([3, 2]);
-        ctx.beginPath(); ctx.arc(0, -8, 4, 0, Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, -8, 4.5, 0, Math.PI*2); ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(0, -4); ctx.lineTo(0, 6);
-        ctx.moveTo(-5, 0); ctx.lineTo(5, 0);
-        ctx.moveTo(0, 6); ctx.lineTo(-3, 12);
-        ctx.moveTo(0, 6); ctx.lineTo(3, 12);
+        ctx.moveTo(0, -4); ctx.lineTo(0, 7);
+        ctx.moveTo(-6, 0); ctx.lineTo(6, 0);
+        ctx.moveTo(0, 7); ctx.lineTo(-4, 13);
+        ctx.moveTo(0, 7); ctx.lineTo(4, 13);
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.shadowBlur = 0;
         ctx.restore();
       } else if (d.type === 'scorch') {
         // Explosion scorch — outer ring + darker core
