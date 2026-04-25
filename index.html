@@ -12786,10 +12786,10 @@ function applyDashTrailEffects(lp) {
     particles.push({x:fx+(Math.random()-0.5)*20,y:fy+(Math.random()-0.5)*20,vx:ddx*2,vy:ddy*2,life:10,maxLife:10,size:2+Math.random(),color:Math.random()<0.5?'#8ef':'#cef',type:'spark'});
   }
 
-  // ---- STORM DASH (arc): lightning bolts strike random nearby enemies DURING dash ----
-  if (hasStatic && gameTime % 3 === 0) {
-    const boltCount = _m.staticWake >= 2 ? 3 : 2;
-    const stormR = 120;
+  // ---- STORM DASH (arc): lightning bolts strike enemies along the ENTIRE dash path ----
+  if (hasStatic && gameTime % 2 === 0) {
+    const boltCount = _m.staticWake >= 2 ? 4 : 3;
+    const stormR = 180; // wide range — hits enemies far from the path
     let boltsLeft = boltCount;
     for (const z of zombies) {
       if (boltsLeft <= 0) break;
@@ -12800,14 +12800,20 @@ function applyDashTrailEffects(lp) {
       damageZombie(z, 25, 0, 0);
       applyCharged(z);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
-      // Lightning bolt from player to enemy
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
-      for (let si = 0; si < 4; si++) { const sa = Math.random()*Math.PI*2; particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:8,maxLife:8,size:2,color:'#fff',type:'spark'}); }
+      // Long-lasting lightning bolt from player to enemy
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:22,maxLife:22,size:1.5,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+      // Bright spark burst at impact point
+      for (let si = 0; si < 8; si++) { const sa = Math.random()*Math.PI*2, ss=2+Math.random()*4; particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*ss,vy:Math.sin(sa)*ss,life:16,maxLife:16,size:2.5+Math.random(),color:Math.random()>0.4?'#4ff':'#fff',type:'spark'}); }
+      // Flash ring at struck enemy
+      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:10,maxLife:10,size:z.radius+15,color:'#4ff',type:'wakering'});
       // Lv2: each bolt chains to 1 nearby
       if (_m.staticWake >= 2) {
         let bestD = 10000, bestZ = null;
-        for (const oz of zombies) { if (oz === z || oz.hp <= 0 || hitSet.has(oz.zid)) continue; const d2 = (oz.x-z.x)**2+(oz.y-z.y)**2; if (d2 < bestD && d2 < 14400) { bestD = d2; bestZ = oz; } }
-        if (bestZ) { damageZombie(bestZ, 15, 0, 0); applyCharged(bestZ); hitSet.add(bestZ.zid); particles.push({x:z.x,y:z.y,vx:0,vy:0,life:10,maxLife:10,size:1,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y}); }
+        for (const oz of zombies) { if (oz === z || oz.hp <= 0 || hitSet.has(oz.zid)) continue; const d2 = (oz.x-z.x)**2+(oz.y-z.y)**2; if (d2 < bestD && d2 < 22500) { bestD = d2; bestZ = oz; } }
+        if (bestZ) { damageZombie(bestZ, 15, 0, 0); applyCharged(bestZ); hitSet.add(bestZ.zid);
+          particles.push({x:z.x,y:z.y,vx:0,vy:0,life:18,maxLife:18,size:1.5,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
+          for (let si=0;si<4;si++){const sa=Math.random()*Math.PI*2;particles.push({x:bestZ.x,y:bestZ.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#fff',type:'spark'});}
+        }
       }
       boltsLeft--;
     }
@@ -14857,12 +14863,12 @@ function update() {
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
       }
       if (_mods.staticWake > 0) {
-        // STORM DASH: lightning arcs from player to random NEARBY points
-        for (let li = 0; li < 2; li++) {
-          const a = Math.random()*Math.PI*2, r = 30+Math.random()*60;
-          particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:8,maxLife:8,size:1,color:Math.random()>0.3?'#4ff':'#fff',type:'lightning',tx:lp.x+Math.cos(a)*r,ty:lp.y+Math.sin(a)*r});
+        // STORM DASH: long arcs reaching far from player path
+        for (let li = 0; li < 3; li++) {
+          const a = Math.random()*Math.PI*2, r = 50+Math.random()*120;
+          particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:18,maxLife:18,size:1.5,color:Math.random()>0.3?'#4ff':'#fff',type:'lightning',tx:lp.x+Math.cos(a)*r,ty:lp.y+Math.sin(a)*r});
         }
-        for (let si = 0; si < 2; si++) { const sa=Math.random()*Math.PI*2; particles.push({x:lp.x+Math.cos(sa)*20,y:lp.y+Math.sin(sa)*20,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:6,maxLife:6,size:2,color:'#4ff',type:'spark'}); }
+        for (let si = 0; si < 3; si++) { const sa=Math.random()*Math.PI*2, sr=20+Math.random()*40; particles.push({x:lp.x+Math.cos(sa)*sr,y:lp.y+Math.sin(sa)*sr,vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:12,maxLife:12,size:2.5,color:'#4ff',type:'spark'}); }
       }
       if (_mods.glitchWake > 0) {
         // GLITCH WAKE: reality corruption zone — glitch blocks + digital noise fill radius
@@ -14958,19 +14964,22 @@ function update() {
           const cfDir = lp.dashDirX !== undefined ? Math.atan2(lp.dashDirY||0, lp.dashDirX||1) : lp.angle;
           const cfR = _rm.cryoWake >= 2 ? 180 : 140;
           const cfHalfAngle = _rm.cryoWake >= 2 ? Math.PI * 0.55 : Math.PI * 0.45;
-          // VFX: massive blizzard burst — dense ice shards spraying forward
-          for(let i=0;i<28;i++){
-            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*2, s=3+Math.random()*7;
-            const d=Math.random()*cfR*0.3;
-            particles.push({x:lp.x+Math.cos(cfDir)*d,y:lp.y+Math.sin(cfDir)*d,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22+Math.floor(Math.random()*10),maxLife:32,size:3+Math.random()*4,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});
+          // VFX: blizzard — ice shards spraying forward and drifting outward
+          for(let i=0;i<24;i++){
+            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*2, s=2+Math.random()*5;
+            const d=Math.random()*cfR*0.4;
+            particles.push({x:lp.x+Math.cos(cfDir)*d,y:lp.y+Math.sin(cfDir)*d,
+              vx:Math.cos(a)*s + Math.cos(cfDir)*2, vy:Math.sin(a)*s + Math.sin(cfDir)*2,
+              life:28+Math.floor(Math.random()*14),maxLife:42,size:2+Math.random()*3,
+              color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});
           }
-          // Frost mist clouds filling the cone
-          for(let i=0;i<10;i++){
-            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*1.5, d=20+Math.random()*cfR*0.7;
-            particles.push({x:lp.x+Math.cos(a)*d,y:lp.y+Math.sin(a)*d,vx:Math.cos(a)*0.4,vy:Math.sin(a)*0.4,life:40,maxLife:40,size:10+Math.random()*8,color:'#8ef',type:'smoke'});
+          // Light frost mist drifting forward — lower opacity
+          for(let i=0;i<8;i++){
+            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*1.2, d=30+Math.random()*cfR*0.6;
+            particles.push({x:lp.x+Math.cos(a)*d,y:lp.y+Math.sin(a)*d,
+              vx:Math.cos(cfDir)*1.2+(Math.random()-0.5)*0.5, vy:Math.sin(cfDir)*1.2+(Math.random()-0.5)*0.5,
+              life:50,maxLife:50,size:12+Math.random()*10,color:'#8ef',type:'smoke'});
           }
-          // Expanding frost ring
-          particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:cfR,color:'#8ef',type:'wakering'});
           // Ice ground decals
           for(let i=0;i<4;i++){const da=cfDir+(Math.random()-0.5)*cfHalfAngle,dd=30+Math.random()*60;decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:18+Math.random()*12,alpha:0.25,color:'#245'});}
           playSound(900, 0.1, 'sine', 0.08); playSound(500, 0.08, 'sine', 0.1); playSound(1400, 0.06, 'square', 0.04);
