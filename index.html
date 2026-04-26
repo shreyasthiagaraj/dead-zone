@@ -816,6 +816,16 @@ const minimapCtx = minimapCanvas.getContext('2d');
 // Cached radial gradients for hot-path additive lighting (created on first render, reused every frame).
 // Barrels: radius 40 (constant). Burning zombies: radius 60 (fixed; was 60+rand). Translate CTM to draw.
 let _barrelGlowGrad = null, _burnGlowGrad = null;
+// PERF: cached origin-centered radial gradients for terminals
+const _gradCache = {};
+function _getCachedGrad(ctx, color, radius) {
+  const key = color + '_' + radius;
+  if (_gradCache[key]) return _gradCache[key];
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+  g.addColorStop(0, color); g.addColorStop(0.5, color); g.addColorStop(1, 'transparent');
+  _gradCache[key] = g;
+  return g;
+}
 
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) && 'ontouchstart' in window;
 
@@ -19508,9 +19518,7 @@ function render() {
       const slScale = Math.min(1, slT * 1.2);
       // Spotlight glow
       ctx.globalAlpha = 0.1 * slPulse;
-      const _slGrd = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
-      _slGrd.addColorStop(0, '#a8f'); _slGrd.addColorStop(0.5, '#a8f'); _slGrd.addColorStop(1, 'transparent');
-      ctx.fillStyle = _slGrd; ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _getCachedGrad(ctx, '#a8f', 100); ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.scale(slScale, slScale);
       // Body
@@ -19554,8 +19562,7 @@ function render() {
       const _arScale = Math.min(1, _arT * 1.2);
       // Ambient glow
       ctx.globalAlpha = 0.1 * _arPulse;
-      const _arGrd = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
-      _arGrd.addColorStop(0, '#f80'); _arGrd.addColorStop(0.5, '#f80'); _arGrd.addColorStop(1, 'transparent');
+      const _arGrd = _getCachedGrad(ctx, '#f80', 100);
       ctx.fillStyle = _arGrd; ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.scale(_arScale, _arScale);
@@ -19592,9 +19599,7 @@ function render() {
       const fgPulse = 0.5 + Math.sin(performance.now() * 0.004 + 1.2) * 0.25;
       const fgScale = Math.min(1, fgT * 1.2);
       ctx.globalAlpha = 0.1 * fgPulse;
-      const _fgGrd = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
-      _fgGrd.addColorStop(0, '#ff0'); _fgGrd.addColorStop(0.5, '#ff0'); _fgGrd.addColorStop(1, 'transparent');
-      ctx.fillStyle = _fgGrd; ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _getCachedGrad(ctx, '#ff0', 100); ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.scale(fgScale, fgScale);
       ctx.fillStyle = '#120e05';
@@ -19637,9 +19642,7 @@ function render() {
       // Use the outer ctx.save()/translate(br.x, br.y) from the loop — just add bob + scale
       // ---- SPOTLIGHT: wide ambient glow visible across the room ----
       ctx.globalAlpha = 0.12 * dlPulse;
-      const _slGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 120);
-      _slGrad.addColorStop(0, dlColor); _slGrad.addColorStop(0.5, dlColor); _slGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = _slGrad; ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _getCachedGrad(ctx, dlColor, 120); ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.translate(0, bob);
       ctx.scale(scale, scale);
