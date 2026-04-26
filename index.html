@@ -17511,7 +17511,7 @@ function update() {
     }
     particles.length = _pw;
     // Hard cap: drop oldest entries via one slice-reassign (avoids O(n²) splice shifts)
-    const PARTICLE_CAP = 300;
+    const PARTICLE_CAP = isMobile ? 180 : 300;
     if (particles.length > PARTICLE_CAP) {
       particles.splice(0, particles.length - PARTICLE_CAP);
     }
@@ -18499,7 +18499,7 @@ function render() {
   ctx.globalAlpha = 1;
   const _renderH=ARENA_H;
   const _borderColor = _domainGridColor || '#b06';
-  ctx.shadowColor=_borderColor;ctx.shadowBlur=16;ctx.strokeStyle=_borderColor;ctx.lineWidth=2;ctx.strokeRect(0,0,ARENA_W,_renderH);ctx.shadowBlur=0;
+  ctx.strokeStyle=_borderColor;ctx.lineWidth=3;ctx.strokeRect(0,0,ARENA_W,_renderH);
 
   // Room neon accents — corner brackets + subtle pulse glow
   const _neonPulse=0.06+Math.sin(performance.now()*0.002)*0.03;
@@ -18511,13 +18511,12 @@ function render() {
     const pfx=Math.max(rx,vL),pfy=Math.max(ry,vT),pfw=Math.min(rx+rw,vR)-pfx,pfh=Math.min(ry+rh,vB)-pfy;
     ctx.globalAlpha=_neonPulse;ctx.fillStyle=r.theme.accent;ctx.fillRect(pfx,pfy,pfw,pfh);
     // Corner brackets — only draw if corner is in viewport
-    ctx.globalAlpha=0.95;ctx.shadowColor=r.theme.accent;ctx.shadowBlur=14;ctx.strokeStyle=r.theme.accent;ctx.lineWidth=2.5;
+    ctx.globalAlpha=0.85;ctx.strokeStyle=r.theme.accent;ctx.lineWidth=3;
     const cb=14;
     if(rx>vL-cb&&rx<vR&&ry>vT-cb&&ry<vB){ctx.beginPath();ctx.moveTo(rx,ry+cb);ctx.lineTo(rx,ry);ctx.lineTo(rx+cb,ry);ctx.stroke();}
     if(rx+rw>vL&&rx+rw<vR+cb&&ry>vT-cb&&ry<vB){ctx.beginPath();ctx.moveTo(rx+rw-cb,ry);ctx.lineTo(rx+rw,ry);ctx.lineTo(rx+rw,ry+cb);ctx.stroke();}
     if(rx>vL-cb&&rx<vR&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx,ry+rh-cb);ctx.lineTo(rx,ry+rh);ctx.lineTo(rx+cb,ry+rh);ctx.stroke();}
     if(rx+rw>vL&&rx+rw<vR+cb&&ry+rh>vT&&ry+rh<vB+cb){ctx.beginPath();ctx.moveTo(rx+rw-cb,ry+rh);ctx.lineTo(rx+rw,ry+rh);ctx.lineTo(rx+rw,ry+rh-cb);ctx.stroke();}
-    ctx.shadowBlur=0;
     // (Neon accent dot grid removed — 25+ arc/fill per large room, no gameplay value)
     ctx.globalAlpha=1;
   }
@@ -20928,16 +20927,18 @@ function render() {
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
-    ctx.shadowColor=_zc;ctx.shadowBlur=z.hitFlash>0?20:(12 + _zt * 6);
-    // Glow outline — brighter for higher tiers
-    ctx.fillStyle=_zc;ctx.globalAlpha=0.25 + _zt * 0.08;
+    // PERF: fake glow — larger dimmer shape instead of shadowBlur
+    ctx.fillStyle=_zc;ctx.globalAlpha=0.1 + _zt * 0.03;
+    _drawZombieShape(ctx, z.type, _zr+6+_zt*2);
+    ctx.fill();
+    ctx.globalAlpha=0.22 + _zt * 0.06;
     _drawZombieShape(ctx, z.type, _zr+2+_zt);
     ctx.fill();
     // Solid body
     ctx.globalAlpha=1;ctx.fillStyle=_zt >= 2 ? '#222' : '#1a1a1a';
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
-    ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();ctx.shadowBlur=0;
+    ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();
     // ---- CORRUPTED-PROGRAM SCANLINES + GLITCH CHUNKS ----
     // Makes every zombie look like a broken signal rather than a plain shape.
     // Scanlines are clipped inside the body silhouette so the outline stays
@@ -20984,12 +20985,13 @@ function render() {
     if (z._chargeUp > 0) {
       const _cpProg = z._chargeUp / 40; // 0→1
       const _cpR = _zr + 4 + _cpProg * 8;
-      ctx.globalAlpha = 0.3 + _cpProg * 0.5;
       ctx.strokeStyle = z.color;
-      ctx.shadowColor = z.color; ctx.shadowBlur = 10 + _cpProg * 10;
-      ctx.lineWidth = 1.5 + _cpProg;
+      // Fake glow ring
+      ctx.globalAlpha = 0.15 + _cpProg * 0.2; ctx.lineWidth = 3 + _cpProg * 2;
+      ctx.beginPath(); ctx.arc(0, 0, _cpR + 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.4 + _cpProg * 0.5; ctx.lineWidth = 1.5 + _cpProg;
       ctx.beginPath(); ctx.arc(0, 0, _cpR, 0, Math.PI * 2); ctx.stroke();
-      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.globalAlpha = 1;
     }
     // ---- BOSS PHASE BODY MODIFICATIONS ----
     if (z.boss || z.type === 'boss') {
@@ -21409,7 +21411,7 @@ function render() {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
       // Neon feel: widen the glow gate so almost every particle emits light —
       // smoke stays dim (by design), everything else glows including sparks.
-      const useGlow = sz >= 2 && p.type !== 'smoke';
+      const useGlow = false; // PERF: shadowBlur disabled on all particles
       if(p.type==='dashtrail'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=10; }
         ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.strokeStyle=p.color;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(p.x,p.y,sz,0,Math.PI*2);ctx.stroke();
@@ -21426,9 +21428,11 @@ function render() {
         ctx.globalAlpha = _hfAlpha * 0.9;
         ctx.strokeStyle = p.color;
         ctx.lineWidth = _hfLw;
-        ctx.shadowColor = p.color; ctx.shadowBlur = p._exposed ? 20 : p._crit ? 16 : 12;
+        // Fake glow: wider dimmer ring behind
+        ctx.globalAlpha = _hfAlpha * 0.3; ctx.lineWidth = _hfLw + 4;
         ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
-        ctx.shadowBlur = 0;
+        ctx.globalAlpha = _hfAlpha * 0.9; ctx.lineWidth = _hfLw;
+        ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
       } else if(p.type==='wakering'){
         // Expanding ring — starts small, grows to p.size over lifetime, alpha
         // fades out. Dropped by each wake card to show the bounds of its
@@ -21436,16 +21440,14 @@ function render() {
         const _prog = 1 - p.life/p.maxLife; // 0→1 across lifetime
         const _rr = Math.max(4, p.size * _prog);
         const _aa = (p.life/p.maxLife);
-        ctx.shadowColor = p.color; ctx.shadowBlur = 12;
         ctx.strokeStyle = p.color;
+        // Fake glow: wider dimmer ring
+        ctx.lineWidth = 4 + (1 - _prog) * 2;
+        ctx.globalAlpha = _aa * 0.2;
+        ctx.beginPath(); ctx.arc(p.x, p.y, _rr + 3, 0, Math.PI*2); ctx.stroke();
         ctx.lineWidth = 2 + (1 - _prog) * 1.2;
-        ctx.globalAlpha = _aa * 0.55;
+        ctx.globalAlpha = _aa * 0.6;
         ctx.beginPath(); ctx.arc(p.x, p.y, _rr, 0, Math.PI*2); ctx.stroke();
-        // Bright inner ring — thinner, higher alpha — for definition
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = _aa * 0.85;
-        ctx.beginPath(); ctx.arc(p.x, p.y, _rr * 0.92, 0, Math.PI*2); ctx.stroke();
-        ctx.shadowBlur = 0;
       } else if(p.type==='glitchtext'){
         // Flickering glitch character — dashes / death / corruption spills
         const _flicker = Math.random() > 0.25 ? 1 : 0.25;
@@ -21745,7 +21747,8 @@ function render() {
   }}
 
   // Dynamic lighting — additive glow from explosions, muzzle flashes, barrels
-  {const dlx=-camera.x+canvas.width/2+screenShake.x,dly=-camera.y+canvas.height/2+screenShake.y;
+  // PERF: skip on mobile — gradient creation per light source is expensive
+  if (!isMobile) {const dlx=-camera.x+canvas.width/2+screenShake.x,dly=-camera.y+canvas.height/2+screenShake.y;
   ctx.save();ctx.globalCompositeOperation='lighter';
   // Explosion light
   for(const e of explosions){const t=e.life/e.maxLife,r=e.radius*2.5*t;const sx=e.x+dlx,sy=e.y+dly;
