@@ -4760,6 +4760,7 @@ function spawnTrenchSection(idx) {
     // ---- BOSS INTRO ----
     triggerGlitchSurge(0.6, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
+    hapticBossIntro();
     // Big dramatic particle burst at boss spawn point
     for (let bi = 0; bi < 40; bi++) {
       const ba = (bi / 40) * Math.PI * 2, bs = 3 + Math.random() * 6;
@@ -4851,6 +4852,7 @@ function updateCheckpointRoom(sec, TW) {
 
     // Save checkpoint
     saveCheckpoint();
+    hapticCheckpoint();
 
     // Clear any obstacles inside the checkpoint section — it's a safe room and
     // the generator template left dark blocks that looked like scenery. Open
@@ -6560,6 +6562,7 @@ function applyChill(z, stacks, force) {
     z._frozenTimer = Math.min(300, (z._frozenTimer || 0) + ext); // cap at 5s
   } else if (z._chill >= threshold) {
     z._frozen = true;
+    hapticFreeze();
     const frozenDur = m.coldSnap >= 2 ? 210 : 150;
     z._frozenTimer = frozenDur;
     z._chill = 0;
@@ -8427,13 +8430,44 @@ function playWeaponSound(weaponType, fallbackSound) {
   if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, weaponType==='pistol'?0.25:0.15);
 }
 
-function playHitSound() { if (!playSfx('zombie_hit', 0.3)) { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); } }
-function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); }
-function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } }
-function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); }
-function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); }
-function playExplosionSound() { if (!playSfx('explosion', 0.7)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } }
-function playIgniteSound() { if (!playSfx('ignite', 0.25)) { playSound(200,0.12,'sawtooth',0.08); playSound(120,0.18,'square',0.05); } }
+// ============================================================
+// HAPTIC FEEDBACK — proportional vibration for key game moments
+// Light taps for small events, heavy rumbles for big impacts.
+// Throttled to prevent buzzing on rapid-fire events.
+// ============================================================
+let _hapticLastTime = 0;
+const _hapticEnabled = typeof navigator !== 'undefined' && !!navigator.vibrate;
+function haptic(ms, minInterval) {
+  if (!_hapticEnabled || !isMobile) return;
+  const now = performance.now();
+  if (minInterval && now - _hapticLastTime < minInterval) return;
+  _hapticLastTime = now;
+  try { navigator.vibrate(ms); } catch(e) {}
+}
+// Named haptic patterns — readable at call sites
+function hapticShot()       { haptic(4, 80); }      // barely-there pulse per bullet
+function hapticHit()        { haptic(8, 50); }       // tiny tap on enemy hit
+function hapticKill()       { haptic(20, 40); }      // satisfying thud on kill
+function hapticEliteKill()  { haptic([20,10,30], 0); } // double-tap for elite/boss kill
+function hapticDash()       { haptic(15, 0); }       // quick burst
+function hapticHurt()       { haptic(40, 100); }     // sharp buzz — you got hit
+function hapticDeath()      { haptic([50,30,80], 0); } // long fade
+function hapticExplosion()  { haptic(30, 60); }      // medium thud
+function hapticSpecial()    { haptic(25, 0); }       // special weapon fire
+function hapticPickup()     { haptic(6, 100); }      // gentle confirmation
+function hapticLevelUp()    { haptic([10,20,10,30], 0); } // celebration pattern
+function hapticBossIntro()  { haptic([30,20,30,20,60], 0); } // dramatic rumble
+function hapticCheckpoint() { haptic([10,30,10], 0); } // saved confirmation
+function hapticOverheat()   { haptic([8,15,8], 200); } // warning buzz
+function hapticFreeze()     { haptic(12, 100); }     // status applied
+
+function playHitSound() { if (!playSfx('zombie_hit', 0.3)) { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); } hapticHit(); }
+function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); hapticKill(); }
+function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } hapticPickup(); }
+function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); hapticDash(); }
+function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); hapticHurt(); }
+function playExplosionSound() { if (!playSfx('explosion', 0.7)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } hapticExplosion(); }
+function playIgniteSound() { if (!playSfx('ignite', 0.25)) { playSound(200,0.12,'sawtooth',0.08); playSound(120,0.18,'square',0.05); } haptic(10, 100); }
 function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
 function playRepairSound() {
   // Procedural welding sound — bright crackle + sizzle
@@ -8460,7 +8494,7 @@ function playRepairSound() {
   } catch(e) {}
 }
 function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.4)) playSound(300,0.05,'sine',0.06); }
-function playLevelCompleteSound() { playSfx('level_complete', 0.6); }
+function playLevelCompleteSound() { playSfx('level_complete', 0.6); hapticLevelUp(); }
 function playGameOverSound() { playSfx('game_over', 0.7); stopMusic(0.5); setTimeout(() => playMusic('music_gameover', 2.0), 1000); }
 function playHeadshotSound() { if (!playSfx('headshot', 0.5)) playSound(1200,0.06,'square',0.15); }
 function playEmptyClipSound() { if (!playSfx('empty_clip', 0.3)) playSound(200,0.03,'square',0.08); }
@@ -11321,6 +11355,7 @@ function showDeathToShell() {
     gameState = 'dying';
     triggerGlitchSurge(0.5, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
+    hapticDeath();
     setTimeout(() => {
       window._deathBeatPlaying = false;
       resumeFromCheckpoint();
@@ -11718,6 +11753,7 @@ function fireWeaponForPlayer(p) {
     _gunReloadTimer = GUN_RELOAD_TIME;
     playSound(200, 0.06, 'sawtooth', 0.08);
     floatingTexts.push({x:p.x,y:p.y-30,text:'OVERHEATED',color:'#f80',vy:-1,life:24,maxLife:24});
+    hapticOverheat();
     return;
   }
   // Fire rate check
@@ -11727,7 +11763,8 @@ function fireWeaponForPlayer(p) {
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
   _gunAmmo--;
-  _gunIdleTimer = 0; // reset idle timer on each shot
+  _gunIdleTimer = 0;
+  hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
@@ -12318,6 +12355,7 @@ function activateDischarge() {
   if (!lp || !lp.alive || lp._beaconCooldown > 0) return;
   if (_dischargeActive) return;
   _dischargeActive = true;
+  hapticSpecial();
   lp._beaconCooldown = DISCHARGE_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || null;
@@ -12540,6 +12578,7 @@ function releasePayload() {
   _payloadAiming = false;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
+  hapticSpecial();
   const _m = runMods || {};
   // RAPID PAYLOAD: cooldown reduction
   const _rapidMult = _m.rapidPayload >= 2 ? 0.6 : (_m.rapidPayload >= 1 ? 0.75 : 1);
@@ -17345,6 +17384,7 @@ function update() {
         dz.type === 'archivist' || dz.type === 'firewall' || dz.type === 'watchdog';
       if (_isElite) {
         screenShake.intensity = Math.max(screenShake.intensity, dz.boss ? 14 : 9);
+        hapticEliteKill();
         for (let _efi = 0; _efi < 28; _efi++) {
           const _efa = (_efi / 28) * Math.PI * 2;
           const _efs = 3.5 + Math.random() * 3.5;
