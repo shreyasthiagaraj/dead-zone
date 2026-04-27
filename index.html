@@ -8438,30 +8438,52 @@ function playWeaponSound(weaponType, fallbackSound) {
 // Light taps for small events, heavy rumbles for big impacts.
 // Throttled to prevent buzzing on rapid-fire events.
 // ============================================================
+// Capacitor Haptics: uses native iOS/Android haptic engine when
+// running as a Capacitor app. Falls back to navigator.vibrate for
+// Android web. iOS web has no haptic support without Capacitor.
 let _hapticLastTime = 0;
-function haptic(ms, minInterval) {
-  if (!navigator || !navigator.vibrate) return;
+let _capHaptics = null; // Capacitor Haptics plugin reference
+// Try to load Capacitor Haptics plugin
+try {
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Haptics) {
+    _capHaptics = window.Capacitor.Plugins.Haptics;
+  }
+} catch(e) {}
+// Impact styles: LIGHT, MEDIUM, HEAVY (Capacitor ImpactStyle enum)
+function _hapticImpact(style, minInterval) {
   const now = performance.now();
   if (minInterval && now - _hapticLastTime < minInterval) return;
   _hapticLastTime = now;
-  try { navigator.vibrate(ms); } catch(e) {}
+  if (_capHaptics) {
+    try { _capHaptics.impact({ style: style || 'MEDIUM' }); } catch(e) {}
+  } else if (navigator && navigator.vibrate) {
+    const ms = style === 'LIGHT' ? 6 : style === 'HEAVY' ? 30 : 15;
+    try { navigator.vibrate(ms); } catch(e) {}
+  }
 }
-// Named haptic patterns — readable at call sites
-function hapticShot()       { haptic(4, 80); }      // barely-there pulse per bullet
-function hapticHit()        { haptic(8, 50); }       // tiny tap on enemy hit
-function hapticKill()       { haptic(20, 40); }      // satisfying thud on kill
-function hapticEliteKill()  { haptic([20,10,30], 0); } // double-tap for elite/boss kill
-function hapticDash()       { haptic(15, 0); }       // quick burst
-function hapticHurt()       { haptic(40, 100); }     // sharp buzz — you got hit
-function hapticDeath()      { haptic([50,30,80], 0); } // long fade
-function hapticExplosion()  { haptic(30, 60); }      // medium thud
-function hapticSpecial()    { haptic(25, 0); }       // special weapon fire
-function hapticPickup()     { haptic(6, 100); }      // gentle confirmation
-function hapticLevelUp()    { haptic([10,20,10,30], 0); } // celebration pattern
-function hapticBossIntro()  { haptic([30,20,30,20,60], 0); } // dramatic rumble
-function hapticCheckpoint() { haptic([10,30,10], 0); } // saved confirmation
-function hapticOverheat()   { haptic([8,15,8], 200); } // warning buzz
-function hapticFreeze()     { haptic(12, 100); }     // status applied
+function _hapticNotification(type) {
+  if (_capHaptics) {
+    try { _capHaptics.notification({ type: type || 'SUCCESS' }); } catch(e) {}
+  } else if (navigator && navigator.vibrate) {
+    try { navigator.vibrate([15, 30, 15]); } catch(e) {}
+  }
+}
+// Named haptic patterns — proportional to game moment significance
+function hapticShot()       { _hapticImpact('LIGHT', 80); }
+function hapticHit()        { _hapticImpact('LIGHT', 50); }
+function hapticKill()       { _hapticImpact('MEDIUM', 40); }
+function hapticEliteKill()  { _hapticImpact('HEAVY', 0); }
+function hapticDash()       { _hapticImpact('LIGHT', 0); }
+function hapticHurt()       { _hapticImpact('HEAVY', 100); }
+function hapticDeath()      { _hapticNotification('ERROR'); }
+function hapticExplosion()  { _hapticImpact('MEDIUM', 60); }
+function hapticSpecial()    { _hapticImpact('MEDIUM', 0); }
+function hapticPickup()     { _hapticImpact('LIGHT', 100); }
+function hapticLevelUp()    { _hapticNotification('SUCCESS'); }
+function hapticBossIntro()  { _hapticNotification('WARNING'); setTimeout(() => _hapticImpact('HEAVY', 0), 200); }
+function hapticCheckpoint() { _hapticNotification('SUCCESS'); }
+function hapticOverheat()   { _hapticNotification('WARNING'); }
+function hapticFreeze()     { _hapticImpact('LIGHT', 100); }
 
 function playHitSound() { if (!playSfx('zombie_hit', 0.3)) { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); } hapticHit(); }
 function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); hapticKill(); }
