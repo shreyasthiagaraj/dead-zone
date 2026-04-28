@@ -5508,7 +5508,7 @@ function spawnTrenchSectionFloorDecals(idx) {
     if (path.length >= 2) {
       nodes.push({ x: cx, y: cy });
       decals.push({ type: 'circuit', x: start.x, y: start.y, path, nodes,
-        color: accent, alpha: 0.55 + Math.random() * 0.15, size: 1 });
+        color: accent, alpha: 0.4 + Math.random() * 0.1, size: 1 });
     }
   }
 
@@ -5531,7 +5531,7 @@ function spawnTrenchSectionFloorDecals(idx) {
     if (!spot) continue;
     const text = stencilMsgs[Math.floor(Math.random() * stencilMsgs.length)];
     decals.push({ type: 'stencil', x: spot.x, y: spot.y,
-      text, size: 18, color: accent, alpha: 0.55,
+      text, size: 17, color: accent, alpha: 0.4,
       _angle: (Math.random() - 0.5) * 0.3 });
   }
 
@@ -5546,7 +5546,7 @@ function spawnTrenchSectionFloorDecals(idx) {
     const _gx = Math.floor(ax / CELL_SIZE), _gy = Math.floor(ay / CELL_SIZE);
     if (!dungeonGrid[_gy] || !dungeonGrid[_gy][_gx]) continue;
     decals.push({ type: 'arrow', x: ax, y: ay, size: 11,
-      color: accent, alpha: 0.85, _angle: 0 });
+      color: accent, alpha: 0.6, _angle: 0 });
   }
 
   // ---- HAZARD CHEVRONS ----
@@ -5556,7 +5556,7 @@ function spawnTrenchSectionFloorDecals(idx) {
     const spot = _floorSpot();
     if (!spot) continue;
     decals.push({ type: 'chevron', x: spot.x, y: spot.y,
-      size: 22, color: '#ff0', alpha: 0.4,
+      size: 22, color: '#dd0', alpha: 0.3,
       _angle: (Math.random() < 0.5 ? 0 : Math.PI / 2) + (Math.random() - 0.5) * 0.2 });
   }
 
@@ -5567,7 +5567,7 @@ function spawnTrenchSectionFloorDecals(idx) {
     const spot = _floorSpot();
     if (!spot) continue;
     decals.push({ type: 'hatch', x: spot.x, y: spot.y,
-      size: 16 + Math.random() * 5, color: accent, alpha: 0.55 });
+      size: 16 + Math.random() * 5, color: accent, alpha: 0.38 });
   }
 
   // ---- CHALK OUTLINES ----
@@ -5575,7 +5575,7 @@ function spawnTrenchSectionFloorDecals(idx) {
   if (idx >= 3 && Math.random() < 0.45) {
     const spot = _floorSpot();
     if (spot) decals.push({ type: 'chalk', x: spot.x, y: spot.y,
-      size: 14, color: '#8cf', alpha: 0.5,
+      size: 14, color: '#8cf', alpha: 0.35,
       _angle: Math.random() * Math.PI * 2 });
   }
 }
@@ -18649,9 +18649,10 @@ function render() {
         // Default: blood/gore stain — existing behavior, unchanged
         ctx.beginPath(); ctx.arc(d.x, d.y, d.size, 0, Math.PI*2); ctx.fill();
       } else if (d.type === 'circuit') {
-        // PCB-style trace: glowing polyline with bright inner core + node dots.
-        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
-        ctx.strokeStyle = d.color; ctx.lineWidth = 2;
+        // PCB trace: thin glowing polyline. No bright white core — that read
+        // as a wire you couldn't cross. Just a soft glow stroke + dim nodes.
+        ctx.shadowColor = d.color; ctx.shadowBlur = 4;
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1.4;
         ctx.beginPath();
         const _pp = d.path;
         for (let _ci = 0; _ci < _pp.length; _ci++) {
@@ -18660,99 +18661,80 @@ function render() {
         }
         ctx.stroke();
         ctx.shadowBlur = 0;
-        // Bright inner core line on top of the glowy stroke
-        ctx.globalAlpha = Math.min(1, d.alpha * 1.8);
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 0.7;
-        ctx.stroke();
-        // Glowing node dots at the endpoints
-        ctx.globalAlpha = Math.min(1, d.alpha * 2);
-        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
         ctx.fillStyle = d.color;
         if (d.nodes) for (const n of d.nodes) {
-          ctx.beginPath(); ctx.arc(n.x, n.y, 2.5, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(n.x, n.y, 1.6, 0, Math.PI*2); ctx.fill();
         }
-        ctx.shadowBlur = 0;
       } else if (d.type === 'stencil') {
+        // Soft colored glow only — the white inner pass made stencils read
+        // like solid signage you could collide with.
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
         ctx.font = `bold ${d.size}px monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        // Glowing colored pass behind, crisp white pass on top so the text
-        // stays readable through fog and the background grid.
-        ctx.shadowColor = d.color; ctx.shadowBlur = 8;
+        ctx.shadowColor = d.color; ctx.shadowBlur = 5;
         ctx.fillText(d.text || 'SECTOR', 0, 0);
         ctx.shadowBlur = 0;
-        ctx.globalAlpha = Math.min(1, d.alpha * 1.6);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(d.text || 'SECTOR', 0, 0);
         ctx.restore();
       } else if (d.type === 'chevron') {
-        // Hazard chevrons — alternating bright/dark diagonal bands with glow
-        ctx.save();
-        ctx.translate(d.x, d.y);
-        ctx.rotate(d._angle || 0);
-        ctx.shadowColor = d.color; ctx.shadowBlur = 6;
-        for (let _ci = 0; _ci < 4; _ci++) {
-          ctx.fillStyle = _ci % 2 === 0 ? d.color : '#0a0a0a';
-          ctx.fillRect(-d.size + _ci * (d.size * 0.5), -d.size * 0.35, d.size * 0.4, d.size * 0.7);
-        }
-        ctx.shadowBlur = 0;
-        ctx.restore();
-      } else if (d.type === 'arrow') {
-        const _pulse = 0.6 + Math.sin(_dt * 0.003 + d.x * 0.01) * 0.4;
-        ctx.globalAlpha = d.alpha * _pulse;
-        ctx.save();
-        ctx.translate(d.x, d.y);
-        ctx.rotate(d._angle || 0);
-        // Outer glowing colored arrow
-        ctx.shadowColor = d.color; ctx.shadowBlur = 14;
-        ctx.beginPath();
-        ctx.moveTo(d.size, 0);
-        ctx.lineTo(-d.size * 0.5, -d.size * 0.6);
-        ctx.lineTo(-d.size * 0.2, 0);
-        ctx.lineTo(-d.size * 0.5, d.size * 0.6);
-        ctx.closePath();
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        // Bright white inner arrowhead
-        ctx.globalAlpha = d.alpha * _pulse;
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.moveTo(d.size * 0.7, 0);
-        ctx.lineTo(-d.size * 0.25, -d.size * 0.32);
-        ctx.lineTo(-d.size * 0.05, 0);
-        ctx.lineTo(-d.size * 0.25, d.size * 0.32);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      } else if (d.type === 'hatch') {
-        // Maintenance hatch — glowing bolted metal plate
-        ctx.shadowColor = d.color; ctx.shadowBlur = 5;
-        ctx.fillRect(d.x - d.size/2, d.y - d.size/2, d.size, d.size);
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = Math.min(1, d.alpha * 1.4);
-        ctx.fillStyle = '#050508';
-        ctx.fillRect(d.x - d.size/2 + 2.5, d.y - d.size/2 + 2.5, d.size - 5, d.size - 5);
-        ctx.globalAlpha = d.alpha;
-        ctx.fillStyle = d.color;
-        // Corner bolts (bigger so they read at distance)
-        for (const [bx, by] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
-          ctx.beginPath();
-          ctx.arc(d.x + bx * (d.size/2 - 3), d.y + by * (d.size/2 - 3), 1.8, 0, Math.PI*2);
-          ctx.fill();
-        }
-        // Center label dash
-        ctx.globalAlpha = d.alpha * 0.8;
-        ctx.fillRect(d.x - 5, d.y - 0.6, 10, 1.2);
-      } else if (d.type === 'chalk') {
-        // Chalk outline — silhouette of a fallen uploader, with subtle glow
+        // Hazard chevrons — softer glow, no white pass. Reads as paint, not
+        // a raised barrier.
         ctx.save();
         ctx.translate(d.x, d.y);
         ctx.rotate(d._angle || 0);
         ctx.shadowColor = d.color; ctx.shadowBlur = 4;
-        ctx.strokeStyle = d.color; ctx.lineWidth = 1.6;
+        for (let _ci = 0; _ci < 4; _ci++) {
+          ctx.fillStyle = _ci % 2 === 0 ? d.color : '#0a0a0a';
+          ctx.fillRect(-d.size + _ci * (d.size * 0.5), -d.size * 0.3, d.size * 0.4, d.size * 0.6);
+        }
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      } else if (d.type === 'arrow') {
+        const _pulse = 0.55 + Math.sin(_dt * 0.003 + d.x * 0.01) * 0.3;
+        ctx.globalAlpha = d.alpha * _pulse;
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        ctx.rotate(d._angle || 0);
+        // Single colored glowing arrow — white inner removed, was reading too
+        // bright against the floor.
+        ctx.shadowColor = d.color; ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.moveTo(d.size, 0);
+        ctx.lineTo(-d.size * 0.5, -d.size * 0.55);
+        ctx.lineTo(-d.size * 0.2, 0);
+        ctx.lineTo(-d.size * 0.5, d.size * 0.55);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+      } else if (d.type === 'hatch') {
+        // Maintenance hatch — outline-only with corner bolts. Filled border
+        // + dark inset made it look like a raised plate / obstacle. Now reads
+        // as an etched ground marking.
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        ctx.shadowColor = d.color; ctx.shadowBlur = 4;
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1;
+        ctx.strokeRect(-d.size/2, -d.size/2, d.size, d.size);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = d.alpha * 0.85;
+        ctx.fillStyle = d.color;
+        for (const [bx, by] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
+          ctx.beginPath();
+          ctx.arc(bx * (d.size/2 - 3), by * (d.size/2 - 3), 1.3, 0, Math.PI*2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = d.alpha * 0.55;
+        ctx.fillRect(-4, -0.5, 8, 1);
+        ctx.restore();
+      } else if (d.type === 'chalk') {
+        // Chalk outline — silhouette of a fallen uploader. Soft glow.
+        ctx.save();
+        ctx.translate(d.x, d.y);
+        ctx.rotate(d._angle || 0);
+        ctx.shadowColor = d.color; ctx.shadowBlur = 3;
+        ctx.strokeStyle = d.color; ctx.lineWidth = 1.3;
         ctx.setLineDash([3, 2]);
         ctx.beginPath(); ctx.arc(0, -8, 4.5, 0, Math.PI*2); ctx.stroke();
         ctx.beginPath();
