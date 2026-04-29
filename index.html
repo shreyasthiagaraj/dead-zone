@@ -14653,6 +14653,43 @@ function createExplosion(x,y,radius,damage,source='player') {
       size: 4 + Math.random() * 5, color: 'rgba(25,15,8,0.65)', alpha: 0.4 });
   }
 }
+// Boss vulnerability: opens a window where the boss takes bonus damage and
+// can't attack. Triggered by post-summon recovery, HP threshold staggers,
+// mortar reload, watchdog charge stun, etc. Frames is the duration in
+// 60fps frames; reason is a tag used by the renderer for visual style.
+function _startBossVuln(z, frames, reason) {
+  if (!z || !z.boss) return;
+  // If a longer window is already running, keep it. Otherwise upgrade.
+  if ((z._vulnTimer || 0) >= frames) {
+    if (reason) z._vulnReason = reason;
+    return;
+  }
+  z._vulnTimer = frames;
+  z._vulnMaxTimer = frames;
+  z._vulnReason = reason || 'stagger';
+  // Burst feedback: glitch surge, mild shake, magenta sparks, banner.
+  triggerGlitchSurge(0.4, 22);
+  screenShake.intensity = Math.max(screenShake.intensity, 7);
+  for (let _vi = 0; _vi < 26; _vi++) {
+    const _va = (_vi / 26) * Math.PI * 2;
+    const _vs = 3 + Math.random() * 2.5;
+    particles.push({ x: z.x, y: z.y, vx: Math.cos(_va) * _vs, vy: Math.sin(_va) * _vs,
+      life: 26, maxLife: 26, size: 3, color: '#f0f', type: 'spark' });
+  }
+  // Wake ring (matches elite-kill flourish style)
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 22, maxLife: 22,
+    size: z.radius * 2.5, color: '#f0f', type: 'wakering' });
+  const _label = reason === 'drained' ? 'DRAINED'
+    : reason === 'reload' ? 'RELOADING'
+    : reason === 'charge_stun' ? 'STUNNED'
+    : reason === 'shield_down' ? 'EXPOSED'
+    : 'STAGGERED';
+  addFloatingText(z.x, z.y - z.radius - 24, _label, '#f0f');
+  // Sound: low thud + high ping
+  playSound(110, 0.18, 'sawtooth', 0.16);
+  playSound(880, 0.12, 'sine', 0.08);
+}
+
 function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if (z.hp <= 0) return; // already dead — prevent cascading death effects
   // NaN guard — if hp somehow became NaN, force-kill the zombie so it doesn't become invincible
@@ -14660,6 +14697,14 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // Sanitize damage — prevent NaN from propagating into hp
   damage = +damage || 0;
   if (damage <= 0) damage = 1; // minimum 1 damage to prevent immortal zombies from 0-damage hits
+  // BOSS VULNERABILITY: 1.75x damage during a vuln window (post-summon drain,
+  // phase stagger, mortar reload, charge stun, shield-down). The signature
+  // mechanic that makes the dance/pummel rhythm worthwhile.
+  if (z._vulnTimer > 0) damage = Math.floor(damage * 1.75);
+  // FIREWALL shield up: 85% damage reduction. Combined with shield-down vuln
+  // gives ~11x damage swing between cycle states — chip during up, burst
+  // during down.
+  if (z._fwShieldUp) damage = Math.max(1, Math.floor(damage * 0.15));
   // AFTERSHOCK vulnerability: +25% damage while staggered from discharge
   if (z._aftershockVuln > 0) damage = Math.floor(damage * 1.25);
   // CORRUPT VULNERABILITY: each stack = +8% damage taken, caps at 5 (+40%). Applies to all sources.
@@ -16597,6 +16642,24 @@ function update() {
         const zt=ZOMBIE_TYPES[z.type];
         const _now=performance.now();
 
+        // ---- VULNERABILITY HANDLING (all bosses) ----
+        // Tick the vuln timer + detect HP thresholds (75/50/25%) for cross-boss
+        // staggers. Bosses with no vuln state run their normal AI below.
+        if (z.boss) {
+          if (z._vulnTimer > 0) z._vulnTimer--;
+          if (!z._vulnHits) z._vulnHits = {};
+          const _vhpPct = z.maxHp > 0 ? z.hp / z.maxHp : 1;
+          for (const _vt of [0.75, 0.5, 0.25]) {
+            if (_vhpPct <= _vt && !z._vulnHits[_vt]) {
+              z._vulnHits[_vt] = true;
+              _startBossVuln(z, 120, 'stagger'); // 2s stagger window
+            }
+          }
+        }
+        // Convenience flag — boss AI blocks below short-circuit attacks/spawns
+        // when this is true. Boss still drifts (decayed) during vuln.
+        const _bossVuln = z.boss && z._vulnTimer > 0;
+
         // ---- CHARGER (sprinter): charge→pause→charge ----
         if(zt?.charger){
           if(!z._chargeState)z._chargeState='approach';
@@ -16652,15 +16715,17 @@ function update() {
           const phase = hpPct > 0.6 ? 1 : hpPct > 0.3 ? 2 : 3;
           const phaseSpeed = phase === 1 ? 1.0 : phase === 2 ? 1.4 : 2.0;
           // Movement: phase 1 = stationary (channeling summons). Phase 2+ = mobile.
-          if (phase === 1) {
+          // During vuln, drift to a near-stop regardless of phase.
+          if (_bossVuln) { z.vx *= 0.35; z.vy *= 0.35; }
+          else if (phase === 1) {
             z.vx *= 0.6; z.vy *= 0.6; // quickly decelerate to a stop
           } else if(gameMode==='siege'){z.vx=(zdx/zd)*z.speed*phaseSpeed*0.7;z.vy=(zdy/zd)*z.speed*phaseSpeed*0.7;}
           else if(zd<120&&phase<3){z.vx=-zdx/zd*z.speed*0.5;z.vy=-zdy/zd*z.speed*0.5;}
           else{z.vx=_chaseDx*z.speed*phaseSpeed;z.vy=_chaseDy*z.speed*phaseSpeed;}
           z._summonTimer=(z._summonTimer||0)+1;
           z._shotTimer=(z._shotTimer||0)+1;
-          // Phase 1: summon minions
-          if(phase===1){
+          // Phase 1: summon minions, then enter DRAINED state for ~3s
+          if(phase===1 && !_bossVuln){
             if(z._summonTimer>=z.fireRate&&zombies.length<8){z._summonTimer=0;
               for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sd=35+Math.random()*20;
                 const _sx=z.x+Math.cos(sa)*sd, _sy=z.y+Math.sin(sa)*sd;
@@ -16672,14 +16737,18 @@ function update() {
                 for(let _pi=0;_pi<8;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*3;
                   particles.push({x:_sx,y:_sy,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:16,maxLife:16,size:3,color:Math.random()<0.5?'#f0f':'#f44',type:'spark'});}}
               screenShake.intensity=Math.max(screenShake.intensity,4);
-              playZombieAttackSound();}
+              playZombieAttackSound();
+              // Post-summon drained: 3s vulnerability window
+              _startBossVuln(z, 180, 'drained');
+            }
           }
           // Phase 2: alternates between ACTIVE (mobile + fan shots) and REST (channel minions, vulnerable).
-          // Rest gives the player a damage window.
+          // Rest gives the player a damage window — also triggers a vuln window
+          // for bonus damage.
           else if(phase===2){
             if(!z._p2State){z._p2State='active';z._p2Timer=300;} // start active for 5s
             z._p2Timer--;
-            if (z._p2State === 'active') {
+            if (z._p2State === 'active' && !_bossVuln) {
               if(z._shotTimer>=90){z._shotTimer=0;
                 const fanCount=5,fanSpread=0.5;
                 for(let fi=0;fi<fanCount;fi++){
@@ -16692,7 +16761,6 @@ function update() {
               }
               if (z._p2Timer <= 0) {
                 z._p2State = 'rest'; z._p2Timer = 180; // 3s rest/channel
-                addFloatingText(z.x, z.y - z.radius - 16, 'CHANNELING', '#f0f');
                 // Spawn 2 minions at start of rest
                 for(let si=0;si<2;si++){const sa=Math.random()*Math.PI*2,sd=40+Math.random()*20;
                   const _sx=z.x+Math.cos(sa)*sd, _sy=z.y+Math.sin(sa)*sd;
@@ -16700,9 +16768,10 @@ function update() {
                   zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:st.hp*0.6,maxHp:st.hp*0.6,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:50,type:'normal',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:25,_spawnAnimMax:25});
                   particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f0f',type:'lightning',tx:_sx,ty:_sy});
                 }
+                _startBossVuln(z, 180, 'drained');
               }
-            } else {
-              // REST state — boss holds still, no fan shots, vulnerable (channel aura)
+            } else if (z._p2State === 'rest') {
+              // REST state — boss holds still, no fan shots
               z.vx *= 0.3; z.vy *= 0.3;
               if (gameTime % 4 === 0) {
                 const _ca = Math.random()*Math.PI*2, _cr = z.radius + 10;
@@ -16712,7 +16781,7 @@ function update() {
             }
           }
           // Phase 3: enraged — radial burst + occasional summon + glitch aura
-          else{
+          else if (!_bossVuln) {
             // Radial burst every 2s — 8 bullets in all directions
             if(z._shotTimer>=120){z._shotTimer=0;
               for(let fi=0;fi<8;fi++){
@@ -16722,7 +16791,7 @@ function update() {
               screenShake.intensity=Math.max(screenShake.intensity,6);
               playZombieAttackSound();
             }
-            // Occasional summon (every 5s)
+            // Occasional summon (every 5s) → drained recovery window
             if(z._summonTimer>=300&&zombies.length<16){z._summonTimer=0;
               const sa=Math.random()*Math.PI*2,sd=35+Math.random()*20;
               const _sx3=z.x+Math.cos(sa)*sd, _sy3=z.y+Math.sin(sa)*sd;
@@ -16730,6 +16799,7 @@ function update() {
               zombies.push({zid:_nextZombieId++,x:_sx3,y:_sy3,vx:0,vy:0,hp:st.hp,maxHp:st.hp,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:75,type:'fast',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,charger:true,_spawnAnim:20,_spawnAnimMax:20});
               particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#f44',type:'lightning',tx:_sx3,ty:_sy3});
               for(let _pi=0;_pi<6;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*3;particles.push({x:_sx3,y:_sy3,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:14,maxLife:14,size:2.5,color:'#f44',type:'spark'});}
+              _startBossVuln(z, 150, 'drained'); // 2.5s window in phase 3 (shorter, harder)
             }
             // Enrage aura particles
             if(gameTime%3===0){const pa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(pa)*(z.radius+8),y:z.y+Math.sin(pa)*(z.radius+8),vx:Math.cos(pa)*1.5,vy:-1.5,life:16,maxLife:16,size:3,color:Math.random()<0.5?'#f44':'#f0f',type:'spark'});}
@@ -16748,11 +16818,36 @@ function update() {
         else if(zt?.firewall){
           const hpPct = z.hp / z.maxHp;
           const phase = hpPct > 0.6 ? 1 : hpPct > 0.3 ? 2 : 3;
-          if (phase === 1) { z.vx *= 0.6; z.vy *= 0.6; } // stationary phase 1
+          // ---- FIREWALL SHIELD CYCLE ----
+          // Shield UP for 6s: deflects bullets (85% damage reduction), boss
+          // can attack. Shield DOWN for 3s: vulnerable, no firing. Encourages
+          // chip damage during up, full burst during down.
+          if (z._fwShieldState === undefined) { z._fwShieldState = 'up'; z._fwShieldTimer = 360; z._fwShieldUp = true; }
+          z._fwShieldTimer--;
+          if (z._fwShieldTimer <= 0) {
+            if (z._fwShieldState === 'up') {
+              z._fwShieldState = 'down'; z._fwShieldTimer = 180;
+              z._fwShieldUp = false;
+              _startBossVuln(z, 180, 'shield_down');
+            } else {
+              z._fwShieldState = 'up'; z._fwShieldTimer = 360;
+              z._fwShieldUp = true;
+              // Shield-up snap: ring particles signal it's back up
+              for (let _fi = 0; _fi < 18; _fi++) {
+                const _fa = (_fi/18) * Math.PI * 2;
+                particles.push({ x: z.x + Math.cos(_fa) * (z.radius+10), y: z.y + Math.sin(_fa) * (z.radius+10),
+                  vx: -Math.cos(_fa) * 1.5, vy: -Math.sin(_fa) * 1.5, life: 14, maxLife: 14, size: 3, color: '#f80', type: 'spark' });
+              }
+              addFloatingText(z.x, z.y - z.radius - 16, 'SHIELD UP', '#f80');
+              playSound(440, 0.18, 'square', 0.1);
+            }
+          }
+          if (_bossVuln) { z.vx *= 0.35; z.vy *= 0.35; }
+          else if (phase === 1) { z.vx *= 0.6; z.vy *= 0.6; } // stationary phase 1
           else { z.vx=_chaseDx*z.speed*(phase===3?1.8:1.2);z.vy=_chaseDy*z.speed*(phase===3?1.8:1.2); }
           z._shotTimer=(z._shotTimer||0)+1;
           // Phase 1: projectile wall — 8 bullets in a line perpendicular to player
-          if(phase===1&&z._shotTimer>=z.fireRate&&zombies.length<10){
+          if(phase===1&&z._shotTimer>=z.fireRate&&zombies.length<10 && !_bossVuln){
             z._shotTimer=0;
             const wallA=z.angle+Math.PI/2;
             for(let wi=-3;wi<=3;wi++){
@@ -16762,7 +16857,7 @@ function update() {
             screenShake.intensity=Math.max(screenShake.intensity,5);playZombieAttackSound();
           }
           // Phase 2: spread fans
-          else if(phase===2&&z._shotTimer>=90){
+          else if(phase===2&&z._shotTimer>=90 && !_bossVuln){
             z._shotTimer=0;
             for(let fi=0;fi<7;fi++){
               const fa=z.angle+(fi-3)*0.15;
@@ -16771,7 +16866,7 @@ function update() {
             screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
           }
           // Phase 3: rapid fire + speed
-          else if(phase===3&&z._shotTimer>=40){
+          else if(phase===3&&z._shotTimer>=40 && !_bossVuln){
             z._shotTimer=0;
             bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*8,vy:Math.sin(z.angle)*8,damage:z.damage*0.6,color:'#ff0',size:4,knockback:4,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
           }
@@ -16816,11 +16911,12 @@ function update() {
         else if(zt?.archivist){
           const hpPct = z.hp / z.maxHp;
           const phase = hpPct > 0.5 ? 1 : 2;
-          z.vx=_chaseDx*z.speed*(phase===2?1.5:0.8);z.vy=_chaseDy*z.speed*(phase===2?1.5:0.8);
+          if (_bossVuln) { z.vx *= 0.35; z.vy *= 0.35; }
+          else { z.vx=_chaseDx*z.speed*(phase===2?1.5:0.8);z.vy=_chaseDy*z.speed*(phase===2?1.5:0.8); }
           z._shotTimer=(z._shotTimer||0)+1;
           z._summonTimer=(z._summonTimer||0)+1;
-          // Mortar barrage: 3 delayed bombs
-          if(z._shotTimer>=z.fireRate){
+          // Mortar barrage: 3 delayed bombs, then RELOAD (vuln) for 3s
+          if(z._shotTimer>=z.fireRate && !_bossVuln){
             z._shotTimer=0;
             for(let mi=0;mi<3;mi++){
               const bx=np.x+(Math.random()-0.5)*80,by=np.y+(Math.random()-0.5)*80;
@@ -16828,15 +16924,19 @@ function update() {
             }
             for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:14,maxLife:14,size:4,color:'#4ef',type:'spark'});}
             screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
+            // Mortar reload — exposed magazine for 3s. Lets player commit to
+            // pressuring instead of dodging another volley.
+            _startBossVuln(z, 180, 'reload');
           }
-          // Summon drones periodically
-          if(z._summonTimer>=240&&zombies.length<8){
+          // Summon drones periodically → drained window
+          if(z._summonTimer>=240&&zombies.length<8 && !_bossVuln){
             z._summonTimer=0;
             for(let si=0;si<3;si++){const sa=Math.random()*Math.PI*2,sd=35+Math.random()*20;
               const _sx=z.x+Math.cos(sa)*sd,_sy=z.y+Math.sin(sa)*sd,st=ZOMBIE_TYPES.drone;
               zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:st.hp,maxHp:st.hp,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:30,type:'drone',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:20,_spawnAnimMax:20});
               particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ef',type:'lightning',tx:_sx,ty:_sy});
             }
+            _startBossVuln(z, 180, 'drained');
           }
           if(!z._lastPhase)z._lastPhase=1;
           if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
@@ -16865,17 +16965,25 @@ function update() {
           const phase = hpPct > 0.5 ? 1 : 2;
           z._wdTimer=(z._wdTimer||0)+1;
           if(!z._wdState) z._wdState = 'chase';
-          if(z._wdState==='chase'){
+          if(z._wdState==='chase' && !_bossVuln){
             z.vx=_chaseDx*z.speed*(phase===2?1.6:1.0);z.vy=_chaseDy*z.speed*(phase===2?1.6:1.0);
             if(z._wdTimer>=60&&zd<250){z._wdState='windup';z._wdTimer=0;z._wdTx=np.x;z._wdTy=np.y;}
+          } else if(z._wdState==='chase' && _bossVuln){
+            z.vx *= 0.35; z.vy *= 0.35; // visibly drift to a stop while vuln
           } else if(z._wdState==='windup'){
             z.vx=0;z.vy=0;z._wdTimer++;
             z.x+=(Math.random()-0.5)*3;z.y+=(Math.random()-0.5)*3;
             if(z._wdTimer>=20){z._wdState='dash';z._wdTimer=0;
-              const da=Math.atan2(z._wdTy-z.y,z._wdTx-z.x);z.vx=Math.cos(da)*16;z.vy=Math.sin(da)*16;}
+              const da=Math.atan2(z._wdTy-z.y,z._wdTx-z.x);z.vx=Math.cos(da)*16;z.vy=Math.sin(da)*16;
+              z._wdHitWall = false;}
           } else if(z._wdState==='dash'){
             z._wdTimer++;
             for(let pi=0;pi<2;pi++){particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:10,maxLife:10,size:4,color:'#f44',type:'spark'});}
+            // Wall-impact detection: did the dash end against a wall? If so,
+            // boss enters extended STUNNED state with 1.75× damage.
+            if (obstacleCollision(z.x, z.y, z.radius, false)) {
+              z._wdHitWall = true;
+            }
             if(z._wdTimer>=12){z._wdState='recover';z._wdTimer=0;z.vx=0;z.vy=0;
               // Landing slam — damage + shockwave pushback
               for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<60)damagePlayerObj(p,z.damage,z);
@@ -16887,10 +16995,14 @@ function update() {
               // Ground crack particles
               for(let gi=0;gi<8;gi++){const ga=Math.random()*Math.PI*2,gd=10+Math.random()*30;particles.push({x:z.x+Math.cos(ga)*gd,y:z.y+Math.sin(ga)*gd,vx:(Math.random()-0.5)*2,vy:-1-Math.random()*2,life:20,maxLife:20,size:3+Math.random()*3,color:'#a22',type:'spark'});}
               playExplosionSound();
+              // Charge into a wall: extra-long stun window for the player to
+              // commit to pummeling. Otherwise just the standard recover.
+              if (z._wdHitWall) _startBossVuln(z, 130, 'charge_stun');
             }
           } else if(z._wdState==='recover'){
             z.vx=0;z.vy=0;z._wdTimer++;
-            // Spawn 1-2 fast henchmen during recovery if zombie count is low
+            // Spawn 1-2 fast henchmen during recovery if zombie count is low,
+            // then enter DRAINED state for ~2.5s.
             if(z._wdTimer===1&&zombies.length<6){
               const _tsec=trenchSections[trenchSection];
               const _types=_tsec?_tsec.types:['fast'];
@@ -16905,11 +17017,12 @@ function update() {
                 zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:_zt.hp,maxHp:_zt.hp,speed:_zt.speed,radius:_zt.radius,color:_zt.color,damage:_zt.damage,score:_zt.score||50,type:_type,attackCooldown:0,hitFlash:0,ranged:_zt.ranged||false,fireRate:_zt.fireRate||0,lastFired:0,explodeOnDeath:_zt.explodeOnDeath||false,explosionRadius:_zt.explosionRadius||0,angle:0,staggerTimer:0,aware:true,wanderAngle:Math.random()*Math.PI*2,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:30,_spawnAnimMax:30});
                 particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f44',type:'lightning',tx:_sx,ty:_sy});
               }
+              _startBossVuln(z, 150, 'drained');
             }
             if(z._wdTimer>=30){z._wdState='chase';z._wdTimer=0;}
           }
-          // Phase 2: also fires shots while chasing
-          if(phase===2&&z._wdState==='chase'&&z._wdTimer%30===0){
+          // Phase 2: also fires shots while chasing (skipped during vuln)
+          if(phase===2&&z._wdState==='chase'&&!_bossVuln&&z._wdTimer%30===0){
             bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*7,vy:Math.sin(z.angle)*7,damage:z.damage*0.4,color:'#f44',size:5,knockback:3,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
           }
           if(!z._lastPhase)z._lastPhase=1;
@@ -17853,6 +17966,8 @@ function update() {
       if (z._frozenTimer > 0 || z._slowTimer > 0) fl |= 4;
       if (z._shocked > 0 || z._charged) fl |= 8;
       if (z._spawnAnim > 0) fl |= 16;
+      if (z._vulnTimer > 0) fl |= 32; // boss vulnerability — for non-host visual parity
+      if (z._fwShieldUp) fl |= 64;    // firewall shield-up dome
       return { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl };
     });
     // Player bullets are local-only; only sync zombie projectiles (spitters)
@@ -18047,7 +18162,8 @@ function applyHostState(msg) {
       oz._targetX = nz.x; oz._targetY = nz.y; oz._targetAngle = nz.angle;
       oz.hp = nz.hp; oz.maxHp = nz.maxHp; oz.hitFlash = nz.hitFlash;
       oz.aware = nz.aware; oz.boss = nz.boss; oz.color = nz.color;
-      // Apply flag bitfield: 1=invader, 2=burning, 4=frozen/slow, 8=shocked, 16=spawning
+      // Apply flag bitfield: 1=invader, 2=burning, 4=frozen/slow, 8=shocked,
+      // 16=spawning, 32=boss vuln, 64=firewall shield up
       const _fl = nz.fl || 0;
       oz._invader = (_fl & 1) !== 0;
       oz._burning = (_fl & 2) ? (oz._burning || 10) : 0;
@@ -18059,6 +18175,11 @@ function applyHostState(msg) {
       oz._charged = (_fl & 8) ? true : false;
       if (_fl & 16) { if (!oz._spawnAnim) { oz._spawnAnim = 30; oz._spawnAnimMax = 30; } }
       else oz._spawnAnim = 0;
+      // Boss vuln visual: keep timer >0 while flag is set so renderer paints
+      // the cracks. Drops to 0 when host clears the flag.
+      if (_fl & 32) { oz._vulnTimer = Math.max(oz._vulnTimer || 0, 6); oz._vulnMaxTimer = oz._vulnMaxTimer || 6; }
+      else oz._vulnTimer = 0;
+      oz._fwShieldUp = (_fl & 64) !== 0;
       updatedZombies.push(oz);
     } else {
       // New zombie: create fresh with position already set (no lerp needed first frame)
@@ -18070,6 +18191,8 @@ function applyHostState(msg) {
       if (_fl & 4) fresh._slowTimer = 10;
       if (_fl & 8) { fresh._shocked = 10; fresh._charged = true; }
       if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
+      if (_fl & 32) { fresh._vulnTimer = 6; fresh._vulnMaxTimer = 6; }
+      if (_fl & 64) fresh._fwShieldUp = true;
       updatedZombies.push(fresh);
     }
   }
@@ -21230,6 +21353,73 @@ function render() {
           ctx.fillStyle = '#f44';
           ctx.beginPath(); ctx.arc(Math.cos(_da)*_dr, Math.sin(_da)*_dr, 3, 0, Math.PI*2); ctx.fill();
         }
+      }
+      // ---- VULNERABILITY VISUAL SIGNATURE ----
+      // Pulsing magenta crack lines + wobbling "drained" outline ring + ambient
+      // particle bleed. Universal across all bosses — players learn to read it
+      // as "punish window."
+      if (z._vulnTimer > 0) {
+        const _vp = z._vulnTimer / Math.max(1, z._vulnMaxTimer || z._vulnTimer);
+        const _vPulse = 0.55 + Math.sin(_bpT * 0.018) * 0.35;
+        // Wobble ring around body
+        const _vWob = Math.sin(_bpT * 0.025) * 1.5;
+        ctx.globalAlpha = 0.65 * _vPulse * _vp;
+        ctx.strokeStyle = '#f0f';
+        ctx.shadowColor = '#f0f'; ctx.shadowBlur = 14;
+        ctx.lineWidth = 2 + _vWob * 0.4;
+        ctx.beginPath();
+        ctx.arc(0, 0, z.radius + 5 + _vWob, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        // Crack fissures — 5 jagged magenta lines from center outward
+        ctx.globalAlpha = 0.85 * _vp;
+        ctx.strokeStyle = '#f0f'; ctx.lineWidth = 1.8;
+        for (let _ci = 0; _ci < 5; _ci++) {
+          const _ca = _ci / 5 * Math.PI * 2 + _bpT * 0.0006;
+          const _crEnd = z.radius * (0.85 + Math.random() * 0.15);
+          const _midX = Math.cos(_ca) * _crEnd * 0.5 + (Math.random() - 0.5) * 4;
+          const _midY = Math.sin(_ca) * _crEnd * 0.5 + (Math.random() - 0.5) * 4;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(_midX, _midY);
+          ctx.lineTo(Math.cos(_ca) * _crEnd, Math.sin(_ca) * _crEnd);
+          ctx.stroke();
+        }
+        // Ambient sparks bleeding from cracks (every other frame to keep cost low)
+        if (gameTime % 2 === 0) {
+          const _pa = Math.random() * Math.PI * 2;
+          const _pr = z.radius * (0.6 + Math.random() * 0.4);
+          particles.push({
+            x: z.x + Math.cos(_pa) * _pr, y: z.y + Math.sin(_pa) * _pr,
+            vx: Math.cos(_pa) * 0.8, vy: Math.sin(_pa) * 0.8 - 0.5,
+            life: 18, maxLife: 18, size: 1.8 + Math.random(),
+            color: '#f0f', type: 'spark',
+          });
+        }
+        ctx.globalAlpha = 1;
+      }
+      // FIREWALL: shield-up dome ring around the body. Render only on the
+      // firewall boss (separate from vuln). Visible from across the room.
+      if (z._fwShieldUp) {
+        const _fsPulse = 0.5 + Math.sin(_bpT * 0.005) * 0.3;
+        ctx.globalAlpha = 0.55 * _fsPulse;
+        ctx.strokeStyle = '#f80';
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 14;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, z.radius + 8, 0, Math.PI * 2);
+        ctx.stroke();
+        // Hex segment lines around the dome
+        ctx.globalAlpha = 0.4 * _fsPulse;
+        ctx.lineWidth = 1.5;
+        for (let _hi = 0; _hi < 6; _hi++) {
+          const _ha = _hi / 6 * Math.PI * 2 + _bpT * 0.0008;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(_ha) * (z.radius + 6), Math.sin(_ha) * (z.radius + 6));
+          ctx.lineTo(Math.cos(_ha) * (z.radius + 12), Math.sin(_ha) * (z.radius + 12));
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       }
       ctx.globalAlpha = 1;
     }
