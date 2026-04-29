@@ -11776,6 +11776,14 @@ function fireWeaponForPlayer(p) {
   _gunIdleTimer = 0;
   hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
+  // Muzzle spark particles — 2-3 small sparks ejected from gun tip
+  { const _ma = p.angle, _mx = p.x + Math.cos(_ma) * (PLAYER_RADIUS + 14), _my = p.y + Math.sin(_ma) * (PLAYER_RADIUS + 14);
+    const _mc = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
+    for (let _mi = 0; _mi < 3; _mi++) {
+      const _sa = _ma + (Math.random() - 0.5) * 1.2, _ss = 2 + Math.random() * 3;
+      particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss, life: 6 + Math.floor(Math.random() * 4), maxLife: 10, size: 1.5 + Math.random(), color: _mi === 0 ? '#fff' : _mc, type: 'spark' });
+    }
+  }
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
   let sp = (Math.random()-0.5) * gun.spread * 2;
@@ -21576,7 +21584,38 @@ function render() {
     ctx.fillStyle = def.color;
     ctx.beginPath(); ctx.arc(PLAYER_RADIUS + 12, 0, 4, 0, Math.PI*2); ctx.fill();
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-    if(w.muzzleFlash>0){ctx.shadowColor=def.color;ctx.shadowBlur=20;ctx.fillStyle='#fff';ctx.globalAlpha=w.muzzleFlash/6;ctx.beginPath();ctx.arc(PLAYER_RADIUS+12,0,5+Math.random()*3,0,Math.PI*2);ctx.fill();ctx.globalAlpha=w.muzzleFlash/6*0.5;ctx.fillStyle=def.color;ctx.beginPath();ctx.arc(PLAYER_RADIUS+12,0,10+Math.random()*4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    if(w.muzzleFlash>0){
+      const _mfA = w.muzzleFlash / 6; // 1→0 fade
+      const _mfX = PLAYER_RADIUS + 13;
+      const _mfC = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || def.color) : def.color;
+      // 1) Forward lance — elongated diamond pointing ahead
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = _mfA * 0.9;
+      ctx.beginPath(); ctx.moveTo(_mfX + 10 + (1-_mfA)*4, 0); ctx.lineTo(_mfX, -3); ctx.lineTo(_mfX - 4, 0); ctx.lineTo(_mfX, 3); ctx.closePath(); ctx.fill();
+      // 2) Colored flare — wider, dimmer
+      ctx.fillStyle = _mfC; ctx.globalAlpha = _mfA * 0.5;
+      ctx.beginPath(); ctx.moveTo(_mfX + 6, 0); ctx.lineTo(_mfX - 2, -5 * _mfA); ctx.lineTo(_mfX - 6, 0); ctx.lineTo(_mfX - 2, 5 * _mfA); ctx.closePath(); ctx.fill();
+      // 3) Cross flare — thin perpendicular line (lens flare feel)
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.globalAlpha = _mfA * 0.4;
+      ctx.beginPath(); ctx.moveTo(_mfX, -8 * _mfA); ctx.lineTo(_mfX, 8 * _mfA); ctx.stroke();
+      // 4) Radial spikes — 3 short lines forward at slight angles
+      ctx.strokeStyle = _mfC; ctx.lineWidth = 1; ctx.globalAlpha = _mfA * 0.6;
+      for (let _rs = -1; _rs <= 1; _rs++) {
+        const _ra = _rs * 0.3;
+        ctx.beginPath(); ctx.moveTo(_mfX, 0);
+        ctx.lineTo(_mfX + Math.cos(_ra) * (8 + (1-_mfA)*4), Math.sin(_ra) * (8 + (1-_mfA)*4));
+        ctx.stroke();
+      }
+      // 5) Outer ring flash — segmented arc that fades fast
+      if (_mfA > 0.3) {
+        ctx.strokeStyle = _mfC; ctx.lineWidth = 1.5; ctx.globalAlpha = (_mfA - 0.3) * 0.5;
+        const _mfR = 8 + (1-_mfA) * 6;
+        for (let _si = 0; _si < 3; _si++) {
+          const _sa = _si * 2.1 - 1.05;
+          ctx.beginPath(); ctx.arc(_mfX, 0, _mfR, _sa, _sa + 0.8); ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
     // Body (not rotated with gun)
     ctx.save();ctx.translate(p.x,p.y);
