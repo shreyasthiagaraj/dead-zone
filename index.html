@@ -627,7 +627,9 @@ body.mobile #mobile-buttons { display: block; }
       <div style="color:#fff;font-size:22px;font-weight:bold;letter-spacing:6px;text-shadow:0 0 12px #0ff,0 0 24px rgba(0,255,255,0.4);margin-top:4px">MOD TERMINAL</div>
       <div id="shop-bits-line" style="color:#ff0;font-size:14px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 8px rgba(255,255,0,0.6);margin-top:6px">◆ 0 BITS</div>
     </div>
-    <!-- Cards container — 3 cards -->
+    <!-- Research focus selector — tap a class icon to bias future draws -->
+    <div id="shop-focus-row" style="display:flex;flex-direction:row;gap:6px;align-items:center;justify-content:center;margin-top:2px"></div>
+    <!-- Cards container -->
     <div id="shop-cards" style="display:flex;flex-direction:row;gap:14px;justify-content:center;margin-top:8px;width:100%"></div>
     <!-- Checkout is now in-place on the selected card — no separate area -->
     <!-- Bottom action bar: small DISCONNECT + prominent COMPILE MOD -->
@@ -2210,7 +2212,7 @@ function _draftBossCards(n) {
 function draftShopCards(n, classFilter) {
   // classFilter: 'thermal'|'cryo'|'arc'|'pulse'|'corrupt'|'core'|null
   // When set, ALL cards are drawn from that class (or generic for 'core').
-  n = n || 4;
+  n = n || 2;
   _shopVisitCount++;
   const cap = getShopTierCap();
   const weights = { common: 60, rare: 30, epic: 15, legendary: 4 };
@@ -2299,19 +2301,7 @@ function draftShopCards(n, classFilter) {
         picks.push(chosen); attempted.add(chosen.id);
       }
     }
-    if (_researchFocus && _shopVisitCount <= 3 && picks.length < n) {
-      const classPool2 = UPGRADE_POOL.filter(u =>
-        _CARD_CLASS_MAP[u.id] === _researchFocus && !attempted.has(u.id) &&
-        (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
-        (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
-      );
-      if (classPool2.length > 0) {
-        const totalW2 = classPool2.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
-        let roll2 = Math.random() * totalW2; let chosen2 = classPool2[0];
-        for (const u of classPool2) { roll2 -= (weights[u.rarity] || 1); if (roll2 <= 0) { chosen2 = u; break; } }
-        picks.push(chosen2); attempted.add(chosen2.id);
-      }
-    }
+    // (Second card is drawn from the full pool — allows cross-class discovery)
     if (!_researchFocus) {
       let bestClass = null, bestCount = 0;
       for (const cls in classCounts) { if (classCounts[cls] > bestCount) { bestCount = classCounts[cls]; bestClass = cls; } }
@@ -2361,10 +2351,8 @@ function openShop(chest) {
     _pendingBossShop = false;
     shopCards = _draftBossCards(3);
   } else {
-    // Class-filtered terminal: pass the class filter from data link choice
-    const _cf = window._pendingClassFilter || null;
     window._pendingClassFilter = null;
-    shopCards = draftShopCards(3, _cf);
+    shopCards = draftShopCards(2);
   }
   _resetJoysticks();
   if (!isMultiplayer) gameState = 'shop';
@@ -2484,7 +2472,50 @@ function _updateShopBitsDisplay(animateFrom) {
   }
 }
 
+function _renderFocusRow() {
+  const row = document.getElementById('shop-focus-row');
+  if (!row) return;
+  row.innerHTML = '';
+  const label = document.createElement('span');
+  label.style.cssText = 'font-size:9px;letter-spacing:2px;color:#667;margin-right:4px';
+  label.textContent = 'FOCUS:';
+  row.appendChild(label);
+  const classes = [
+    { id: 'thermal', icon: '🔥', color: '#f80' },
+    { id: 'cryo', icon: '🧊', color: '#8ef' },
+    { id: 'arc', icon: '⚡', color: '#4ff' },
+    { id: 'pulse', icon: '💨', color: '#cef' },
+    { id: 'corrupt', icon: '☣', color: '#a4f' },
+  ];
+  for (const cls of classes) {
+    const btn = document.createElement('button');
+    const isActive = _researchFocus === cls.id;
+    btn.style.cssText = `width:36px;height:30px;font-size:16px;border-radius:6px;border:1.5px solid ${isActive ? cls.color : cls.color + '33'};background:${isActive ? cls.color + '22' : 'rgba(10,10,20,0.8)'};cursor:pointer;-webkit-tap-highlight-color:transparent;display:flex;align-items:center;justify-content:center;padding:0;transition:border-color 0.15s,background 0.15s;${isActive ? 'box-shadow:0 0 8px ' + cls.color + '44' : ''}`;
+    btn.textContent = cls.icon;
+    const handler = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      _researchFocus = _researchFocus === cls.id ? null : cls.id;
+      // Redraw cards with new focus
+      shopCards = draftShopCards(2);
+      _shopSelectedId = null;
+      _renderFocusRow();
+      _renderShopCards();
+      // Reset card entrance animation
+      const cards = document.querySelectorAll('.shop-card-wrap');
+      cards.forEach((c, i) => { c.classList.remove('card-in'); setTimeout(() => c.classList.add('card-in'), i * 80); });
+      // Update confirm button state
+      const confirmBtn = document.getElementById('btn-shop-confirm');
+      if (confirmBtn) { confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; }
+      playSfx('ui_click', 0.15) || playSound(600, 0.04, 'sine', 0.06);
+    };
+    btn.addEventListener('click', handler);
+    btn.addEventListener('touchend', handler, { passive: false });
+    row.appendChild(btn);
+  }
+}
+
 function _renderShopCards() {
+  _renderFocusRow();
   const list = document.getElementById('shop-cards');
   if (!list || !shopCards) return;
   list.innerHTML = '';
@@ -2507,7 +2538,7 @@ function _renderShopCards() {
     const _synBg = 'rgba(6,8,16,0.96)';
     const _synShadow = isSelected ? '0 0 20px rgba(0,255,255,0.4), inset 0 0 12px rgba(0,255,255,0.06)' : '0 0 8px rgba(0,255,255,0.1), inset 0 0 12px rgba(0,0,0,0.6)';
     card.style.cssText = `
-      width:210px; min-height:210px; padding:12px 12px;
+      width:240px; min-height:210px; padding:14px 14px;
       border:2px solid ${_synBorder};
       border-radius:10px;
       background:${_synBg};
@@ -2977,75 +3008,20 @@ function _pickClassTerminal(exclude) {
 function generateDataLinkChoice() {
   const lp = getLocalPlayer();
   const hpPct = lp ? (lp.hp / lp.maxHp) : 1;
-  const upgradeableCards = _countUpgradeableCards();
   const lastChoice = _dlChoiceHistory.length > 0 ? _dlChoiceHistory[_dlChoiceHistory.length - 1] : null;
 
-  // Every 4th eligible section: one slot is a CORE terminal (weapon/generic cards)
-  const _dlCount = _dlChoiceHistory.length;
-  const isCoreSection = _dlCount > 0 && _dlCount % 4 === 0;
-
-  // ---- Both slots drawn from one pool — always two different options ----
-  const _fullPool = {};
-
-  // Class terminals — weighted by build investment
-  const _classes = ['thermal','cryo','arc','pulse','corrupt'];
-  for (const cls of _classes) {
-    const count = _countClassCards(cls);
-    _fullPool[cls] = 12 + count * 8;
-    if (count === 0) _fullPool[cls] = 18; // branching bonus
-    if (_researchFocus === cls) _fullPool[cls] += 25;
+  // Single terminal system — usually mod, occasionally utility
+  let roll = Math.random();
+  // Repair: 20% when hurt, 30% when critical, 0% if last was repair or full HP
+  if (lastChoice !== 'repair' && hpPct < 0.5) {
+    const repairChance = hpPct < 0.3 ? 0.30 : 0.20;
+    if (roll < repairChance) return ['repair'];
+    roll = (roll - repairChance) / (1 - repairChance);
   }
+  // Bits: 10% chance (skip if last was bits)
+  if (lastChoice !== 'bits' && roll < 0.10) return ['bits'];
 
-  // CORE — weapon/generic cards, boosted every 4th offer
-  _fullPool.core = isCoreSection ? 50 : 15;
-
-  // REPAIR — only if hurt
-  if (hpPct < 1.0) {
-    _fullPool.repair = 15;
-    if (hpPct < 0.5) _fullPool.repair += 25;
-    if (hpPct < 0.3) _fullPool.repair += 15;
-    if (lastChoice === 'repair') _fullPool.repair -= 12;
-  }
-
-  // REFORGE — if 2+ upgradeable cards
-  if (upgradeableCards >= 2) {
-    _fullPool.reforge = 18;
-    if (_isBossSection(trenchSection)) _fullPool.reforge += 15;
-  }
-
-  // BITS — always available, low weight
-  _fullPool.bits = 10;
-  if (lastChoice === 'bits') _fullPool.bits -= 6;
-
-  // Clamp
-  for (const k in _fullPool) { _fullPool[k] = Math.max(0, _fullPool[k]); }
-
-  // Draw 2 without replacement
-  const picks = [];
-  const remaining = { ..._fullPool };
-  for (let i = 0; i < 2; i++) {
-    const totalW = Object.values(remaining).reduce((s, w) => s + w, 0);
-    if (totalW <= 0) break;
-    let r = Math.random() * totalW;
-    for (const [type, w] of Object.entries(remaining)) {
-      r -= w;
-      if (r <= 0) { picks.push(type); delete remaining[type]; break; }
-    }
-  }
-
-  // Hard rule: at least one build-advancing option (class/core/reforge)
-  const _buildTypes = new Set([..._classes, 'core', 'reforge']);
-  if (!picks.some(p => _buildTypes.has(p))) {
-    picks[0] = _pickClassTerminal(null);
-  }
-  while (picks.length < 2) picks.push(_pickClassTerminal(picks.length > 0 ? new Set([picks[0]]) : null));
-
-  // Track drought (any class terminal counts as "got a mod")
-  const _classTypes = new Set(['thermal','cryo','arc','pulse','corrupt','core']);
-  if (picks.some(p => _classTypes.has(p))) _dlModDrought = 0;
-  else _dlModDrought++;
-
-  return picks;
+  return ['mod'];
 }
 
 // --- Spawn two physical Data Link chests on the stage ---
@@ -3056,52 +3032,36 @@ function spawnDataLinkChests() {
   const picks = generateDataLinkChoice();
   _dlFirstChoice = false;
 
-  // Spawn in front of the door (right wall), parallel to it with generous spacing
+  // Single chest, centered in front of the door
   const sec = trenchSections[trenchSection];
   const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
   const midY = (TRENCH_HEIGHT / 2) * CELL_SIZE;
-  // Position: ~3 cells left of the door
   const spawnX = sec ? sec.x + TW - CELL_SIZE * 4 : lp.x + 80;
-  const gap = 80; // vertical gap between chests
-  const positions = [
-    { x: spawnX, y: midY - gap / 2 },
-    { x: spawnX, y: midY + gap / 2 },
-  ];
-  // Ensure spawn positions are walkable — nudge if inside a wall
-  for (const pos of positions) {
-    const gx = Math.floor(pos.x / CELL_SIZE), gy = Math.floor(pos.y / CELL_SIZE);
-    if (!(dungeonGrid[gy] && dungeonGrid[gy][gx])) {
-      // Try closer to center
-      pos.x -= CELL_SIZE * 2;
-      const gx2 = Math.floor(pos.x / CELL_SIZE);
-      if (!(dungeonGrid[gy] && dungeonGrid[gy][gx2])) {
-        pos.y = midY + (pos === positions[0] ? -CELL_SIZE : CELL_SIZE);
-      }
-    }
+  const pos = { x: spawnX, y: midY };
+  // Ensure spawn position is walkable
+  const gx = Math.floor(pos.x / CELL_SIZE), gy = Math.floor(pos.y / CELL_SIZE);
+  if (!(dungeonGrid[gy] && dungeonGrid[gy][gx])) {
+    pos.x -= CELL_SIZE * 2;
   }
-  // Lock the door until a choice is made
   _dlChoicePending = true;
 
-  for (let i = 0; i < 2; i++) {
-    const typeId = picks[i];
-    const t = DL_TYPES[typeId];
-    barrels.push({
-      x: positions[i].x, y: positions[i].y,
-      radius: 18,
-      hp: 2, maxHp: 2,
-      _dlChest: true,
-      _dlRewardType: typeId,
-      _dlColor: t.color,
-      _dlIcon: t.icon,
-      _dlLabel: t.label,
-      _bobTimer: Math.random() * Math.PI * 2,
-      _spawnAnim: 30, _spawnAnimMax: 30,
-    });
-    // Spawn particles
-    for (let k = 0; k < 12; k++) {
-      const a = (k / 12) * Math.PI * 2, s = 1.5 + Math.random() * 2;
-      particles.push({ x: positions[i].x, y: positions[i].y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 20, maxLife: 20, size: 2, color: t.color, type: 'spark' });
-    }
+  const typeId = picks[0];
+  const t = DL_TYPES[typeId];
+  barrels.push({
+    x: pos.x, y: pos.y,
+    radius: 18,
+    hp: 2, maxHp: 2,
+    _dlChest: true,
+    _dlRewardType: typeId,
+    _dlColor: t.color,
+    _dlIcon: t.icon,
+    _dlLabel: t.label,
+    _bobTimer: Math.random() * Math.PI * 2,
+    _spawnAnim: 30, _spawnAnimMax: 30,
+  });
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2, s = 1.5 + Math.random() * 2;
+    particles.push({ x: pos.x, y: pos.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 20, maxLife: 20, size: 2, color: t.color, type: 'spark' });
   }
   playSound(500, 0.08, 'sine', 0.1);
 }
@@ -3122,45 +3082,15 @@ function claimDataLinkChest(barrel) {
   playSfx('level_up', 0.25) || playSound(900, 0.08, 'sine', 0.15);
   screenShake.intensity = Math.max(screenShake.intensity, 4);
 
-  // Despawn the OTHER data link chest with cyber glitch dissolve
-  for (let i = barrels.length - 1; i >= 0; i--) {
-    const b = barrels[i];
-    if (b._dlChest && b !== barrel) {
-      const bCol = b._dlColor || '#888';
-      // Glitch rectangle shards flying outward
-      for (let k = 0; k < 14; k++) {
-        const a = Math.random() * Math.PI * 2, s = 1.5 + Math.random() * 3.5;
-        particles.push({ x: b.x + (Math.random()-0.5)*20, y: b.y + (Math.random()-0.5)*20,
-          vx: Math.cos(a)*s, vy: Math.sin(a)*s,
-          life: 20 + Math.random()*10, maxLife: 30, size: 2 + Math.random()*3, color: bCol, type: 'spark' });
-      }
-      // Glitch text chars dissolving
-      const _gChars = '█░▓▒╳◆▪';
-      for (let k = 0; k < 4; k++) {
-        const a = Math.random() * Math.PI * 2;
-        particles.push({ x: b.x + Math.cos(a)*10, y: b.y + Math.sin(a)*10,
-          vx: Math.cos(a)*1.5, vy: Math.sin(a)*1.5 - 1,
-          life: 24, maxLife: 24, size: 10, color: bCol, type: 'glitchtext',
-          text: _gChars[Math.floor(Math.random() * _gChars.length)] });
-      }
-      triggerGlitchSurge(0.2, 12);
-      barrels.splice(i, 1);
-    }
-  }
-
-  // Spill out the reward as a physical pickup or object
-  const _classTerminalTypes = new Set(['thermal','cryo','arc','pulse','corrupt','core','mod']);
-  if (_classTerminalTypes.has(typeId)) {
-    // Class terminal or generic mod: spawn a shop chest with class filter
+  // Spill out the reward
+  if (typeId === 'mod') {
     _dlChoicePending = true;
-    window._pendingClassFilter = (typeId === 'mod') ? null : typeId;
+    window._pendingClassFilter = null;
     spawnShopChest(bx, by);
-    const _termLabel = typeId === 'mod' ? 'MOD TERMINAL' : (typeId === 'core' ? 'CORE TERMINAL' : (DL_TYPES[typeId]?.label || typeId.toUpperCase()) + ' TERMINAL');
-    addFloatingText(bx, by - 30, _termLabel, DL_TYPES[typeId]?.color || '#0ff');
+    addFloatingText(bx, by - 30, 'MOD TERMINAL', '#0ff');
   }
   switch (typeId) {
-    case 'mod': case 'thermal': case 'cryo': case 'arc': case 'pulse': case 'corrupt': case 'core':
-      break; // handled above
+    case 'mod': break; // handled above
 
     case 'repair':
       // Spill health pickups — 1 large (25 HP) + 2 small (10 HP) = 45 HP total
@@ -3207,7 +3137,7 @@ function openShopDirect() {
   _shopActiveChest = null;
   _shopSelectedId = null;
   _shopPurchased = false;
-  shopCards = draftShopCards(3);
+  shopCards = draftShopCards(2);
   _resetJoysticks();
   gameState = 'shop';
   canvas.classList.add('focus-back');
