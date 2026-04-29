@@ -3880,6 +3880,51 @@ function getTrenchDomain(sectionIdx) {
   for (const d of TRENCH_DOMAINS) { if (sectionIdx >= d.sections[0] && sectionIdx <= d.sections[1]) return d; }
   return TRENCH_DOMAINS[0];
 }
+// Per-section color progression within a domain — subtle hue/brightness
+// shift so sections 0-9 within a domain feel visually distinct.
+// Returns { wallColor, wallStroke, floorTint, accentColor, fogR/G/B }
+function _getSectionPalette(sectionIdx) {
+  const dom = getTrenchDomain(sectionIdx);
+  const localIdx = sectionIdx - dom.sections[0]; // 0-9 within domain
+  const span = Math.max(1, dom.sections[1] - dom.sections[0]);
+  const t = localIdx / span; // 0→1 across domain
+  // Parse hex color to RGB
+  const _hex = (h) => {
+    h = h.replace('#','');
+    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+  };
+  const _toHex = (r,g,b) => '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+  // Wall color: gets slightly lighter deeper in
+  const wc = _hex(dom.wallColor);
+  const wallColor = _toHex(wc[0] + t * 8, wc[1] + t * 6, wc[2] + t * 8);
+  // Wall stroke (grid lines): shifts hue slightly + brightens
+  const ws = _hex(dom.wallStroke);
+  const hueShift = t * 20; // subtle shift
+  const wallStroke = _toHex(
+    Math.min(255, ws[0] + hueShift * (ws[0] > 128 ? -0.3 : 0.5)),
+    Math.min(255, ws[1] + hueShift * (ws[1] > 128 ? -0.3 : 0.5)),
+    Math.min(255, ws[2] + hueShift * (ws[2] > 128 ? -0.3 : 0.5))
+  );
+  // Accent color: brightens toward the end of a domain
+  const ac = _hex(dom.accentColor);
+  const accentColor = _toHex(
+    Math.min(255, ac[0] + t * 30),
+    Math.min(255, ac[1] + t * 30),
+    Math.min(255, ac[2] + t * 30)
+  );
+  // Floor tint: opacity increases deeper in
+  let floorTint = dom.floorTint;
+  if (floorTint) {
+    const baseOpacity = parseFloat(floorTint.match(/[\d.]+\)$/)?.[0]) || 0.03;
+    floorTint = floorTint.replace(/[\d.]+\)$/, (baseOpacity + t * 0.03).toFixed(3) + ')');
+  }
+  // Fog: subtly shifts deeper in
+  const fogR = Math.round(dom.fogR + t * 6);
+  const fogG = Math.round(dom.fogG + t * 4);
+  const fogB = Math.round(dom.fogB + t * 6);
+  return { wallColor, wallStroke, floorTint, accentColor, fogR, fogG, fogB };
+}
 
 // ---- LAYOUT TEMPLATES — replace random pillar scatter ----
 // Each template returns an array of {x,y} cell offsets (section-local) to set as WALL.
@@ -18577,12 +18622,10 @@ function render() {
     _domainWallColor = SHELL_THEME.floor;
     _domainGridColor = SHELL_THEME.grid;
   } else if (gameMode === 'trench' && trenchSections[trenchSection]) {
-    const _dom = trenchSections[trenchSection].domain;
-    if (_dom) {
-      _domainFloorTint = _dom.floorTint;
-      _domainWallColor = _dom.wallColor;
-      _domainGridColor = _dom.wallStroke;
-    }
+    const _secPal = _getSectionPalette(trenchSection);
+    _domainFloorTint = _secPal.floorTint;
+    _domainWallColor = _secPal.wallColor;
+    _domainGridColor = _secPal.wallStroke;
   }
   // ---- Shell-only cyber void background ----
   // Instead of black beyond the shell walls, render a neon circuit board —
@@ -18592,8 +18635,7 @@ function render() {
   // tile. Bullets fly over gaps, walkers can't cross them (unless flagged).
   let _gapAccent = '#a8f';
   if (gameMode === 'trench' && trenchSections[trenchSection]) {
-    const _dom = trenchSections[trenchSection].domain;
-    if (_dom && _dom.accentColor) _gapAccent = _dom.accentColor;
+    _gapAccent = _getSectionPalette(trenchSection).accentColor;
   }
   const _gapT = performance.now();
   // Batch grid strokes: collect all visible floor cell rects into one Path2D and stroke once.
@@ -22051,7 +22093,10 @@ function render() {
       if (!window._fogCanvas) { window._fogCanvas = document.createElement('canvas'); window._fogCtx = window._fogCanvas.getContext('2d'); }
       const fc = window._fogCanvas, fctx = window._fogCtx;
       fc.width = canvas.width; fc.height = canvas.height;
-      fctx.fillStyle = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench') ? 'rgba(0,0,8,0.5)' : 'rgba(0,0,8,0.6)';
+      let _fogFill = 'rgba(0,0,8,0.6)';
+      if (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent') _fogFill = 'rgba(0,0,8,0.5)';
+      else if (gameMode === 'trench') { const _fp = _getSectionPalette(trenchSection); _fogFill = `rgba(${_fp.fogR},${_fp.fogG},${_fp.fogB},0.5)`; }
+      fctx.fillStyle = _fogFill;
       fctx.fillRect(0, 0, fc.width, fc.height);
       fctx.globalCompositeOperation = 'destination-out';
       const fox = -camera.x + canvas.width/2 + screenShake.x;
