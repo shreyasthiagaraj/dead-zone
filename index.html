@@ -21755,19 +21755,55 @@ function render() {
         // Track zombie position if still alive and valid
         if (p._followZ && isFinite(p._followZ.x) && isFinite(p._followZ.y)) { p.x = p._followZ.x; p.y = p._followZ.y; }
         if (!isFinite(p.x) || !isFinite(p.y)) continue; // skip corrupted particles
-        // Big expanding hollow ring — thick stroke, hollow center
         const _hfProg = 1 - p.life/p.maxLife; // 0→1 over lifetime
-        const _hfR = 4 + p.size * _hfProg * 1.2; // smaller expansion
-        const _hfAlpha = (p.life/p.maxLife); // fades out
-        const _hfLw = p._exposed ? 4 + (1 - _hfProg) * 2 : p._crit ? 3 + (1 - _hfProg) * 2 : 2 + (1 - _hfProg) * 1.5;
-        ctx.globalAlpha = _hfAlpha * 0.9;
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = _hfLw;
-        // Fake glow: wider dimmer ring behind
-        ctx.globalAlpha = _hfAlpha * 0.3; ctx.lineWidth = _hfLw + 4;
-        ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
-        ctx.globalAlpha = _hfAlpha * 0.9; ctx.lineWidth = _hfLw;
-        ctx.beginPath(); ctx.arc(p.x, p.y, _hfR, 0, Math.PI*2); ctx.stroke();
+        const _hfR = 4 + p.size * _hfProg * 1.1;
+        const _hfAlpha = (p.life/p.maxLife);
+        const _hfLw = p._exposed ? 3 + (1 - _hfProg) * 2.5 : p._crit ? 2.5 + (1 - _hfProg) * 2 : 1.5 + (1 - _hfProg) * 1.5;
+        // Use a seed from the particle's spawn position for stable jitter
+        if (!p._hfSeed) p._hfSeed = (p.x * 7 + p.y * 13) % 1000;
+        const _hfSeed = p._hfSeed;
+        // 1) Hot center flash — bright white dot, fades fast in first 30% of life
+        if (_hfProg < 0.35) {
+          const _coreAlpha = (1 - _hfProg / 0.35);
+          const _coreR = 3 + (1 - _coreAlpha) * 2;
+          ctx.globalAlpha = _coreAlpha * 0.9;
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(p.x, p.y, _coreR, 0, Math.PI * 2); ctx.fill();
+        }
+        // 2) Segmented ring — 5 arcs with gaps + slight radial jitter
+        const _segs = 5;
+        const _gapSize = 0.22; // gap between segments (radians)
+        const _segLen = (Math.PI * 2 - _segs * _gapSize) / _segs;
+        const _baseAngle = (_hfSeed * 0.01) + _hfProg * 0.8; // slow rotation
+        // Outer glow ring (dimmer, wider)
+        ctx.strokeStyle = p.color; ctx.lineWidth = _hfLw + 3;
+        ctx.globalAlpha = _hfAlpha * 0.2;
+        for (let si = 0; si < _segs; si++) {
+          const _sa = _baseAngle + si * (_segLen + _gapSize);
+          const _jit = (((_hfSeed + si * 17) % 7) - 3) * 0.6 * (1 - _hfProg);
+          ctx.beginPath(); ctx.arc(p.x, p.y, _hfR + _jit, _sa, _sa + _segLen); ctx.stroke();
+        }
+        // Main bright ring segments
+        ctx.strokeStyle = p.color; ctx.lineWidth = _hfLw;
+        ctx.globalAlpha = _hfAlpha * 0.85;
+        for (let si = 0; si < _segs; si++) {
+          const _sa = _baseAngle + si * (_segLen + _gapSize);
+          const _jit = (((_hfSeed + si * 17) % 7) - 3) * 0.6 * (1 - _hfProg);
+          ctx.beginPath(); ctx.arc(p.x, p.y, _hfR + _jit, _sa, _sa + _segLen); ctx.stroke();
+        }
+        // 3) Radial spike lines — thin lines radiating from center through the ring
+        const _spikeCount = p._crit ? 6 : p._exposed ? 5 : 4;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.globalAlpha = _hfAlpha * 0.6 * (1 - _hfProg * 0.7);
+        for (let si = 0; si < _spikeCount; si++) {
+          const _sa = _baseAngle + (si / _spikeCount) * Math.PI * 2 + 0.3;
+          const _innerR = _hfR * 0.3;
+          const _outerR = _hfR + 4 + (1 - _hfProg) * 3;
+          ctx.beginPath();
+          ctx.moveTo(p.x + Math.cos(_sa) * _innerR, p.y + Math.sin(_sa) * _innerR);
+          ctx.lineTo(p.x + Math.cos(_sa) * _outerR, p.y + Math.sin(_sa) * _outerR);
+          ctx.stroke();
+        }
       } else if(p.type==='wakering'){
         // Expanding ring — starts small, grows to p.size over lifetime, alpha
         // fades out. Dropped by each wake card to show the bounds of its
