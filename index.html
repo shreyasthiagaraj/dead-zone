@@ -1747,6 +1747,9 @@ const UPGRADE_POOL = [
   { id:'cascade', name:'CASCADE', rarity:'epic', max:1, icon:'◈', color:'#f80',
     descs:['Enemies killed by discharge emit a mini shockwave (50% radius, 50% dmg).'],
     flavor:'recursive signal propagation' },
+  { id:'singularity', name:'SINGULARITY', rarity:'epic', max:1, icon:'◉', color:'#f80',
+    descs:['Full charge: wave collapses back inward, pulling enemies to center. Implosion detonation on arrival.'],
+    flavor:'gravitational reversal — nothing escapes' },
   { id:'residual_field', name:'RESIDUAL FIELD', rarity:'rare', max:2, icon:'◌', color:'#f80',
     descs:['LEVEL 1: Wave leaves a lingering damage zone for 2s (30% dmg + stagger).','LEVEL 2: Zone lasts 3s, applies element status.'],
     flavor:'energy dissipates slowly — the field remains' },
@@ -1918,7 +1921,7 @@ function rebuildRunMods() {
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
     // Discharge mods
-    wideArc: 0, surgeRange: 0, aftershock: 0, cascade: false, residualField: 0,
+    wideArc: 0, surgeRange: 0, aftershock: 0, cascade: false, singularity: false, residualField: 0,
     // Payload mods
     clusterBomb: 0, stickyCharge: false, napalmZone: 0, concussiveBlast: 0, rapidPayload: 0,
     // Deadshot mods
@@ -2029,6 +2032,7 @@ function rebuildRunMods() {
       case 'surge_range':     m.surgeRange += n; break;
       case 'aftershock':      m.aftershock += n; break;
       case 'cascade':         m.cascade = true; break;
+      case 'singularity':     m.singularity = true; break;
       case 'residual_field':  m.residualField += n; break;
       // Payload mods
       case 'cluster_bomb':    m.clusterBomb += n; break;
@@ -2183,7 +2187,7 @@ const _SPECIAL_CARD_MAP = {
   recall_anchor: 'beacon', rapid_turret: 'beacon', multi_beacon: 'beacon', beacon_range: 'beacon',
   // beacon_thermal/cryo/arc/corrupt are now universal (PROTOCOL cards) — not weapon-locked
   // Discharge-specific
-  wide_arc: 'discharge', surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', residual_field: 'discharge',
+  wide_arc: 'discharge', surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', singularity: 'discharge', residual_field: 'discharge',
   // Payload-specific
   cluster_bomb: 'payload', sticky_charge: 'payload', napalm_zone: 'payload', concussive_blast: 'payload', rapid_payload: 'payload',
   // Deadshot-specific
@@ -10729,9 +10733,9 @@ function activateRightJoystickFromButton(touch) {
 document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); dash(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
 document.getElementById('btn-mark').addEventListener('touchstart', (e) => { e.preventDefault(); activateSpecial(); }, { passive: false });
-document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); }, { passive: false });
+document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); if (selectedSpecial === 'discharge') releaseDischarge(); }, { passive: false });
 document.getElementById('btn-mark').addEventListener('mousedown', () => { activateSpecial(); });
-document.getElementById('btn-mark').addEventListener('mouseup', () => { if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); });
+document.getElementById('btn-mark').addEventListener('mouseup', () => { if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); if (selectedSpecial === 'discharge') releaseDischarge(); });
 // Shoot button: hold to auto-aim + fire, drag to bias target selection
 document.getElementById('btn-shoot').addEventListener('touchstart', (e) => {
   e.preventDefault(); shootButtonHeld = true;
@@ -10795,7 +10799,7 @@ function enterShell(fromDeath) {
   players = []; localPlayerIdx = 0;
   bullets = []; zombies = []; particles = []; pickups = []; decals = [];
   floatingTexts = []; explosions = []; barrels = []; xpOrbs = [];
-  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _deadshotCharging = false; _deadshotCharge = 0;
+  activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _dischargeCharging = false; _dischargeCharge = 0; _dischargeWave = null; _deadshotCharging = false; _deadshotCharge = 0;
   activeOrbital = null;
   // Clear run-specific state so old mods don't persist in the Shell
   runUpgrades = {}; rebuildRunMods();
@@ -11667,7 +11671,7 @@ function handleKeyDown(e) {
     if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
   }
 }
-function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'payload') releasePayload(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
+function handleKeyUp(e) { keys[e.key.toLowerCase()] = false; if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'deadshot') releaseDeadshot(); if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'payload') releasePayload(); if ((e.key === 's' || e.key === 'S') && selectedSpecial === 'discharge') releaseDischarge(); if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = false; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.remove('repairing'); } }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 document.addEventListener('keydown', handleKeyDown);
@@ -12363,85 +12367,207 @@ function activateNova() {
 // DISCHARGE — short-range cone spray, inherits element
 // ============================================================
 const DISCHARGE_COOLDOWN = 120;  // 2 seconds
-const DISCHARGE_RANGE = 200;     // max wave reach
+const DISCHARGE_RANGE_MIN = 80;  // minimum wave reach (tap)
+const DISCHARGE_RANGE_MAX = 250; // maximum wave reach (full charge)
+const DISCHARGE_CHARGE_TIME = 90; // frames to full charge (~1.5s)
 const DISCHARGE_ANGLE = Math.PI * 0.5; // 90° arc
 let _dischargeActive = false;
-let _dischargeWave = null; // { x, y, angle, radius, maxRadius, color, classId, hitSet }
+let _dischargeWave = null;
+let _dischargeCharging = false;
+let _dischargeCharge = 0;
 
 function activateDischarge() {
   const lp = getLocalPlayer();
   if (!lp || !lp.alive || lp._beaconCooldown > 0) return;
-  if (_dischargeActive) return;
+  if (_dischargeActive || _dischargeCharging) return;
+  _dischargeCharging = true;
+  _dischargeCharge = 0;
+  playSound(300, 0.06, 'sine', 0.08);
+}
+
+function releaseDischarge() {
+  if (!_dischargeCharging) return;
+  _dischargeCharging = false;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) { _dischargeCharge = 0; return; }
+  _fireDischarge(lp);
+}
+
+function updateDischargeCharge() {
+  if (!_dischargeCharging) return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) { _dischargeCharging = false; _dischargeCharge = 0; return; }
+  _dischargeCharge = Math.min(DISCHARGE_CHARGE_TIME, _dischargeCharge + 1);
+  const chargePct = _dischargeCharge / DISCHARGE_CHARGE_TIME;
+  const _m = runMods || {};
+  const classId = _m.beaconElement || null;
+  const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
+  // Charging VFX: energy gathering at player
+  if (gameTime % 3 === 0) {
+    const a = Math.random() * Math.PI * 2, r = 20 + (1 - chargePct) * 30;
+    particles.push({ x: lp.x + Math.cos(a) * r, y: lp.y + Math.sin(a) * r,
+      vx: -Math.cos(a) * 3, vy: -Math.sin(a) * 3,
+      life: 8, maxLife: 8, size: 2 + chargePct * 3, color: bColor, type: 'spark' });
+  }
+  if (_dischargeCharge % 20 === 0) playSound(200 + _dischargeCharge * 6, 0.03, 'sine', 0.04);
+}
+
+function _fireDischarge(lp) {
+  const chargePct = Math.min(1, _dischargeCharge / DISCHARGE_CHARGE_TIME);
+  _dischargeCharge = 0;
   _dischargeActive = true;
   hapticSpecial();
   lp._beaconCooldown = DISCHARGE_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || null;
   const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
-  // Apply discharge mods to wave properties
-  const waveAngle = DISCHARGE_ANGLE + (_m.wideArc || 0) * (Math.PI / 9); // +20 deg per level
-  const waveRange = DISCHARGE_RANGE * (1 + (_m.surgeRange || 0) * 0.25);
+  const waveAngle = DISCHARGE_ANGLE + (_m.wideArc || 0) * (Math.PI / 9);
+  const waveRange = (DISCHARGE_RANGE_MIN + (DISCHARGE_RANGE_MAX - DISCHARGE_RANGE_MIN) * chargePct) * (1 + (_m.surgeRange || 0) * 0.25);
+  const isFullCharge = chargePct >= 0.95;
   _dischargeWave = {
     x: lp.x, y: lp.y, angle: lp.angle,
     radius: 20, maxRadius: waveRange,
-    waveAngle: waveAngle, waveRange: waveRange,
-    color: bColor, classId,
-    hitSet: new Set(), // track which enemies were already hit
+    waveAngle, waveRange, color: bColor, classId,
+    hitSet: new Set(), chargePct,
+    _singularity: isFullCharge && !!_m.singularity,
   };
-  // Punchy launch: bass thump + rising whoosh
-  playSound(80, 0.18, 'sawtooth', 0.1);
-  playSound(200, 0.12, 'square', 0.06);
-  setTimeout(() => playSound(500, 0.06, 'sine', 0.04), 30);
-  screenShake.intensity = Math.max(screenShake.intensity, 5);
-  // Launch flash — ring of sparks from the player
-  for (let _di = 0; _di < 10; _di++) {
-    const _da = lp.angle + ((_di / 10) - 0.5) * waveAngle;
-    const _ds = 6 + Math.random() * 4;
-    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
-      life: 8, maxLife: 8, size: 3 + Math.random()*2, color: bColor, type: 'spark' });
+  // Sound scales with charge — bigger charge = deeper boom
+  playSound(40 + (1 - chargePct) * 60, 0.12 + chargePct * 0.12, 'sawtooth', 0.08 + chargePct * 0.06);
+  playSound(150 + chargePct * 100, 0.1, 'square', 0.05);
+  setTimeout(() => playSound(400 + chargePct * 300, 0.05, 'sine', 0.03), 30);
+  screenShake.intensity = Math.max(screenShake.intensity, 4 + chargePct * 6);
+  if (isFullCharge) triggerGlitchSurge(0.3, 15);
+  // Launch flash — spark count scales with charge
+  const sparkCount = 6 + Math.floor(chargePct * 10);
+  for (let _di = 0; _di < sparkCount; _di++) {
+    const _da = lp.angle + ((_di / sparkCount) - 0.5) * waveAngle;
+    const _ds = 5 + Math.random() * 4 + chargePct * 4;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(_da) * _ds, vy: Math.sin(_da) * _ds,
+      life: 8 + Math.floor(chargePct * 6), maxLife: 14, size: 3 + chargePct * 3, color: bColor, type: 'spark' });
   }
 }
 
 function updateDischarge() {
+  updateDischargeCharge();
   if (!_dischargeActive || !_dischargeWave) return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) { _dischargeActive = false; _dischargeWave = null; return; }
   const w = _dischargeWave;
   const _m = runMods || {};
-  // Expand the wave — fast launch, decelerates as it travels
-  const _expandPct = w.radius / w.maxRadius; // 0→1
-  const _speed = 32 * (1 - _expandPct * 0.85); // 32→5 px/frame (explosive start, slow end)
-  w.radius += Math.max(3, _speed);
-  // Linger phase: near max range, pause briefly before fading
-  if (!w._lingering && w.radius >= w.maxRadius * 0.92) {
-    w._lingering = true;
-    w._lingerFrames = 12; // hold for 12 frames with bright shine
+
+  // ---- SINGULARITY COLLAPSE PHASE ----
+  if (w._collapsePhase) {
+    w._collapseTimer--;
+    w.radius = Math.max(0, w.radius - w.maxRadius / 25); // shrink over ~25 frames
+    // Pull enemies toward origin
+    if (isHost) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - w.x, dy = z.y - w.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > w.maxRadius || d < 5) continue;
+        const a = Math.atan2(dy, dx);
+        let da = a - w.angle; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+        const halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
+        if (Math.abs(da) > halfA) continue;
+        const pull = 4 + (1 - d / w.maxRadius) * 4;
+        z.vx -= (dx / d) * pull; z.vy -= (dy / d) * pull;
+        // Damage on return wave band
+        if (!w._collapseHitSet.has(z.zid) && Math.abs(d - w.radius) < 35) {
+          w._collapseHitSet.add(z.zid);
+          damageZombie(z, Math.floor(60 * (w.chargePct || 1)), 0, 0);
+          z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
+        }
+      }
+    }
+    // Collapse VFX: inward-moving sparks
+    if (gameTime % 2 === 0) {
+      const _ca = w.angle + (Math.random() - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+      const _cr = w.radius * (0.8 + Math.random() * 0.2);
+      particles.push({ x: w.x + Math.cos(_ca) * _cr, y: w.y + Math.sin(_ca) * _cr,
+        vx: -Math.cos(_ca) * 4, vy: -Math.sin(_ca) * 4,
+        life: 10, maxLife: 10, size: 2 + Math.random() * 2, color: w.color, type: 'spark' });
+    }
+    // Implosion detonation at center
+    if (w.radius <= 10 || w._collapseTimer <= 0) {
+      if (isHost) {
+        for (const z of zombies) {
+          if (z.hp <= 0) continue;
+          const dx = z.x - w.x, dy = z.y - w.y, d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 80) {
+            damageZombie(z, 100, d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0);
+            z.staggerTimer = Math.max(z.staggerTimer || 0, 40);
+          }
+        }
+      }
+      // Implosion burst VFX
+      for (let i = 0; i < 20; i++) {
+        const a = Math.random() * Math.PI * 2, s = 4 + Math.random() * 8;
+        particles.push({ x: w.x, y: w.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          life: 16, maxLife: 16, size: 4 + Math.random() * 4, color: w.color, type: 'explosion' });
+      }
+      for (let i = 0; i < 8; i++) {
+        const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 2;
+        particles.push({ x: w.x, y: w.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          life: 30, maxLife: 30, size: 6 + Math.random() * 5, color: '#333', type: 'smoke' });
+      }
+      particles.push({ x: w.x, y: w.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 80, color: '#fff', type: 'wakering' });
+      screenShake.intensity = Math.max(screenShake.intensity, 12);
+      playSound(35, 0.3, 'sawtooth', 0.15);
+      playSound(90, 0.2, 'square', 0.08);
+      triggerGlitchSurge(0.5, 20);
+      _dischargeActive = false; _dischargeWave = null;
+      return;
+    }
+    return;
   }
-  if (w._lingering && w._lingerFrames > 0) {
-    w._lingerFrames--;
-    w.radius = Math.min(w.radius, w.maxRadius); // cap at max, don't overshoot
-    if (w._lingerFrames <= 0) w.radius = w.maxRadius; // release to cleanup
+
+  // ---- EXPANSION PHASE ----
+  // Faster expansion — explosive burst feel
+  const _expandPct = w.radius / w.maxRadius;
+  const _speed = 42 * (1 - _expandPct * 0.8); // 42→8 px/frame
+  w.radius += Math.max(5, _speed);
+
+  // Dust trail particles — linger and drift outward slightly (no damage)
+  if (gameTime % 2 === 0) {
+    const _dCount = 2 + Math.floor((w.chargePct || 0.5) * 3);
+    for (let _di = 0; _di < _dCount; _di++) {
+      const _da = w.angle + (Math.random() - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+      const _dr = w.radius * (0.5 + Math.random() * 0.4);
+      particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
+        vx: Math.cos(_da) * 1.2 + (Math.random() - 0.5) * 1.5, vy: Math.sin(_da) * 1.2 + (Math.random() - 0.5) * 1.5,
+        life: 20 + Math.floor(Math.random() * 15), maxLife: 35, size: 4 + Math.random() * 4, color: '#333', type: 'smoke' });
+    }
   }
+
   if (w.radius >= w.maxRadius) {
-    // Dissolve particles — wave breaks apart as it fades
     const _halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
+    // SINGULARITY: full-charge → collapse phase
+    if (w._singularity) {
+      w._collapsePhase = true;
+      w._collapseTimer = 30;
+      w._collapseHitSet = new Set();
+      // Pause VFX — flash at max extent
+      for (let _di = 0; _di < 12; _di++) {
+        const _da = w.angle + (_di / 12 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+        const _dr = w.maxRadius;
+        particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
+          vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: '#fff', type: 'spark' });
+      }
+      playSound(600, 0.08, 'sine', 0.06);
+      screenShake.intensity = Math.max(screenShake.intensity, 6);
+      return;
+    }
+    // Normal dissolve
     for (let _di = 0; _di < 10; _di++) {
       const _da = w.angle + (_di / 10 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
       const _dr = w.maxRadius * (0.85 + Math.random() * 0.15);
-      particles.push({ x: w.x + Math.cos(_da)*_dr, y: w.y + Math.sin(_da)*_dr,
-        vx: Math.cos(_da)*1.5 + (Math.random()-0.5)*2, vy: Math.sin(_da)*1.5 + (Math.random()-0.5)*2,
-        life: 14 + Math.random()*8, maxLife: 22, size: 3 + Math.random()*3, color: w.color, type: 'spark' });
+      particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
+        vx: Math.cos(_da) * 1.5 + (Math.random() - 0.5) * 2, vy: Math.sin(_da) * 1.5 + (Math.random() - 0.5) * 2,
+        life: 14 + Math.random() * 8, maxLife: 22, size: 3 + Math.random() * 3, color: w.color, type: 'spark' });
     }
-    // Bright flash fragments at the leading edge
-    for (let _di = 0; _di < 5; _di++) {
-      const _da = w.angle + (_di / 5 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE) * 0.8;
-      particles.push({ x: w.x + Math.cos(_da)*w.maxRadius, y: w.y + Math.sin(_da)*w.maxRadius,
-        vx: Math.cos(_da)*0.5, vy: Math.sin(_da)*0.5,
-        life: 10, maxLife: 10, size: 5, color: '#fff', type: 'spark' });
-    }
-    // RESIDUAL FIELD: leave a lingering damage zone
+    // RESIDUAL FIELD
     if (_m.residualField > 0) {
-      const _rfDur = _m.residualField >= 2 ? 180 : 120; // 3s or 2s
+      const _rfDur = _m.residualField >= 2 ? 180 : 120;
       const _rfApplyElem = _m.residualField >= 2;
       window._residualFields = window._residualFields || [];
       window._residualFields.push({
@@ -12449,8 +12575,7 @@ function updateDischarge() {
         halfAngle: _halfA, radius: w.maxRadius,
         timer: _rfDur, maxTimer: _rfDur,
         color: w.color, classId: w.classId,
-        dmg: 40, applyElem: _rfApplyElem,
-        hitCd: {}, // per-zombie cooldown to prevent damage every frame
+        dmg: 40, applyElem: _rfApplyElem, hitCd: {},
       });
     }
     _dischargeActive = false;
