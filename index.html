@@ -17786,10 +17786,14 @@ function update() {
     if(p.type!=='_bomb'){p._age=(p._age||0)+1;if(p._age>600){pickups.splice(pi,1);continue;}}
     // Bomber bombs: arc toward target, then explode
     if(p.type==='_bomb'){
-      if(p._timer>60){const t=1-(p._timer-60)/60;p.x+=(p._tx-p.x)*0.05;p.y+=(p._ty-p.y)*0.05;}
+      if(p._timer>60){p.x+=(p._tx-p.x)*0.05;p.y+=(p._ty-p.y)*0.05;}
       p._timer--;
       if(p._timer<=0&&isHost){createExplosion(p.x,p.y,p._radius,p._damage,'any');pickups.splice(pi,1);continue;}
-      // Render bomb as pulsing red circle (visual warning)
+      // Flight trail: sparks + smoke while in the air
+      if(p._timer>30&&gameTime%2===0){
+        particles.push({x:p.x+(Math.random()-0.5)*6,y:p.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*1.5,vy:0.5+Math.random(),life:12,maxLife:12,size:2+Math.random(),color:p._timer>60?'#fa0':'#f44',type:'spark'});
+        particles.push({x:p.x,y:p.y,vx:(Math.random()-0.5)*0.5,vy:0.3,life:18,maxLife:18,size:3+Math.random()*2,color:'#333',type:'smoke'});
+      }
     }
   }
   // Decal lifecycle:
@@ -20610,14 +20614,51 @@ function render() {
   }
   // Pickups (+ orbital pickup rendering)
   for(const p of pickups){if(p.type==='_bomb'){
-    // Bomber bomb: pulsing red circle with expanding warning. Clamp bt into
-    // [0,1] because archivist-boss mortars spawn with _timer=90+mi*20 — the
-    // third bomb starts at 130, which overshoots the 120 divisor and used
-    // to produce a NEGATIVE arc radius, throwing IndexSizeError and killing
-    // the render loop the moment the boss first fired.
-    const bt=Math.max(0,Math.min(1,p._timer/120));ctx.save();ctx.translate(p.x,p.y);
-    ctx.globalAlpha=0.3+bt*0.3;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,Math.max(0,p._radius*(1-bt)),0,Math.PI*2);ctx.stroke();
-    ctx.globalAlpha=0.8;ctx.fillStyle='#f44';ctx.beginPath();ctx.arc(0,0,5,0,Math.PI*2);ctx.fill();
+    // Bomber bomb: neon cyber grenade with pulsing danger zone
+    const bt=Math.max(0,Math.min(1,p._timer/120));
+    const _urgency = 1 - bt; // 0→1 as detonation approaches
+    const _pulseRate = 0.006 + _urgency * 0.02; // faster pulsing near detonation
+    const _pulse = 0.5 + Math.sin(performance.now() * _pulseRate) * 0.4;
+    const _bombCol = _urgency > 0.7 ? '#f44' : '#fa0'; // orange → red shift
+    ctx.save();ctx.translate(p.x,p.y);
+    // 1) Danger zone: segmented warning ring expanding to blast radius
+    const _dzR = Math.max(0, p._radius * _urgency);
+    if (_dzR > 4) {
+      const _dzSegs = 6;
+      const _dzGap = 0.2;
+      const _dzArc = (Math.PI * 2 - _dzSegs * _dzGap) / _dzSegs;
+      const _dzRot = performance.now() * 0.001;
+      ctx.strokeStyle = _bombCol; ctx.lineWidth = 1.5;
+      ctx.globalAlpha = (0.15 + _urgency * 0.2) * _pulse;
+      for (let si = 0; si < _dzSegs; si++) {
+        const a = _dzRot + si * (_dzArc + _dzGap);
+        ctx.beginPath(); ctx.arc(0, 0, _dzR, a, a + _dzArc); ctx.stroke();
+      }
+      // Fill tint inside danger zone
+      ctx.globalAlpha = 0.04 + _urgency * 0.06;
+      ctx.fillStyle = _bombCol;
+      ctx.beginPath(); ctx.arc(0, 0, _dzR, 0, Math.PI * 2); ctx.fill();
+    }
+    // 2) Crosshair lines at the landing spot
+    const _chLen = 8 + _urgency * 4;
+    ctx.strokeStyle = _bombCol; ctx.lineWidth = 1; ctx.globalAlpha = 0.5 + _urgency * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(0, -_chLen); ctx.lineTo(0, -3);
+    ctx.moveTo(0, 3); ctx.lineTo(0, _chLen);
+    ctx.moveTo(-_chLen, 0); ctx.lineTo(-3, 0);
+    ctx.moveTo(3, 0); ctx.lineTo(_chLen, 0);
+    ctx.stroke();
+    // 3) Core: pulsing diamond with glow rings
+    const _coreR = 5 + _pulse * 2;
+    // Outer glow ring
+    ctx.globalAlpha = 0.25 * _pulse; ctx.strokeStyle = _bombCol; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, _coreR + 4, 0, Math.PI * 2); ctx.stroke();
+    // Diamond core
+    ctx.globalAlpha = 0.7 + _pulse * 0.3; ctx.fillStyle = _bombCol;
+    ctx.beginPath(); ctx.moveTo(0, -_coreR); ctx.lineTo(_coreR * 0.7, 0); ctx.lineTo(0, _coreR); ctx.lineTo(-_coreR * 0.7, 0); ctx.closePath(); ctx.fill();
+    // White hot center
+    ctx.globalAlpha = 0.8; ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(0, 0, 2 + _pulse, 0, Math.PI * 2); ctx.fill();
     ctx.restore();continue;}
     const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){const hs=p.amount>=25?1.6:p.amount>=15?1.2:0.8;ctx.shadowColor='#4f4';ctx.shadowBlur=8+hs*4;ctx.fillStyle='#4f4';ctx.fillRect(-6*hs,-2*hs,12*hs,4*hs);ctx.fillRect(-2*hs,-6*hs,4*hs,12*hs);ctx.shadowBlur=0;}else if(p.type==='bits'){const bpulse=0.6+Math.sin(performance.now()*0.007)*0.4;ctx.globalAlpha=bpulse;ctx.shadowColor='#ff0';ctx.shadowBlur=12;ctx.fillStyle='#ff0';ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(7,-4);ctx.lineTo(7,4);ctx.lineTo(0,8);ctx.lineTo(-7,4);ctx.lineTo(-7,-4);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#000';ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('◆',0,0);}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}else if(p.type==='element'){const ed=ELEMENT_TYPES.find(e=>e.id===p.elementId);if(ed){const pulse=0.55+Math.sin(performance.now()*0.009)*0.45;ctx.globalAlpha=pulse;ctx.shadowColor=ed.color;ctx.shadowBlur=24;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.3;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,18+Math.sin(performance.now()*0.006)*2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ed.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=ed.color;ctx.fillText(ed.name,0,22);}}ctx.restore();}
 
