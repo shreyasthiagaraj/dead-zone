@@ -960,7 +960,7 @@ const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 20, spread: 0.02, bul
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 22;      // bullet life in frames (~440px at speed 20)
-const GUN_AUTO_RELOAD_DELAY = 90;  // frames (~1.5s) of not firing before cooldown starts
+const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
 let _gunReloadTimer = 0;
@@ -10722,7 +10722,7 @@ document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootBu
 // Reload button — manual reload tap
 (() => {
   const _rlb = document.getElementById('btn-reload');
-  const _rlTap = (e) => { if (e) e.preventDefault(); const _maxA = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); if (!_gunReloading && _gunAmmo < _maxA) { _gunReloading = true; _gunReloadTimer = GUN_RELOAD_TIME; playSound(300, 0.08, 'square', 0.06); playSound(600, 0.05, 'sine', 0.12); _rlb.style.display = 'none'; } };
+  const _rlTap = (e) => { if (e) e.preventDefault(); const _maxA = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); if (!_gunReloading && _gunAmmo < _maxA) { const _hu = (_maxA - _gunAmmo) / _maxA; _gunReloading = true; _gunReloadTimer = Math.max(8, Math.floor(GUN_RELOAD_TIME * _hu)); playSound(300, 0.08, 'square', 0.06); playSound(600, 0.05, 'sine', 0.12); _rlb.style.display = 'none'; } };
   _rlb.addEventListener('touchstart', _rlTap, { passive: false });
   _rlb.addEventListener('mousedown', _rlTap);
 })();
@@ -15770,15 +15770,19 @@ function update() {
       _gunReloadTimer--;
       if (_gunReloadTimer <= 0) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); floatingTexts.push({x:lp.x,y:lp.y-30,text:'COOLED',color:'#0ff',vy:-1,life:20,maxLife:20}); playSound(800,0.06,'sine',0.06); }
     }
-    // Passive cooldown: after 1.5s idle, gun starts cooling (recovering ammo)
-    if (!_gunReloading && _gunAmmo < GUN_MAG_SIZE + ((runMods||{}).magBonus||0)) {
+    // Passive cooldown: after idle delay, gun starts cooling (proportional to heat used)
+    const _maxAmmo = GUN_MAG_SIZE + ((runMods||{}).magBonus||0);
+    if (!_gunReloading && _gunAmmo < _maxAmmo) {
       if (shouldFire) {
         _gunIdleTimer = 0; // firing resets the idle cooldown timer
       } else {
         _gunIdleTimer++;
-        if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY) {
-          // Cool down — restore ammo gradually (full restore over ~0.8s)
-          _gunReloading = true; _gunReloadTimer = GUN_RELOAD_TIME; _gunIdleTimer = 0;
+        const _coolMult = (runMods && runMods.fastCool) ? 0.5 : 1;
+        if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY * _coolMult) {
+          // Cool down proportional to heat used (fewer shots = shorter cooldown)
+          const _heatUsed = (_maxAmmo - _gunAmmo) / _maxAmmo; // 0→1
+          const _coolTime = Math.max(8, Math.floor(GUN_RELOAD_TIME * _heatUsed));
+          _gunReloading = true; _gunReloadTimer = _coolTime; _gunIdleTimer = 0;
         }
       }
     }
