@@ -1806,7 +1806,7 @@ const _STATUS_COLORS = {
   OVERHEAT: '#f80', OVERHEATED: '#f80', BURN: '#f80', BURNING: '#f80', IGNITE: '#f80',
   CHILL: '#8ef', CHILLED: '#8ef', FROZEN: '#aef', FREEZE: '#aef',
   CHARGED: '#4ff', CHARGE: '#4ff',
-  EXPOSED: '#ff4', EXPOSE: '#ff4',
+  EXPOSED: '#cef', EXPOSE: '#cef',
   CORRUPT: '#a4f', COMPROMISED: '#c8f',
 };
 
@@ -1818,7 +1818,7 @@ const _TERM_GLOSSARY = {
   CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   CHARGED:      { color: '#4ff', desc: 'Arc conduit mark. Arc procs chain through Charged enemies at longer range.' },
-  EXPOSED:      { color: '#ff4', desc: 'Pulse vulnerability. 2x knockback, wall collision damage, +15% crit chance.' },
+  EXPOSED:      { color: '#cef', desc: 'Pulse vulnerability. 2x knockback, wall collision damage, +15% crit chance.' },
   COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes +50% damage. Enemies deal 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking poison (0-5). At threshold, becomes COMPROMISED for 5 seconds.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
@@ -6537,8 +6537,8 @@ function applyExposed(z) {
   if (!_synLock && _m.synStormSurge) { _synLock = true; applyCharged(z); _synLock = false; }
   // VFX: only show label on first application
   if (!_wasExposed) {
-    particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#ff4',type:'spark'});
-    floatingTexts.push({x:z.x, y:z.y - z.radius - 14, text:'EXPOSED', color:'#ff4', vx:0, vy:-1.2, life:24, maxLife:24});
+    particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});
+    floatingTexts.push({x:z.x, y:z.y - z.radius - 14, text:'EXPOSED', color:'#cef', vx:0, vy:-1.2, life:24, maxLife:24});
   }
 }
 function applyCorrupt(z, stacks) {
@@ -12978,10 +12978,10 @@ function applyDashTrailEffects(lp) {
   const hitSet = lp._dashHitSet || (lp._dashHitSet = new Set());
   const ddx = lp.dashDirX || Math.cos(lp.angle), ddy = lp.dashDirY || Math.sin(lp.angle);
 
-  // ---- IGNITION TRAIL (thermal): drop fire puddles BEHIND ----
+  // ---- IGNITION TRAIL (thermal): drop fire puddles BEHIND + slightly ahead ----
   if (hasBurnout && gameTime % 2 === 0) {
-    const px = lp.x - ddx * 20, py = lp.y - ddy * 20; // behind player
-    const pudR = _m.burnoutWake >= 2 ? 35 : 25;
+    const px = lp.x - ddx * 14, py = lp.y - ddy * 14; // mostly behind, slightly forward
+    const pudR = _m.burnoutWake >= 2 ? 40 : 30;
     // Spawn a burnout puddle (reuse burnoutPuddles array)
     burnoutPuddles.push({ x: px, y: py, radius: pudR, life: 180, maxLife: 180 }); // 3s
     // Damage + overheat anything already standing in the puddle
@@ -13018,8 +13018,9 @@ function applyDashTrailEffects(lp) {
       damageZombie(z, 25, 0, 0);
       applyCharged(z);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
-      // Long-lasting lightning bolt from player to enemy
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:22,maxLife:22,size:1.5,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+      // Lightning bolt from player to enemy
+      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
+      playSound(800 + Math.random()*400, 0.04, 'sawtooth', 0.04); // electric zap
       // Bright spark burst at impact point
       for (let si = 0; si < 8; si++) { const sa = Math.random()*Math.PI*2, ss=2+Math.random()*4; particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*ss,vy:Math.sin(sa)*ss,life:16,maxLife:16,size:2.5+Math.random(),color:Math.random()>0.4?'#4ff':'#fff',type:'spark'}); }
       // Flash ring at struck enemy
@@ -14830,11 +14831,14 @@ function damagePlayerObj(p,damage,attacker) {
   if (p === getLocalPlayer() && runMods && runMods.hypothermia && attacker && attacker._chill > 0) {
     damage *= 0.75;
   }
-  // VOLTAIC ARMOR: getting hit arcs a bolt at the attacker
+  // VOLTAIC ARMOR: getting hit (melee or projectile) arcs a bolt at the attacker
   if (p === getLocalPlayer() && runMods && runMods.voltaicArmor && attacker && attacker.hp > 0 && isHost) {
     damageZombie(attacker, 30, 0, 0, true);
     applyCharged(attacker);
-    particles.push({x:p.x,y:p.y,vx:0,vy:0,life:16,maxLife:16,size:1.5,color:'#4ff',type:'lightning',tx:attacker.x,ty:attacker.y});
+    particles.push({x:p.x,y:p.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:attacker.x,ty:attacker.y});
+    // Spark burst at struck enemy
+    for (let _va = 0; _va < 6; _va++) { const _a = Math.random()*Math.PI*2; particles.push({x:attacker.x,y:attacker.y,vx:Math.cos(_a)*3,vy:Math.sin(_a)*3,life:10,maxLife:10,size:2,color:'#4ff',type:'spark'}); }
+    playSound(900 + Math.random()*300, 0.05, 'sawtooth', 0.04);
   }
   // Barrier absorbs damage before HP
   if (p.barrier > 0) {
@@ -16284,7 +16288,7 @@ function update() {
           }
         }
         if(shieldBlocked)continue;
-        for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){damagePlayerObj(p,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}
+        for(const p of players){if(!p.alive)continue;if(dist(b,p)<PLAYER_RADIUS+b.size){const _bOwner=b.ownerId?zombies.find(z2=>z2.zid===b.ownerId&&z2.hp>0):null;damagePlayerObj(p,b.damage,_bOwner||null);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}
       }
     }
     // Non-host: visual bullet collision with client-side hit prediction
@@ -21155,7 +21159,7 @@ function render() {
       ctx.globalAlpha=1;
       ctx.restore();
     }
-    const _zc=z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._shocked>0?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#ff4':z.hitFlash>0?'#fff':z.color;
+    const _zc=z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._shocked>0?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#cef':z.hitFlash>0?'#fff':z.color;
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
@@ -21401,7 +21405,7 @@ function render() {
     // Charged: electrical arcs across body + cyan flicker
     if(z._charged){ctx.globalAlpha=0.6;ctx.shadowColor='#4ff';ctx.shadowBlur=10;for(let ci=0;ci<4;ci++){const a1=Math.random()*Math.PI*2,a2=a1+Math.random()*1.5;ctx.strokeStyle=Math.random()>0.3?'#4ff':'#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(Math.cos(a1)*z.radius*0.5,Math.sin(a1)*z.radius*0.5);const mx=Math.cos((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6,my=Math.sin((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6;ctx.lineTo(mx,my);ctx.lineTo(Math.cos(a2)*z.radius*0.5,Math.sin(a2)*z.radius*0.5);ctx.stroke();}ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Exposed: pulsing target reticle + vulnerability shimmer
-    if(z._exposed){const _ep=0.4+Math.sin(performance.now()*0.008)*0.3;ctx.globalAlpha=_ep;ctx.strokeStyle='#ff4';ctx.lineWidth=2;ctx.shadowColor='#ff4';ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(0,-z.radius-10);ctx.lineTo(0,-z.radius-4);ctx.moveTo(0,z.radius+4);ctx.lineTo(0,z.radius+10);ctx.moveTo(-z.radius-10,0);ctx.lineTo(-z.radius-4,0);ctx.moveTo(z.radius+4,0);ctx.lineTo(z.radius+10,0);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    if(z._exposed){const _ep=0.4+Math.sin(performance.now()*0.008)*0.3;ctx.globalAlpha=_ep;ctx.strokeStyle='#cef';ctx.lineWidth=2;ctx.shadowColor='#cef';ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(0,-z.radius-10);ctx.lineTo(0,-z.radius-4);ctx.moveTo(0,z.radius+4);ctx.lineTo(0,z.radius+10);ctx.moveTo(-z.radius-10,0);ctx.lineTo(-z.radius-4,0);ctx.moveTo(z.radius+4,0);ctx.lineTo(z.radius+10,0);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Tracer mark: pulsing red diamond reticle
     if(z._tracerMarked>0){const _tp=0.5+Math.sin(performance.now()*0.01)*0.3;ctx.globalAlpha=_tp;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.beginPath();const _tr=z.radius+8;ctx.moveTo(0,-_tr);ctx.lineTo(_tr*0.6,0);ctx.lineTo(0,_tr);ctx.lineTo(-_tr*0.6,0);ctx.closePath();ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Overheat: pulsing orange glow + heat shimmer rings
@@ -21729,13 +21733,14 @@ function render() {
     if(p.type==='lightning'&&p.tx!==undefined){
       // Cull lightning if BOTH endpoints are offscreen
       if ((p.x<_pViewL||p.x>_pViewR||p.y<_pViewT||p.y>_pViewB) && (p.tx<_pViewL||p.tx>_pViewR||p.ty<_pViewT||p.ty>_pViewB)) continue;
-      const jitter = 25 * (p.life/p.maxLife);
+      const jitter = 20 * (p.life/p.maxLife);
       const segs=6;
-      ctx.strokeStyle='#4ff';ctx.lineWidth=3;ctx.shadowColor='#4ff';ctx.shadowBlur=14;ctx.beginPath();ctx.moveTo(p.x,p.y);
+      const _lw = Math.max(1, p.size * 1.5); // outer width scales with particle size
+      ctx.strokeStyle=p.color||'#4ff';ctx.lineWidth=_lw;ctx.shadowColor=p.color||'#4ff';ctx.shadowBlur=10;ctx.beginPath();ctx.moveTo(p.x,p.y);
       for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter);}
       ctx.stroke();
-      ctx.strokeStyle=p.color==='#fff'?'#fff':'#aff';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(p.x,p.y);
-      for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter*0.6,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter*0.6);}
+      ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(0.5,_lw*0.4);ctx.beginPath();ctx.moveTo(p.x,p.y);
+      for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter*0.5,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter*0.5);}
       ctx.stroke();ctx.shadowBlur=0;
     } else {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
@@ -22010,7 +22015,7 @@ function render() {
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
         if (z.x < _vL || z.x > _vR || z.y < _vT || z.y > _vB) continue;
-        const rc = z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#ff4':z.color;
+        const rc = z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._compromised?'#c8f':z._overheat>0?'#f85':z._burning>0?'#f85':z._exposed?'#cef':z.color;
         ctx.save();
         ctx.translate(z.x + _rox, z.y + _roy);
         ctx.rotate(z.angle || 0);
