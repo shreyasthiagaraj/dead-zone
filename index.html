@@ -17241,9 +17241,64 @@ function update() {
             particles.push({x:z.x+Math.cos(ra2)*_anchorR*0.5,y:z.y+Math.sin(ra2)*_anchorR*0.5,vx:-Math.cos(ra2)*2.5,vy:-Math.sin(ra2)*2.5,life:14,maxLife:14,size:2.5,color:'#a4f',type:'spark'});
           }
         }
-        // ---- DEFAULT: walk toward player (with persistent chase-offset target) ----
+        // ---- DEFAULT: walk toward player (with melee attack state machine) ----
         else{
-          z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;
+          const _meleeStopDist = z.radius + PLAYER_RADIUS + 10;
+          // Melee zombies: stop at boundary, wind up, lunge, recover
+          if (zd < _meleeStopDist + 50) {
+            if (!z._meleeState) z._meleeState = 'approach';
+            if (z._meleeState === 'approach') {
+              if (zd <= _meleeStopDist + 8 && z.attackCooldown <= 0) {
+                z._meleeState = 'windup';
+                z._meleeTimer = 14 + Math.floor(Math.random() * 8);
+              } else if (zd > _meleeStopDist) {
+                z.vx = _chaseDx * z.speed; z.vy = _chaseDy * z.speed;
+              } else {
+                // At range but on cooldown — strafe slightly
+                const _perpX = -_chaseDy, _perpY = _chaseDx;
+                if (!z._strafeDir) z._strafeDir = Math.random() > 0.5 ? 1 : -1;
+                z.vx = _perpX * z.speed * 0.35 * z._strafeDir;
+                z.vy = _perpY * z.speed * 0.35 * z._strafeDir;
+              }
+            } else if (z._meleeState === 'windup') {
+              z.vx *= 0.15; z.vy *= 0.15;
+              z._meleeTimer--;
+              // Wind-up telegraph: red sparks from body
+              if (z._meleeTimer % 3 === 0) {
+                const _wa = Math.atan2(np.y - z.y, np.x - z.x);
+                particles.push({ x: z.x + Math.cos(_wa) * z.radius * 0.8, y: z.y + Math.sin(_wa) * z.radius * 0.8,
+                  vx: Math.cos(_wa) * 1.5, vy: Math.sin(_wa) * 1.5, life: 10, maxLife: 10, size: 3, color: '#f66', type: 'spark' });
+              }
+              if (z._meleeTimer <= 0) {
+                z._meleeState = 'strike';
+                z._meleeTimer = 7;
+                const _la = Math.atan2(np.y - z.y, np.x - z.x);
+                z._meleeAng = _la;
+                z.vx = Math.cos(_la) * z.speed * 3.5;
+                z.vy = Math.sin(_la) * z.speed * 3.5;
+              }
+            } else if (z._meleeState === 'strike') {
+              z._meleeTimer--;
+              z.vx *= 0.82; z.vy *= 0.82;
+              if (z._meleeTimer <= 0) {
+                z._meleeState = 'recover';
+                z._meleeTimer = 22;
+                const _ba = (z._meleeAng || 0) + Math.PI;
+                z.vx = Math.cos(_ba) * z.speed * 1.8;
+                z.vy = Math.sin(_ba) * z.speed * 1.8;
+              }
+            } else if (z._meleeState === 'recover') {
+              z.vx *= 0.86; z.vy *= 0.86;
+              z._meleeTimer--;
+              if (z._meleeTimer <= 0) {
+                z._meleeState = 'approach';
+                z._strafeDir = Math.random() > 0.5 ? 1 : -1;
+              }
+            }
+          } else {
+            z._meleeState = 'approach';
+            z.vx = _chaseDx * z.speed; z.vy = _chaseDy * z.speed;
+          }
         }
         // Paused "lose-sight" beat — decay velocity so the zombie stops moving
         // this frame. Runs AFTER behavior writes so it overrides any chase vector.
@@ -17353,22 +17408,31 @@ function update() {
           const _nx = pd > 0.1 ? pdx / pd : 0, _ny = pd > 0.1 ? pdy / pd : 0;
           z.vx -= _nx * 3.5; z.vy -= _ny * 3.5;
           z.attackCooldown = 35;
-          // Slash VFX — short bright arc between zombie and player at the contact point
+          // Swipe VFX — 3 bright claw marks + outer glow arc + impact sparks
           const cx = z.x + _nx * z.radius, cy = z.y + _ny * z.radius;
           const slashAng = Math.atan2(_ny, _nx) + Math.PI / 2;
-          const sl = 14;
-          particles.push({ x: cx - Math.cos(slashAng) * sl, y: cy - Math.sin(slashAng) * sl,
-            tx: cx + Math.cos(slashAng) * sl, ty: cy + Math.sin(slashAng) * sl,
-            vx: 0, vy: 0, life: 8, maxLife: 8, size: 2, color: '#fff', type: 'lightning' });
-          particles.push({ x: cx - Math.cos(slashAng) * sl * 0.7, y: cy - Math.sin(slashAng) * sl * 0.7,
-            tx: cx + Math.cos(slashAng) * sl * 0.7, ty: cy + Math.sin(slashAng) * sl * 0.7,
-            vx: 0, vy: 0, life: 6, maxLife: 6, size: 1, color: '#f88', type: 'lightning' });
-          // Impact sparks radiating outward along the slash
-          for (let si = 0; si < 5; si++) {
-            const sa = slashAng + (Math.random() - 0.5) * 0.8;
-            const ss = 2 + Math.random() * 3;
-            particles.push({ x: cx, y: cy, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss,
-              life: 10, maxLife: 10, size: 2 + Math.random(), color: Math.random() > 0.5 ? '#f44' : '#faa', type: 'spark' });
+          const sl = 28;
+          const _fwdAng = Math.atan2(_ny, _nx);
+          // 3 claw marks in a fan pattern
+          for (let ci = -1; ci <= 1; ci++) {
+            const _ca = slashAng + ci * 0.18;
+            const _off = ci * 4;
+            const _ox = Math.cos(_fwdAng) * _off, _oy = Math.sin(_fwdAng) * _off;
+            particles.push({ x: cx - Math.cos(_ca) * sl + _ox, y: cy - Math.sin(_ca) * sl + _oy,
+              tx: cx + Math.cos(_ca) * sl + _ox, ty: cy + Math.sin(_ca) * sl + _oy,
+              vx: _nx * 1.5, vy: _ny * 1.5, life: 12, maxLife: 12, size: 3, color: '#fff', type: 'lightning' });
+          }
+          // Outer glow arc — wider, dimmer red
+          particles.push({ x: cx - Math.cos(slashAng) * sl * 1.3, y: cy - Math.sin(slashAng) * sl * 1.3,
+            tx: cx + Math.cos(slashAng) * sl * 1.3, ty: cy + Math.sin(slashAng) * sl * 1.3,
+            vx: _nx * 2, vy: _ny * 2, life: 10, maxLife: 10, size: 5, color: '#f44', type: 'lightning' });
+          // Impact sparks — bigger burst
+          const _sColors = ['#f44','#faa','#fff','#f88','#fa6'];
+          for (let si = 0; si < 10; si++) {
+            const sa = slashAng + (Math.random() - 0.5) * 1.4;
+            const ss = 3 + Math.random() * 5;
+            particles.push({ x: cx, y: cy, vx: Math.cos(sa) * ss + _nx * 2, vy: Math.sin(sa) * ss + _ny * 2,
+              life: 14, maxLife: 14, size: 2.5 + Math.random() * 2, color: _sColors[si % 5], type: 'spark' });
           }
         }
       }
@@ -21050,6 +21114,31 @@ function render() {
       ctx.beginPath(); ctx.arc(0, 0, _cpR + 3, 0, Math.PI * 2); ctx.stroke();
       ctx.globalAlpha = 0.4 + _cpProg * 0.5; ctx.lineWidth = 1.5 + _cpProg;
       ctx.beginPath(); ctx.arc(0, 0, _cpR, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Melee wind-up telegraph — pulsing red ring when about to swipe
+    if (z._meleeState === 'windup' && z._meleeTimer !== undefined) {
+      const _mwMax = 22; // approx max wind-up duration
+      const _mwProg = 1 - (z._meleeTimer / _mwMax); // 0→1
+      const _mwR = _zr + 3 + _mwProg * 10;
+      const _mwPulse = 0.5 + Math.sin(performance.now() * 0.02) * 0.3;
+      ctx.strokeStyle = '#f44';
+      ctx.globalAlpha = (0.2 + _mwProg * 0.5) * _mwPulse; ctx.lineWidth = 2 + _mwProg * 3;
+      ctx.beginPath(); ctx.arc(0, 0, _mwR, 0, Math.PI * 2); ctx.stroke();
+      // Directional indicator — short line toward player showing attack direction
+      if (z._meleeAng === undefined) {
+        const _np2 = players.find(p2 => p2.alive);
+        if (_np2) { z._meleeAng = Math.atan2(_np2.y - z.y, _np2.x - z.x); }
+      }
+      if (z._meleeAng !== undefined) {
+        const _mda = z._meleeAng - z.angle; // relative to zombie facing (translate coords)
+        ctx.globalAlpha = 0.4 + _mwProg * 0.5;
+        ctx.strokeStyle = '#f66'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(_mda) * _zr, Math.sin(_mda) * _zr);
+        ctx.lineTo(Math.cos(_mda) * (_zr + 12 + _mwProg * 10), Math.sin(_mda) * (_zr + 12 + _mwProg * 10));
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }
     // ---- BOSS PHASE BODY MODIFICATIONS ----
