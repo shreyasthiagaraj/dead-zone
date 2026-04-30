@@ -11852,49 +11852,96 @@ function fireWeaponForPlayer(p) {
         life: 4 + Math.floor(Math.random() * 5), maxLife: 9,
         size: 2.5 + Math.random() * 3, color: _mi < 5 ? '#fff' : _ec, type: 'spark' });
     }
-    // Thick smoke cloud at barrel
+    // Bright smoke cloud at barrel — element tinted
     for (let _mi = 0; _mi < 4; _mi++) {
       const _sOff = (Math.random()-0.5) * 10;
+      const _smCol = _mi < 2 ? _ec : (Math.random() > 0.5 ? '#fa0' : '#ff8');
       particles.push({ x: _mx + _perpX*_sOff, y: _my + _perpY*_sOff,
         vx: _mc * (1 + Math.random()*2) + (Math.random()-0.5)*3, vy: _ms * (1 + Math.random()*2) + (Math.random()-0.5)*3,
-        life: 16 + Math.floor(Math.random()*10), maxLife: 26, size: 6 + Math.random()*5, color: '#555', type: 'smoke' });
+        life: 14 + Math.floor(Math.random()*8), maxLife: 22, size: 5 + Math.random()*4, color: _smCol, type: 'smoke' });
     }
     // Expanding flash ring — BIG
     particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 6, maxLife: 6, size: 35, color: _ec, type: 'wakering' });
     // Bright white core flash
     particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 3, maxLife: 3, size: 12, color: '#fff', type: 'spark' });
 
-    // --- BEAM FLASH — instant line from barrel to endpoint ---
-    // Triple-layered beam: wide dim → medium bright → thin white-hot
-    // Wide outer beam
-    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
-      life: 5, maxLife: 5, size: 4, color: _ec, type: 'lightning' });
-    // Bright inner beam
-    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
-      life: 4, maxLife: 4, size: 2.5, color: '#fff', type: 'lightning' });
-    // Hot core beam (thinnest, longest lasting)
-    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
-      life: 7, maxLife: 7, size: 1, color: '#fff', type: 'lightning' });
-
-    // --- SMOKE TRAIL along the beam path ---
-    const _smokeCount = 5 + Math.floor(Math.random() * 3);
-    for (let _si = 0; _si < _smokeCount; _si++) {
-      const _t = 0.1 + (_si / _smokeCount) * 0.8;
-      const _sx = _mx + _mc * _range * _t + (Math.random()-0.5) * 8;
-      const _sy = _my + _ms * _range * _t + (Math.random()-0.5) * 8;
-      particles.push({ x: _sx, y: _sy,
-        vx: _perpX * (Math.random()-0.5) * 3, vy: _perpY * (Math.random()-0.5) * 3,
-        life: 12 + Math.floor(Math.random()*10), maxLife: 22,
-        size: 4 + Math.random() * 5, color: '#444', type: 'smoke' });
+    // --- RAYCAST: find actual hit point (beam stops at first enemy or wall) ---
+    let _hitDist = _range;
+    for (const _rz of zombies) {
+      if (_rz.hp <= 0) continue;
+      const _rdx = _rz.x - _mx, _rdy = _rz.y - _my;
+      const _proj = _rdx * _mc + _rdy * _ms; // distance along beam
+      if (_proj < 0 || _proj > _hitDist) continue;
+      const _perp2 = _rdx * _perpX + _rdy * _perpY; // perpendicular distance
+      if (Math.abs(_perp2) < _rz.radius + 6) _hitDist = Math.min(_hitDist, _proj);
     }
-    // Scattered sparks along the beam path
-    for (let _si = 0; _si < 6; _si++) {
-      const _t = Math.random() * 0.9;
-      const _sx = _mx + _mc * _range * _t, _sy = _my + _ms * _range * _t;
+    // Wall check along beam (sample every 40px)
+    for (let _wd = 40; _wd < _hitDist; _wd += 40) {
+      const _wx = _mx + _mc * _wd, _wy = _my + _ms * _wd;
+      const _gx = Math.floor(_wx / CELL_SIZE), _gy = Math.floor(_wy / CELL_SIZE);
+      if (_gx < 0 || _gx >= GRID_W || _gy < 0 || _gy >= GRID_H || !(dungeonGrid[_gy] && dungeonGrid[_gy][_gx])) { _hitDist = _wd; break; }
+    }
+    const _beamEndX = _mx + _mc * _hitDist, _beamEndY = _my + _ms * _hitDist;
+
+    // --- BEAM FLASH — thin core line with effects along its length ---
+    // Core beam line (thin, bright, longest lasting)
+    particles.push({ x: _mx, y: _my, tx: _beamEndX, ty: _beamEndY, vx: 0, vy: 0,
+      life: 6, maxLife: 6, size: 1.2, color: '#fff', type: 'lightning' });
+    // Colored beam (slightly wider, shorter lived)
+    particles.push({ x: _mx, y: _my, tx: _beamEndX, ty: _beamEndY, vx: 0, vy: 0,
+      life: 4, maxLife: 4, size: 2.5, color: _ec, type: 'lightning' });
+
+    // --- FLASH NODES along the beam — bright bursts at random positions ---
+    const _nodeCount = 2 + Math.floor(Math.random() * 2);
+    for (let _ni = 0; _ni < _nodeCount; _ni++) {
+      const _t = 0.15 + Math.random() * 0.7;
+      const _nx = _mx + _mc * _hitDist * _t, _ny = _my + _ms * _hitDist * _t;
+      // Flash ring at this point
+      particles.push({ x: _nx, y: _ny, vx: 0, vy: 0, life: 5, maxLife: 5,
+        size: 12 + Math.random() * 10, color: _ec, type: 'wakering' });
+      // Perpendicular burst lines — short lines crossing the beam
+      const _burstLen = 6 + Math.random() * 8;
+      particles.push({ x: _nx + _perpX * _burstLen, y: _ny + _perpY * _burstLen,
+        tx: _nx - _perpX * _burstLen, ty: _ny - _perpY * _burstLen,
+        vx: 0, vy: 0, life: 4, maxLife: 4, size: 1, color: '#fff', type: 'lightning' });
+      // Bright spark at the node
+      particles.push({ x: _nx, y: _ny, vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4,
+        life: 5, maxLife: 5, size: 3 + Math.random()*2, color: '#fff', type: 'spark' });
+    }
+
+    // --- SMOKE + FIRE TRAIL — bright colored, not gray ---
+    const _smokeCount = 4 + Math.floor(Math.random() * 3);
+    for (let _si = 0; _si < _smokeCount; _si++) {
+      const _t = 0.05 + (_si / _smokeCount) * 0.85;
+      const _sx = _mx + _mc * _hitDist * _t + (Math.random()-0.5) * 10;
+      const _sy = _my + _ms * _hitDist * _t + (Math.random()-0.5) * 10;
+      // Bright tinted smoke — element color at low sat or warm yellow/orange
+      const _smokeCol = Math.random() > 0.5 ? _ec : (Math.random() > 0.5 ? '#fa0' : '#ff8');
       particles.push({ x: _sx, y: _sy,
-        vx: (Math.random()-0.5) * 5, vy: (Math.random()-0.5) * 5,
-        life: 5 + Math.floor(Math.random()*4), maxLife: 9,
-        size: 1.5 + Math.random() * 2, color: Math.random()>0.4 ? _ec : '#fff', type: 'spark' });
+        vx: _perpX * (Math.random()-0.5) * 4, vy: _perpY * (Math.random()-0.5) * 4,
+        life: 14 + Math.floor(Math.random()*10), maxLife: 24,
+        size: 5 + Math.random() * 5, color: _smokeCol, type: 'smoke' });
+    }
+    // Hot sparks scattered along the beam
+    for (let _si = 0; _si < 5; _si++) {
+      const _t = 0.05 + Math.random() * 0.85;
+      const _sx = _mx + _mc * _hitDist * _t, _sy = _my + _ms * _hitDist * _t;
+      particles.push({ x: _sx, y: _sy,
+        vx: _perpX * (Math.random()-0.5) * 6 + (Math.random()-0.5)*2, vy: _perpY * (Math.random()-0.5) * 6 + (Math.random()-0.5)*2,
+        life: 4 + Math.floor(Math.random()*4), maxLife: 8,
+        size: 2 + Math.random() * 2, color: Math.random()>0.3 ? '#ff0' : '#fff', type: 'spark' });
+    }
+
+    // --- IMPACT FLASH at beam endpoint (if it hit something) ---
+    if (_hitDist < _range - 10) {
+      particles.push({ x: _beamEndX, y: _beamEndY, vx: 0, vy: 0, life: 6, maxLife: 6,
+        size: 25, color: _ec, type: 'wakering' });
+      for (let _ei = 0; _ei < 6; _ei++) {
+        const _ea = Math.random()*Math.PI*2, _es = 3 + Math.random()*5;
+        particles.push({ x: _beamEndX, y: _beamEndY, vx: Math.cos(_ea)*_es, vy: Math.sin(_ea)*_es,
+          life: 5 + Math.floor(Math.random()*3), maxLife: 8, size: 2 + Math.random()*2,
+          color: Math.random()>0.5 ? '#fff' : _ec, type: 'spark' });
+      }
     }
 
     // Screenshake per shot
