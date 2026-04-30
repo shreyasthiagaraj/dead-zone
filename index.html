@@ -956,10 +956,10 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 34, spread: 0.02, bulletSize: 4.5, knockback: 3, pierce: 0 };
+const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 200, spread: 0.02, bulletSize: 5, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
-const GUN_BULLET_RANGE = 9;       // bullet life in frames (~306px at speed 34)
+const GUN_BULLET_RANGE = 2;       // 2 frames at speed 200 = ~400px hitscan range
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
@@ -11836,30 +11836,69 @@ function fireWeaponForPlayer(p) {
   _gunIdleTimer = 0;
   hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  // MUZZLE DETONATION — each shot is a mini-explosion at the barrel
+  // ====== HITSCAN FORCE BLAST — muzzle detonation + beam flash + smoke trail ======
   { const _ma = p.angle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
     const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
     const _ec = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    // Explosion sparks — radial burst centered on muzzle
-    for (let _mi = 0; _mi < 8; _mi++) {
-      const _sa = _ma + (Math.random() - 0.5) * 1.6, _ss = 5 + Math.random() * 7;
+    const _range = 320; // visual beam length
+    const _endX = _mx + _mc * _range, _endY = _my + _ms * _range;
+    const _perpX = -_ms, _perpY = _mc;
+
+    // --- MUZZLE DETONATION ---
+    // Massive radial spark burst
+    for (let _mi = 0; _mi < 14; _mi++) {
+      const _sa = _ma + (Math.random() - 0.5) * 2.2, _ss = 4 + Math.random() * 10;
       particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
-        life: 4 + Math.floor(Math.random() * 4), maxLife: 8,
-        size: 2 + Math.random() * 2, color: _mi < 3 ? '#fff' : _ec, type: 'spark' });
+        life: 4 + Math.floor(Math.random() * 5), maxLife: 9,
+        size: 2.5 + Math.random() * 3, color: _mi < 5 ? '#fff' : _ec, type: 'spark' });
     }
-    // Smoke puff — lingers at muzzle
-    for (let _mi = 0; _mi < 2; _mi++) {
-      particles.push({ x: _mx + (Math.random()-0.5)*6, y: _my + (Math.random()-0.5)*6,
-        vx: _mc * 1.5 + (Math.random()-0.5)*2, vy: _ms * 1.5 + (Math.random()-0.5)*2,
-        life: 14 + Math.floor(Math.random()*8), maxLife: 22, size: 4 + Math.random()*3, color: '#444', type: 'smoke' });
+    // Thick smoke cloud at barrel
+    for (let _mi = 0; _mi < 4; _mi++) {
+      const _sOff = (Math.random()-0.5) * 10;
+      particles.push({ x: _mx + _perpX*_sOff, y: _my + _perpY*_sOff,
+        vx: _mc * (1 + Math.random()*2) + (Math.random()-0.5)*3, vy: _ms * (1 + Math.random()*2) + (Math.random()-0.5)*3,
+        life: 16 + Math.floor(Math.random()*10), maxLife: 26, size: 6 + Math.random()*5, color: '#555', type: 'smoke' });
     }
-    // Bright muzzle flash ring — expanding wakering
-    particles.push({ x: _mx, y: _my, vx: _mc * 3, vy: _ms * 3, life: 5, maxLife: 5, size: 20, color: _ec, type: 'wakering' });
-    // Forward blast line — bright flash in the firing direction
-    particles.push({ x: _mx, y: _my, tx: _mx + _mc * 30, ty: _my + _ms * 30,
-      vx: _mc * 8, vy: _ms * 8, life: 3, maxLife: 3, size: 1.5, color: '#fff', type: 'lightning' });
-    // Micro screenshake per shot
-    screenShake.intensity = Math.max(screenShake.intensity, 1.5);
+    // Expanding flash ring — BIG
+    particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 6, maxLife: 6, size: 35, color: _ec, type: 'wakering' });
+    // Bright white core flash
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 3, maxLife: 3, size: 12, color: '#fff', type: 'spark' });
+
+    // --- BEAM FLASH — instant line from barrel to endpoint ---
+    // Triple-layered beam: wide dim → medium bright → thin white-hot
+    // Wide outer beam
+    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
+      life: 5, maxLife: 5, size: 4, color: _ec, type: 'lightning' });
+    // Bright inner beam
+    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
+      life: 4, maxLife: 4, size: 2.5, color: '#fff', type: 'lightning' });
+    // Hot core beam (thinnest, longest lasting)
+    particles.push({ x: _mx, y: _my, tx: _endX, ty: _endY, vx: 0, vy: 0,
+      life: 7, maxLife: 7, size: 1, color: '#fff', type: 'lightning' });
+
+    // --- SMOKE TRAIL along the beam path ---
+    const _smokeCount = 5 + Math.floor(Math.random() * 3);
+    for (let _si = 0; _si < _smokeCount; _si++) {
+      const _t = 0.1 + (_si / _smokeCount) * 0.8;
+      const _sx = _mx + _mc * _range * _t + (Math.random()-0.5) * 8;
+      const _sy = _my + _ms * _range * _t + (Math.random()-0.5) * 8;
+      particles.push({ x: _sx, y: _sy,
+        vx: _perpX * (Math.random()-0.5) * 3, vy: _perpY * (Math.random()-0.5) * 3,
+        life: 12 + Math.floor(Math.random()*10), maxLife: 22,
+        size: 4 + Math.random() * 5, color: '#444', type: 'smoke' });
+    }
+    // Scattered sparks along the beam path
+    for (let _si = 0; _si < 6; _si++) {
+      const _t = Math.random() * 0.9;
+      const _sx = _mx + _mc * _range * _t, _sy = _my + _ms * _range * _t;
+      particles.push({ x: _sx, y: _sy,
+        vx: (Math.random()-0.5) * 5, vy: (Math.random()-0.5) * 5,
+        life: 5 + Math.floor(Math.random()*4), maxLife: 9,
+        size: 1.5 + Math.random() * 2, color: Math.random()>0.4 ? _ec : '#fff', type: 'spark' });
+    }
+
+    // Screenshake per shot
+    screenShake.intensity = Math.max(screenShake.intensity, 2.5);
   }
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
@@ -14907,15 +14946,25 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
   z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
-  // Impact flash — big expanding hollow ring on every gun hit
-  // Exposed: even bigger. Crits (damage >= 50): magenta colored.
+  // IMPACT DETONATION — every hit is a mini-explosion at the target
   if (!silent) {
     const _hfExposed = z._exposed;
     const _hfCrit = _critHit;
     const _hfColor = _hfCrit ? '#f0f' : '#fff';
-    const _hfSize = _hfExposed ? z.radius + 35 : z.radius + 20;
-    const _hfLife = _hfExposed ? 13 : (_hfCrit ? 12 : 10);
+    const _hfSize = _hfExposed ? z.radius + 50 : z.radius + 30;
+    const _hfLife = _hfExposed ? 14 : (_hfCrit ? 13 : 11);
     particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit, _followZ: z });
+    // Impact spark burst — radial sparks from the hit point
+    const _impactSparks = _hfCrit ? 10 : (_hfExposed ? 8 : 5);
+    for (let _isi = 0; _isi < _impactSparks; _isi++) {
+      const _ia = Math.random() * Math.PI * 2, _is = 3 + Math.random() * 5;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is + kbx*0.3, vy: Math.sin(_ia)*_is + kby*0.3,
+        life: 5 + Math.floor(Math.random()*4), maxLife: 9, size: 2 + Math.random()*2,
+        color: _isi < 2 ? '#fff' : _hfColor, type: 'spark' });
+    }
+    // Impact smoke puff
+    particles.push({ x: z.x, y: z.y, vx: kbx*0.2+(Math.random()-0.5)*2, vy: kby*0.2+(Math.random()-0.5)*2,
+      life: 10 + Math.floor(Math.random()*6), maxLife: 16, size: 5 + Math.random()*4, color: '#555', type: 'smoke' });
     // Pixel-fragment shower on crits — square chunks spew with velocity,
     // giving the big hits a distinct "chunk breaking off" feel.
     if (_hfCrit) {
@@ -16129,21 +16178,7 @@ function update() {
     if(b.trail.length<6){b.trail.push({x:b.x,y:b.y});}
     else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
-    // Player bullet wake — sparks + smoke showing the force path
-    if(b.owner==='player'&&!b._deadshotRound&&!b._beaconBullet&&!b.flame&&!b.grenade){
-      const _tPerp=Math.atan2(b.vy,b.vx)+Math.PI/2;
-      // Bright sparks scattered from the head
-      const _tOff=(Math.random()-0.5)*5;
-      particles.push({x:b.x+Math.cos(_tPerp)*_tOff,y:b.y+Math.sin(_tPerp)*_tOff,
-        vx:-b.vx*0.03+(Math.random()-0.5)*3,vy:-b.vy*0.03+(Math.random()-0.5)*3,
-        life:4+Math.floor(Math.random()*3),maxLife:7,size:1.5+Math.random()*2,color:Math.random()>0.5?'#fff':b.color,type:'spark'});
-      // Smoke puff behind — lingers to show the path
-      if(gameTime%2===0){
-        particles.push({x:b.x-b.vx*0.3+(Math.random()-0.5)*4,y:b.y-b.vy*0.3+(Math.random()-0.5)*4,
-          vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,
-          life:10+Math.floor(Math.random()*6),maxLife:16,size:3+Math.random()*3,color:'#444',type:'smoke'});
-      }
-    }
+    // Hitscan bullets: no per-frame trail (they're instant). Trail VFX created at fire time.
     // Elemental bullet particle trails
     // Deadshot arrow trail
     if(b._deadshotRound&&gameTime%2===0){const _dc=b._deadshotColor||b.color;particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:_dc,type:'spark'});
@@ -21387,83 +21422,34 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // FORCE BEAM rendering — explosive energy transfer, not a "bullet"
+      // Hitscan bullet — barely visible (all VFX are beam flash particles).
+      // Just a small bright flash at the collision front for 1-2 frames.
       const _bS = b.size * _bSizeMult;
       const _bAng = Math.atan2(b.vy || 0, b.vx || 1);
-      const _bIsPlayer = b.owner === 'player';
-      if (!b._vfxSeed) b._vfxSeed = Math.random();
-      const _seed = b._vfxSeed;
-      const _lifePct = b.life / (b.maxLife || 9); // 1→0 as bullet ages
-      // Origin-to-head beam — the "force transfer" path
-      const _ox = b._originX != null ? b._originX : b.x - (b.vx||0) * 4;
-      const _oy = b._originY != null ? b._originY : b.y - (b.vy||0) * 4;
-      const _dx = b.x - _ox, _dy = b.y - _oy;
-      const _beamLen = Math.sqrt(_dx*_dx + _dy*_dy);
-      const _perpX = _beamLen > 1 ? -_dy / _beamLen : 0;
-      const _perpY = _beamLen > 1 ? _dx / _beamLen : 0;
-      if (_bIsPlayer && _beamLen > 5) {
-        // 1) Outer wide force cone — colored, tapers from head to origin
-        const _headW = _bS * 2.2 * (0.8 + _seed * 0.4);
-        const _tailW = _bS * 0.3;
-        ctx.globalAlpha = 0.12 * _bAlphaMult * _lifePct;
+      if (b.owner === 'player' && b._originX != null) {
+        // Tiny hot point — the bullet itself is nearly invisible
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_bAng);
+        ctx.globalAlpha = 0.9 * _bAlphaMult;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(0, 0, _bS * 0.6, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 0.5 * _bAlphaMult;
         ctx.fillStyle = b.color;
-        ctx.beginPath();
-        ctx.moveTo(_ox + _perpX * _tailW, _oy + _perpY * _tailW);
-        ctx.lineTo(b.x + _perpX * _headW, b.y + _perpY * _headW);
-        ctx.lineTo(b.x - _perpX * _headW, b.y - _perpY * _headW);
-        ctx.lineTo(_ox - _perpX * _tailW, _oy - _perpY * _tailW);
-        ctx.closePath(); ctx.fill();
-        // 2) Inner bright beam — narrower, hotter
-        const _iW = _headW * 0.45;
-        ctx.globalAlpha = 0.3 * _bAlphaMult * _lifePct;
-        ctx.fillStyle = b.color;
-        ctx.beginPath();
-        ctx.moveTo(_ox, _oy);
-        ctx.lineTo(b.x + _perpX * _iW, b.y + _perpY * _iW);
-        ctx.lineTo(b.x - _perpX * _iW, b.y - _perpY * _iW);
-        ctx.closePath(); ctx.fill();
-        // 3) White-hot core line — thin bright center
-        ctx.globalAlpha = 0.55 * _bAlphaMult * Math.min(1, _lifePct * 1.5);
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _bS * 0.2;
-        ctx.beginPath(); ctx.moveTo(_ox, _oy); ctx.lineTo(b.x, b.y); ctx.stroke();
-        // 4) Scattered smoke along the beam path (3-4 puffs at random positions)
-        if (_lifePct > 0.5) {
-          ctx.globalAlpha = 0.08 * _bAlphaMult;
-          ctx.fillStyle = '#666';
-          for (let _si = 0; _si < 3; _si++) {
-            const _t = 0.2 + _seed * 0.1 + _si * 0.25;
-            const _sx = _ox + _dx * _t + ((_seed * 17 + _si * 7) % 5 - 2) * 3;
-            const _sy = _oy + _dy * _t + ((_seed * 13 + _si * 11) % 5 - 2) * 3;
-            ctx.beginPath(); ctx.arc(_sx, _sy, 4 + _seed * 3, 0, Math.PI * 2); ctx.fill();
-          }
-        }
+        ctx.beginPath(); ctx.arc(0, 0, _bS * 1.2, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 1; ctx.restore();
+      } else {
+        // Non-player bullets (zombie projectiles) — keep the old diamond shape
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_bAng);
+        ctx.globalAlpha = 0.7 * _bAlphaMult; ctx.fillStyle = b.color;
+        const _bd = _bS * 1.5;
+        ctx.beginPath(); ctx.moveTo(_bd, 0); ctx.lineTo(0, -_bd*0.5); ctx.lineTo(-_bd*0.6, 0); ctx.lineTo(0, _bd*0.5); ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = _bAlphaMult; ctx.fillStyle = '#fff';
+        const _bc = _bS * 0.6;
+        ctx.beginPath(); ctx.moveTo(_bc, 0); ctx.lineTo(0, -_bc*0.4); ctx.lineTo(-_bc*0.4, 0); ctx.lineTo(0, _bc*0.4); ctx.closePath(); ctx.fill();
+        // Short trail
+        ctx.globalAlpha = 0.25 * _bAlphaMult; ctx.strokeStyle = b.color; ctx.lineWidth = _bS;
+        ctx.beginPath(); ctx.moveTo(-_bS*3, 0); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.restore();
       }
-      // 5) Head: bright flash point + pressure wave
-      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_bAng);
-      // Pressure wave crescents
-      if (_bIsPlayer) {
-        const _pwR = _bS * (2.5 + _seed * 1.5);
-        ctx.globalAlpha = (0.3 + _seed * 0.2) * _bAlphaMult;
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _seed;
-        ctx.beginPath(); ctx.arc(0, 0, _pwR, -0.7, 0.7); ctx.stroke();
-        if (_seed > 0.35) {
-          ctx.globalAlpha = 0.15 * _bAlphaMult;
-          ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(_bS, 0, _pwR * 1.4, -0.5, 0.5); ctx.stroke();
-        }
-      }
-      // Colored flare
-      ctx.globalAlpha = 0.7 * _bAlphaMult;
-      ctx.fillStyle = b.color;
-      const _fd = _bS * 1.8;
-      ctx.beginPath(); ctx.moveTo(_fd, 0); ctx.lineTo(0, -_fd * 0.45);
-      ctx.lineTo(-_fd * 0.4, 0); ctx.lineTo(0, _fd * 0.45); ctx.closePath(); ctx.fill();
-      // White core
-      ctx.globalAlpha = _bAlphaMult;
-      ctx.fillStyle = '#fff';
-      const _cd = _bS * 0.85;
-      ctx.beginPath(); ctx.moveTo(_cd * 1.1, 0); ctx.lineTo(0, -_cd * 0.4);
-      ctx.lineTo(-_cd * 0.3, 0); ctx.lineTo(0, _cd * 0.4); ctx.closePath(); ctx.fill();
-      ctx.globalAlpha = 1; ctx.restore();
     }
   }
 
