@@ -4525,22 +4525,24 @@ function initTrenchSections() {
     } else if (i <= 19) {
       // Domain 2: Crossfire Zone — ranged pressure + melee filler
       types = ['strafe', 'brute', 'spitter', 'mortar', 'normal', 'fast'];
+      if (i >= 12) types.push('reaper');
       if (i >= 13) types.push('leaper');
-      if (i >= 15) types.push('exploder', 'stalker');
+      if (i >= 15) types.push('exploder', 'stalker', 'disc');
     } else if (i <= 29) {
       // Domain 3: Siege Zone — support + priority + melee padding
       types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster', 'fast', 'leaper'];
-      if (i >= 22) types.push('beam');
+      if (i >= 22) types.push('beam', 'scatter', 'reaper');
       if (i >= 23) types.push('tank');
-      if (i >= 26) types.push('mortar');
+      if (i >= 25) types.push('crusher');
+      if (i >= 26) types.push('mortar', 'disc');
     } else if (i <= 39) {
       // Domain 4: Control Zone — movement denial + melee pressure
-      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster', 'fast', 'exploder', 'beam'];
+      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster', 'fast', 'exploder', 'beam', 'reaper', 'crusher', 'disc', 'scatter'];
       if (i >= 33) types.push('shieldbot');
       if (i >= 36) types.push('stalker');
     } else {
       // Domain 5: Collapse Zone — everything, with melee filler to prevent all-elite waves
-      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker', 'fast', 'exploder', 'leaper', 'beam'];
+      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker', 'fast', 'exploder', 'leaper', 'beam', 'reaper', 'crusher', 'disc', 'scatter'];
     }
     const hazards = [];
     trenchSections.push({
@@ -4601,12 +4603,12 @@ function spawnTrenchWave(idx, waveIdx) {
   if (sec._trialModified) { hpScale *= 1.3; speedBoost += 0.3; }
   // Cap shooting enemies per wave — ALL types that fire projectiles at the player.
   // Prevents unfair projectile density where every enemy is firing at once.
-  const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder', 'strafe', 'mortar', 'caster']);
+  const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder', 'strafe', 'mortar', 'caster', 'disc', 'scatter']);
   let _rangedCount = 0;
   const _maxRanged = sec.isBoss ? 0 : (idx < 8 ? 1 : (idx < 20 ? 2 : 3));
   // Cap elite/heavy enemies per wave — prevents the "wall of tanks" feeling.
   // Elites are high-HP, high-threat targets that demand focused attention.
-  const _eliteTypes = new Set(['tank', 'brute', 'stalker', 'anchor', 'shieldbot']);
+  const _eliteTypes = new Set(['tank', 'brute', 'stalker', 'anchor', 'shieldbot', 'reaper', 'crusher']);
   let _eliteCount = 0;
   const _maxElite = sec.isBoss ? 0 : (idx < 15 ? 1 : (idx < 30 ? 2 : 3));
   // Melee filler pool — when caps are hit, reroll to these approachable types.
@@ -7851,6 +7853,22 @@ function _drawZombieShape(ctx, type, r) {
     // Rounded diamond with notches — arcane caster
     ctx.moveTo(r*1.1, 0); ctx.lineTo(r*0.3, -r*0.8); ctx.lineTo(0, -r*1.1); ctx.lineTo(-r*0.3, -r*0.8);
     ctx.lineTo(-r*1.1, 0); ctx.lineTo(-r*0.3, r*0.8); ctx.lineTo(0, r*1.1); ctx.lineTo(r*0.3, r*0.8); ctx.closePath();
+  } else if (type === 'reaper') {
+    // Broad crescent/blade shape — wide and menacing
+    ctx.moveTo(r*1.3, 0); ctx.lineTo(r*0.4, -r*1.1); ctx.lineTo(-r*0.5, -r*0.7);
+    ctx.lineTo(-r*0.8, 0); ctx.lineTo(-r*0.5, r*0.7); ctx.lineTo(r*0.4, r*1.1); ctx.closePath();
+  } else if (type === 'crusher') {
+    // Heavy block with notched top — siege hammer
+    ctx.moveTo(r*0.8, -r); ctx.lineTo(r, -r*0.5); ctx.lineTo(r, r*0.5);
+    ctx.lineTo(r*0.8, r); ctx.lineTo(-r*0.8, r); ctx.lineTo(-r, r*0.5);
+    ctx.lineTo(-r, -r*0.5); ctx.lineTo(-r*0.8, -r);
+    ctx.lineTo(-r*0.2, -r*0.7); ctx.lineTo(r*0.2, -r*0.7); ctx.closePath();
+  } else if (type === 'disc') {
+    // Angular throwing shape — like a shuriken
+    for(let di=0;di<4;di++){const da=(di/4)*Math.PI*2;ctx.lineTo(Math.cos(da)*r*1.1,Math.sin(da)*r*1.1);ctx.lineTo(Math.cos(da+Math.PI/4)*r*0.5,Math.sin(da+Math.PI/4)*r*0.5);}ctx.closePath();
+  } else if (type === 'scatter') {
+    // Spiky cluster — multiple barrels
+    for(let si=0;si<7;si++){const sa=(si/7)*Math.PI*2;ctx.lineTo(Math.cos(sa)*r,Math.sin(sa)*r);ctx.lineTo(Math.cos(sa+Math.PI/7)*r*0.55,Math.sin(sa+Math.PI/7)*r*0.55);}ctx.closePath();
   } else {
     ctx.arc(0, 0, r, 0, Math.PI * 2);
   }
@@ -7903,6 +7921,12 @@ const ZOMBIE_TYPES = {
   phaser:    { hp: 100, speed: 2.2, radius: 16, color: '#eef', damage: 20, score: 250, phaser: true, canCrossGaps: true },
   anchor:    { hp: 350, speed: 0.4, radius: 24, color: '#c6f', damage: 0, score: 300, anchor: true },
   caster:    { hp: 160, speed: 1.2, radius: 18, color: '#f4f', damage: 25, score: 250, caster: true, fireRate: 3000 },
+  // Wide-attack melee
+  reaper:    { hp: 280, speed: 1.5, radius: 22, color: '#f64', damage: 28, score: 300, reaper: true },
+  crusher:   { hp: 420, speed: 1.0, radius: 26, color: '#0dc', damage: 18, score: 350, crusher: true },
+  // Projectile variety
+  disc:      { hp: 130, speed: 2.0, radius: 16, color: '#fd0', damage: 14, score: 250, ranged: true, disc: true, fireRate: 3200 },
+  scatter:   { hp: 110, speed: 2.2, radius: 16, color: '#f8a', damage: 5, score: 250, ranged: true, scatter: true, fireRate: 2600 },
 };
 
 // ---- AUDIO ENGINE ----
@@ -10330,6 +10354,10 @@ const ZOMBIE_CODEX = {
   phaser:    { name: 'PHASER',     desc: 'Teleports toward you every 1.5s. Hard to kite.' },
   anchor:    { name: 'ANCHOR',     desc: 'Heavy control unit. Creates gravity pull that slows nearby players.' },
   caster:    { name: 'CASTER',    desc: 'Fires large, slow glowing orbs. High damage but easy to dodge if you see them coming.' },
+  reaper:    { name: 'REAPER',    desc: 'Big melee with a devastating 180° sweep attack. Telegraphs with red sparks, then slashes everything in front.' },
+  crusher:   { name: 'CRUSHER',   desc: 'Heavy siege unit. Winds up a ground slam that sends a shockwave through the floor. Stay clear when it raises up.' },
+  disc:      { name: 'DISC',      desc: 'Throws large spinning disc projectiles that pierce through targets. Keep moving — they travel far.' },
+  scatter:   { name: 'SCATTER',   desc: 'Shotgun burst of 5 pellets in a wide spread. Low per-pellet damage but devastating up close.' },
 };
 
 const CODEX_CATEGORIES = [
@@ -16084,6 +16112,8 @@ function update() {
       b.vx = _nvx; b.vy = _nvy;
     }
     const _bpx=b.x,_bpy=b.y;b.x+=b.vx;b.y+=b.vy;b.life--;const _bfast=(b.vx*b.vx+b.vy*b.vy)>400;
+    // Disc projectile: spin + trailing sparks
+    if(b._disc){b._discAngle=(b._discAngle||0)+0.3;if(gameTime%3===0)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:8,maxLife:8,size:2+Math.random(),color:'#fd0',type:'spark'});}
     // Bouncing behavior: ricochet off walls
     if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size,true)){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size,true))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size,true))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
     const _bAH=ARENA_H;
@@ -17505,6 +17535,116 @@ function update() {
             const ra2=ra+Math.PI*0.7;
             particles.push({x:z.x+Math.cos(ra2)*_anchorR*0.5,y:z.y+Math.sin(ra2)*_anchorR*0.5,vx:-Math.cos(ra2)*2.5,vy:-Math.sin(ra2)*2.5,life:14,maxLife:14,size:2.5,color:'#a4f',type:'spark'});
           }
+        }
+        // ---- REAPER: wide 180° sweep attack ----
+        else if(zt?.reaper){
+          if(!z._reaperState) z._reaperState = 'chase';
+          if(z._reaperState==='chase'){
+            z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;
+            if(zd<55&&z.attackCooldown<=0){z._reaperState='windup';z._reaperTimer=25;z.vx=0;z.vy=0;}
+          } else if(z._reaperState==='windup'){
+            z.vx*=0.15;z.vy*=0.15;z._reaperTimer--;
+            z._reaperAng=Math.atan2(np.y-z.y,np.x-z.x);
+            // Telegraph: red pulse + sparks from "blade" side
+            if(z._reaperTimer%4===0){const sa=z._reaperAng+(Math.random()-0.5)*1.5;particles.push({x:z.x+Math.cos(sa)*z.radius,y:z.y+Math.sin(sa)*z.radius,vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:8,maxLife:8,size:3,color:'#f64',type:'spark'});}
+            if(z._reaperTimer<=0){z._reaperState='sweep';z._reaperTimer=10;}
+          } else if(z._reaperState==='sweep'){
+            z.vx*=0.2;z.vy*=0.2;z._reaperTimer--;
+            // Damage all players in a 180° arc, 55px range
+            if(z._reaperTimer===8){
+              const _rAng=z._reaperAng;
+              for(const p of players){if(!p.alive)continue;
+                const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
+                if(pd>55)continue;
+                let da=Math.atan2(pdy,pdx)-_rAng;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;
+                if(Math.abs(da)<Math.PI*0.5)damagePlayerObj(p,z.damage,z);
+              }
+              // VFX: bright arc sweep + sparks
+              for(let si=0;si<20;si++){const sa=_rAng+(si/20-0.5)*Math.PI,sr=20+Math.random()*35;
+                particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:10,maxLife:10,size:3+Math.random()*2,color:si%3===0?'#fff':'#f64',type:'spark'});}
+              // Sweep arc line
+              for(let li=-3;li<=3;li++){const la=_rAng+li*0.25;
+                particles.push({x:z.x,y:z.y,tx:z.x+Math.cos(la)*50,ty:z.y+Math.sin(la)*50,vx:0,vy:0,life:8,maxLife:8,size:1.5,color:'#f64',type:'lightning'});}
+              playSound(250,0.1,'sawtooth',0.06);screenShake.intensity=Math.max(screenShake.intensity,4);
+            }
+            if(z._reaperTimer<=0){z._reaperState='recover';z._reaperTimer=35;z.attackCooldown=50;}
+          } else if(z._reaperState==='recover'){
+            z.vx*=0.85;z.vy*=0.85;z._reaperTimer--;
+            if(z._reaperTimer<=0)z._reaperState='chase';
+          }
+        }
+        // ---- CRUSHER: ground slam shockwave ----
+        else if(zt?.crusher){
+          if(!z._crushState) z._crushState = 'chase';
+          if(z._crushState==='chase'){
+            z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;
+            if(zd<70&&z.attackCooldown<=0){z._crushState='windup';z._crushTimer=30;z.vx=0;z.vy=0;}
+          } else if(z._crushState==='windup'){
+            z.vx=0;z.vy=0;z._crushTimer--;
+            // Telegraph: body rises (scale effect handled in render via _crushState), ground cracks
+            if(z._crushTimer%5===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*12,y:z.y+Math.sin(sa)*12,vx:0,vy:-1.5,life:10,maxLife:10,size:3,color:'#0dc',type:'spark'});}
+            if(z._crushTimer<=0){z._crushState='slam';z._crushTimer=6;}
+          } else if(z._crushState==='slam'){
+            z._crushTimer--;
+            if(z._crushTimer===4){
+              // Shockwave: damage all players in 80px radius
+              const _slamR=80;
+              for(const p of players){if(!p.alive)continue;
+                const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);
+                if(pd<_slamR){damagePlayerObj(p,z.damage+10,z);p.staggerTimer=Math.max(p.staggerTimer||0,15);}
+              }
+              // Push nearby zombies outward too (environmental feel)
+              for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y,d=Math.sqrt(dx*dx+dy*dy);if(d<_slamR&&d>1){oz.vx+=(dx/d)*6;oz.vy+=(dy/d)*6;}}
+              // VFX: expanding ring + ground crack + sparks
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:_slamR,color:'#0dc',type:'wakering'});
+              for(let si=0;si<16;si++){const sa=(si/16)*Math.PI*2,sr=20+Math.random()*40;
+                particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:3+Math.random()*2,color:Math.random()>0.3?'#0dc':'#fff',type:'spark'});}
+              decals.push({x:z.x,y:z.y,size:_slamR*0.5,alpha:0.3,color:'#066',_fade:0.003});
+              screenShake.intensity=Math.max(screenShake.intensity,7);playSound(50,0.2,'sawtooth',0.1);playSound(120,0.12,'square',0.06);
+            }
+            if(z._crushTimer<=0){z._crushState='recover';z._crushTimer=45;z.attackCooldown=60;}
+          } else if(z._crushState==='recover'){
+            z.vx*=0.9;z.vy*=0.9;z._crushTimer--;
+            if(z._crushTimer<=0)z._crushState='chase';
+          }
+        }
+        // ---- DISC THROWER: fires large piercing spinning disc ----
+        else if(zt?.disc){
+          // Keep distance 120-180px, strafe
+          if(zd<120){z.vx=-_chaseDx*z.speed*0.6;z.vy=-_chaseDy*z.speed*0.6;}
+          else if(zd>200){z.vx=_chaseDx*z.speed*0.8;z.vy=_chaseDy*z.speed*0.8;}
+          else{const _perpX=-_chaseDy,_perpY=_chaseDx;if(!z._strafeDir)z._strafeDir=Math.random()>0.5?1:-1;z.vx=_perpX*z.speed*0.5*z._strafeDir;z.vy=_perpY*z.speed*0.5*z._strafeDir;if(Math.random()<0.008)z._strafeDir*=-1;}
+          if(_now-z.lastFired>z.fireRate){
+            z._chargeUp=(z._chargeUp||0)+1;
+            if(z._chargeUp%6===0)particles.push({x:z.x+Math.cos(z.angle)*z.radius,y:z.y+Math.sin(z.angle)*z.radius,vx:0,vy:0,life:6,maxLife:6,size:3,color:'#fd0',type:'spark'});
+            if(z._chargeUp>=30){
+              z._chargeUp=0;z.lastFired=_now;
+              const da=z.angle;
+              bullets.push({x:z.x,y:z.y,vx:Math.cos(da)*5,vy:Math.sin(da)*5,damage:z.damage,color:'#fd0',size:8,knockback:5,pierce:3,pierced:0,life:100,owner:'zombie',trail:[],_disc:true,_discAngle:0});
+              playSound(350,0.08,'square',0.06);
+              for(let si=0;si<4;si++){const sa=da+(Math.random()-0.5)*0.8;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:6,maxLife:6,size:2,color:'#fd0',type:'spark'});}
+            }
+          } else {z._chargeUp=0;}
+        }
+        // ---- SCATTER: fires shotgun burst of small pellets ----
+        else if(zt?.scatter){
+          // Approach to 100-160px, then strafe
+          if(zd<100){z.vx=-_chaseDx*z.speed*0.5;z.vy=-_chaseDy*z.speed*0.5;}
+          else if(zd>180){z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;}
+          else{z.vx*=0.9;z.vy*=0.9;}
+          if(_now-z.lastFired>z.fireRate){
+            z._chargeUp=(z._chargeUp||0)+1;
+            if(z._chargeUp%5===0)particles.push({x:z.x,y:z.y,vx:0,vy:-0.5,life:6,maxLife:6,size:2,color:'#f8a',type:'spark'});
+            if(z._chargeUp>=20){
+              z._chargeUp=0;z.lastFired=_now;
+              const da=z.angle;
+              // 5 pellets in a 40° spread
+              for(let pi=-2;pi<=2;pi++){const pa=da+pi*0.14;
+                bullets.push({x:z.x,y:z.y,vx:Math.cos(pa)*8,vy:Math.sin(pa)*8,damage:z.damage,color:'#f8a',size:3,knockback:1,pierce:0,pierced:0,life:40,owner:'zombie',trail:[]});}
+              playSound(500,0.08,'sawtooth',0.04);playSound(300,0.06,'square',0.03);
+              for(let si=0;si<6;si++){const sa=da+(Math.random()-0.5)*0.8;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:6,maxLife:6,size:2,color:'#f8a',type:'spark'});}
+            }
+          } else {z._chargeUp=0;}
         }
         // ---- DEFAULT: walk toward player (with melee attack state machine) ----
         else{
@@ -21064,6 +21204,15 @@ function render() {
     }
     ctx.globalAlpha = 1; ctx.restore();
     // Trailing particles (emitted in update loop via _deadshotRound flag)
+    }else if(b._disc){
+    // Spinning disc projectile — 4-point shuriken shape
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b._discAngle || 0);
+    ctx.fillStyle = '#fd0'; ctx.globalAlpha = 0.3;
+    ctx.beginPath(); for(let di=0;di<4;di++){const da=(di/4)*Math.PI*2;ctx.lineTo(Math.cos(da)*b.size*1.4,Math.sin(da)*b.size*1.4);ctx.lineTo(Math.cos(da+Math.PI/4)*b.size*0.5,Math.sin(da+Math.PI/4)*b.size*0.5);} ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.9;
+    ctx.beginPath(); for(let di=0;di<4;di++){const da=(di/4)*Math.PI*2;ctx.lineTo(Math.cos(da)*b.size,Math.sin(da)*b.size);ctx.lineTo(Math.cos(da+Math.PI/4)*b.size*0.35,Math.sin(da+Math.PI/4)*b.size*0.35);} ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 0.7; ctx.fillStyle = '#fd0'; ctx.beginPath(); ctx.arc(0, 0, b.size*0.3, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1; ctx.restore();
     }else if(b.laserGlow){
     // Laser dot with intense glow
     ctx.shadowColor=b.color;ctx.shadowBlur=25;ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();
