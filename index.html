@@ -11836,26 +11836,30 @@ function fireWeaponForPlayer(p) {
   _gunIdleTimer = 0;
   hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  // Muzzle launch burst — explosive feel per shot
-  { const _ma = p.angle, _mx = p.x + Math.cos(_ma) * (PLAYER_RADIUS + 14), _my = p.y + Math.sin(_ma) * (PLAYER_RADIUS + 14);
-    const _mc = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    // Forward sparks — cone of bright particles
-    const _sparkCount = 4 + Math.floor(Math.random() * 3);
-    for (let _mi = 0; _mi < _sparkCount; _mi++) {
-      const _sa = _ma + (Math.random() - 0.5) * 0.9, _ss = 4 + Math.random() * 5;
+  // MUZZLE DETONATION — each shot is a mini-explosion at the barrel
+  { const _ma = p.angle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
+    const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
+    const _ec = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
+    // Explosion sparks — radial burst centered on muzzle
+    for (let _mi = 0; _mi < 8; _mi++) {
+      const _sa = _ma + (Math.random() - 0.5) * 1.6, _ss = 5 + Math.random() * 7;
       particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
-        life: 5 + Math.floor(Math.random() * 4), maxLife: 9,
-        size: 1.5 + Math.random() * 1.5, color: _mi < 2 ? '#fff' : _mc, type: 'spark' });
+        life: 4 + Math.floor(Math.random() * 4), maxLife: 8,
+        size: 2 + Math.random() * 2, color: _mi < 3 ? '#fff' : _ec, type: 'spark' });
     }
-    // Side-ejected sparks — perpendicular scatter (shell casings feel)
-    const _perpA = _ma + (Math.random() > 0.5 ? 1 : -1) * (1.2 + Math.random() * 0.5);
-    particles.push({ x: _mx, y: _my, vx: Math.cos(_perpA) * (2 + Math.random() * 2), vy: Math.sin(_perpA) * (2 + Math.random() * 2),
-      life: 8, maxLife: 8, size: 1.5, color: '#ff0', type: 'spark' });
-    // Short muzzle flash streak — bright line forward from barrel (random on/off)
-    if (Math.random() < 0.6) {
-      particles.push({ x: _mx, y: _my, tx: _mx + Math.cos(_ma) * (12 + Math.random() * 10), ty: _my + Math.sin(_ma) * (12 + Math.random() * 10),
-        vx: Math.cos(_ma) * 6, vy: Math.sin(_ma) * 6, life: 4, maxLife: 4, size: 1, color: '#fff', type: 'lightning' });
+    // Smoke puff — lingers at muzzle
+    for (let _mi = 0; _mi < 2; _mi++) {
+      particles.push({ x: _mx + (Math.random()-0.5)*6, y: _my + (Math.random()-0.5)*6,
+        vx: _mc * 1.5 + (Math.random()-0.5)*2, vy: _ms * 1.5 + (Math.random()-0.5)*2,
+        life: 14 + Math.floor(Math.random()*8), maxLife: 22, size: 4 + Math.random()*3, color: '#444', type: 'smoke' });
     }
+    // Bright muzzle flash ring — expanding wakering
+    particles.push({ x: _mx, y: _my, vx: _mc * 3, vy: _ms * 3, life: 5, maxLife: 5, size: 20, color: _ec, type: 'wakering' });
+    // Forward blast line — bright flash in the firing direction
+    particles.push({ x: _mx, y: _my, tx: _mx + _mc * 30, ty: _my + _ms * 30,
+      vx: _mc * 8, vy: _ms * 8, life: 3, maxLife: 3, size: 1.5, color: '#fff', type: 'lightning' });
+    // Micro screenshake per shot
+    screenShake.intensity = Math.max(screenShake.intensity, 1.5);
   }
   if (p === getLocalPlayer()) runStats.shotsFired++;
   // ---- BULLET CREATION ----
@@ -11899,6 +11903,7 @@ function fireWeaponForPlayer(p) {
       owner: 'player', ownerId: p.id, trail: [], crit: false,
       _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
       _angVel: (Math.random() - 0.5) * 0.015,
+      _originX: p.x + bc * 22, _originY: p.y + bs * 22,
     });
   }
   // Muzzle flash — punchy but lean
@@ -16124,25 +16129,19 @@ function update() {
     if(b.trail.length<6){b.trail.push({x:b.x,y:b.y});}
     else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
-    // Player bullet trail sparks — every bullet leaves a fiery wake
+    // Player bullet wake — sparks + smoke showing the force path
     if(b.owner==='player'&&!b._deadshotRound&&!b._beaconBullet&&!b.flame&&!b.grenade){
       const _tPerp=Math.atan2(b.vy,b.vx)+Math.PI/2;
-      // Main trail sparks — every frame, 1-2 particles
-      const _tOff=(Math.random()-0.5)*4;
-      particles.push({x:b.x+Math.cos(_tPerp)*_tOff-b.vx*0.15,y:b.y+Math.sin(_tPerp)*_tOff-b.vy*0.15,
-        vx:-b.vx*0.04+(Math.random()-0.5)*2,vy:-b.vy*0.04+(Math.random()-0.5)*2,
-        life:5+Math.floor(Math.random()*3),maxLife:8,size:1.5+Math.random()*1.5,color:b.color,type:'spark'});
-      // Second spark on alternating frames (wider scatter)
+      // Bright sparks scattered from the head
+      const _tOff=(Math.random()-0.5)*5;
+      particles.push({x:b.x+Math.cos(_tPerp)*_tOff,y:b.y+Math.sin(_tPerp)*_tOff,
+        vx:-b.vx*0.03+(Math.random()-0.5)*3,vy:-b.vy*0.03+(Math.random()-0.5)*3,
+        life:4+Math.floor(Math.random()*3),maxLife:7,size:1.5+Math.random()*2,color:Math.random()>0.5?'#fff':b.color,type:'spark'});
+      // Smoke puff behind — lingers to show the path
       if(gameTime%2===0){
-        const _tOff2=(Math.random()-0.5)*6;
-        particles.push({x:b.x+Math.cos(_tPerp)*_tOff2-b.vx*0.25,y:b.y+Math.sin(_tPerp)*_tOff2-b.vy*0.25,
-          vx:-b.vx*0.03+(Math.random()-0.5)*2.5,vy:-b.vy*0.03+(Math.random()-0.5)*2.5,
-          life:4+Math.floor(Math.random()*3),maxLife:7,size:1+Math.random(),color:Math.random()>0.6?'#fff':b.color,type:'spark'});
-      }
-      // Hot ember — brighter, less frequent
-      if(Math.random()<0.15){
-        particles.push({x:b.x-b.vx*0.2,y:b.y-b.vy*0.2,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,
-          life:8,maxLife:8,size:2+Math.random()*1.5,color:'#fff',type:'spark'});
+        particles.push({x:b.x-b.vx*0.3+(Math.random()-0.5)*4,y:b.y-b.vy*0.3+(Math.random()-0.5)*4,
+          vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,
+          life:10+Math.floor(Math.random()*6),maxLife:16,size:3+Math.random()*3,color:'#444',type:'smoke'});
       }
     }
     // Elemental bullet particle trails
@@ -21388,79 +21387,83 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // Default bullet render — Hades-style flame lance with pressure wave
-      const _bRenderSize = b.size * _bSizeMult;
-      const _glow = b._glowBoost || 0;
-      const _bPulse = 1 + Math.sin(performance.now() * 0.03 + b.x * 0.015) * 0.12;
+      // FORCE BEAM rendering — explosive energy transfer, not a "bullet"
+      const _bS = b.size * _bSizeMult;
       const _bAng = Math.atan2(b.vy || 0, b.vx || 1);
-      const _bSpd = Math.sqrt((b.vx||0)*(b.vx||0)+(b.vy||0)*(b.vy||0));
       const _bIsPlayer = b.owner === 'player';
       if (!b._vfxSeed) b._vfxSeed = Math.random();
       const _seed = b._vfxSeed;
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(_bAng);
-      const _headW = _bRenderSize * 1.6;
-      const _trailLen = _bRenderSize * (6 + _bSpd * 0.2 + _seed * 3);
-      // 1) Wide outer flame trail — tapered cone, bullet color, dim
-      ctx.globalAlpha = 0.18 * _bAlphaMult;
-      ctx.fillStyle = b.color;
-      ctx.beginPath(); ctx.moveTo(-_trailLen, 0);
-      ctx.lineTo(-_bRenderSize * 2, -_headW * 0.35);
-      ctx.lineTo(0, -_headW * 0.9);
-      ctx.lineTo(0, _headW * 0.9);
-      ctx.lineTo(-_bRenderSize * 2, _headW * 0.35);
-      ctx.closePath(); ctx.fill();
-      // 2) Inner bright flame body — narrower, brighter
-      ctx.globalAlpha = 0.35 * _bAlphaMult;
-      ctx.fillStyle = b.color;
-      const _innerW = _headW * 0.55;
-      ctx.beginPath(); ctx.moveTo(-_trailLen * 0.7, 0);
-      ctx.lineTo(-_bRenderSize, -_innerW * 0.3);
-      ctx.lineTo(_bRenderSize * 0.5, -_innerW);
-      ctx.lineTo(_bRenderSize * 0.5, _innerW);
-      ctx.lineTo(-_bRenderSize, _innerW * 0.3);
-      ctx.closePath(); ctx.fill();
-      // 3) Hot white core streak — narrow intense line
-      ctx.globalAlpha = 0.6 * _bAlphaMult;
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = _bRenderSize * 0.7;
-      ctx.beginPath(); ctx.moveTo(-_trailLen * 0.4, 0); ctx.lineTo(_bRenderSize * 0.3, 0); ctx.stroke();
-      // 4) Bullet head — bright filled shape
-      ctx.globalAlpha = (0.75 + _glow * 0.25) * _bAlphaMult;
-      ctx.fillStyle = b.color;
-      const _hd = _bRenderSize * 2.0 * _bPulse;
-      ctx.beginPath(); ctx.moveTo(_hd, 0); ctx.lineTo(0, -_hd * 0.45);
-      ctx.lineTo(-_hd * 0.5, 0); ctx.lineTo(0, _hd * 0.45); ctx.closePath(); ctx.fill();
-      // White-hot inner core
-      ctx.globalAlpha = _bAlphaMult;
-      ctx.fillStyle = '#fff';
-      const _hc = _bRenderSize * 0.9;
-      ctx.beginPath(); ctx.moveTo(_hc * 1.2, 0); ctx.lineTo(0, -_hc * 0.4);
-      ctx.lineTo(-_hc * 0.4, 0); ctx.lineTo(0, _hc * 0.4); ctx.closePath(); ctx.fill();
-      // 5) Pressure wave crescent — arc in front of the bullet
-      if (_bIsPlayer) {
-        ctx.globalAlpha = (0.25 + _seed * 0.15) * _bAlphaMult * _bPulse;
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _seed;
-        const _pwR = _bRenderSize * (2.5 + _seed);
-        ctx.beginPath(); ctx.arc(_hd * 0.6, 0, _pwR, -0.6, 0.6); ctx.stroke();
-        // Second wider dimmer wave (random)
-        if (_seed > 0.4) {
-          ctx.globalAlpha = 0.12 * _bAlphaMult;
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.arc(_hd * 0.9, 0, _pwR * 1.3, -0.45, 0.45); ctx.stroke();
+      const _lifePct = b.life / (b.maxLife || 9); // 1→0 as bullet ages
+      // Origin-to-head beam — the "force transfer" path
+      const _ox = b._originX != null ? b._originX : b.x - (b.vx||0) * 4;
+      const _oy = b._originY != null ? b._originY : b.y - (b.vy||0) * 4;
+      const _dx = b.x - _ox, _dy = b.y - _oy;
+      const _beamLen = Math.sqrt(_dx*_dx + _dy*_dy);
+      const _perpX = _beamLen > 1 ? -_dy / _beamLen : 0;
+      const _perpY = _beamLen > 1 ? _dx / _beamLen : 0;
+      if (_bIsPlayer && _beamLen > 5) {
+        // 1) Outer wide force cone — colored, tapers from head to origin
+        const _headW = _bS * 2.2 * (0.8 + _seed * 0.4);
+        const _tailW = _bS * 0.3;
+        ctx.globalAlpha = 0.12 * _bAlphaMult * _lifePct;
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.moveTo(_ox + _perpX * _tailW, _oy + _perpY * _tailW);
+        ctx.lineTo(b.x + _perpX * _headW, b.y + _perpY * _headW);
+        ctx.lineTo(b.x - _perpX * _headW, b.y - _perpY * _headW);
+        ctx.lineTo(_ox - _perpX * _tailW, _oy - _perpY * _tailW);
+        ctx.closePath(); ctx.fill();
+        // 2) Inner bright beam — narrower, hotter
+        const _iW = _headW * 0.45;
+        ctx.globalAlpha = 0.3 * _bAlphaMult * _lifePct;
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.moveTo(_ox, _oy);
+        ctx.lineTo(b.x + _perpX * _iW, b.y + _perpY * _iW);
+        ctx.lineTo(b.x - _perpX * _iW, b.y - _perpY * _iW);
+        ctx.closePath(); ctx.fill();
+        // 3) White-hot core line — thin bright center
+        ctx.globalAlpha = 0.55 * _bAlphaMult * Math.min(1, _lifePct * 1.5);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _bS * 0.2;
+        ctx.beginPath(); ctx.moveTo(_ox, _oy); ctx.lineTo(b.x, b.y); ctx.stroke();
+        // 4) Scattered smoke along the beam path (3-4 puffs at random positions)
+        if (_lifePct > 0.5) {
+          ctx.globalAlpha = 0.08 * _bAlphaMult;
+          ctx.fillStyle = '#666';
+          for (let _si = 0; _si < 3; _si++) {
+            const _t = 0.2 + _seed * 0.1 + _si * 0.25;
+            const _sx = _ox + _dx * _t + ((_seed * 17 + _si * 7) % 5 - 2) * 3;
+            const _sy = _oy + _dy * _t + ((_seed * 13 + _si * 11) % 5 - 2) * 3;
+            ctx.beginPath(); ctx.arc(_sx, _sy, 4 + _seed * 3, 0, Math.PI * 2); ctx.fill();
+          }
         }
       }
-      // 6) Random side wisps — thin lines peeling off the trail
-      if (_bIsPlayer && _seed > 0.25) {
-        ctx.globalAlpha = 0.15 * _bAlphaMult;
-        ctx.strokeStyle = b.color; ctx.lineWidth = 0.8;
-        const _wOff = _trailLen * (0.2 + _seed * 0.3);
-        const _wSpread = _headW * (0.6 + _seed * 0.4);
-        ctx.beginPath(); ctx.moveTo(-_wOff, 0); ctx.lineTo(-_wOff * 1.3, _wSpread); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-_wOff * 0.8, 0); ctx.lineTo(-_wOff * 1.1, -_wSpread * 0.8); ctx.stroke();
+      // 5) Head: bright flash point + pressure wave
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_bAng);
+      // Pressure wave crescents
+      if (_bIsPlayer) {
+        const _pwR = _bS * (2.5 + _seed * 1.5);
+        ctx.globalAlpha = (0.3 + _seed * 0.2) * _bAlphaMult;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _seed;
+        ctx.beginPath(); ctx.arc(0, 0, _pwR, -0.7, 0.7); ctx.stroke();
+        if (_seed > 0.35) {
+          ctx.globalAlpha = 0.15 * _bAlphaMult;
+          ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(_bS, 0, _pwR * 1.4, -0.5, 0.5); ctx.stroke();
+        }
       }
-      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
-      ctx.restore();
+      // Colored flare
+      ctx.globalAlpha = 0.7 * _bAlphaMult;
+      ctx.fillStyle = b.color;
+      const _fd = _bS * 1.8;
+      ctx.beginPath(); ctx.moveTo(_fd, 0); ctx.lineTo(0, -_fd * 0.45);
+      ctx.lineTo(-_fd * 0.4, 0); ctx.lineTo(0, _fd * 0.45); ctx.closePath(); ctx.fill();
+      // White core
+      ctx.globalAlpha = _bAlphaMult;
+      ctx.fillStyle = '#fff';
+      const _cd = _bS * 0.85;
+      ctx.beginPath(); ctx.moveTo(_cd * 1.1, 0); ctx.lineTo(0, -_cd * 0.4);
+      ctx.lineTo(-_cd * 0.3, 0); ctx.lineTo(0, _cd * 0.4); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1; ctx.restore();
     }
   }
 
