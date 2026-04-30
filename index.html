@@ -892,7 +892,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); gapGrid = null; }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 16;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -2700,7 +2700,7 @@ function buyShopCard(upgradeId) {
       else if (bump > 0) lp.hp += bump;
       // Cap current HP to max (berserker etc. can reduce maxHp below current)
       lp.hp = Math.min(lp.hp, lp.maxHp);
-      lp.speed = 6 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
+      lp.speed = 5.4 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
     }
   }
   playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
@@ -3307,7 +3307,7 @@ function applyReforge(cardId, cardEl) {
     lp.maxHp = newMax;
     if (bump > 0) lp.hp += bump;
     lp.hp = Math.min(lp.hp, lp.maxHp);
-    lp.speed = 6 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
+    lp.speed = 5.4 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
   }
 
   // Close after brief celebration
@@ -10307,7 +10307,7 @@ function confirmUpgradeCard() {
       else if (bump > 0) lp.hp += bump;
       // Cap current HP to max (berserker etc. can reduce maxHp below current)
       lp.hp = Math.min(lp.hp, lp.maxHp);
-      lp.speed = 6 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
+      lp.speed = 5.4 * (1 + getMetaBonus('swift')) * (1 + (runMods.moveSpeedMult || 0));
     }
   }
   pendingLevelUps--;
@@ -10969,7 +10969,7 @@ function updateShell() {
     if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
     if (gamepad.lx !== 0 || gamepad.ly !== 0) { dx = gamepad.lx; dy = gamepad.ly; }
     const mag = Math.sqrt(dx*dx + dy*dy);
-    let moveSpeed = 5;
+    let moveSpeed = 4.5;
     if (mag > 0.01) { dx /= mag; dy /= mag; moveSpeed *= Math.min(1, mag); }
     lp.vx = dx * moveSpeed; lp.vy = dy * moveSpeed;
     lp.x += lp.vx; lp.y += lp.vy;
@@ -13097,7 +13097,7 @@ function dash() {
   // the remote-player system; we set it to a frame-based value and also track _dashFrames
   // for the local player's actual motion.
   lp.dashTimer = 150;   // 150ms of visible dash state (broadcasts to MP)
-  lp._dashFrames = 8;   // 8 actual dash-motion frames
+  lp._dashFrames = 7;   // 7 actual dash-motion frames
   // Invincible for the dash + a small recovery window. 350ms total — the
   // dash motion itself eats ~133ms, leaving ~217ms of post-dash i-frames
   // (roughly 13 frames at 60 Hz). Long enough to clear a grabber that
@@ -13105,47 +13105,46 @@ function dash() {
   // protection has ended when they come to a stop.
   lp.invincible = Math.max(lp.invincible, 350);
   // ---- GLITCH BURST: the Revenant briefly de-syncs from the simulation ----
-  // The dash is reframed as a priority-override exploit that breaks physics
-  // for ~10 frames. Visually, everything goes glitchy at the origin.
-  triggerGlitchSurge(0.3, 14);
-  // Origin burst — lean but punchy
-  for (let i = 0; i < 10; i++) {
+  triggerGlitchSurge(0.4, 18);
+  screenShake.intensity = Math.max(screenShake.intensity, 4);
+  const perpX = -dy, perpY = dx;
+  // Origin burst — big radial spark shower
+  for (let i = 0; i < 16; i++) {
     const a = Math.random() * Math.PI * 2;
-    const s = 2.5 + Math.random() * 4;
-    particles.push({
-      x: lp.x, y: lp.y,
-      vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-      life: 14, maxLife: 14,
-      size: 2 + Math.random() * 2,
-      color: Math.random() < 0.5 ? '#0ff' : '#f0f',
-      type: 'spark',
-    });
+    const s = 3 + Math.random() * 5;
+    particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 14 + Math.floor(Math.random() * 6), maxLife: 20,
+      size: 2.5 + Math.random() * 2.5, color: ['#0ff','#f0f','#fff','#8ff'][i%4], type: 'spark' });
   }
-  // Speed lines
-  for (let i = 0; i < 4; i++) {
-    const offset = (Math.random() - 0.5) * PLAYER_RADIUS;
-    const perpX = -dy, perpY = dx;
-    particles.push({
-      x: lp.x + perpX * offset, y: lp.y + perpY * offset,
-      vx: -dx * (4 + Math.random() * 3), vy: -dy * (4 + Math.random() * 3),
-      life: 10, maxLife: 10, size: 1.5,
-      color: '#0ff', type: 'spark',
-    });
+  // Expanding wake ring at origin
+  particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 50, color: '#0ff', type: 'wakering' });
+  // Speed lines — more and longer
+  for (let i = 0; i < 7; i++) {
+    const offset = (Math.random() - 0.5) * PLAYER_RADIUS * 1.5;
+    particles.push({ x: lp.x + perpX * offset, y: lp.y + perpY * offset,
+      vx: -dx * (5 + Math.random() * 4), vy: -dy * (5 + Math.random() * 4),
+      life: 12, maxLife: 12, size: 1.5 + Math.random(), color: '#0ff', type: 'spark' });
   }
-  // Glitch chars
+  // Directional flash lines from origin to destination
   for (let i = 0; i < 3; i++) {
+    const off = (i - 1) * 6;
+    particles.push({ x: lp.x + perpX * off, y: lp.y + perpY * off, vx: 0, vy: 0,
+      life: 10, maxLife: 10, size: 1, color: '#fff', type: 'lightning',
+      tx: lp.x + dx * 80 + perpX * off, ty: lp.y + dy * 80 + perpY * off });
+  }
+  // Glitch chars — more + bigger
+  const _dashGlyphs = '█░▓▒╳◆▪◢◣';
+  for (let i = 0; i < 5; i++) {
     const a = Math.random() * Math.PI * 2;
-    particles.push({
-      x: lp.x + Math.cos(a) * 8, y: lp.y + Math.sin(a) * 8,
-      vx: Math.cos(a) * 1.5, vy: Math.sin(a) * 1.5 - 1,
-      life: 16, maxLife: 16, size: 11,
-      color: Math.random() < 0.5 ? '#0ff' : '#f0f',
-      type: 'glitchtext',
-      text: '█░▓▒◆'[Math.floor(Math.random() * 5)],
-    });
+    particles.push({ x: lp.x + Math.cos(a) * 10, y: lp.y + Math.sin(a) * 10,
+      vx: Math.cos(a) * 2 - dx * 1.5, vy: Math.sin(a) * 2 - dy * 1.5,
+      life: 18, maxLife: 18, size: 12,
+      color: ['#0ff','#f0f','#fff'][Math.floor(Math.random()*3)],
+      type: 'glitchtext', text: _dashGlyphs[Math.floor(Math.random() * _dashGlyphs.length)] });
   }
   playSfx('dash', 0.3) || playSound(680, 0.08, 'sine', 0.2);
   playSound(420, 0.04, 'square', 0.12);
+  playSound(200, 0.06, 'sawtooth', 0.06); // bass thump
   // ---- ELEMENT DASH ACTIVATION VFX + SOUND ----
   // When trail mods are equipped, the dash burst takes on the element's character.
   if (_mods.burnoutWake > 0) {
