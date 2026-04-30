@@ -956,10 +956,10 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 20, spread: 0.02, bulletSize: 3, knockback: 3, pierce: 0 };
+const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 34, spread: 0.02, bulletSize: 4.5, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
-const GUN_BULLET_RANGE = 22;      // bullet life in frames (~440px at speed 20)
+const GUN_BULLET_RANGE = 15;      // bullet life in frames (~510px at speed 34)
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
@@ -16124,19 +16124,25 @@ function update() {
     if(b.trail.length<6){b.trail.push({x:b.x,y:b.y});}
     else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
-    // Player bullet trail sparks — every bullet leaves a wake
+    // Player bullet trail sparks — every bullet leaves a fiery wake
     if(b.owner==='player'&&!b._deadshotRound&&!b._beaconBullet&&!b.flame&&!b.grenade){
-      // Trailing spark every 2-3 frames (randomized so bullets look different)
-      if(gameTime%(2+Math.floor(b.x*0.1)%2)===0){
-        const _tOff=(Math.random()-0.5)*3;const _tPerp=Math.atan2(b.vy,b.vx)+Math.PI/2;
-        particles.push({x:b.x+Math.cos(_tPerp)*_tOff-b.vx*0.2,y:b.y+Math.sin(_tPerp)*_tOff-b.vy*0.2,
-          vx:-b.vx*0.06+(Math.random()-0.5)*1.2,vy:-b.vy*0.06+(Math.random()-0.5)*1.2,
-          life:6+Math.floor(Math.random()*4),maxLife:10,size:1+Math.random()*1.5,color:b.color,type:'spark'});
+      const _tPerp=Math.atan2(b.vy,b.vx)+Math.PI/2;
+      // Main trail sparks — every frame, 1-2 particles
+      const _tOff=(Math.random()-0.5)*4;
+      particles.push({x:b.x+Math.cos(_tPerp)*_tOff-b.vx*0.15,y:b.y+Math.sin(_tPerp)*_tOff-b.vy*0.15,
+        vx:-b.vx*0.04+(Math.random()-0.5)*2,vy:-b.vy*0.04+(Math.random()-0.5)*2,
+        life:5+Math.floor(Math.random()*3),maxLife:8,size:1.5+Math.random()*1.5,color:b.color,type:'spark'});
+      // Second spark on alternating frames (wider scatter)
+      if(gameTime%2===0){
+        const _tOff2=(Math.random()-0.5)*6;
+        particles.push({x:b.x+Math.cos(_tPerp)*_tOff2-b.vx*0.25,y:b.y+Math.sin(_tPerp)*_tOff2-b.vy*0.25,
+          vx:-b.vx*0.03+(Math.random()-0.5)*2.5,vy:-b.vy*0.03+(Math.random()-0.5)*2.5,
+          life:4+Math.floor(Math.random()*3),maxLife:7,size:1+Math.random(),color:Math.random()>0.6?'#fff':b.color,type:'spark'});
       }
-      // Rare bright hot ember (1 in 5 bullets per frame)
-      if(Math.random()<0.08){
-        particles.push({x:b.x-b.vx*0.3,y:b.y-b.vy*0.3,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,
-          life:10,maxLife:10,size:2+Math.random(),color:'#fff',type:'spark'});
+      // Hot ember — brighter, less frequent
+      if(Math.random()<0.15){
+        particles.push({x:b.x-b.vx*0.2,y:b.y-b.vy*0.2,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,
+          life:8,maxLife:8,size:2+Math.random()*1.5,color:'#fff',type:'spark'});
       }
     }
     // Elemental bullet particle trails
@@ -21382,50 +21388,76 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // Default bullet render — explosive neon lance with streaks
+      // Default bullet render — Hades-style flame lance with pressure wave
       const _bRenderSize = b.size * _bSizeMult;
       const _glow = b._glowBoost || 0;
-      const _bPulse = 1 + Math.sin(performance.now() * 0.025 + b.x * 0.013) * 0.15;
+      const _bPulse = 1 + Math.sin(performance.now() * 0.03 + b.x * 0.015) * 0.12;
       const _bAng = Math.atan2(b.vy || 0, b.vx || 1);
       const _bSpd = Math.sqrt((b.vx||0)*(b.vx||0)+(b.vy||0)*(b.vy||0));
       const _bIsPlayer = b.owner === 'player';
-      // Per-bullet random seed for visual variation (stable across frames)
       if (!b._vfxSeed) b._vfxSeed = Math.random();
       const _seed = b._vfxSeed;
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(_bAng);
-      // 1) Long trailing streak — extends behind bullet based on speed
-      const _streakLen = _bRenderSize * (3 + _bSpd * 0.15 + _seed * 2);
-      ctx.globalAlpha = 0.2 * _bAlphaMult;
-      ctx.strokeStyle = b.color; ctx.lineWidth = _bRenderSize * 1.4;
-      ctx.beginPath(); ctx.moveTo(-_streakLen, 0); ctx.lineTo(-_bRenderSize * 0.5, 0); ctx.stroke();
-      // 2) Parallel side streaks (random per bullet — some have 1, some have 2)
-      if (_bIsPlayer && _seed > 0.3) {
-        const _sideOff = _bRenderSize * (0.8 + _seed * 0.5);
-        ctx.globalAlpha = 0.15 * _bAlphaMult; ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.moveTo(-_streakLen * 0.7, _sideOff); ctx.lineTo(-_bRenderSize, _sideOff * 0.4); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-_streakLen * 0.7, -_sideOff); ctx.lineTo(-_bRenderSize, -_sideOff * 0.4); ctx.stroke();
-      }
-      // 3) Hot core trail — brighter narrow line right behind the head
-      ctx.globalAlpha = 0.5 * _bAlphaMult;
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = _bRenderSize * 0.5;
-      ctx.beginPath(); ctx.moveTo(-_bRenderSize * 2.5, 0); ctx.lineTo(0, 0); ctx.stroke();
-      // 4) Outer diamond — bullet color, slightly larger
-      ctx.globalAlpha = (0.6 + _glow * 0.3) * _bAlphaMult;
+      const _headW = _bRenderSize * 1.6;
+      const _trailLen = _bRenderSize * (6 + _bSpd * 0.2 + _seed * 3);
+      // 1) Wide outer flame trail — tapered cone, bullet color, dim
+      ctx.globalAlpha = 0.18 * _bAlphaMult;
       ctx.fillStyle = b.color;
-      const _bd = _bRenderSize * 1.8 * _bPulse;
-      ctx.beginPath(); ctx.moveTo(_bd, 0); ctx.lineTo(0, -_bd * 0.5); ctx.lineTo(-_bd * 0.65, 0); ctx.lineTo(0, _bd * 0.5); ctx.closePath(); ctx.fill();
-      // 5) Inner white core — crisp point
+      ctx.beginPath(); ctx.moveTo(-_trailLen, 0);
+      ctx.lineTo(-_bRenderSize * 2, -_headW * 0.35);
+      ctx.lineTo(0, -_headW * 0.9);
+      ctx.lineTo(0, _headW * 0.9);
+      ctx.lineTo(-_bRenderSize * 2, _headW * 0.35);
+      ctx.closePath(); ctx.fill();
+      // 2) Inner bright flame body — narrower, brighter
+      ctx.globalAlpha = 0.35 * _bAlphaMult;
+      ctx.fillStyle = b.color;
+      const _innerW = _headW * 0.55;
+      ctx.beginPath(); ctx.moveTo(-_trailLen * 0.7, 0);
+      ctx.lineTo(-_bRenderSize, -_innerW * 0.3);
+      ctx.lineTo(_bRenderSize * 0.5, -_innerW);
+      ctx.lineTo(_bRenderSize * 0.5, _innerW);
+      ctx.lineTo(-_bRenderSize, _innerW * 0.3);
+      ctx.closePath(); ctx.fill();
+      // 3) Hot white core streak — narrow intense line
+      ctx.globalAlpha = 0.6 * _bAlphaMult;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = _bRenderSize * 0.7;
+      ctx.beginPath(); ctx.moveTo(-_trailLen * 0.4, 0); ctx.lineTo(_bRenderSize * 0.3, 0); ctx.stroke();
+      // 4) Bullet head — bright filled shape
+      ctx.globalAlpha = (0.75 + _glow * 0.25) * _bAlphaMult;
+      ctx.fillStyle = b.color;
+      const _hd = _bRenderSize * 2.0 * _bPulse;
+      ctx.beginPath(); ctx.moveTo(_hd, 0); ctx.lineTo(0, -_hd * 0.45);
+      ctx.lineTo(-_hd * 0.5, 0); ctx.lineTo(0, _hd * 0.45); ctx.closePath(); ctx.fill();
+      // White-hot inner core
       ctx.globalAlpha = _bAlphaMult;
       ctx.fillStyle = '#fff';
-      const _bc = _bRenderSize * 0.75;
-      ctx.beginPath(); ctx.moveTo(_bc * 1.1, 0); ctx.lineTo(0, -_bc * 0.5); ctx.lineTo(-_bc * 0.5, 0); ctx.lineTo(0, _bc * 0.5); ctx.closePath(); ctx.fill();
-      // 6) Forward flare spike (random — some bullets have it, some don't)
-      if (_bIsPlayer && _seed > 0.55) {
-        ctx.globalAlpha = 0.4 * _bAlphaMult * _bPulse;
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(_bd, 0); ctx.lineTo(_bd + _bRenderSize * (1.5 + _seed), 0); ctx.stroke();
+      const _hc = _bRenderSize * 0.9;
+      ctx.beginPath(); ctx.moveTo(_hc * 1.2, 0); ctx.lineTo(0, -_hc * 0.4);
+      ctx.lineTo(-_hc * 0.4, 0); ctx.lineTo(0, _hc * 0.4); ctx.closePath(); ctx.fill();
+      // 5) Pressure wave crescent — arc in front of the bullet
+      if (_bIsPlayer) {
+        ctx.globalAlpha = (0.25 + _seed * 0.15) * _bAlphaMult * _bPulse;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 + _seed;
+        const _pwR = _bRenderSize * (2.5 + _seed);
+        ctx.beginPath(); ctx.arc(_hd * 0.6, 0, _pwR, -0.6, 0.6); ctx.stroke();
+        // Second wider dimmer wave (random)
+        if (_seed > 0.4) {
+          ctx.globalAlpha = 0.12 * _bAlphaMult;
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(_hd * 0.9, 0, _pwR * 1.3, -0.45, 0.45); ctx.stroke();
+        }
+      }
+      // 6) Random side wisps — thin lines peeling off the trail
+      if (_bIsPlayer && _seed > 0.25) {
+        ctx.globalAlpha = 0.15 * _bAlphaMult;
+        ctx.strokeStyle = b.color; ctx.lineWidth = 0.8;
+        const _wOff = _trailLen * (0.2 + _seed * 0.3);
+        const _wSpread = _headW * (0.6 + _seed * 0.4);
+        ctx.beginPath(); ctx.moveTo(-_wOff, 0); ctx.lineTo(-_wOff * 1.3, _wSpread); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-_wOff * 0.8, 0); ctx.lineTo(-_wOff * 1.1, -_wSpread * 0.8); ctx.stroke();
       }
       ctx.globalAlpha = 1; ctx.shadowBlur = 0;
       ctx.restore();
