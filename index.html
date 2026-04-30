@@ -11836,12 +11836,25 @@ function fireWeaponForPlayer(p) {
   _gunIdleTimer = 0;
   hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
-  // Muzzle spark particles — 2-3 small sparks ejected from gun tip
+  // Muzzle launch burst — explosive feel per shot
   { const _ma = p.angle, _mx = p.x + Math.cos(_ma) * (PLAYER_RADIUS + 14), _my = p.y + Math.sin(_ma) * (PLAYER_RADIUS + 14);
     const _mc = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    for (let _mi = 0; _mi < 3; _mi++) {
-      const _sa = _ma + (Math.random() - 0.5) * 1.2, _ss = 2 + Math.random() * 3;
-      particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss, life: 6 + Math.floor(Math.random() * 4), maxLife: 10, size: 1.5 + Math.random(), color: _mi === 0 ? '#fff' : _mc, type: 'spark' });
+    // Forward sparks — cone of bright particles
+    const _sparkCount = 4 + Math.floor(Math.random() * 3);
+    for (let _mi = 0; _mi < _sparkCount; _mi++) {
+      const _sa = _ma + (Math.random() - 0.5) * 0.9, _ss = 4 + Math.random() * 5;
+      particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+        life: 5 + Math.floor(Math.random() * 4), maxLife: 9,
+        size: 1.5 + Math.random() * 1.5, color: _mi < 2 ? '#fff' : _mc, type: 'spark' });
+    }
+    // Side-ejected sparks — perpendicular scatter (shell casings feel)
+    const _perpA = _ma + (Math.random() > 0.5 ? 1 : -1) * (1.2 + Math.random() * 0.5);
+    particles.push({ x: _mx, y: _my, vx: Math.cos(_perpA) * (2 + Math.random() * 2), vy: Math.sin(_perpA) * (2 + Math.random() * 2),
+      life: 8, maxLife: 8, size: 1.5, color: '#ff0', type: 'spark' });
+    // Short muzzle flash streak — bright line forward from barrel (random on/off)
+    if (Math.random() < 0.6) {
+      particles.push({ x: _mx, y: _my, tx: _mx + Math.cos(_ma) * (12 + Math.random() * 10), ty: _my + Math.sin(_ma) * (12 + Math.random() * 10),
+        vx: Math.cos(_ma) * 6, vy: Math.sin(_ma) * 6, life: 4, maxLife: 4, size: 1, color: '#fff', type: 'lightning' });
     }
   }
   if (p === getLocalPlayer()) runStats.shotsFired++;
@@ -16111,6 +16124,21 @@ function update() {
     if(b.trail.length<6){b.trail.push({x:b.x,y:b.y});}
     else{const _tt=b.trail.shift();_tt.x=b.x;_tt.y=b.y;b.trail.push(_tt);}
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
+    // Player bullet trail sparks — every bullet leaves a wake
+    if(b.owner==='player'&&!b._deadshotRound&&!b._beaconBullet&&!b.flame&&!b.grenade){
+      // Trailing spark every 2-3 frames (randomized so bullets look different)
+      if(gameTime%(2+Math.floor(b.x*0.1)%2)===0){
+        const _tOff=(Math.random()-0.5)*3;const _tPerp=Math.atan2(b.vy,b.vx)+Math.PI/2;
+        particles.push({x:b.x+Math.cos(_tPerp)*_tOff-b.vx*0.2,y:b.y+Math.sin(_tPerp)*_tOff-b.vy*0.2,
+          vx:-b.vx*0.06+(Math.random()-0.5)*1.2,vy:-b.vy*0.06+(Math.random()-0.5)*1.2,
+          life:6+Math.floor(Math.random()*4),maxLife:10,size:1+Math.random()*1.5,color:b.color,type:'spark'});
+      }
+      // Rare bright hot ember (1 in 5 bullets per frame)
+      if(Math.random()<0.08){
+        particles.push({x:b.x-b.vx*0.3,y:b.y-b.vy*0.3,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,
+          life:10,maxLife:10,size:2+Math.random(),color:'#fff',type:'spark'});
+      }
+    }
     // Elemental bullet particle trails
     // Deadshot arrow trail
     if(b._deadshotRound&&gameTime%2===0){const _dc=b._deadshotColor||b.color;particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:_dc,type:'spark'});
@@ -21354,51 +21382,52 @@ function render() {
     ctx.globalAlpha=0.4;ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x,b.y,b.size*3,0,Math.PI*2);ctx.fill();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
     }else{
-      // Default bullet render — scales with travel distance + build glow from card stacks.
-      // Neon-diamond silhouette oriented along velocity so bullets read as data-
-      // lances rather than round dots. Short motion streak behind for a
-      // tracer-lite feel without the full trail array cost.
+      // Default bullet render — explosive neon lance with streaks
       const _bRenderSize = b.size * _bSizeMult;
       const _glow = b._glowBoost || 0;
-      const _bPulse = 1 + Math.sin(performance.now() * 0.02 + b.x * 0.01) * 0.12;
+      const _bPulse = 1 + Math.sin(performance.now() * 0.025 + b.x * 0.013) * 0.15;
       const _bAng = Math.atan2(b.vy || 0, b.vx || 1);
+      const _bSpd = Math.sqrt((b.vx||0)*(b.vx||0)+(b.vy||0)*(b.vy||0));
+      const _bIsPlayer = b.owner === 'player';
+      // Per-bullet random seed for visual variation (stable across frames)
+      if (!b._vfxSeed) b._vfxSeed = Math.random();
+      const _seed = b._vfxSeed;
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(_bAng);
-      ctx.shadowColor = b.color;
-      ctx.shadowBlur = (14 + _glow * 20) * _bAlphaMult;
-      // Motion streak — short tapered line behind the bullet
-      ctx.globalAlpha = 0.35 * _bAlphaMult;
-      ctx.strokeStyle = b.color;
-      ctx.lineWidth = _bRenderSize * 1.2;
-      ctx.beginPath();
-      ctx.moveTo(-_bRenderSize * 3.2, 0);
-      ctx.lineTo(-_bRenderSize * 0.6, 0);
-      ctx.stroke();
-      // Outer diamond — bullet color glow
-      ctx.globalAlpha = (0.55 + _glow * 0.3) * _bAlphaMult;
+      // 1) Long trailing streak — extends behind bullet based on speed
+      const _streakLen = _bRenderSize * (3 + _bSpd * 0.15 + _seed * 2);
+      ctx.globalAlpha = 0.2 * _bAlphaMult;
+      ctx.strokeStyle = b.color; ctx.lineWidth = _bRenderSize * 1.4;
+      ctx.beginPath(); ctx.moveTo(-_streakLen, 0); ctx.lineTo(-_bRenderSize * 0.5, 0); ctx.stroke();
+      // 2) Parallel side streaks (random per bullet — some have 1, some have 2)
+      if (_bIsPlayer && _seed > 0.3) {
+        const _sideOff = _bRenderSize * (0.8 + _seed * 0.5);
+        ctx.globalAlpha = 0.15 * _bAlphaMult; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.moveTo(-_streakLen * 0.7, _sideOff); ctx.lineTo(-_bRenderSize, _sideOff * 0.4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-_streakLen * 0.7, -_sideOff); ctx.lineTo(-_bRenderSize, -_sideOff * 0.4); ctx.stroke();
+      }
+      // 3) Hot core trail — brighter narrow line right behind the head
+      ctx.globalAlpha = 0.5 * _bAlphaMult;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = _bRenderSize * 0.5;
+      ctx.beginPath(); ctx.moveTo(-_bRenderSize * 2.5, 0); ctx.lineTo(0, 0); ctx.stroke();
+      // 4) Outer diamond — bullet color, slightly larger
+      ctx.globalAlpha = (0.6 + _glow * 0.3) * _bAlphaMult;
       ctx.fillStyle = b.color;
-      const _bd = _bRenderSize * 1.7 * _bPulse;
-      ctx.beginPath();
-      ctx.moveTo(_bd, 0);
-      ctx.lineTo(0, -_bd * 0.55);
-      ctx.lineTo(-_bd * 0.7, 0);
-      ctx.lineTo(0, _bd * 0.55);
-      ctx.closePath();
-      ctx.fill();
-      // Inner white core — crisp high-alpha hit point
+      const _bd = _bRenderSize * 1.8 * _bPulse;
+      ctx.beginPath(); ctx.moveTo(_bd, 0); ctx.lineTo(0, -_bd * 0.5); ctx.lineTo(-_bd * 0.65, 0); ctx.lineTo(0, _bd * 0.5); ctx.closePath(); ctx.fill();
+      // 5) Inner white core — crisp point
       ctx.globalAlpha = _bAlphaMult;
       ctx.fillStyle = '#fff';
-      const _bc = _bRenderSize * 0.72;
-      ctx.beginPath();
-      ctx.moveTo(_bc, 0);
-      ctx.lineTo(0, -_bc * 0.55);
-      ctx.lineTo(-_bc * 0.6, 0);
-      ctx.lineTo(0, _bc * 0.55);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
+      const _bc = _bRenderSize * 0.75;
+      ctx.beginPath(); ctx.moveTo(_bc * 1.1, 0); ctx.lineTo(0, -_bc * 0.5); ctx.lineTo(-_bc * 0.5, 0); ctx.lineTo(0, _bc * 0.5); ctx.closePath(); ctx.fill();
+      // 6) Forward flare spike (random — some bullets have it, some don't)
+      if (_bIsPlayer && _seed > 0.55) {
+        ctx.globalAlpha = 0.4 * _bAlphaMult * _bPulse;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(_bd, 0); ctx.lineTo(_bd + _bRenderSize * (1.5 + _seed), 0); ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
       ctx.restore();
     }
   }
