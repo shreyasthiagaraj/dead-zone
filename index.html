@@ -7169,8 +7169,8 @@ let shootButtonHeld = false; // when true, auto-aim engages
 // Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
 
 // Ranges are screen-relative (computed from canvas size at runtime)
-function _aaHardLockRange() { return Math.max(canvas.width, canvas.height) * 0.5; }
-function _aaFallbackRange() { return Math.max(canvas.width, canvas.height) * 0.7; }
+function _aaHardLockRange() { return BASE_GUN.bulletSpeed * GUN_BULLET_RANGE; }
+function _aaFallbackRange() { return BASE_GUN.bulletSpeed * GUN_BULLET_RANGE * 1.2; }
 const AA_PANIC_RADIUS = 60;        // emergency override distance
 const AA_RETARGET_INTERVAL = 1;    // retarget every frame — always track closest
 const AA_SWITCH_THRESHOLD = 0;     // no threshold — switch immediately
@@ -14998,25 +14998,34 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
   z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
-  // IMPACT DETONATION — every hit is a mini-explosion at the target
+  // MASSIVE IMPACT DETONATION — every hit is an explosion at the target
   if (!silent) {
     const _hfExposed = z._exposed;
     const _hfCrit = _critHit;
-    const _hfColor = _hfCrit ? '#f0f' : '#fff';
-    const _hfSize = _hfExposed ? z.radius + 50 : z.radius + 30;
-    const _hfLife = _hfExposed ? 14 : (_hfCrit ? 13 : 11);
+    const _hfColor = _hfCrit ? '#f0f' : '#ff0';
+    const _hfSize = _hfCrit ? z.radius + 65 : (_hfExposed ? z.radius + 55 : z.radius + 40);
+    const _hfLife = _hfCrit ? 14 : (_hfExposed ? 13 : 11);
+    // Expanding segmented hitflash ring
     particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit, _followZ: z });
-    // Impact spark burst — radial sparks from the hit point
-    const _impactSparks = _hfCrit ? 10 : (_hfExposed ? 8 : 5);
+    // Second outer ring — bigger, dimmer
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife + 3, maxLife: _hfLife + 3, size: _hfSize * 1.4, color: _hfColor, type: 'wakering' });
+    // Massive radial spark burst
+    const _impactSparks = _hfCrit ? 16 : (_hfExposed ? 12 : 8);
     for (let _isi = 0; _isi < _impactSparks; _isi++) {
-      const _ia = Math.random() * Math.PI * 2, _is = 3 + Math.random() * 5;
-      particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is + kbx*0.3, vy: Math.sin(_ia)*_is + kby*0.3,
-        life: 5 + Math.floor(Math.random()*4), maxLife: 9, size: 2 + Math.random()*2,
-        color: _isi < 2 ? '#fff' : _hfColor, type: 'spark' });
+      const _ia = Math.random() * Math.PI * 2, _is = 4 + Math.random() * 7;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is + kbx*0.4, vy: Math.sin(_ia)*_is + kby*0.4,
+        life: 6 + Math.floor(Math.random()*5), maxLife: 11, size: 2.5 + Math.random()*2.5,
+        color: _isi < 3 ? '#fff' : (_isi < 6 ? '#ff0' : _hfColor), type: 'spark' });
     }
-    // Impact smoke puff
-    particles.push({ x: z.x, y: z.y, vx: kbx*0.2+(Math.random()-0.5)*2, vy: kby*0.2+(Math.random()-0.5)*2,
-      life: 10 + Math.floor(Math.random()*6), maxLife: 16, size: 5 + Math.random()*4, color: '#555', type: 'smoke' });
+    // Thick black smoke cloud at impact
+    for (let _si = 0; _si < 3; _si++) {
+      particles.push({ x: z.x + (Math.random()-0.5)*10, y: z.y + (Math.random()-0.5)*10,
+        vx: kbx*0.15+(Math.random()-0.5)*3, vy: kby*0.15+(Math.random()-0.5)*3,
+        life: 14 + Math.floor(Math.random()*8), maxLife: 22, size: 6 + Math.random()*5,
+        color: '#000', type: 'smoke', _smokeAlpha: 0.3 + Math.random()*0.2 });
+    }
+    // Bright flash at center
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 3, maxLife: 3, size: 8 + Math.random()*4, color: '#fff', type: 'spark' });
     // Pixel-fragment shower on crits — square chunks spew with velocity,
     // giving the big hits a distinct "chunk breaking off" feel.
     if (_hfCrit) {
@@ -16299,6 +16308,14 @@ function update() {
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
       // Splasher: split into 3 fragment projectiles on expiry
       if(b._splashOnDeath){const _sa=Math.atan2(b.vy,b.vx);for(let _si=0;_si<3;_si++){const _fa=_sa+(_si-1)*0.7;bullets.push({x:b.x,y:b.y,vx:Math.cos(_fa)*5,vy:Math.sin(_fa)*5,damage:b._splashDmg||6,color:b._splashColor||'#4f8',size:3,knockback:1,pierce:0,pierced:0,life:35,owner:'zombie',trail:[]});}for(let si=0;si<6;si++){const sa=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:8,maxLife:8,size:2+Math.random(),color:b._splashColor||'#4f8',type:'spark'});}playSound(500,0.05,'square',0.03);}
+      // Player hitscan end-of-path explosion (miss — bullet expired without hitting)
+      if(b.owner==='player'&&b._originX!=null){
+        // Visible pop at the endpoint so you see where the shot landed
+        particles.push({x:b.x,y:b.y,vx:0,vy:0,life:7,maxLife:7,size:22,color:'#ff0',type:'wakering'});
+        for(let _ei=0;_ei<6;_ei++){const _ea=Math.random()*Math.PI*2,_es=2+Math.random()*4;
+          particles.push({x:b.x,y:b.y,vx:Math.cos(_ea)*_es,vy:Math.sin(_ea)*_es,life:5+Math.floor(Math.random()*3),maxLife:8,size:2+Math.random()*1.5,color:_ei<2?'#fff':'#ff0',type:'spark'});}
+        for(let _si=0;_si<2;_si++){particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:12+Math.floor(Math.random()*6),maxLife:18,size:5+Math.random()*4,color:'#000',type:'smoke',_smokeAlpha:0.3+Math.random()*0.2});}
+      }
       // All bullets: glitch-dissolve VFX on death. Projectiles de-rezz out of the sim.
       if (!b.flame && !b.grenade) {
         const _gc = '░▒╳◆▪';
