@@ -956,10 +956,10 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // ---- SMOOTH GUN POWER SCALING ----
 // No tiers, no transitions. Gun stays the same, just gets stronger.
 // +5% damage per 10 kills. Subtle fire rate increase. Bullet grows and shifts color.
-const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 200, spread: 0.02, bulletSize: 5, knockback: 3, pierce: 0 };
+const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 300, spread: 0.02, bulletSize: 5, knockback: 3, pierce: 0 };
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
-const GUN_BULLET_RANGE = 2;       // 2 frames at speed 200 = ~400px hitscan range
+const GUN_BULLET_RANGE = 1;       // 1 frame at speed 300 = 300px hitscan range
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
@@ -11840,7 +11840,7 @@ function fireWeaponForPlayer(p) {
   { const _ma = p.angle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
     const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
     const _ec = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    const _range = 320; // visual beam length
+    const _range = 300; // visual beam length (matches bullet range)
     const _endX = _mx + _mc * _range, _endY = _my + _ms * _range;
     const _perpX = -_ms, _perpY = _mc;
 
@@ -11880,41 +11880,72 @@ function fireWeaponForPlayer(p) {
       if (_gx < 0 || _gx >= GRID_W || _gy < 0 || _gy >= GRID_H || !(dungeonGrid[_gy] && dungeonGrid[_gy][_gx])) { _hitDist = _wd; break; }
     }
 
-    // --- YELLOW TRAIL — short dashes that travel forward with gaps ---
     const _beamEndX = _mx + _mc * _hitDist, _beamEndY = _my + _ms * _hitDist;
-    // 3-5 short line segments spawned at staggered positions along the path
-    const _dashCount = 3 + Math.floor(Math.random() * 3);
-    for (let _di = 0; _di < _dashCount; _di++) {
-      const _t = 0.05 + (_di / _dashCount) * 0.8 + (Math.random()-0.5) * 0.1;
-      const _sx = _mx + _mc * _hitDist * _t;
-      const _sy = _my + _ms * _hitDist * _t;
-      const _dashLen = 15 + Math.random() * 20; // short segment length
-      const _dex = _sx + _mc * _dashLen;
-      const _dey = _sy + _ms * _dashLen;
-      const _driftSpd = 1.5 + Math.random() * 1.5; // slow drift forward
-      const _thickness = 1.2 - _t * 0.5 + Math.random() * 0.3; // thinner further out
-      particles.push({ x: _sx, y: _sy, tx: _dex, ty: _dey,
-        vx: _mc * _driftSpd, vy: _ms * _driftSpd,
-        life: 8 + Math.floor(Math.random() * 4), maxLife: 12,
-        size: _thickness, color: '#ff0', type: 'lightning' });
-    }
-    // Sparse glow sparks along the path (not dense — just accent)
-    const _trailSegs = 5 + Math.floor(Math.random() * 3);
-    for (let _ti = 0; _ti < _trailSegs; _ti++) {
-      const _t = 0.1 + Math.random() * 0.8;
-      const _tx = _mx + _mc * _hitDist * _t;
-      const _ty = _my + _ms * _hitDist * _t;
-      const _jitter = (Math.random() - 0.5) * 3;
-      particles.push({ x: _tx + _perpX * _jitter, y: _ty + _perpY * _jitter,
-        vx: _mc * (1 + Math.random()*1.5) + (Math.random()-0.5)*0.8, vy: _ms * (1 + Math.random()*1.5) + (Math.random()-0.5)*0.8,
-        life: 6 + Math.floor(Math.random() * 4), maxLife: 10,
-        size: 2 + Math.random() * 1.5, color: Math.random() > 0.2 ? '#ff0' : '#fa0', type: 'spark' });
+
+    // --- LAUNCH BLAST BEAM — thick, bright, explosive near the gun ---
+    // Heavy beam from muzzle extending ~30% of the path (wide, bright, short-lived)
+    const _launchLen = Math.min(_hitDist * 0.3, 80);
+    const _lEx = _mx + _mc * _launchLen, _lEy = _my + _ms * _launchLen;
+    particles.push({ x: _mx, y: _my, tx: _lEx, ty: _lEy, vx: _mc*3, vy: _ms*3,
+      life: 6, maxLife: 6, size: 3.5, color: '#ff0', type: 'lightning' });
+    particles.push({ x: _mx, y: _my, tx: _lEx, ty: _lEy, vx: _mc*4, vy: _ms*4,
+      life: 4, maxLife: 4, size: 2, color: '#fff', type: 'lightning' });
+    // Launch-zone sparks (concentrated near gun)
+    for (let _li = 0; _li < 5; _li++) {
+      const _lt = Math.random() * 0.25;
+      const _lx = _mx + _mc * _hitDist * _lt, _ly = _my + _ms * _hitDist * _lt;
+      particles.push({ x: _lx + _perpX*(Math.random()-0.5)*6, y: _ly + _perpY*(Math.random()-0.5)*6,
+        vx: _mc*2 + (Math.random()-0.5)*3, vy: _ms*2 + (Math.random()-0.5)*3,
+        life: 5 + Math.floor(Math.random()*4), maxLife: 9,
+        size: 2.5 + Math.random()*2, color: Math.random()>0.3?'#ff0':'#fff', type: 'spark' });
     }
 
-    // --- THICK BLACK SMOKE around the trail ---
+    // --- MIDDLE DASHES — thin, sparse, with gaps ---
+    const _dashCount = 2 + Math.floor(Math.random() * 3);
+    for (let _di = 0; _di < _dashCount; _di++) {
+      const _t = 0.25 + (_di / _dashCount) * 0.45 + (Math.random()-0.5)*0.08;
+      const _sx = _mx + _mc * _hitDist * _t;
+      const _sy = _my + _ms * _hitDist * _t;
+      const _dashLen = 12 + Math.random() * 18;
+      const _dex = _sx + _mc * _dashLen, _dey = _sy + _ms * _dashLen;
+      particles.push({ x: _sx, y: _sy, tx: _dex, ty: _dey,
+        vx: _mc * (1.5 + Math.random()), vy: _ms * (1.5 + Math.random()),
+        life: 7 + Math.floor(Math.random()*4), maxLife: 11,
+        size: 0.8 + Math.random()*0.4, color: '#ff0', type: 'lightning' });
+    }
+    // A few accent sparks in the middle
+    for (let _ti = 0; _ti < 3; _ti++) {
+      const _t = 0.2 + Math.random()*0.5;
+      particles.push({ x: _mx+_mc*_hitDist*_t+_perpX*(Math.random()-0.5)*3, y: _my+_ms*_hitDist*_t+_perpY*(Math.random()-0.5)*3,
+        vx: _mc*(1+Math.random()) + (Math.random()-0.5)*0.8, vy: _ms*(1+Math.random()) + (Math.random()-0.5)*0.8,
+        life: 5+Math.floor(Math.random()*3), maxLife: 8, size: 1.5+Math.random(), color: '#ff0', type: 'spark' });
+    }
+
+    // --- ENDPOINT BLAST BEAM — thick, explosive near the hit point ---
+    const _endStart = Math.max(0, _hitDist - Math.min(_hitDist*0.3, 80));
+    const _eSx = _mx + _mc * _endStart, _eSy = _my + _ms * _endStart;
+    particles.push({ x: _eSx, y: _eSy, tx: _beamEndX, ty: _beamEndY, vx: _mc*2, vy: _ms*2,
+      life: 6, maxLife: 6, size: 3, color: '#ff0', type: 'lightning' });
+    particles.push({ x: _eSx, y: _eSy, tx: _beamEndX, ty: _beamEndY, vx: _mc*2.5, vy: _ms*2.5,
+      life: 4, maxLife: 4, size: 1.5, color: '#fff', type: 'lightning' });
+    // Endpoint sparks (concentrated near target)
+    for (let _ei = 0; _ei < 5; _ei++) {
+      const _et = 0.75 + Math.random()*0.2;
+      const _ex = _mx+_mc*_hitDist*_et, _ey = _my+_ms*_hitDist*_et;
+      particles.push({ x: _ex + _perpX*(Math.random()-0.5)*6, y: _ey + _perpY*(Math.random()-0.5)*6,
+        vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4,
+        life: 5 + Math.floor(Math.random()*4), maxLife: 9,
+        size: 2 + Math.random()*2, color: Math.random()>0.3?'#ff0':'#fff', type: 'spark' });
+    }
+
+    // --- BLACK SMOKE — heavier near launch and endpoint ---
     const _smokeCount = 7 + Math.floor(Math.random() * 4);
     for (let _si = 0; _si < _smokeCount; _si++) {
-      const _t = 0.02 + Math.random() * 0.9;
+      // Bias smoke toward the ends (launch + endpoint)
+      let _t = Math.random();
+      if (_t < 0.4) _t = Math.random() * 0.2;        // 40% chance: near launch
+      else if (_t > 0.7) _t = 0.8 + Math.random()*0.2; // 30% chance: near endpoint
+      else _t = 0.2 + Math.random() * 0.6;             // 30% chance: middle
       const _bx = _mx + _mc * _hitDist * _t;
       const _by = _my + _ms * _hitDist * _t;
       const _puffCount = 2 + Math.floor(Math.random() * 2);
@@ -11928,24 +11959,23 @@ function fireWeaponForPlayer(p) {
       }
     }
 
-    // --- IMPACT EXPLOSION at endpoint (if it hit something) ---
-    if (_hitDist < _range - 10) {
-      const _ix = _mx + _mc * _hitDist, _iy = _my + _ms * _hitDist;
-      // Flash ring
-      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 6, maxLife: 6, size: 28, color: '#ff0', type: 'wakering' });
-      // Radial sparks
-      for (let _ei = 0; _ei < 8; _ei++) {
-        const _ea = Math.random()*Math.PI*2, _es = 3 + Math.random()*6;
+    // --- ENDPOINT EXPLOSION (always — bigger if it hit something) ---
+    { const _ix = _beamEndX, _iy = _beamEndY;
+      const _hitTarget = _hitDist < _range - 10;
+      const _ringSize = _hitTarget ? 32 : 20;
+      const _sparkN = _hitTarget ? 10 : 5;
+      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 7, maxLife: 7, size: _ringSize, color: '#ff0', type: 'wakering' });
+      for (let _ei = 0; _ei < _sparkN; _ei++) {
+        const _ea = Math.random()*Math.PI*2, _es = 2 + Math.random()*(_hitTarget?7:4);
         particles.push({ x: _ix, y: _iy, vx: Math.cos(_ea)*_es, vy: Math.sin(_ea)*_es,
-          life: 5 + Math.floor(Math.random()*4), maxLife: 9, size: 2.5 + Math.random()*2,
-          color: _ei < 3 ? '#fff' : '#ff0', type: 'spark' });
+          life: 5 + Math.floor(Math.random()*4), maxLife: 9, size: 2 + Math.random()*2,
+          color: _ei < 2 ? '#fff' : '#ff0', type: 'spark' });
       }
-      // Impact smoke
-      for (let _si = 0; _si < 3; _si++) {
-        particles.push({ x: _ix + (Math.random()-0.5)*8, y: _iy + (Math.random()-0.5)*8,
+      for (let _si = 0; _si < (_hitTarget?3:2); _si++) {
+        particles.push({ x: _ix+(Math.random()-0.5)*8, y: _iy+(Math.random()-0.5)*8,
           vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3,
-          life: 10 + Math.floor(Math.random()*8), maxLife: 18,
-          size: 5 + Math.random()*5, color: '#111', type: 'smoke', _smokeAlpha: 0.2 + Math.random()*0.2 });
+          life: 12+Math.floor(Math.random()*8), maxLife: 20,
+          size: 5+Math.random()*5, color: '#000', type: 'smoke', _smokeAlpha: 0.3+Math.random()*0.2 });
       }
     }
 
