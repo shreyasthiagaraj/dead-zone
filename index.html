@@ -12024,17 +12024,21 @@ function fireWeaponForPlayer(p) {
     // --- ENDPOINT EXPLOSION — class-colored ---
     { const _ix = _beamEndX, _iy = _beamEndY;
       const _hitTarget = _hitDist < _range - 10;
-      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 8, maxLife: 8, size: _hitTarget?40:22, color: _beamCol, type: 'wakering' });
-      if (_hitTarget) particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 10, maxLife: 10, size: 55, color: _beamCol2, type: 'wakering' });
-      const _sparkN = _hitTarget ? 16 : 6;
+      // Expanding rings — always dramatic, bigger on hit
+      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 8, maxLife: 8, size: _hitTarget?40:35, color: _beamCol, type: 'wakering' });
+      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: _hitTarget?10:8, maxLife: _hitTarget?10:8, size: _hitTarget?55:45, color: _beamCol2, type: 'wakering' });
+      // Radial sparks — always visible, more on hit
+      const _sparkN = _hitTarget ? 16 : 10;
       for (let _ei = 0; _ei < _sparkN; _ei++) {
-        const _ea = Math.random()*Math.PI*2, _es = 3+Math.random()*(_hitTarget?9:4);
+        const _ea = Math.random()*Math.PI*2, _es = 3+Math.random()*(_hitTarget?9:6);
         particles.push({ x: _ix, y: _iy, vx: Math.cos(_ea)*_es, vy: Math.sin(_ea)*_es,
-          life: 5+Math.floor(Math.random()*5), maxLife: 10, size: 2.5+Math.random()*(_hitTarget?3:1.5),
+          life: 5+Math.floor(Math.random()*5), maxLife: 10, size: 2.5+Math.random()*(_hitTarget?3:2.5),
           color: _ei<3?'#fff':(_ei<7?_beamCol:_beamCol2), type: 'spark' });
       }
-      if (_hitTarget) particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 3, maxLife: 3, size: 10, color: '#fff', type: 'spark' });
-      const _smokeN = _hitTarget ? 5 : 2;
+      // Bright center flash — always
+      particles.push({ x: _ix, y: _iy, vx: 0, vy: 0, life: 3, maxLife: 3, size: _hitTarget?10:7, color: '#fff', type: 'spark' });
+      // Smoke cloud
+      const _smokeN = _hitTarget ? 5 : 3;
       for (let _si = 0; _si < _smokeN; _si++) {
         particles.push({ x: _ix+(Math.random()-0.5)*12, y: _iy+(Math.random()-0.5)*12,
           vx: (Math.random()-0.5)*4, vy: (Math.random()-0.5)*4,
@@ -16639,6 +16643,11 @@ function update() {
         if(z.x<_bbXMin||z.x>_bbXMax||z.y<_bbYMin||z.y>_bbYMax)continue;
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_bhit){
+                  // Range check — skip enemies beyond effective gun range
+                  if (b._originX != null) {
+                    const _erd = (z.x-b._originX)**2+(z.y-b._originY)**2;
+                    if (_erd > (GUN_EFFECTIVE_RANGE+z.radius)**2) continue;
+                  }
                   // Wall LOS check — skip enemies behind walls
                   if (b._originX != null && !hasLineOfSight(_bpx, _bpy, z.x, z.y)) continue;
                   // Hitscan: only hit the NEAREST enemy (skip if closer enemy exists in path)
