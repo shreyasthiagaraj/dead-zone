@@ -11836,32 +11836,35 @@ function fireWeaponForPlayer(p) {
   hapticShot();
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   // ====== HITSCAN FORCE BLAST — muzzle detonation + beam flash + smoke trail ======
-  { const _ma = p.angle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
+  { const _shotSeed = Math.random(); // per-shot variance seed
+    const _shotWiggle = (Math.random() - 0.5) * 0.08; // visual beam angle variance
+    const _ma = p.angle + _shotWiggle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
     const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
     const _ec = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    const _range = 300; // visual beam length (matches bullet range)
+    const _range = 270 + Math.floor(_shotSeed * 60); // 270-330px varied range per shot
     const _endX = _mx + _mc * _range, _endY = _my + _ms * _range;
     const _perpX = -_ms, _perpY = _mc;
 
-    // --- MUZZLE DETONATION ---
-    // Massive radial spark burst
-    for (let _mi = 0; _mi < 14; _mi++) {
+    // --- MUZZLE DETONATION (varies per shot) ---
+    const _muzzleSparks = 10 + Math.floor(_shotSeed * 8); // 10-18 sparks
+    for (let _mi = 0; _mi < _muzzleSparks; _mi++) {
       const _sa = _ma + (Math.random() - 0.5) * 2.2, _ss = 4 + Math.random() * 10;
       particles.push({ x: _mx, y: _my, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
         life: 4 + Math.floor(Math.random() * 5), maxLife: 9,
         size: 2.5 + Math.random() * 3, color: _mi < 5 ? '#fff' : _ec, type: 'spark' });
     }
-    // Thick black smoke cloud at barrel
-    for (let _mi = 0; _mi < 5; _mi++) {
-      const _sOff = (Math.random()-0.5) * 14;
+    // Smoke cloud at barrel (varied count)
+    const _smokePuffs = 3 + Math.floor(_shotSeed * 5); // 3-8 puffs
+    for (let _mi = 0; _mi < _smokePuffs; _mi++) {
+      const _sOff = (Math.random()-0.5) * 16;
       particles.push({ x: _mx + _perpX*_sOff + (Math.random()-0.5)*5, y: _my + _perpY*_sOff + (Math.random()-0.5)*5,
-        vx: _mc * (0.8 + Math.random()*1.5) + (Math.random()-0.5)*2.5, vy: _ms * (0.8 + Math.random()*1.5) + (Math.random()-0.5)*2.5,
-        life: 18 + Math.floor(Math.random()*10), maxLife: 28, size: 7 + Math.random()*6, color: '#000', type: 'smoke', _smokeAlpha: 0.3 + Math.random()*0.25 });
+        vx: _mc * (0.5 + Math.random()*2) + (Math.random()-0.5)*3, vy: _ms * (0.5 + Math.random()*2) + (Math.random()-0.5)*3,
+        life: 16 + Math.floor(Math.random()*12), maxLife: 28, size: 5 + Math.random()*8, color: '#000', type: 'smoke', _smokeAlpha: 0.2 + Math.random()*0.3 });
     }
-    // Expanding flash ring — BIG
-    particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 6, maxLife: 6, size: 35, color: _ec, type: 'wakering' });
-    // Bright white core flash
-    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 3, maxLife: 3, size: 12, color: '#fff', type: 'spark' });
+    // Expanding flash ring (varied size)
+    particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 5+Math.floor(_shotSeed*3), maxLife: 8, size: 25 + _shotSeed*20, color: _ec, type: 'wakering' });
+    // Bright white core flash (varied size)
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 2+Math.floor(_shotSeed*2), maxLife: 4, size: 8 + _shotSeed*8, color: '#fff', type: 'spark' });
 
     // --- RAYCAST: find actual hit point (beam stops at first enemy or wall) ---
     let _hitDist = _range;
@@ -12079,9 +12082,9 @@ function fireWeaponForPlayer(p) {
   const fanSpread = extraProj > 0 ? 0.25 : 0; // angle between each extra projectile
   for (let pi = 0; pi < totalProj; pi++) {
     const angleOffset = extraProj > 0 ? (pi - (totalProj - 1) / 2) * fanSpread : 0;
-    // Gun variance: slight angle wiggle + speed variation per shot
-    const _wiggle = (Math.random() - 0.5) * 0.04; // ±0.02 rad natural drift
-    const _spdVar = 0.9 + Math.random() * 0.2; // 90-110% speed variance
+    // Gun variance: noticeable angle wiggle + speed variation per shot
+    const _wiggle = (Math.random() - 0.5) * 0.14; // ±0.07 rad visible drift
+    const _spdVar = 0.8 + Math.random() * 0.4; // 80-120% speed variance
     const ba = a + angleOffset + _wiggle, bc = Math.cos(ba), bs = Math.sin(ba);
     bullets.push({
       x: p.x+bc*22, y: p.y+bs*22, vx: bc*gun.bulletSpeed*_spdVar, vy: bs*gun.bulletSpeed*_spdVar,
@@ -16542,8 +16545,8 @@ function update() {
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
       // Splasher: split into 3 fragment projectiles on expiry
       if(b._splashOnDeath){const _sa=Math.atan2(b.vy,b.vx);for(let _si=0;_si<3;_si++){const _fa=_sa+(_si-1)*0.7;bullets.push({x:b.x,y:b.y,vx:Math.cos(_fa)*5,vy:Math.sin(_fa)*5,damage:b._splashDmg||6,color:b._splashColor||'#4f8',size:3,knockback:1,pierce:0,pierced:0,life:35,owner:'zombie',trail:[]});}for(let si=0;si<6;si++){const sa=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:8,maxLife:8,size:2+Math.random(),color:b._splashColor||'#4f8',type:'spark'});}playSound(500,0.05,'square',0.03);}
-      // Player hitscan end-of-path explosion (miss — only within effective range)
-      if(b.owner==='player'&&b._originX!=null&&((b.x-b._originX)**2+(b.y-b._originY)**2)<(GUN_EFFECTIVE_RANGE+50)**2){
+      // Player hitscan: beam VFX already handles endpoint — skip bullet-death VFX entirely
+      if(false&&b.owner==='player'&&b._originX!=null){
         // Visible pop at the endpoint so you see where the shot landed
         particles.push({x:b.x,y:b.y,vx:0,vy:0,life:7,maxLife:7,size:22,color:'#ff0',type:'wakering'});
         for(let _ei=0;_ei<6;_ei++){const _ea=Math.random()*Math.PI*2,_es=2+Math.random()*4;
