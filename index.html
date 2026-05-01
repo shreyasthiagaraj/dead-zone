@@ -15214,10 +15214,18 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // phase stagger, mortar reload, charge stun, shield-down). The signature
   // mechanic that makes the dance/pummel rhythm worthwhile.
   if (z._vulnTimer > 0) damage = Math.floor(damage * 1.75);
-  // FIREWALL shield up: 85% damage reduction. Combined with shield-down vuln
-  // gives ~11x damage swing between cycle states — chip during up, burst
-  // during down.
-  if (z._fwShieldUp) damage = Math.max(1, Math.floor(damage * 0.15));
+  // FIREWALL shield up: FULL BLOCK — no damage gets through
+  if (z._fwShieldUp) {
+    // Shield absorb VFX: spark burst at impact point
+    for (let _si = 0; _si < 6; _si++) {
+      const _sa = Math.random()*Math.PI*2, _ss = 2+Math.random()*4;
+      particles.push({ x: z.x+Math.cos(_sa)*z.radius, y: z.y+Math.sin(_sa)*z.radius,
+        vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
+        life: 8, maxLife: 8, size: 2+Math.random()*2, color: '#f80', type: 'spark' });
+    }
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: z.radius+18, color: '#f80', type: 'wakering' });
+    return; // fully blocked
+  }
   // AFTERSHOCK vulnerability: +25% damage while staggered from discharge
   if (z._aftershockVuln > 0) damage = Math.floor(damage * 1.25);
   // CORRUPT VULNERABILITY: each stack = +8% damage taken, caps at 5 (+40%). Applies to all sources.
@@ -17412,7 +17420,7 @@ function update() {
               zombies.push({zid:_nextZombieId++,x:_sx3,y:_sy3,vx:0,vy:0,hp:st.hp,maxHp:st.hp,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:75,type:'fast',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,charger:true,_spawnAnim:20,_spawnAnimMax:20});
               particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#f44',type:'lightning',tx:_sx3,ty:_sy3});
               for(let _pi=0;_pi<6;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*3;particles.push({x:_sx3,y:_sy3,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:14,maxLife:14,size:2.5,color:'#f44',type:'spark'});}
-              _startBossVuln(z, 150, 'drained'); // 2.5s window in phase 3 (shorter, harder)
+              _startBossVuln(z, 210, 'drained'); // 3.5s window in phase 3
             }
             // Enrage aura particles
             if(gameTime%3===0){const pa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(pa)*(z.radius+8),y:z.y+Math.sin(pa)*(z.radius+8),vx:Math.cos(pa)*1.5,vy:-1.5,life:16,maxLife:16,size:3,color:Math.random()<0.5?'#f44':'#f0f',type:'spark'});}
@@ -17439,9 +17447,9 @@ function update() {
           z._fwShieldTimer--;
           if (z._fwShieldTimer <= 0) {
             if (z._fwShieldState === 'up') {
-              z._fwShieldState = 'down'; z._fwShieldTimer = 180;
+              z._fwShieldState = 'down'; z._fwShieldTimer = 270;
               z._fwShieldUp = false;
-              _startBossVuln(z, 180, 'shield_down');
+              _startBossVuln(z, 270, 'shield_down');
             } else {
               z._fwShieldState = 'up'; z._fwShieldTimer = 360;
               z._fwShieldUp = true;
@@ -17610,7 +17618,7 @@ function update() {
               playExplosionSound();
               // Charge into a wall: extra-long stun window for the player to
               // commit to pummeling. Otherwise just the standard recover.
-              if (z._wdHitWall) _startBossVuln(z, 130, 'charge_stun');
+              if (z._wdHitWall) _startBossVuln(z, 210, 'charge_stun');
             }
           } else if(z._wdState==='recover'){
             z.vx=0;z.vy=0;z._wdTimer++;
@@ -22296,45 +22304,35 @@ function render() {
       // FIREWALL: shield-up dome ring around the body. Render only on the
       // firewall boss (separate from vuln). Visible from across the room.
       if (z._fwShieldUp) {
-        const _fsPulse = 0.5 + Math.sin(_bpT * 0.005) * 0.3;
-        // Filled shield tint — obvious armor dome
-        ctx.globalAlpha = 0.12 * _fsPulse;
+        // SHIELD RING — bright, obvious, unmissable (like player's shield)
+        const _fsPulse = 0.6 + Math.sin(_bpT * 0.006) * 0.3;
+        const _shieldR = z.radius + 16;
+        // Filled tint inside shield
+        ctx.globalAlpha = 0.08 * _fsPulse;
         ctx.fillStyle = '#f80';
-        ctx.beginPath(); ctx.arc(0, 0, z.radius + 14, 0, Math.PI * 2); ctx.fill();
-        // Outer ring — thick and bright
-        ctx.globalAlpha = 0.7 * _fsPulse;
-        ctx.strokeStyle = '#f80'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(0, 0, z.radius + 14, 0, Math.PI * 2); ctx.stroke();
-        // Inner ring
-        ctx.globalAlpha = 0.3 * _fsPulse; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 0, z.radius + 8, 0, Math.PI * 2); ctx.stroke();
-        // Hex segment spokes — larger, brighter
-        ctx.globalAlpha = 0.5 * _fsPulse; ctx.lineWidth = 2;
-        for (let _hi = 0; _hi < 8; _hi++) {
-          const _ha = _hi / 8 * Math.PI * 2 + _bpT * 0.001;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(_ha) * (z.radius + 4), Math.sin(_ha) * (z.radius + 4));
-          ctx.lineTo(Math.cos(_ha) * (z.radius + 18), Math.sin(_ha) * (z.radius + 18));
-          ctx.stroke();
-        }
-        // "SHIELDED" indicator
-        ctx.globalAlpha = 0.6 * _fsPulse; ctx.fillStyle = '#f80';
-        ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('SHIELDED', 0, -z.radius - 20);
+        ctx.beginPath(); ctx.arc(0, 0, _shieldR, 0, Math.PI * 2); ctx.fill();
+        // THICK outer ring — the main shield indicator
+        ctx.globalAlpha = 0.8 * _fsPulse;
+        ctx.strokeStyle = '#fa0'; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.arc(0, 0, _shieldR, 0, Math.PI * 2); ctx.stroke();
+        // Brighter inner edge
+        ctx.globalAlpha = 0.4 * _fsPulse;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, 0, _shieldR - 3, 0, Math.PI * 2); ctx.stroke();
+        // "SHIELDED" text
+        ctx.globalAlpha = 0.8; ctx.fillStyle = '#fa0';
+        ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('SHIELDED', 0, -z.radius - 24);
         ctx.globalAlpha = 1;
       }
       ctx.globalAlpha = 1;
-      // BOSS STAGGER: bright pulsing magenta indicator when vulnerable
-      if (z._vulnTimer > 0) {
+      // BOSS STAGGER: no ring — stagger is simply the absence of shield.
+      // Just show "VULNERABLE" text so the player knows to attack.
+      if (z._vulnTimer > 0 && !z._fwShieldUp) {
         const _vPulse = 0.5 + Math.sin(performance.now() * 0.015) * 0.4;
-        // Pulsing magenta ring
-        ctx.globalAlpha = 0.5 * _vPulse;
-        ctx.strokeStyle = '#f0f'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(0, 0, z.radius + 10 + Math.sin(performance.now()*0.01)*4, 0, Math.PI*2); ctx.stroke();
-        // STAGGERED text
-        ctx.globalAlpha = 0.7 * _vPulse; ctx.fillStyle = '#f0f';
+        ctx.globalAlpha = 0.7 * _vPulse; ctx.fillStyle = '#0f0';
         ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
-        ctx.fillText('STAGGERED', 0, -z.radius - 22);
+        ctx.fillText('VULNERABLE', 0, -z.radius - 24);
         ctx.globalAlpha = 1;
       }
     }
@@ -23061,13 +23059,13 @@ function render() {
       // BEACON LIGHTSOURCE: carve out fog around active beacons
       const _fogBeacons = _beacons.length > 0 ? _beacons : (activeBeacon ? [activeBeacon] : []);
       for (const _fb of _fogBeacons) {
-        if (!_fb || _fb._armTimer > 0) continue; // skip unarmed mines
+        if (!_fb) continue;
         const _fbx = _fb.x + fox, _fby = _fb.y + foy;
-        const _fbColor = _fb.classId ? (_ELEM_COLOR[_fb.classId] || '#0ff') : '#0ff';
-        const _fbR = BEACON_RANGE * ((runMods || {}).beaconRangeMult || 1) * 0.6;
+        const _fbR = BEACON_RANGE * ((runMods || {}).beaconRangeMult || 1) * 0.7;
         const _fbGrad = fctx.createRadialGradient(_fbx, _fby, 0, _fbx, _fby, _fbR);
-        _fbGrad.addColorStop(0, 'rgba(0,0,0,0.6)');
-        _fbGrad.addColorStop(0.5, 'rgba(0,0,0,0.3)');
+        _fbGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
+        _fbGrad.addColorStop(0.4, 'rgba(0,0,0,0.4)');
+        _fbGrad.addColorStop(0.7, 'rgba(0,0,0,0.15)');
         _fbGrad.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = _fbGrad;
         fctx.fillRect(_fbx - _fbR, _fby - _fbR, _fbR * 2, _fbR * 2);
