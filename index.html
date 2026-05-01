@@ -15885,7 +15885,7 @@ function update() {
         }
         // ---- BLIGHT ZONE: corruption pool at dash ENDPOINT ----
         if (_rm.glitchWake > 0) {
-          const bzR = _rm.glitchWake >= 2 ? 70 : 50;
+          const bzR = _rm.glitchWake >= 2 ? 90 : 65;
           const bzDur = 240; // 4s
           // Spawn a corruption pool (reuse burnoutPuddles with a corrupt flag)
           burnoutPuddles.push({ x: lp.x, y: lp.y, radius: bzR, life: bzDur, maxLife: bzDur, _corrupt: true, _glitchLv: _rm.glitchWake });
@@ -21266,12 +21266,26 @@ function render() {
     const bpFade = bp.life / bp.maxLife;
     const bpPulse = 0.5 + Math.sin(performance.now() * 0.006 + bp.x * 0.1) * 0.2;
     if (bp._corrupt) {
-      // Corruption pool — purple pulsing circle
-      ctx.globalAlpha = bpFade * 0.3 * bpPulse;
+      // Corruption pool — illuminated purple glow zone
+      // Outer glow halo (fake lightsource)
+      ctx.globalAlpha = bpFade * 0.08 * bpPulse;
+      ctx.fillStyle = '#a4f';
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+      // Mid glow
+      ctx.globalAlpha = bpFade * 0.15 * bpPulse;
+      ctx.fillStyle = '#a4f';
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 1.2, 0, Math.PI * 2); ctx.fill();
+      // Core pool fill
+      ctx.globalAlpha = bpFade * 0.35 * bpPulse;
       ctx.fillStyle = '#a4f';
       ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = bpFade * 0.5 * bpPulse;
-      ctx.strokeStyle = '#a4f'; ctx.lineWidth = 2;
+      // Bright inner core
+      ctx.globalAlpha = bpFade * 0.2 * bpPulse;
+      ctx.fillStyle = '#f0f';
+      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 0.5, 0, Math.PI * 2); ctx.fill();
+      // Edge ring
+      ctx.globalAlpha = bpFade * 0.6 * bpPulse;
+      ctx.strokeStyle = '#c6f'; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius, 0, Math.PI * 2); ctx.stroke();
     } else {
       // Fire puddle — orange/red pulsing circle with bright center
@@ -23043,6 +23057,20 @@ function render() {
           grad.addColorStop(1, 'rgba(0,0,0,0)');
           fctx.fillStyle = grad; fctx.fillRect(cx - r, cy - r, r * 2, r * 2);
         }
+      }
+      // BEACON LIGHTSOURCE: carve out fog around active beacons
+      const _fogBeacons = _beacons.length > 0 ? _beacons : (activeBeacon ? [activeBeacon] : []);
+      for (const _fb of _fogBeacons) {
+        if (!_fb || _fb._armTimer > 0) continue; // skip unarmed mines
+        const _fbx = _fb.x + fox, _fby = _fb.y + foy;
+        const _fbColor = _fb.classId ? (_ELEM_COLOR[_fb.classId] || '#0ff') : '#0ff';
+        const _fbR = BEACON_RANGE * ((runMods || {}).beaconRangeMult || 1) * 0.6;
+        const _fbGrad = fctx.createRadialGradient(_fbx, _fby, 0, _fbx, _fby, _fbR);
+        _fbGrad.addColorStop(0, 'rgba(0,0,0,0.6)');
+        _fbGrad.addColorStop(0.5, 'rgba(0,0,0,0.3)');
+        _fbGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        fctx.fillStyle = _fbGrad;
+        fctx.fillRect(_fbx - _fbR, _fby - _fbR, _fbR * 2, _fbR * 2);
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
