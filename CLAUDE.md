@@ -122,6 +122,57 @@ These principles govern ALL balance, combat feel, power scaling, and difficulty 
 - A fully built fire+shockwave dash should clear 60%+ of a normal wave
 - The player should see 4-8 power-ups per run and visit the shop 5-8 times
 
+## VFX Design Principles
+
+These principles govern ALL visual effects work. Learned through extensive iteration on the gun/bullet system, dash, hit impacts, enemy attacks, and status effects.
+
+### Philosophy: Effects Are Feelings, Not Decorations
+Every VFX must communicate **what just happened** and **how powerful it was**. If the player can't feel the difference between a normal shot and a class-empowered shot at a glance, the VFX has failed. Go BIGGER than you think is right, then dial back 10%.
+
+### The Three-Point Rule
+Every action needs VFX at three points:
+1. **Origin** — explosion/burst where the action starts (gun muzzle, dash launch, ability cast)
+2. **Path** — trail/streak/smoke showing how the force traveled (beam dashes, smoke, sparks)
+3. **Impact** — explosion/ring/sparks where the force lands (enemy hit, endpoint, wall collision)
+
+If any of these three is missing, the action feels weak. The origin and impact should be the loudest; the path connects them.
+
+### Hitscan Gun VFX Model (reference implementation)
+The gun doesn't fire a "bullet" — it fires a **force transfer**. The projectile is invisible (speed 300, life 2). What the player sees:
+- **Muzzle detonation**: radial spark burst + smoke cloud + expanding flash ring
+- **Beam trail**: short colored line dashes (class-colored, tapered thick→thin) drifting forward with gaps. NOT a solid line. Surrounded by class-tinted smoke (organic ellipse shapes, not perfect circles).
+- **Endpoint explosion**: expanding ring + radial sparks + smoke + cross-flash lines. Bigger on hit than on miss.
+- **Raycast**: beam VFX stops at the first enemy or wall (don't draw through targets).
+
+### Class Identity Through VFX
+When a class (Thermal/Cryo/Arc/Pulse/Corrupt) is active, it must transform the ENTIRE visual:
+- **Beam color**: the core line, dashes, sparks, and endpoint rings ALL change color
+- **Smoke tint**: each class has its own dark smoke color (fire=dark orange, ice=dark blue, arc=dark cyan, corrupt=dark purple)
+- **Unique particles**: fire=rising flame sparks, ice=frost crystals scattering sideways, arc=forking lightning bolts, pulse=expanding shockwave rings, corrupt=glitch text characters
+- If it still looks like the default yellow beam with a couple extra particles, it's NOT ENOUGH. The whole shot identity must change.
+
+### Performance Rules
+- **NEVER use `shadowBlur`** — it's the #1 Canvas2D performance killer. Use "fake glow" instead: draw a larger, dimmer shape behind the bright shape.
+- Use geometric draws (arc, lineTo, fillRect) not gradients for particles
+- Smoke uses organic squashed ellipses (ctx.scale with stable per-particle rotation), not perfect circles
+- Lightning particles draw jagged segmented lines between two points — line width and color driven by `p.size` and `p.color`
+- Per-bullet `_vfxSeed` (stable random) ensures visual variety without per-frame randomness
+- Particle type `'smoke'` uses `_smokeAlpha` for per-particle translucence control
+
+### Exaggeration Scale
+- **Dash**: screenshake + glitch surge + expanding ring + 16 sparks + 7 speed lines + 3 directional flash lines + 5 glitch chars + bass thump. This is the MINIMUM for a major action.
+- **Gun shot**: 14 muzzle sparks + 5 smoke puffs + flash ring + beam trail + endpoint explosion. Every single shot.
+- **Enemy hit**: segmented ring + outer wake ring + 8-16 radial sparks + smoke puffs + center flash. Every hit.
+- **Status effects**: floating text label on application (CHILL x2, EXPOSED, etc.) + per-frame particles on affected enemies + distinct body color change.
+- When in doubt, ADD MORE. It's easier to dial back than to make something feel impactful after the fact.
+
+### Common Mistakes to Avoid
+- Gray/dark smoke on a dark background is invisible. Use class-tinted smoke or bright smoke.
+- A solid line from point A to point B looks like a laser, not a gunshot. Use SHORT DASHES with gaps, drifting forward.
+- Perfect circles for smoke look artificial. Use overlapping offset ellipses.
+- Effects that are the same size regardless of context (crit vs normal, exposed vs not) miss an opportunity for feedback scaling.
+- Static effects feel dead. Add small drift velocity, rotation, or pulse to everything.
+
 ## Development Notes
 
 - No test suite or linter configured.
