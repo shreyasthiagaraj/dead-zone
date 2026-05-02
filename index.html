@@ -1434,8 +1434,8 @@ const UPGRADE_POOL = [
   // ---- CLASS ENHANCEMENT (rare, max 2) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:2, icon:'✸', color:'#f80',
     descs:[
-      'LEVEL 1: OVERHEAT explosions get +50% radius.',
-      'LEVEL 2: OVERHEAT explosions spread the effect to nearby enemies.',
+      'LEVEL 1: +33% OVERHEAT damage per tick. Explosions get +50% radius.',
+      'LEVEL 2: +66% OVERHEAT damage per tick. Explosions spread OVERHEAT to nearby enemies.',
     ], flavor:'thermal runaway. the reactor goes critical.', prereqs:['thermal_rounds|burnout_wake'] },
   { id:'cold_snap', name:'BRITTLE', rarity:'rare', max:2, icon:'❆', color:'#8ef',
     descs:[
@@ -6508,6 +6508,16 @@ function updateElementZones() {
 // status can automatically trigger another. _synLock prevents recursion.
 // ============================================================
 let _synLock = false;
+// Flat burn baseline — same regardless of weapon damage. Mod cards scale via
+// runMods.reactorBloom (the explicit "make fire deal more damage" card).
+// Result is rounded; force multiplier is applied inside applyOverheat itself.
+const BURN_BASE_STACK = 12;
+function _burnStackValue() {
+  const m = runMods || {};
+  // Reactor Bloom: +33% per level (Lv1=+33%, Lv2=+66%)
+  const bonus = (m.reactorBloom || 0) * 0.33;
+  return Math.floor(BURN_BASE_STACK * (1 + bonus));
+}
 function applyOverheat(z, value, force) {
   if (!isHost) return;
   force = force || 1;
@@ -6636,9 +6646,11 @@ function applyElementOnHit(z, damage, srcX, srcY) {
   if (!activeElement || !isHost) return;
   const el = activeElement.id;
   if (el === 'fire') {
-    // Fire DoT nerfed: shorter duration + lower stack. No longer chains across enemies.
+    // Fire DoT: flat baseline (independent of bullet damage) so the Fire
+    // element infusion adds the same DoT regardless of which gun fired the
+    // bullet. Mod cards (Reactor Bloom) scale via _burnStackValue().
     if (!z._burning) playIgniteSound();
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.18);
+    z._burning = (z._burning || 0) + _burnStackValue();
     z._burnTimer = 180;
   } else if (el === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
@@ -6793,9 +6805,10 @@ function fireModifiedWeapon(p) {
 function applyElementEffect(z, element, damage) {
   if (!element || !isHost) return;
   if (element === 'fire') {
-    // Fire DoT nerfed: lower per-hit stack.
+    // Fire DoT: flat baseline (see _burnStackValue helper). Same value
+    // regardless of source bullet damage; mod cards scale it.
     if (!z._burning) playIgniteSound();
-    z._burning = (z._burning || 0) + Math.floor(damage * 0.08);
+    z._burning = (z._burning || 0) + _burnStackValue();
     z._burnTimer = 150;
   } else if (element === 'ice') {
     z._iceStacks = (z._iceStacks || 0) + 1;
@@ -16828,7 +16841,7 @@ function update() {
                   if (_isLocal && b._beaconBullet) {
                     // ---- BEACON TURRET BULLETS: use beacon's own classId only ----
                     const _bc = b._beaconClass;
-                    if (_bc === 'fire') applyOverheat(z, Math.floor(_dmg * 0.2), 1.2);
+                    if (_bc === 'fire') applyOverheat(z, _burnStackValue(), 1.2);
                     else if (_bc === 'ice') applyChill(z, 1, 1.2);
                     else if (_bc === 'chain') applyCharged(z);
                     else if (_bc === 'corrupt') applyCorrupt(z, 1);
@@ -16837,9 +16850,13 @@ function update() {
                     // ---- CLASS PROCS ----
                     const _sf = _m.statusForce || 1;
                     // THERMAL ROUNDS: apply Overheat
+                    // Stack value is FLAT (see _burnStackValue) so a low-damage
+                    // SMG and a high-damage sniper apply the same DoT — the
+                    // strategic choice is between dealing damage and applying
+                    // status effects, not coupling them.
                     if (_m.thermalRoundsLv > 0) {
                       const ch = 0.20 + 0.15 * _m.thermalRoundsLv; // 35%/50%/65%
-                      if (Math.random() < ch) applyOverheat(z, Math.floor(_dmg * 0.15), _sf);
+                      if (Math.random() < ch) applyOverheat(z, _burnStackValue(), _sf);
                     }
                     // CRYO ROUNDS: apply Chill
                     if (_m.cryoRoundsLv > 0) {
