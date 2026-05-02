@@ -13298,10 +13298,20 @@ function updatePayload() {
       decals.push({ x:g.x+Math.cos(sa)*sr, y:g.y+Math.sin(sa)*sr, size:6+Math.random()*10, alpha:0.4, color:'#222' });
     }
     if (_plCls) decals.push({ x:g.x, y:g.y, size:radius*0.6, alpha:0.15, color:_plCol });
-    screenShake.intensity = Math.max(screenShake.intensity, 14);
-    triggerGlitchSurge(0.35, 14);
-    playSound(25, 0.4, 'sawtooth', 0.2);
-    playSound(60, 0.3, 'square', 0.15);
+    // Ground flash — brief bright circle on the floor
+    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:5, maxLife:5, size:radius*0.8, color:'#fff', type:'wakering' });
+    // Extra directional debris flung outward
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random()*Math.PI*2, s = 6+Math.random()*10;
+      particles.push({ x:g.x, y:g.y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+        life:20+Math.floor(Math.random()*10), maxLife:30, size:2+Math.random()*3,
+        color:'#888', type:'spark', _pixel:true, gravity:0.08 });
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 16);
+    triggerGlitchSurge(0.4, 16);
+    playSound(20, 0.45, 'sawtooth', 0.22);
+    playSound(50, 0.35, 'square', 0.16);
+    playSound(100, 0.2, 'square', 0.1);
     setTimeout(() => playSound(150, 0.12, 'sawtooth', 0.08), 50);
     setTimeout(() => playSound(400, 0.06, 'sine', 0.04), 100);
     // CLUSTER BOMB: 3 or 5 big explosions around the main impact
@@ -15383,34 +15393,42 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
   z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
-  // MASSIVE IMPACT DETONATION — every hit is an explosion at the target
+  // IMPACT DETONATION — every hit is an explosion at the target
   if (!silent) {
     const _hfExposed = z._exposed;
     const _hfCrit = _critHit;
     const _hfColor = _hfCrit ? '#f0f' : '#ff0';
-    const _hfSize = _hfCrit ? z.radius + 40 : (_hfExposed ? z.radius + 30 : z.radius + 20);
-    const _hfLife = _hfCrit ? 12 : (_hfExposed ? 11 : 9);
-    // Expanding segmented hitflash ring (thin)
+    const _hfSize = _hfCrit ? z.radius + 50 : (_hfExposed ? z.radius + 40 : z.radius + 25);
+    const _hfLife = _hfCrit ? 13 : (_hfExposed ? 12 : 10);
+    // Expanding segmented hitflash ring
     particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife, maxLife: _hfLife, size: _hfSize, color: _hfColor, type: 'hitflash', _exposed: _hfExposed, _crit: _hfCrit, _followZ: z });
-    // Second outer ring — bigger, very faint
-    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife + 2, maxLife: _hfLife + 2, size: _hfSize * 1.3, color: _hfColor, type: 'wakering' });
-    // Massive radial spark burst
-    const _impactSparks = _hfCrit ? 16 : (_hfExposed ? 12 : 8);
+    // Second outer ring
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: _hfLife + 3, maxLife: _hfLife + 3, size: _hfSize * 1.4, color: _hfColor, type: 'wakering' });
+    // Radial spark burst — bigger
+    const _impactSparks = _hfCrit ? 18 : (_hfExposed ? 14 : 10);
     for (let _isi = 0; _isi < _impactSparks; _isi++) {
-      const _ia = Math.random() * Math.PI * 2, _is = 4 + Math.random() * 7;
+      const _ia = Math.random() * Math.PI * 2, _is = 4 + Math.random() * 8;
       particles.push({ x: z.x, y: z.y, vx: Math.cos(_ia)*_is + kbx*0.4, vy: Math.sin(_ia)*_is + kby*0.4,
-        life: 6 + Math.floor(Math.random()*5), maxLife: 11, size: 2.5 + Math.random()*2.5,
-        color: _isi < 3 ? '#fff' : (_isi < 6 ? '#ff0' : _hfColor), type: 'spark' });
+        life: 6 + Math.floor(Math.random()*5), maxLife: 11, size: 2.5 + Math.random()*3,
+        color: _isi < 3 ? '#fff' : (_isi < 7 ? '#ff0' : _hfColor), type: 'spark' });
     }
-    // Thick black smoke cloud at impact
-    for (let _si = 0; _si < 3; _si++) {
-      particles.push({ x: z.x + (Math.random()-0.5)*10, y: z.y + (Math.random()-0.5)*10,
+    // Directional sparks — fly in knockback direction (shows force direction)
+    for (let _di = 0; _di < 4; _di++) {
+      const _da = Math.atan2(kby||0, kbx||0) + (Math.random()-0.5)*0.6;
+      const _ds = 5 + Math.random()*6;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
+        life: 8 + Math.floor(Math.random()*4), maxLife: 12, size: 2 + Math.random()*2,
+        color: '#fff', type: 'spark' });
+    }
+    // Smoke puffs at impact
+    for (let _si = 0; _si < 4; _si++) {
+      particles.push({ x: z.x + (Math.random()-0.5)*12, y: z.y + (Math.random()-0.5)*12,
         vx: kbx*0.15+(Math.random()-0.5)*3, vy: kby*0.15+(Math.random()-0.5)*3,
-        life: 14 + Math.floor(Math.random()*8), maxLife: 22, size: 6 + Math.random()*5,
-        color: '#000', type: 'smoke', _smokeAlpha: 0.3 + Math.random()*0.2 });
+        life: 12 + Math.floor(Math.random()*8), maxLife: 20, size: 5 + Math.random()*5,
+        color: '#000', type: 'smoke', _smokeAlpha: 0.25 + Math.random()*0.2 });
     }
     // Bright flash at center
-    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 3, maxLife: 3, size: 8 + Math.random()*4, color: '#fff', type: 'spark' });
+    particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 3, maxLife: 3, size: 10 + Math.random()*4, color: '#fff', type: 'spark' });
     // Pixel-fragment shower on crits — square chunks spew with velocity,
     // giving the big hits a distinct "chunk breaking off" feel.
     if (_hfCrit) {
