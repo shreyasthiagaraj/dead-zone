@@ -1362,7 +1362,12 @@ let _playerNearestZombieDist = Infinity;
 
 function getScaledGun() {
   const m = runMods || {};
-  const dmgMult = (1 + (m.damageMult || 0)) * (1 + getMetaBonus('power'));
+  // ADRENALINE: while below 30% HP, +25% damage. Checked here so every hit
+  // path picks it up (pistol, shotgun, beacon turret, etc.).
+  const _lpAdr = m.adrenaline > 0 ? getLocalPlayer() : null;
+  const _adrenActive = _lpAdr && _lpAdr.hp > 0 && (_lpAdr.hp / _lpAdr.maxHp) < 0.30;
+  const _adrenMult = _adrenActive ? 1.25 : 1;
+  const dmgMult = (1 + (m.damageMult || 0)) * (1 + getMetaBonus('power')) * _adrenMult;
   const frMult = Math.max(0.5, 1 + (m.fireRateMult || 0)); // floor at 0.5 to prevent negative
   const bulletColor = m.dominantClass ? _ELEM_COLOR[m.dominantClass] : '#ff0';
   // Wide Spread: +1 extra projectile per level
@@ -1600,6 +1605,9 @@ const UPGRADE_POOL = [
       'LEVEL 1: Gain 1 HP per hit on COMPROMISED enemies.',
       'LEVEL 2: Killing COMPROMISED heals 15 HP.',
     ], flavor:'the corruption feeds both ways.' },
+  { id:'adrenaline', name:'ADRENALINE', rarity:'rare', max:1, icon:'❤', color:'#f44',
+    descs:['Below 30% HP: +25% damage dealt, reload time -50%.'],
+    flavor:'fear focuses the system. survive the spike.' },
   // ---- CLASS PASSIVES (rare, max 1) ----
   // Thermal passives
   { id:'pyromaniac', name:'PYROMANIAC', rarity:'rare', max:1, icon:'🔥', color:'#f80',
@@ -1903,7 +1911,7 @@ function rebuildRunMods() {
     slipstream: 0, kineticWake: 0, // kineticWake absorbs the old shockwave + impulseWave cards
     glitchWake: 0, fatalException: 0,
     // Sustain
-    recoveryLoop: 0, emergencyBuffer: 0, failSafe: false, parasiticLink: 0,
+    recoveryLoop: 0, emergencyBuffer: 0, failSafe: false, parasiticLink: 0, adrenaline: 0,
     pyromaniac: 0, thermalRunaway: 0, scorchedEarth: 0,
     coldBlood: 0, hypothermia: 0, deepFreeze: 0,
     voltaicArmor: 0, superconductor: 0, lightningRod: 0,
@@ -1968,6 +1976,7 @@ function rebuildRunMods() {
       case 'recovery_loop':    m.recoveryLoop    += n; break;
       case 'emergency_buffer': m.emergencyBuffer += n; break;
       case 'parasitic_link':    m.parasiticLink    += n; break;
+      case 'adrenaline':        m.adrenaline        = n; break;
       case 'pyromaniac':        m.pyromaniac        = n; break;
       case 'thermal_runaway':   m.thermalRunaway    = n; break;
       case 'scorched_earth':    m.scorchedEarth     = n; break;
@@ -10853,7 +10862,7 @@ document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootBu
 // Reload button — manual reload tap
 (() => {
   const _rlb = document.getElementById('btn-reload');
-  const _rlTap = (e) => { if (e) e.preventDefault(); const _maxA = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); if (!_gunReloading && _gunAmmo < _maxA) { const _hu = (_maxA - _gunAmmo) / _maxA; _gunReloading = true; _gunReloadTimer = Math.max(8, Math.floor(GUN_RELOAD_TIME * _hu)); playSound(300, 0.08, 'square', 0.06); playSound(600, 0.05, 'sine', 0.12); _rlb.style.display = 'none'; } };
+  const _rlTap = (e) => { if (e) e.preventDefault(); const _maxA = GUN_MAG_SIZE + ((runMods||{}).magBonus||0); if (!_gunReloading && _gunAmmo < _maxA) { const _hu = (_maxA - _gunAmmo) / _maxA; _gunReloading = true; _gunReloadTimer = Math.max(6, Math.floor(GUN_RELOAD_TIME * _hu * _reloadTimeScale())); playSound(300, 0.08, 'square', 0.06); playSound(600, 0.05, 'sine', 0.12); _rlb.style.display = 'none'; } };
   _rlb.addEventListener('touchstart', _rlTap, { passive: false });
   _rlb.addEventListener('mousedown', _rlTap);
 })();
@@ -11832,6 +11841,16 @@ if (isMobile) {
 // ============================================================
 function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){stopWeaponLoop();lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
+// Returns the effective reload time multiplier — Adrenaline at <30% HP halves
+// reload duration. Centralized so every reload path picks it up.
+function _reloadTimeScale() {
+  const m = runMods || {};
+  if (m.adrenaline > 0) {
+    const lp = getLocalPlayer();
+    if (lp && lp.hp > 0 && (lp.hp / lp.maxHp) < 0.30) return 0.5;
+  }
+  return 1;
+}
 
 function fireWeaponForPlayer(p) {
   const gun = getScaledGun();
@@ -11846,7 +11865,7 @@ function fireWeaponForPlayer(p) {
   if (_gunAmmo <= 0) {
     // Overheated — force cooldown
     _gunReloading = true;
-    _gunReloadTimer = GUN_RELOAD_TIME;
+    _gunReloadTimer = Math.max(6, Math.floor(GUN_RELOAD_TIME * _reloadTimeScale()));
     playSound(200, 0.06, 'sawtooth', 0.08);
     floatingTexts.push({x:p.x,y:p.y-30,text:'OVERHEATED',color:'#f80',vy:-1,life:24,maxLife:24});
     hapticOverheat();
@@ -16587,7 +16606,7 @@ function update() {
         if (_gunIdleTimer >= GUN_AUTO_RELOAD_DELAY * _coolMult) {
           // Cool down proportional to heat used (fewer shots = shorter cooldown)
           const _heatUsed = (_maxAmmo - _gunAmmo) / _maxAmmo; // 0→1
-          const _coolTime = Math.max(8, Math.floor(GUN_RELOAD_TIME * _heatUsed));
+          const _coolTime = Math.max(6, Math.floor(GUN_RELOAD_TIME * _heatUsed * _reloadTimeScale()));
           _gunReloading = true; _gunReloadTimer = _coolTime; _gunIdleTimer = 0;
         }
       }
