@@ -17620,98 +17620,65 @@ function update() {
           // Enrage aura when low HP
           if(_enraged&&gameTime%3===0){const pa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(pa)*(z.radius+8),y:z.y+Math.sin(pa)*(z.radius+8),vx:Math.cos(pa)*1.5,vy:-1.5,life:16,maxLife:16,size:3,color:Math.random()<0.5?'#f44':'#f0f',type:'spark'});}
         }
-        // ---- BOSS: FIREWALL (Domain 2) — shield phases + projectile walls ----
+        // ---- BOSS: FIREWALL (Domain 2) — simple 3-state cycle, no shield ----
+        // IDLE (stationary, easy to hit) → BARRAGE (fires projectile walls) → CHASE (mobile, fan shots) → repeat
         else if(zt?.firewall){
           const hpPct = z.hp / z.maxHp;
-          const phase = hpPct > 0.6 ? 1 : hpPct > 0.3 ? 2 : 3;
-          // ---- FIREWALL SHIELD CYCLE ----
-          // Shield UP for 6s: deflects bullets (85% damage reduction), boss
-          // can attack. Shield DOWN for 3s: vulnerable, no firing. Encourages
-          // chip damage during up, full burst during down.
-          if (z._fwShieldState === undefined) { z._fwShieldState = 'up'; z._fwShieldTimer = 360; z._fwShieldUp = true; }
-          z._fwShieldTimer--;
-          if (z._fwShieldTimer <= 0) {
-            if (z._fwShieldState === 'up') {
-              z._fwShieldState = 'down'; z._fwShieldTimer = 270;
-              z._fwShieldUp = false;
-              _startBossVuln(z, 270, 'shield_down');
-            } else {
-              z._fwShieldState = 'up'; z._fwShieldTimer = 360;
-              z._fwShieldUp = true;
-              // Shield-up snap: ring particles signal it's back up
-              for (let _fi = 0; _fi < 18; _fi++) {
-                const _fa = (_fi/18) * Math.PI * 2;
-                particles.push({ x: z.x + Math.cos(_fa) * (z.radius+10), y: z.y + Math.sin(_fa) * (z.radius+10),
-                  vx: -Math.cos(_fa) * 1.5, vy: -Math.sin(_fa) * 1.5, life: 14, maxLife: 14, size: 3, color: '#f80', type: 'spark' });
-              }
-              addFloatingText(z.x, z.y - z.radius - 16, 'SHIELD UP', '#f80');
-              playSound(440, 0.18, 'square', 0.1);
-            }
-          }
-          if (_bossVuln) { z.vx *= 0.35; z.vy *= 0.35; }
-          else if (phase === 1) { z.vx *= 0.6; z.vy *= 0.6; } // stationary phase 1
-          else { z.vx=_chaseDx*z.speed*(phase===3?1.8:1.2);z.vy=_chaseDy*z.speed*(phase===3?1.8:1.2); }
+          const _enraged = hpPct < 0.35;
+          z._fwShieldUp = false; // no shield ever
           z._shotTimer=(z._shotTimer||0)+1;
-          // Phase 1: projectile wall — 8 bullets in a line perpendicular to player
-          if(phase===1&&z._shotTimer>=z.fireRate&&zombies.length<10 && !_bossVuln){
-            z._shotTimer=0;
-            const wallA=z.angle+Math.PI/2;
-            for(let wi=-3;wi<=3;wi++){
-              const wx=z.x+Math.cos(wallA)*wi*25, wy=z.y+Math.sin(wallA)*wi*25;
-              bullets.push({x:wx,y:wy,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage*0.4,color:'#f80',size:5,knockback:3,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});
+          if (!z._bossState) { z._bossState = 'idle'; z._bossTimer = 240; }
+          if (z._bossState === 'idle') {
+            // IDLE — stationary, easy to hit, boss recharges
+            z.vx *= 0.4; z.vy *= 0.4;
+            // Charging VFX
+            if (gameTime%4===0) { const _ca=Math.random()*Math.PI*2;
+              particles.push({x:z.x+Math.cos(_ca)*(z.radius+10),y:z.y+Math.sin(_ca)*(z.radius+10),vx:-Math.cos(_ca)*1,vy:-Math.sin(_ca)*1,life:12,maxLife:12,size:2+Math.random()*2,color:'#f80',type:'spark'}); }
+            _startBossVuln(z, 10, 'drained'); // keep vuln marker active during idle
+            z._bossTimer--;
+            if (z._bossTimer <= 0) {
+              z._bossState = 'barrage'; z._bossTimer = _enraged ? 180 : 240;
+              addFloatingText(z.x, z.y - z.radius - 20, 'BARRAGE', '#f80');
             }
-            screenShake.intensity=Math.max(screenShake.intensity,5);playZombieAttackSound();
-          }
-          // Phase 2: spread fans
-          else if(phase===2&&z._shotTimer>=90 && !_bossVuln){
-            z._shotTimer=0;
-            for(let fi=0;fi<7;fi++){
-              const fa=z.angle+(fi-3)*0.15;
-              bullets.push({x:z.x,y:z.y,vx:Math.cos(fa)*6,vy:Math.sin(fa)*6,damage:z.damage*0.5,color:'#fa0',size:5,knockback:2,pierce:0,pierced:0,life:70,owner:'zombie',trail:[]});
-            }
-            screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
-          }
-          // Phase 3: rapid fire + speed
-          else if(phase===3&&z._shotTimer>=40 && !_bossVuln){
-            z._shotTimer=0;
-            bullets.push({x:z.x,y:z.y,vx:Math.cos(z.angle)*8,vy:Math.sin(z.angle)*8,damage:z.damage*0.6,color:'#ff0',size:4,knockback:4,pierce:0,pierced:0,life:50,owner:'zombie',trail:[]});
-          }
-          // Phase 2+: sweep attack — wall of bullets across stage height every 180 frames
-          z._sweepTimer=(z._sweepTimer||0)+1;
-          if(z._sweepTimer%180===0&&phase>=2){
-            const sweepX=z.x-100;
-            for(let si=0;si<10;si++){
-              const sy=(1+si*(TRENCH_HEIGHT-2)/9)*CELL_SIZE;
-              // Leave a gap near the player so they can dodge through
-              if(Math.abs(sy-np.y)<CELL_SIZE*2)continue;
-              bullets.push({x:sweepX,y:sy,vx:-4,vy:0,damage:Math.floor(z.damage*0.3),color:'#f80',size:5,knockback:3,pierce:0,pierced:0,life:120,maxLife:120,flame:false,explosive:false,explosionRadius:0,tracer:false,chain:false,chainRange:0,chainCount:0,laserGlow:false,grenade:false,owner:'zombie',ownerId:z.zid,trail:[],crit:false});
-            }
-            screenShake.intensity=Math.max(screenShake.intensity,6);playZombieAttackSound();
-            addFloatingText(z.x,z.y-z.radius-16,'FIREWALL SWEEP','#f80');
-          }
-          // Phase transition
-          if(!z._lastPhase)z._lastPhase=1;
-          if(phase!==z._lastPhase){z._lastPhase=phase;triggerGlitchSurge(0.5,30);screenShake.intensity=Math.max(screenShake.intensity,10);
-            addFloatingText(z.x,z.y-z.radius-20,phase===2?'FIREWALL ADAPTING':'FIREWALL CRITICAL',phase===2?'#f80':'#f44');
-            for(let pi=0;pi<24;pi++){const pa=(pi/24)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*6,vy:Math.sin(pa)*6,life:24,maxLife:24,size:4,color:phase===2?'#f80':'#f44',type:'spark'});}
-            // Spawn henchmen on phase transition
-            if(!z._henchmenSpawned)z._henchmenSpawned={};
-            if(!z._henchmenSpawned[phase]){z._henchmenSpawned[phase]=true;
-              const _tsec=trenchSections[trenchSection];
-              const _types=_tsec?_tsec.types:['normal'];
-              const _secX=_tsec?_tsec.x:z.x-200;
-              const _TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
-              const _hCount=2+Math.floor(Math.random()*2); // 2-3
-              for(let hi=0;hi<_hCount;hi++){
-                const _type=_types[Math.floor(Math.random()*_types.length)];
-                const _zt=ZOMBIE_TYPES[_type];if(!_zt)continue;
-                const _sx=_secX+(0.2+Math.random()*0.6)*_TW;
-                const _sy=(2+Math.random()*(TRENCH_HEIGHT-4))*CELL_SIZE;
-                zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:_zt.hp,maxHp:_zt.hp,speed:_zt.speed,radius:_zt.radius,color:_zt.color,damage:_zt.damage,score:_zt.score||50,type:_type,attackCooldown:0,hitFlash:0,ranged:_zt.ranged||false,fireRate:_zt.fireRate||0,lastFired:0,explodeOnDeath:_zt.explodeOnDeath||false,explosionRadius:_zt.explosionRadius||0,angle:0,staggerTimer:0,aware:true,wanderAngle:Math.random()*Math.PI*2,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:30,_spawnAnimMax:30});
-                particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f80',type:'lightning',tx:_sx,ty:_sy});
+          } else if (z._bossState === 'barrage') {
+            // BARRAGE — fires projectile walls, stays mostly still
+            z.vx *= 0.6; z.vy *= 0.6;
+            const _fireInterval = _enraged ? 80 : 120;
+            if (z._shotTimer >= _fireInterval) { z._shotTimer = 0;
+              const wallA = z.angle + Math.PI/2;
+              const _wallCount = _enraged ? 5 : 4;
+              for (let wi = -_wallCount; wi <= _wallCount; wi++) {
+                const wx = z.x + Math.cos(wallA)*wi*22, wy = z.y + Math.sin(wallA)*wi*22;
+                bullets.push({x:wx,y:wy,vx:Math.cos(z.angle)*5,vy:Math.sin(z.angle)*5,damage:z.damage*0.35,color:'#f80',size:5,knockback:3,pierce:0,pierced:0,life:80,owner:'zombie',trail:[]});
               }
+              screenShake.intensity = Math.max(screenShake.intensity, 4); playZombieAttackSound();
+            }
+            z._bossTimer--;
+            if (z._bossTimer <= 0) {
+              z._bossState = 'chase'; z._bossTimer = _enraged ? 180 : 210;
+              addFloatingText(z.x, z.y - z.radius - 20, 'PURSUIT', '#fa0');
+            }
+          } else if (z._bossState === 'chase') {
+            // CHASE — mobile, fires fan shots
+            const _spd = _enraged ? 1.8 : 1.3;
+            z.vx = _chaseDx * z.speed * _spd; z.vy = _chaseDy * z.speed * _spd;
+            const _fireInterval = _enraged ? 50 : 80;
+            if (z._shotTimer >= _fireInterval) { z._shotTimer = 0;
+              const _fanCount = _enraged ? 7 : 5;
+              for (let fi = 0; fi < _fanCount; fi++) {
+                const fa = z.angle + (fi - Math.floor(_fanCount/2)) * 0.16;
+                bullets.push({x:z.x,y:z.y,vx:Math.cos(fa)*6,vy:Math.sin(fa)*6,damage:z.damage*0.4,color:'#fa0',size:5,knockback:2,pierce:0,pierced:0,life:70,owner:'zombie',trail:[]});
+              }
+              screenShake.intensity = Math.max(screenShake.intensity, 3); playZombieAttackSound();
+            }
+            z._bossTimer--;
+            if (z._bossTimer <= 0) {
+              z._bossState = 'idle'; z._bossTimer = _enraged ? 180 : 240; // back to easy phase
             }
           }
+          // Enrage aura
+          if (_enraged && gameTime%3===0) { const pa=Math.random()*Math.PI*2;
+            particles.push({x:z.x+Math.cos(pa)*(z.radius+8),y:z.y+Math.sin(pa)*(z.radius+8),vx:Math.cos(pa)*1.5,vy:-1.5,life:16,maxLife:16,size:3,color:Math.random()<0.5?'#f44':'#f80',type:'spark'}); }
         }
         // ---- BOSS: ARCHIVIST (Domain 3) — artillery + summons small packs ----
         else if(zt?.archivist){
