@@ -1755,9 +1755,9 @@ const UPGRADE_POOL = [
   { id:'cluster_bomb', name:'CLUSTER BOMB', rarity:'epic', max:2, icon:'⁂', color:'#fa0',
     descs:['LEVEL 1: Explosion spawns 3 mini-blasts (40% dmg, 50% radius).','LEVEL 2: 5 mini-blasts.'],
     flavor:'fragmentation munition loaded' },
-  { id:'sticky_charge', name:'BOUNCING PAYLOAD', rarity:'common', max:2, icon:'◉', color:'#fa0',
-    descs:['LEVEL 1: Grenade bounces once before detonating, creating 2 explosions.','LEVEL 2: Bounces twice — 3 explosions along the path.'],
-    flavor:'ricochet ordnance protocol' },
+  { id:'sticky_charge', name:'HOMING PAYLOAD', rarity:'common', max:2, icon:'◉', color:'#fa0',
+    descs:['LEVEL 1: Grenade tracks the nearest enemy.','LEVEL 2: Stronger tracking + grenade speed boost.'],
+    flavor:'heat-seeking ordnance' },
   { id:'napalm_zone', name:'NAPALM ZONE', rarity:'rare', max:2, icon:'♨', color:'#fa0',
     descs:['LEVEL 1: Explosion leaves fire zone for 3s (applies Overheat).','LEVEL 2: Fire zone PULLS enemies toward center.'],
     flavor:'persistent thermal hazard' },
@@ -13166,6 +13166,23 @@ function updatePayload() {
   {
     g.x += g.vx; g.y += g.vy;
     g.vx *= 0.96; g.vy *= 0.96; // decelerate — explosive start, heavy landing
+    // HOMING PAYLOAD: track nearest enemy
+    if (_m.stickyCharge > 0) {
+      let _bestZ = null, _bestD = 300;
+      for (const z of zombies) { if (z.hp <= 0) continue;
+        const d = Math.sqrt((z.x-g.x)**2+(z.y-g.y)**2);
+        if (d < _bestD) { _bestD = d; _bestZ = z; }
+      }
+      if (_bestZ) {
+        const _ha = Math.atan2(_bestZ.y-g.y, _bestZ.x-g.x);
+        const _ba = Math.atan2(g.vy, g.vx);
+        let _da = _ha - _ba; while(_da>Math.PI)_da-=Math.PI*2; while(_da<-Math.PI)_da+=Math.PI*2;
+        const _turnRate = _m.stickyCharge >= 2 ? 0.08 : 0.04;
+        const _na = _ba + _da * _turnRate;
+        const _spd = Math.sqrt(g.vx*g.vx+g.vy*g.vy) * (_m.stickyCharge >= 2 ? 1.02 : 1.0);
+        g.vx = Math.cos(_na) * _spd; g.vy = Math.sin(_na) * _spd;
+      }
+    }
     g.timer--;
     // Explode on wall/obstacle contact
     if (obstacleCollision(g.x, g.y, 5, true) || g.x < 4 || g.x > ARENA_W - 4 || g.y < 4 || g.y > ARENA_H - 4) {
@@ -13324,29 +13341,29 @@ function updatePayload() {
     playSound(100, 0.2, 'square', 0.1);
     setTimeout(() => playSound(150, 0.12, 'sawtooth', 0.08), 50);
     setTimeout(() => playSound(400, 0.06, 'sine', 0.04), 100);
-    // CLUSTER BOMB: 3 or 5 big explosions around the main impact
+    // CLUSTER BOMB: 3 or 5 EQUAL explosions around the main impact
     if (_m.clusterBomb > 0) {
       const count = _m.clusterBomb >= 2 ? 5 : 3;
-      const _gx = g.x, _gy = g.y, _cRadius = radius * 0.7, _cDmg = dmg, _cGc = gc2;
+      const _gx = g.x, _gy = g.y, _cRadius = radius, _cDmg = dmg, _cGc = gc2;
       for (let ci = 0; ci < count; ci++) {
         const ca = (ci / count) * Math.PI * 2 + Math.random() * 0.6;
-        const cd = 35 + Math.random() * 40;
+        const cd = 40 + Math.random() * 35;
         const cx = _gx + Math.cos(ca)*cd, cy = _gy + Math.sin(ca)*cd;
         setTimeout(() => {
           if (isHost) {
             for (const z of zombies) { if (z.hp <= 0) continue; const ddx=z.x-cx,ddy=z.y-cy,dd=Math.sqrt(ddx*ddx+ddy*ddy);
-              if (dd < _cRadius + z.radius) { damageZombie(z, Math.floor(_cDmg*0.5*(1-dd/(_cRadius+z.radius))), dd>1?(ddx/dd)*8:0, dd>1?(ddy/dd)*8:0); } }
+              if (dd < _cRadius + z.radius) { const _cl=1-dd/(_cRadius+z.radius); damageZombie(z, Math.floor(_cDmg*_cl), dd>1?(ddx/dd)*10:0, dd>1?(ddy/dd)*10:0); } }
           }
-          // BIG visible explosion per cluster hit
-          particles.push({x:cx,y:cy,vx:0,vy:0,life:10,maxLife:10,size:_cRadius*1.3,color:_cGc,type:'wakering'});
-          particles.push({x:cx,y:cy,vx:0,vy:0,life:7,maxLife:7,size:_cRadius*0.7,color:'#fff',type:'wakering'});
-          for (let i = 0; i < 18; i++) { const a2=Math.random()*Math.PI*2,s2=3+Math.random()*6;
-            particles.push({x:cx,y:cy,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:16,maxLife:16,size:4+Math.random()*3,color:Math.random()>0.3?_cGc:'#fff',type:'explosion'}); }
-          for (let i = 0; i < 6; i++) { const a2=Math.random()*Math.PI*2,s2=1+Math.random()*2;
-            particles.push({x:cx+(Math.random()-0.5)*12,y:cy+(Math.random()-0.5)*12,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:22,maxLife:22,size:5+Math.random()*4,color:'#333',type:'smoke',_smokeAlpha:0.25+Math.random()*0.15}); }
-          decals.push({x:cx,y:cy,size:_cRadius*0.4,alpha:0.35,color:'#333'});
-          screenShake.intensity = Math.max(screenShake.intensity, 7);
-          playSound(70, 0.15, 'sawtooth', 0.08);
+          // FULL explosion per cluster hit — same intensity as main
+          particles.push({x:cx,y:cy,vx:0,vy:0,life:12,maxLife:12,size:_cRadius*1.5,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
+          particles.push({x:cx,y:cy,vx:0,vy:0,life:4,maxLife:4,size:12,color:'#fff',type:'spark'});
+          for (let i = 0; i < 24; i++) { const a2=Math.random()*Math.PI*2,s2=3+Math.random()*8;
+            particles.push({x:cx,y:cy,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:18,maxLife:18,size:4+Math.random()*4,color:i<6?'#fff':_cGc,type:'explosion'}); }
+          for (let i = 0; i < 8; i++) { const a2=Math.random()*Math.PI*2,s2=1+Math.random()*2;
+            particles.push({x:cx+(Math.random()-0.5)*14,y:cy+(Math.random()-0.5)*14,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:26,maxLife:26,size:6+Math.random()*5,color:'#222',type:'smoke',_smokeAlpha:0.3+Math.random()*0.15}); }
+          decals.push({x:cx,y:cy,size:_cRadius*0.5,alpha:0.4,color:'#333'});
+          screenShake.intensity = Math.max(screenShake.intensity, 10);
+          playSound(40, 0.2, 'sawtooth', 0.1); playSound(80, 0.15, 'square', 0.08);
         }, 80 + ci * 60);
       }
     }
@@ -13356,37 +13373,7 @@ function updatePayload() {
       const napRadius = _m.napalmZone >= 2 ? Math.floor(radius * 0.5) : Math.floor(radius * 0.4);
       burnoutPuddles.push({ x: g.x, y: g.y, radius: napRadius, life: napLife, maxLife: napLife });
     }
-    // BOUNCING PAYLOAD: grenade bounces and detonates again
-    if (_m.stickyCharge > 0 && !g._bounced) {
-      const _bounces = _m.stickyCharge >= 2 ? 2 : 1;
-      const _bAng = Math.atan2(g.vy || 0, g.vx || 1);
-      let _bx = g.x, _by = g.y, _ba = _bAng;
-      for (let _bi = 0; _bi < _bounces; _bi++) {
-        const _bd = 50 + Math.random() * 30;
-        _ba += (Math.random()-0.5)*0.8; // slight angle change
-        _bx += Math.cos(_ba) * _bd; _by += Math.sin(_ba) * _bd;
-        const _bxi = _bx, _byi = _by, _bri = radius * 0.8, _bdi = Math.floor(dmg * 0.6);
-        const _bgc = gc2;
-        setTimeout(() => {
-          if (isHost) {
-            for (const z of zombies) { if (z.hp <= 0) continue;
-              const ddx=z.x-_bxi,ddy=z.y-_byi,dd=Math.sqrt(ddx*ddx+ddy*ddy);
-              if (dd < _bri + z.radius) damageZombie(z, Math.floor(_bdi*(1-dd/(_bri+z.radius))), dd>1?(ddx/dd)*8:0, dd>1?(ddy/dd)*8:0);
-            }
-          }
-          // Big visible explosion per bounce
-          particles.push({x:_bxi,y:_byi,vx:0,vy:0,life:12,maxLife:12,size:_bri*1.2,color:_bgc,type:'wakering'});
-          particles.push({x:_bxi,y:_byi,vx:0,vy:0,life:8,maxLife:8,size:_bri*0.8,color:'#fff',type:'wakering'});
-          for(let i=0;i<20;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;
-            particles.push({x:_bxi,y:_byi,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:16,maxLife:16,size:4+Math.random()*3,color:Math.random()>0.3?_bgc:'#fff',type:'explosion'});}
-          for(let i=0;i<8;i++){const a=Math.random()*Math.PI*2,s=1+Math.random()*2;
-            particles.push({x:_bxi+(Math.random()-0.5)*15,y:_byi+(Math.random()-0.5)*15,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:24,maxLife:24,size:6+Math.random()*4,color:'#333',type:'smoke',_smokeAlpha:0.25+Math.random()*0.15});}
-          decals.push({x:_bxi,y:_byi,size:_bri*0.5,alpha:0.4,color:'#333'});
-          screenShake.intensity=Math.max(screenShake.intensity,6);
-          playSound(60,0.2,'sawtooth',0.1);
-        }, 120 + _bi * 150); // staggered timing
-      }
-    }
+    // (Homing payload has no detonation-phase effect — tracking happens in flight)
     activeGrenade = null;
   }
 }
