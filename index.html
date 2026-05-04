@@ -1602,23 +1602,23 @@ const UPGRADE_POOL = [
   { id:'syn_breach_protocol', name:'BREACH PROTOCOL', rarity:'epic', max:1, icon:'⚠', color:'#c8f',
     descs:['LEVEL 1: EXPOSED + COMPROMISED = 2x damage. COMBO: killing them triggers a corruption wave.'],
     flavor:'every vulnerability compounds.', prereqs:['pulse_shot|kinetic_wake','viral_payload|glitch_wake'] },
-  // ---- SPIKE CLASS CARDS (4th button: throw a spike that pulses class effect) ----
+  // ---- SPIKE CLASS CARDS (4th button: each class is a totally different mechanic) ----
   // Mutually exclusive — picking one replaces the others. Reforge bumps potency.
-  { id:'thermal_spike', name:'IGNITE SPIKE', rarity:'rare', max:1, icon:'🔥', color:'#f80',
-    descs:['Spike sticks → fire pool that ticks OVERHEAT in a 60px radius.'],
-    flavor:'thrown daemon. burning soil.' },
-  { id:'cryo_spike', name:'FROST SPIKE', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
-    descs:['Spike sticks → frost aura that applies CHILL stacks in a 50px radius.'],
-    flavor:'cold node. matter slows around it.' },
-  { id:'arc_spike', name:'CHAIN SPIKE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['Spike sticks → arcs to 2 nearest enemies every 0.6s, applies CHARGED.'],
-    flavor:'live conduit. follow the current.' },
-  { id:'pulse_spike', name:'KINETIC SPIKE', rarity:'rare', max:1, icon:'💨', color:'#cef',
-    descs:['Spike sticks → kinetic mine. Anyone in 70px gets knocked back + EXPOSED.'],
-    flavor:'pressure plate. step in, fly out.' },
-  { id:'corrupt_spike', name:'VIRAL SPIKE', rarity:'rare', max:1, icon:'☣', color:'#a4f',
-    descs:['Spike sticks → spreads CORRUPT in an 80px radius every 0.5s.'],
-    flavor:'malware in the soil. it crawls outward.' },
+  { id:'thermal_spike', name:'METEOR', rarity:'rare', max:1, icon:'☄', color:'#f80',
+    descs:['Lobs an arcing fireball that lands at target. 90px crater detonates + pulses OVERHEAT for 3s.'],
+    flavor:'orbital strike. compiled mid-flight.' },
+  { id:'cryo_spike', name:'FROST WALL', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
+    descs:['Instantly raises a 3-spire ice wall ahead of you. Blocks movement, pulses CHILL. Walls shatter on damage.'],
+    flavor:'cold geometry. drop. retreat. kite.' },
+  { id:'arc_spike', name:'TESLA ORB', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
+    descs:['Hovering turret in mid-air. Every 0.5s arcs main bolt + 2-target chain to nearest enemies. CHARGED on hit.'],
+    flavor:'sentry compiled. fires while you reposition.' },
+  { id:'pulse_spike', name:'KINETIC TORPEDO', rarity:'rare', max:1, icon:'💨', color:'#cef',
+    descs:['Fast piercing torpedo. EXPOSES every enemy it passes through. On wall hit: 130px shockwave detonation.'],
+    flavor:'linear violence. clears the line.' },
+  { id:'corrupt_spike', name:'VIRAL SEEKER', rarity:'rare', max:1, icon:'☣', color:'#a4f',
+    descs:['Homing missile locks onto nearest enemy. On hit: instant COMPROMISED + pulses CORRUPT for 5s. Death = COMPROMISED to 3 nearby.'],
+    flavor:'virus. find a host. spread.' },
   // ---- SPIKE ENHANCEMENTS (universal — work with any class spike, including base) ----
   { id:'spike_loop', name:'SPIKE LOOP', rarity:'common', max:1, icon:'⟳', color:'#a4f',
     descs:['+1 spike charge.'], flavor:'extra slot in the queue.' },
@@ -8998,6 +8998,8 @@ function obstacleCollision(ox, oy, r, canCrossGaps) {
   const mnx=Math.max(0,Math.floor((ox-r)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((ox+r)/CELL_SIZE));
   const mny=Math.max(0,Math.floor((oy-r)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((oy+r)/CELL_SIZE));
   for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (_isWalkerBlocked(gy,gx,canCrossGaps)) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(ox,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(oy,wy+CELL_SIZE)); const dx=ox-cx,dy=oy-cy; if (dx*dx+dy*dy<r*r) return true; } }
+  // CRYO frost wall segments — blocks both players and zombies
+  if (typeof spikes !== 'undefined' && spikes.length > 0 && _spikeWallCollision(ox, oy, r)) return true;
   return false;
 }
 function pushOutOfObstacles(e, r, canCrossGaps) {
@@ -12374,17 +12376,36 @@ const SPIKE_MAX_TRAVEL = 250;         // px before it dies in flight (or sticks 
 const SPIKE_LIFETIME = 270;           // frames stuck (~4.5s)
 const SPIKE_RECHARGE_FRAMES = 240;    // 4s per charge
 const SPIKE_BASE_DAMAGE = 28;         // direct hit damage when no class card
-let spikes = [];  // { x, y, vx, vy, ownerId, traveling, stuckTo, lifetime, classId, _hits, _pulseTimer }
+let spikes = [];
+// Spike object shape (varies by class):
+//  Common:    { x, y, ownerId, classId, phase, lifetime, maxLife, _pulseTimer }
+//  None:      + { vx, vy, travel, stuckTo, stuckOffX, stuckOffY }
+//  Thermal:   _meteor=true, _arcSx, _arcSy, _arcEx, _arcEy, _arcT, _arcDur
+//  Cryo:      _wall=true,   _wallSegs:[{x,y,hp,maxHp}], _wallAng
+//  Arc:       _orb=true,    vx, vy, travel, _hoverFire (after travel done)
+//  Pulse:     _torpedo=true,vx, vy, travel, _piercedSet
+//  Corrupt:   _seeker=true, vx, vy, _seekerTarget, _seekerSpeed
 
 // Resolves which class flavor the spike has, based on equipped spike-class cards.
 function _spikeClass() {
   const m = runMods || {};
-  if (m.spikeClass) return m.spikeClass; // primary equipped flavor
-  return null; // base/no flavor
+  if (m.spikeClass) return m.spikeClass;
+  return null;
 }
 
-// Throws a spike from the local player in their aim direction. Consumes 1
-// charge. No-op if no charges or player is dead.
+function _spikeColor(sp) {
+  if (!sp || !sp.classId) return '#a4f';
+  return sp.classId === 'thermal' ? '#f80'
+    : sp.classId === 'cryo' ? '#8ef'
+    : sp.classId === 'arc' ? '#4ff'
+    : sp.classId === 'pulse' ? '#cef'
+    : sp.classId === 'corrupt' ? '#a4f'
+    : '#fff';
+}
+
+// Throws a spike from the local player. The class flavor on the equipped
+// spike-class card transforms the mechanic entirely (Hades-style cast). All
+// 5 mechanics share a button + charges + per-class color scheme.
 function throwSpike() {
   if (gameState !== 'playing') return;
   const lp = getLocalPlayer();
@@ -12394,230 +12415,653 @@ function throwSpike() {
   if (lp._spikeRecharge <= 0) lp._spikeRecharge = SPIKE_RECHARGE_FRAMES;
   const a = lp.angle || 0;
   const _classId = _spikeClass();
+  const _twin = (runMods || {}).spikeTwin > 0;
+  const _persist = (runMods || {}).spikePersist > 0 ? 1.5 : 1;
   // Spawn point — at gun barrel tip
   const sx = lp.x + Math.cos(a) * (PLAYER_RADIUS + 10);
   const sy = lp.y + Math.sin(a) * (PLAYER_RADIUS + 10);
-  const _twin = (runMods || {}).spikeTwin > 0;
-  const _spawn = (offsetA) => {
+
+  // ============================================================
+  // CLASS DISPATCH — each class is a different mechanic
+  // ============================================================
+  if (_classId === 'thermal') {
+    // METEOR — arcing parabolic shell that lands in a 90px crater
+    const _spawnMeteor = (offsetA) => {
+      const _aA = a + offsetA;
+      const _ex = sx + Math.cos(_aA) * 250;
+      const _ey = sy + Math.sin(_aA) * 250;
+      spikes.push({
+        x: sx, y: sy, ownerId: lp.id, classId: 'thermal',
+        phase: 'flying', _meteor: true,
+        _arcSx: sx, _arcSy: sy, _arcEx: _ex, _arcEy: _ey,
+        _arcT: 0, _arcDur: 42, // ~0.7s arc
+        lifetime: 180 * _persist, maxLife: 180,
+        _pulseTimer: 0,
+      });
+    };
+    _spawnMeteor(0);
+    if (_twin) _spawnMeteor(0.22);
+    // Launch VFX — fiery puff + ember plume
+    for (let i = 0; i < 14; i++) {
+      const pa = a + (Math.random() - 0.5) * 1.6;
+      const ps = 1 + Math.random() * 2.5;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps - 0.8,
+        life: 14, maxLife: 14, size: 2 + Math.random() * 2,
+        color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
+    }
+    playSound(220, 0.08, 'sawtooth', 0.12);
+  } else if (_classId === 'cryo') {
+    // FROST WALL — instant 3-segment ice wall perpendicular to aim
+    const _wallDist = 110;
+    const _wallCx = lp.x + Math.cos(a) * _wallDist;
+    const _wallCy = lp.y + Math.sin(a) * _wallDist;
+    const _perp = a + Math.PI / 2;
+    const _segLen = 36; // px each
+    const _segCount = _twin ? 5 : 3;
+    const _segs = [];
+    for (let i = 0; i < _segCount; i++) {
+      const t = (i - (_segCount - 1) / 2) * _segLen;
+      _segs.push({
+        x: _wallCx + Math.cos(_perp) * t,
+        y: _wallCy + Math.sin(_perp) * t,
+        hp: 80, maxHp: 80,
+        wobble: Math.random() * Math.PI * 2,
+      });
+    }
     spikes.push({
-      x: sx, y: sy,
-      vx: Math.cos(a + offsetA) * SPIKE_TRAVEL_SPEED,
-      vy: Math.sin(a + offsetA) * SPIKE_TRAVEL_SPEED,
-      ownerId: lp.id,
-      traveling: true,
-      stuckTo: null,
-      stuckOffX: 0, stuckOffY: 0,
-      travel: 0,
-      lifetime: SPIKE_LIFETIME * (1 + ((runMods || {}).spikePersist > 0 ? 0.5 : 0)),
-      maxLife: SPIKE_LIFETIME,
-      classId: _classId,
+      x: _wallCx, y: _wallCy, ownerId: lp.id, classId: 'cryo',
+      phase: 'wall', _wall: true,
+      _wallSegs: _segs, _wallAng: _perp,
+      lifetime: 360 * _persist, maxLife: 360,
       _pulseTimer: 0,
-      _hits: new Set(),
     });
-  };
-  _spawn(0);
-  if (_twin) {
-    // Twin Spike: throws a second spike at a slight off-axis angle
-    _spawn(0.18);
+    // Frost burst from each segment
+    for (const seg of _segs) {
+      for (let i = 0; i < 8; i++) {
+        const pa = Math.random() * Math.PI * 2;
+        particles.push({ x: seg.x, y: seg.y, vx: Math.cos(pa) * 2, vy: Math.sin(pa) * 2 - 1,
+          life: 22, maxLife: 22, size: 2 + Math.random() * 2,
+          color: Math.random() > 0.4 ? '#8ef' : '#cff', type: 'spark' });
+      }
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 4);
+    playSound(660, 0.1, 'sine', 0.1);
+    playSound(440, 0.08, 'sine', 0.08);
+  } else if (_classId === 'arc') {
+    // TESLA ORB — flies forward, then hovers as turret
+    const _spawnOrb = (offsetA) => {
+      const _aA = a + offsetA;
+      spikes.push({
+        x: sx, y: sy, ownerId: lp.id, classId: 'arc',
+        vx: Math.cos(_aA) * SPIKE_TRAVEL_SPEED, vy: Math.sin(_aA) * SPIKE_TRAVEL_SPEED,
+        phase: 'flying', _orb: true,
+        travel: 0, _hoverFire: 0,
+        lifetime: 300 * _persist, maxLife: 300,
+        _pulseTimer: 0,
+      });
+    };
+    _spawnOrb(0);
+    if (_twin) _spawnOrb(0.18);
+    // Launch VFX — electric arcs around launch point
+    for (let i = 0; i < 6; i++) {
+      const pa = a + (Math.random() - 0.5) * 0.6;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa) * 4, vy: Math.sin(pa) * 4,
+        life: 10, maxLife: 10, size: 2, color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+    }
+    playSound(1200, 0.05, 'sine', 0.08);
+  } else if (_classId === 'pulse') {
+    // KINETIC TORPEDO — fast linear projectile that pierces, detonates on wall/end
+    const _spawnTorpedo = (offsetA) => {
+      const _aA = a + offsetA;
+      spikes.push({
+        x: sx, y: sy, ownerId: lp.id, classId: 'pulse',
+        vx: Math.cos(_aA) * 22, vy: Math.sin(_aA) * 22,
+        phase: 'flying', _torpedo: true,
+        travel: 0,
+        _piercedSet: new Set(),
+        lifetime: 60 * _persist, maxLife: 60,
+        _pulseTimer: 0,
+      });
+    };
+    _spawnTorpedo(0);
+    if (_twin) { _spawnTorpedo(0.08); _spawnTorpedo(-0.08); }
+    // Launch VFX — kinetic shockwave at muzzle
+    for (let i = 0; i < 12; i++) {
+      const pa = a + (Math.random() - 0.5) * 0.4;
+      const ps = 3 + Math.random() * 4;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps,
+        life: 10, maxLife: 10, size: 2 + Math.random() * 2, color: '#cef', type: 'spark' });
+    }
+    particles.push({ x: sx, y: sy, vx: 0, vy: 0, life: 10, maxLife: 10,
+      size: 30, color: '#cef', type: 'wakering' });
+    screenShake.intensity = Math.max(screenShake.intensity, 3);
+    playSound(380, 0.06, 'square', 0.1);
+  } else if (_classId === 'corrupt') {
+    // VIRAL SEEKER — homing missile that locks onto nearest zombie
+    const _findTarget = (excludeSet) => {
+      let best = null, bestD = 600 * 600;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        if (excludeSet && excludeSet.has(z.zid)) continue;
+        const dx = z.x - lp.x, dy = z.y - lp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD) { bestD = d2; best = z; }
+      }
+      return best;
+    };
+    const _used = new Set();
+    const _spawnSeeker = (offsetA) => {
+      const _aA = a + offsetA;
+      const _t = _findTarget(_used);
+      if (_t) _used.add(_t.zid);
+      spikes.push({
+        x: sx, y: sy, ownerId: lp.id, classId: 'corrupt',
+        vx: Math.cos(_aA) * 9, vy: Math.sin(_aA) * 9,
+        phase: 'flying', _seeker: true,
+        _seekerTarget: _t,
+        _seekerSpeed: 9,
+        travel: 0,
+        lifetime: 300 * _persist, maxLife: 300,
+        _pulseTimer: 0,
+      });
+    };
+    _spawnSeeker(0);
+    if (_twin) _spawnSeeker(0.18);
+    // Launch VFX — corrupt glitch puff
+    for (let i = 0; i < 10; i++) {
+      const pa = a + (Math.random() - 0.5) * 1.4;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa) * 2, vy: Math.sin(pa) * 2 - 0.5,
+        life: 14, maxLife: 14, size: 2 + Math.random() * 2,
+        color: Math.random() > 0.5 ? '#a4f' : '#f0f', type: 'spark' });
+    }
+    playSound(520, 0.08, 'sawtooth', 0.1);
+  } else {
+    // BASE SPIKE — no class, just a thump that sticks
+    const _spawnBase = (offsetA) => {
+      const _aA = a + offsetA;
+      spikes.push({
+        x: sx, y: sy, ownerId: lp.id, classId: null,
+        vx: Math.cos(_aA) * SPIKE_TRAVEL_SPEED, vy: Math.sin(_aA) * SPIKE_TRAVEL_SPEED,
+        phase: 'flying',
+        travel: 0,
+        stuckTo: null, stuckOffX: 0, stuckOffY: 0,
+        lifetime: 180 * _persist, maxLife: 180,
+        _pulseTimer: 0,
+      });
+    };
+    _spawnBase(0);
+    if (_twin) _spawnBase(0.18);
+    for (let i = 0; i < 4; i++) {
+      const pa = a + (Math.random() - 0.5) * 1.4;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa) * 1.5, vy: Math.sin(pa) * 1.5,
+        life: 8, maxLife: 8, size: 2, color: '#a4f', type: 'spark' });
+    }
+    playSound(540, 0.05, 'square', 0.08);
   }
-  // Throw VFX — small magenta puff at spawn point
-  for (let i = 0; i < 4; i++) {
-    const pa = a + (Math.random() - 0.5) * 1.4;
-    particles.push({ x: sx, y: sy, vx: Math.cos(pa) * 1.5, vy: Math.sin(pa) * 1.5,
-      life: 8, maxLife: 8, size: 2, color: '#a4f', type: 'spark' });
-  }
-  playSfx('ui_click', 0.1) || playSound(540, 0.05, 'square', 0.08);
 }
 
 // Per-frame physics + lifetime + pulse for all active spikes.
+// ============================================================
+// Per-frame class-dispatched spike update. Each class has its own physics
+// + lifetime + effect logic. Host-authoritative.
+// ============================================================
 function updateSpikes() {
-  if (!isHost) return; // host-authoritative
+  if (!isHost) return;
+  const m = runMods || {};
+  const _radBoost = m.spikeWide > 0 ? 1.3 : 1;
   for (let si = spikes.length - 1; si >= 0; si--) {
     const sp = spikes[si];
-    if (sp.traveling) {
-      // Move forward
-      sp.x += sp.vx; sp.y += sp.vy;
-      sp.travel += SPIKE_TRAVEL_SPEED;
-      // Wall collision — stop and stick to floor
-      if (obstacleCollision(sp.x, sp.y, 4, true)) {
-        sp.x -= sp.vx; sp.y -= sp.vy;
-        sp.traveling = false;
-        sp.vx = 0; sp.vy = 0;
-        _spawnSpikeStuckBurst(sp);
-      }
-      // Out of bounds — drop
-      if (sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
-        spikes.splice(si, 1); continue;
-      }
-      // Zombie collision — stick to first zombie hit
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < (z.radius + 4) ** 2) {
-          // Direct impact damage — base or scaled by reforge level if class card present
-          const baseDmg = sp.classId ? Math.floor(SPIKE_BASE_DAMAGE * 0.6) : SPIKE_BASE_DAMAGE;
-          damageZombie(z, baseDmg, sp.vx * 0.4, sp.vy * 0.4);
-          sp.traveling = false;
-          sp.stuckTo = z;
-          sp.stuckOffX = sp.x - z.x;
-          sp.stuckOffY = sp.y - z.y;
-          sp.vx = 0; sp.vy = 0;
-          _spawnSpikeStuckBurst(sp);
-          break;
-        }
-      }
-      // Max travel — drop on floor where it landed
-      if (sp.traveling && sp.travel >= SPIKE_MAX_TRAVEL) {
-        sp.traveling = false;
-        sp.vx = 0; sp.vy = 0;
-        _spawnSpikeStuckBurst(sp);
-      }
+    sp._pulseTimer = (sp._pulseTimer || 0) + 1;
+    if (sp._meteor) {
+      _updateMeteorSpike(sp, _radBoost);
+    } else if (sp._wall) {
+      _updateWallSpike(sp, _radBoost);
+    } else if (sp._orb) {
+      _updateOrbSpike(sp, _radBoost);
+    } else if (sp._torpedo) {
+      _updateTorpedoSpike(sp, _radBoost);
+    } else if (sp._seeker) {
+      _updateSeekerSpike(sp, _radBoost);
     } else {
-      // Stuck — track host zombie if present
-      if (sp.stuckTo) {
-        if (sp.stuckTo.hp <= 0) {
-          // Host zombie died — drop to floor at last position
-          sp.stuckTo = null;
-        } else {
-          sp.x = sp.stuckTo.x + sp.stuckOffX;
-          sp.y = sp.stuckTo.y + sp.stuckOffY;
-        }
-      }
-      // Lifetime tick
-      sp.lifetime--;
-      sp._pulseTimer++;
-      // Apply class pulse
-      _applySpikePulse(sp);
-      if (sp.lifetime <= 0) {
-        // Final expire burst
-        for (let _ei = 0; _ei < 8; _ei++) {
-          const _ea = Math.random() * Math.PI * 2;
-          particles.push({ x: sp.x, y: sp.y, vx: Math.cos(_ea) * 2, vy: Math.sin(_ea) * 2,
-            life: 14, maxLife: 14, size: 2, color: _spikeColor(sp), type: 'spark' });
-        }
-        spikes.splice(si, 1);
-      }
+      _updateBaseSpike(sp);
+    }
+    if (sp.lifetime <= 0) {
+      _spawnSpikeExpireBurst(sp);
+      spikes.splice(si, 1);
     }
   }
 }
 
-function _spikeColor(sp) {
-  if (!sp.classId) return '#a4f';
-  return sp.classId === 'thermal' ? '#f80'
-    : sp.classId === 'cryo' ? '#8ef'
-    : sp.classId === 'arc' ? '#4ff'
-    : sp.classId === 'pulse' ? '#cef'
-    : sp.classId === 'corrupt' ? '#a4f'
-    : '#fff';
-}
-
-function _spawnSpikeStuckBurst(sp) {
+function _spawnSpikeExpireBurst(sp) {
   const c = _spikeColor(sp);
   for (let i = 0; i < 10; i++) {
     const a = Math.random() * Math.PI * 2;
-    const s = 1.5 + Math.random() * 2;
+    const s = 1.5 + Math.random() * 2.5;
     particles.push({ x: sp.x, y: sp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-      life: 16, maxLife: 16, size: 2.5, color: c, type: 'spark' });
+      life: 14 + Math.random() * 6, maxLife: 20, size: 2 + Math.random() * 1.5,
+      color: c, type: 'spark' });
   }
-  playSfx('ui_click', 0.12) || playSound(880, 0.04, 'square', 0.06);
 }
 
-// Per-frame class effect from a stuck spike — applies status to enemies in
-// the spike's aura. Each class flavor has its own radius + cadence.
-function _applySpikePulse(sp) {
-  if (!sp.classId) return;
-  const m = runMods || {};
-  const _radBoost = (m.spikeWide > 0) ? 1.3 : 1;
-  if (sp.classId === 'thermal') {
-    // Fire pool — applies OVERHEAT to anyone inside, every 18 frames
-    const r = 60 * _radBoost;
+// ---------- THERMAL: METEOR ----------
+// Parabolic flight to landing target → 90px crater that pulses OVERHEAT.
+function _updateMeteorSpike(sp, _radBoost) {
+  if (sp.phase === 'flying') {
+    sp._arcT++;
+    const t = sp._arcT / sp._arcDur;
+    if (t >= 1) {
+      // Land
+      sp.x = sp._arcEx; sp.y = sp._arcEy;
+      sp.phase = 'landed';
+      // Detonation — direct AoE damage + screen shake + huge fireball
+      const _craterR = 90 * _radBoost;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < _craterR * _craterR) {
+          const d = Math.sqrt(d2) || 1;
+          const _close = 1 - d / _craterR;
+          damageZombie(z, Math.floor(50 * _close + 10), dx / d * 4, dy / d * 4);
+          applyOverheat(z, _burnStackValue(), 1.2);
+        }
+      }
+      screenShake.intensity = Math.max(screenShake.intensity, 9);
+      triggerGlitchSurge(0.25, 16);
+      // Detonation burst — 40 particles
+      for (let i = 0; i < 40; i++) {
+        const ba = Math.random() * Math.PI * 2;
+        const bs = 2 + Math.random() * 7;
+        particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba) * bs, vy: Math.sin(ba) * bs,
+          life: 24 + Math.random() * 14, maxLife: 38, size: 3 + Math.random() * 4,
+          color: ['#f80','#fa0','#f40','#ff0','#fff'][Math.floor(Math.random()*5)], type: 'explosion' });
+      }
+      // Wakering shockwave at landing
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+        life: 22, maxLife: 22, size: _craterR * 1.2, color: '#fa0', type: 'wakering' });
+      // Smoke pillar
+      for (let i = 0; i < 8; i++) {
+        const sa = Math.random() * Math.PI * 2;
+        particles.push({ x: sp.x + Math.cos(sa) * 8, y: sp.y + Math.sin(sa) * 8,
+          vx: Math.cos(sa) * 0.6, vy: -1.5 - Math.random() * 1.5,
+          life: 36, maxLife: 36, size: 5 + Math.random() * 4, color: '#555', type: 'smoke' });
+      }
+      // Scorch decal at landing
+      decals.push({ type: 'scorch', x: sp.x, y: sp.y, size: _craterR * 0.4,
+        color: 'rgba(40,20,10,0.7)', alpha: 0.55 });
+      for (let _si = 0; _si < 4; _si++) {
+        const _sa = Math.random() * Math.PI * 2, _sr = _craterR * (0.3 + Math.random() * 0.4);
+        decals.push({ type: 'scorch',
+          x: sp.x + Math.cos(_sa) * _sr, y: sp.y + Math.sin(_sa) * _sr,
+          size: 4 + Math.random() * 5, color: 'rgba(25,15,8,0.65)', alpha: 0.4 });
+      }
+      playExplosionSound();
+    } else {
+      // Mid-flight — smooth arc with parabolic Y dip (visual handled in render)
+      sp.x = sp._arcSx + (sp._arcEx - sp._arcSx) * t;
+      sp.y = sp._arcSy + (sp._arcEy - sp._arcSy) * t;
+      // Trailing embers
+      if (sp._pulseTimer % 2 === 0) {
+        particles.push({ x: sp.x + (Math.random() - 0.5) * 6, y: sp.y + (Math.random() - 0.5) * 6,
+          vx: (Math.random() - 0.5) * 0.8, vy: -1 - Math.random(),
+          life: 14, maxLife: 14, size: 2 + Math.random() * 2,
+          color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)], type: 'explosion' });
+      }
+    }
+  } else if (sp.phase === 'landed') {
+    // Crater pulses OVERHEAT every 18 frames + emits embers
+    const r = 90 * _radBoost;
     if (sp._pulseTimer % 18 === 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
         if (dx * dx + dy * dy < r * r) applyOverheat(z, _burnStackValue(), 1);
       }
-      // Fire particles welling up
-      for (let i = 0; i < 3; i++) {
+    }
+    // Continuous fire/ember plume
+    if (sp._pulseTimer % 3 === 0) {
+      for (let i = 0; i < 2; i++) {
         const a = Math.random() * Math.PI * 2;
-        const rr = Math.random() * r;
+        const rr = Math.random() * r * 0.85;
         particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
-          vx: 0, vy: -1.2 - Math.random() * 1.5, life: 14, maxLife: 14,
+          vx: 0, vy: -1.2 - Math.random() * 1.4, life: 16, maxLife: 16,
           size: 2 + Math.random() * 2, color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
       }
     }
-  } else if (sp.classId === 'cryo') {
-    // Frost spire — chill stacks every 24 frames within 50px aura
-    const r = 50 * _radBoost;
-    if (sp._pulseTimer % 24 === 0) {
+    sp.lifetime--;
+  }
+}
+
+// ---------- CRYO: FROST WALL ----------
+// Instant 3-segment ice wall. Each segment is an obstacle with HP.
+function _updateWallSpike(sp, _radBoost) {
+  // Tick each segment lifetime + chill any zombies near each
+  const _chillR = 60 * _radBoost;
+  let alive = false;
+  for (const seg of sp._wallSegs) {
+    if (seg.hp <= 0) continue;
+    alive = true;
+    // Chill pulse from each segment
+    if (sp._pulseTimer % 30 === 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < r * r) applyChill(z, 1, 1);
+        const dx = z.x - seg.x, dy = z.y - seg.y;
+        if (dx * dx + dy * dy < _chillR * _chillR) applyChill(z, 1, 1);
       }
     }
-    // Slow drifting frost mist
-    if (sp._pulseTimer % 4 === 0) {
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.random() * r * 0.9;
-      particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
-        vx: (Math.random() - 0.5) * 0.4, vy: -0.3 - Math.random() * 0.4,
-        life: 22, maxLife: 22, size: 1.5 + Math.random(),
-        color: Math.random() > 0.4 ? '#8ef' : '#cff', type: 'spark' });
-    }
-  } else if (sp.classId === 'arc') {
-    // Chain anchor — every 36 frames arc to nearest 2 enemies in 200px
-    const r = 200 * _radBoost;
-    if (sp._pulseTimer % 36 === 0 && sp._pulseTimer > 0) {
-      const _hit = [];
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < r * r) _hit.push({ z, d2 });
-      }
-      _hit.sort((a, b) => a.d2 - b.d2);
-      for (let i = 0; i < Math.min(2, _hit.length); i++) {
-        const z = _hit[i].z;
-        damageZombie(z, 14, 0, 0, true);
-        applyCharged(z);
-        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
-          size: 1, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
-      }
-    }
-  } else if (sp.classId === 'pulse') {
-    // Kinetic mine — proximity check every 12 frames; if a zombie enters
-    // 70px radius, get knocked back + EXPOSED. Mine re-arms after each pulse.
-    const r = 70 * _radBoost;
-    if (sp._pulseTimer % 12 === 0) {
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < r * r) {
-          const d = Math.sqrt(d2) || 1;
-          z.vx += (dx / d) * 6;
-          z.vy += (dy / d) * 6;
-          applyExposed(z);
-          damageZombie(z, 10, dx / d * 4, dy / d * 4, true);
+    // Damage segments via direct zombie contact (they shatter on melee)
+    for (const z of zombies) {
+      if (z.hp <= 0) continue;
+      const dx = z.x - seg.x, dy = z.y - seg.y;
+      const _r = z.radius + 18;
+      if (dx * dx + dy * dy < _r * _r && (sp._pulseTimer % 12 === 0)) {
+        seg.hp -= 4;
+        if (seg.hp <= 0) {
+          // Shatter VFX — burst of crystal shards
+          for (let i = 0; i < 14; i++) {
+            const sa = Math.random() * Math.PI * 2;
+            const ss = 2 + Math.random() * 4;
+            particles.push({ x: seg.x, y: seg.y, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss,
+              life: 22, maxLife: 22, size: 2 + Math.random() * 2,
+              color: Math.random() > 0.5 ? '#8ef' : '#cff', type: 'spark' });
+          }
         }
       }
-      // Pulse ring particle
-      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
-        size: r * 0.9, color: '#cef', type: 'wakering' });
     }
-  } else if (sp.classId === 'corrupt') {
-    // Viral spore — every 30 frames spreads CORRUPT to enemies in 80px
-    const r = 80 * _radBoost;
+    // Frost mist particles
+    if (sp._pulseTimer % 5 === 0 && Math.random() > 0.5) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.random() * 24;
+      particles.push({ x: seg.x + Math.cos(a) * rr, y: seg.y + Math.sin(a) * rr,
+        vx: (Math.random() - 0.5) * 0.4, vy: -0.4 - Math.random() * 0.5,
+        life: 24, maxLife: 24, size: 1.5 + Math.random(),
+        color: Math.random() > 0.4 ? '#8ef' : '#cff', type: 'spark' });
+    }
+  }
+  if (!alive) sp.lifetime = 0; // all segments destroyed
+  else sp.lifetime--;
+}
+
+// ---------- ARC: TESLA ORB ----------
+// Travels forward, stops mid-air, becomes turret firing chain bolts.
+function _updateOrbSpike(sp, _radBoost) {
+  if (sp.phase === 'flying') {
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+    // Wall hit — drop on floor at impact
+    if (obstacleCollision(sp.x, sp.y, 4, true)) {
+      sp.x -= sp.vx; sp.y -= sp.vy;
+      sp.phase = 'hovering'; sp.vx = 0; sp.vy = 0;
+    }
+    if (sp.travel >= 250) { sp.phase = 'hovering'; sp.vx = 0; sp.vy = 0; }
+    if (sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) { sp.lifetime = 0; }
+    // In-flight crackle particles
+    if (sp._pulseTimer % 2 === 0) {
+      const a = Math.random() * Math.PI * 2;
+      particles.push({ x: sp.x + Math.cos(a) * 6, y: sp.y + Math.sin(a) * 6,
+        vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5,
+        life: 8, maxLife: 8, size: 1.5, color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark' });
+    }
+  } else if (sp.phase === 'hovering') {
+    sp._hoverFire = (sp._hoverFire || 0) + 1;
+    // Bob in place
+    sp.y += Math.sin(sp._pulseTimer * 0.08) * 0.15;
+    // Fire main chain bolt every 30 frames
+    const _r = 250 * _radBoost;
+    if (sp._hoverFire >= 30) {
+      sp._hoverFire = 0;
+      // Find nearest zombie
+      let best = null, bestD2 = _r * _r;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = z; }
+      }
+      if (best) {
+        // Main bolt
+        damageZombie(best, 25, 0, 0);
+        applyCharged(best);
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 16, maxLife: 16,
+          size: 2, color: '#4ff', type: 'lightning', tx: best.x, ty: best.y });
+        // Chain to up to 2 more
+        const chainSet = new Set([best.zid || -1]);
+        let lastZ = best;
+        for (let i = 0; i < 2; i++) {
+          let next = null, nextD2 = 200 * 200;
+          for (const z of zombies) {
+            if (z.hp <= 0) continue;
+            if (chainSet.has(z.zid)) continue;
+            const dx = z.x - lastZ.x, dy = z.y - lastZ.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < nextD2) { nextD2 = d2; next = z; }
+          }
+          if (!next) break;
+          chainSet.add(next.zid);
+          damageZombie(next, 12, 0, 0);
+          applyCharged(next);
+          particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+            size: 2, color: '#4ff', type: 'lightning', tx: next.x, ty: next.y });
+          lastZ = next;
+        }
+        playSfx('lightning_fire', 0.18) || playSound(1400, 0.04, 'sine', 0.08);
+        screenShake.intensity = Math.max(screenShake.intensity, 3);
+      }
+    }
+    // Continuous arcing aura — small bolts to nearby foes
+    if (sp._pulseTimer % 8 === 0) {
+      let ambient = null, ambD2 = 90 * 90;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < ambD2) { ambD2 = d2; ambient = z; }
+      }
+      if (ambient) {
+        damageZombie(ambient, 4, 0, 0, true);
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8,
+          size: 1, color: '#4ff', type: 'lightning', tx: ambient.x, ty: ambient.y });
+      }
+    }
+    // Crackle particles around orb
+    if (sp._pulseTimer % 3 === 0) {
+      const a = Math.random() * Math.PI * 2;
+      particles.push({ x: sp.x + Math.cos(a) * 10, y: sp.y + Math.sin(a) * 10,
+        vx: -Math.cos(a) * 0.6, vy: -Math.sin(a) * 0.6,
+        life: 10, maxLife: 10, size: 1.5, color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+    }
+    sp.lifetime--;
+  }
+}
+
+// ---------- PULSE: KINETIC TORPEDO ----------
+// Fast linear projectile that pierces, detonates on wall/end with a big shockwave.
+function _updateTorpedoSpike(sp, _radBoost) {
+  if (sp.phase !== 'flying') { sp.lifetime = 0; return; }
+  sp.x += sp.vx; sp.y += sp.vy;
+  sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+  // Pierce damage as it passes through zombies
+  for (const z of zombies) {
+    if (z.hp <= 0) continue;
+    if (sp._piercedSet.has(z.zid)) continue;
+    const dx = z.x - sp.x, dy = z.y - sp.y;
+    if (dx * dx + dy * dy < (z.radius + 6) ** 2) {
+      sp._piercedSet.add(z.zid);
+      damageZombie(z, 30, sp.vx * 0.5, sp.vy * 0.5);
+      applyExposed(z);
+      // Sparks at the pierce point
+      for (let i = 0; i < 4; i++) {
+        const pa = Math.random() * Math.PI * 2;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(pa) * 3, vy: Math.sin(pa) * 3,
+          life: 10, maxLife: 10, size: 2, color: '#cef', type: 'spark' });
+      }
+    }
+  }
+  // Streak trail
+  for (let i = 0; i < 2; i++) {
+    particles.push({ x: sp.x + (Math.random() - 0.5) * 4, y: sp.y + (Math.random() - 0.5) * 4,
+      vx: -sp.vx * 0.15, vy: -sp.vy * 0.15,
+      life: 12, maxLife: 12, size: 2 + Math.random(), color: '#cef', type: 'spark' });
+  }
+  // Wall hit / max travel / out of bounds → detonate
+  const _shouldDetonate = obstacleCollision(sp.x, sp.y, 4, true)
+    || sp.travel >= 400
+    || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H;
+  if (_shouldDetonate) {
+    if (obstacleCollision(sp.x, sp.y, 4, true)) { sp.x -= sp.vx; sp.y -= sp.vy; }
+    // Massive shockwave
+    const _shockR = 130 * _radBoost;
+    for (const z of zombies) {
+      if (z.hp <= 0) continue;
+      const dx = z.x - sp.x, dy = z.y - sp.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < _shockR * _shockR) {
+        const d = Math.sqrt(d2) || 1;
+        const _close = 1 - d / _shockR;
+        z.vx += (dx / d) * 14 * _close;
+        z.vy += (dy / d) * 14 * _close;
+        damageZombie(z, Math.floor(60 * _close + 10), dx / d * 6, dy / d * 6);
+        applyExposed(z);
+      }
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 12);
+    triggerGlitchSurge(0.3, 18);
+    // Triple wakering for impact emphasis
+    for (let r = 0; r < 3; r++) {
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+        life: 20 + r * 4, maxLife: 22, size: _shockR * (1 + r * 0.15), color: '#cef', type: 'wakering' });
+    }
+    // Outward burst
+    for (let i = 0; i < 36; i++) {
+      const ba = (i / 36) * Math.PI * 2;
+      const bs = 4 + Math.random() * 6;
+      particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba) * bs, vy: Math.sin(ba) * bs,
+        life: 22 + Math.random() * 10, maxLife: 32, size: 2 + Math.random() * 3,
+        color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
+    }
+    playExplosionSound();
+    sp.lifetime = 0;
+  }
+}
+
+// ---------- CORRUPT: VIRAL SEEKER ----------
+// Homing missile that locks on a target. On impact, applies COMPROMISED + sticks.
+function _updateSeekerSpike(sp, _radBoost) {
+  if (sp.phase === 'flying') {
+    // Re-acquire target if lost
+    if (!sp._seekerTarget || sp._seekerTarget.hp <= 0) {
+      let best = null, bestD2 = 800 * 800;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = z; }
+      }
+      sp._seekerTarget = best;
+    }
+    // Steer toward target
+    if (sp._seekerTarget) {
+      const tx = sp._seekerTarget.x, ty = sp._seekerTarget.y;
+      const curAng = Math.atan2(sp.vy, sp.vx);
+      const wantAng = Math.atan2(ty - sp.y, tx - sp.x);
+      let dAng = wantAng - curAng;
+      while (dAng > Math.PI) dAng -= Math.PI * 2;
+      while (dAng < -Math.PI) dAng += Math.PI * 2;
+      const turnRate = 0.15; // ~8.5°/frame
+      const newAng = curAng + Math.max(-turnRate, Math.min(turnRate, dAng));
+      const speed = sp._seekerSpeed || 9;
+      sp.vx = Math.cos(newAng) * speed;
+      sp.vy = Math.sin(newAng) * speed;
+    }
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+    // Wall hit → drop inert (becomes a small COMPROMISE puddle)
+    if (obstacleCollision(sp.x, sp.y, 4, true)) {
+      sp.x -= sp.vx; sp.y -= sp.vy;
+      sp.phase = 'sticking';
+      sp.stuckTo = null;
+      sp._compromiseFloor = true;
+    }
+    // Hit target
+    if (sp._seekerTarget) {
+      const dx = sp._seekerTarget.x - sp.x, dy = sp._seekerTarget.y - sp.y;
+      if (dx * dx + dy * dy < (sp._seekerTarget.radius + 6) ** 2) {
+        damageZombie(sp._seekerTarget, 30, sp.vx * 0.4, sp.vy * 0.4);
+        // Force-apply COMPROMISED
+        sp._seekerTarget._corrupt = 5;
+        sp._seekerTarget._compromised = true;
+        sp._seekerTarget._compromisedTimer = Math.max(sp._seekerTarget._compromisedTimer || 0, 360);
+        addFloatingText(sp._seekerTarget.x, sp._seekerTarget.y - sp._seekerTarget.radius - 12, 'COMPROMISED', '#a4f');
+        sp.phase = 'sticking';
+        sp.stuckTo = sp._seekerTarget;
+        sp.stuckOffX = sp.x - sp._seekerTarget.x;
+        sp.stuckOffY = sp.y - sp._seekerTarget.y;
+        // Impact burst
+        for (let i = 0; i < 22; i++) {
+          const pa = Math.random() * Math.PI * 2;
+          particles.push({ x: sp.x, y: sp.y, vx: Math.cos(pa) * 3, vy: Math.sin(pa) * 3 - 1,
+            life: 18, maxLife: 18, size: 2 + Math.random() * 2,
+            color: Math.random() > 0.4 ? '#a4f' : '#f0f', type: 'spark' });
+        }
+        screenShake.intensity = Math.max(screenShake.intensity, 5);
+      }
+    }
+    if (sp.travel >= 1000 || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
+      sp.lifetime = 0;
+    }
+    // Trail glitch particles
+    if (sp._pulseTimer % 2 === 0) {
+      particles.push({ x: sp.x + (Math.random() - 0.5) * 6, y: sp.y + (Math.random() - 0.5) * 6,
+        vx: -sp.vx * 0.1, vy: -sp.vy * 0.1, life: 12, maxLife: 12,
+        size: 1.8, color: Math.random() > 0.5 ? '#a4f' : '#f0f', type: 'spark' });
+    }
+  } else if (sp.phase === 'sticking') {
+    // Track stuck zombie
+    if (sp.stuckTo) {
+      if (sp.stuckTo.hp <= 0) {
+        // Target died — final eruption: spread COMPROMISED to up to 3 nearby
+        let _spread = 0;
+        for (const z of zombies) {
+          if (z.hp <= 0 || z === sp.stuckTo) continue;
+          const dx = z.x - sp.x, dy = z.y - sp.y;
+          if (dx * dx + dy * dy < 110 * 110 && _spread < 3) {
+            z._corrupt = 5;
+            z._compromised = true;
+            z._compromisedTimer = Math.max(z._compromisedTimer || 0, 240);
+            addFloatingText(z.x, z.y - z.radius - 10, 'COMPROMISED', '#a4f');
+            _spread++;
+          }
+        }
+        // Eruption VFX
+        for (let i = 0; i < 24; i++) {
+          const ba = Math.random() * Math.PI * 2;
+          particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba) * 4, vy: Math.sin(ba) * 4,
+            life: 24, maxLife: 24, size: 3 + Math.random() * 2,
+            color: Math.random() > 0.5 ? '#a4f' : '#f0f', type: 'spark' });
+        }
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 18, maxLife: 18,
+          size: 80, color: '#a4f', type: 'wakering' });
+        playSound(180, 0.15, 'sawtooth', 0.14);
+        sp.lifetime = 0;
+        return;
+      }
+      sp.x = sp.stuckTo.x + sp.stuckOffX;
+      sp.y = sp.stuckTo.y + sp.stuckOffY;
+    }
+    // Pulse CORRUPT spread every 30 frames
+    const r = 70 * _radBoost;
     if (sp._pulseTimer % 30 === 0 && sp._pulseTimer > 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
         if (dx * dx + dy * dy < r * r) applyCorrupt(z, 1);
       }
+      // Ring particle
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+        size: r, color: '#a4f', type: 'wakering' });
     }
     // Glitchy spore particles
-    if (sp._pulseTimer % 6 === 0) {
+    if (sp._pulseTimer % 5 === 0) {
       const a = Math.random() * Math.PI * 2;
       const rr = Math.random() * r * 0.7;
       particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
@@ -12625,7 +13069,58 @@ function _applySpikePulse(sp) {
         life: 18, maxLife: 18, size: 1.5 + Math.random(),
         color: Math.random() > 0.5 ? '#a4f' : '#f0f', type: 'spark' });
     }
+    sp.lifetime--;
   }
+}
+
+// ---------- BASE: NO CLASS ----------
+// Default thump that sticks for a moment.
+function _updateBaseSpike(sp) {
+  if (sp.phase === 'flying') {
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+    if (obstacleCollision(sp.x, sp.y, 4, true)) {
+      sp.x -= sp.vx; sp.y -= sp.vy;
+      sp.phase = 'sticking'; sp.vx = 0; sp.vy = 0;
+    }
+    if (sp.travel >= SPIKE_MAX_TRAVEL) {
+      sp.phase = 'sticking'; sp.vx = 0; sp.vy = 0;
+    }
+    if (sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) { sp.lifetime = 0; return; }
+    for (const z of zombies) {
+      if (z.hp <= 0) continue;
+      const dx = z.x - sp.x, dy = z.y - sp.y;
+      if (dx * dx + dy * dy < (z.radius + 4) ** 2) {
+        damageZombie(z, SPIKE_BASE_DAMAGE, sp.vx * 0.4, sp.vy * 0.4);
+        sp.phase = 'sticking';
+        sp.stuckTo = z;
+        sp.stuckOffX = sp.x - z.x;
+        sp.stuckOffY = sp.y - z.y;
+        sp.vx = 0; sp.vy = 0;
+        break;
+      }
+    }
+  } else {
+    if (sp.stuckTo) {
+      if (sp.stuckTo.hp <= 0) sp.stuckTo = null;
+      else { sp.x = sp.stuckTo.x + sp.stuckOffX; sp.y = sp.stuckTo.y + sp.stuckOffY; }
+    }
+    sp.lifetime--;
+  }
+}
+
+// Returns true if (ox,oy,r) collides with any active CRYO frost wall segment.
+// Used by the obstacle collision system so walls block both players + zombies.
+function _spikeWallCollision(ox, oy, r) {
+  for (const sp of spikes) {
+    if (!sp._wall) continue;
+    for (const seg of sp._wallSegs) {
+      if (seg.hp <= 0) continue;
+      const dx = ox - seg.x, dy = oy - seg.y;
+      if (dx * dx + dy * dy < (r + 18) ** 2) return true;
+    }
+  }
+  return false;
 }
 
 function deployBeacon() {
@@ -19586,7 +20081,22 @@ function update() {
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,powerupId:p.powerupId,elementId:p.elementId,orbitalId:p.orbitalId,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0,_signalLab:br._signalLab?1:0,_forge:br._forge?1:0,_armory:br._armory?1:0,_prop:br._prop?1:0,_propType:br._propType||'',_propColors:br._propColors||null}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
-    const sps = spikes.map(sp => ({x:+sp.x.toFixed(1),y:+sp.y.toFixed(1),vx:+sp.vx.toFixed(1),vy:+sp.vy.toFixed(1),tr:sp.traveling?1:0,life:sp.lifetime|0,maxLife:sp.maxLife|0,cls:sp.classId||null,zid:sp.stuckTo?sp.stuckTo.zid:0}));
+    const sps = spikes.map(sp => {
+      const _base = { x:+sp.x.toFixed(1), y:+sp.y.toFixed(1), life:sp.lifetime|0, maxLife:sp.maxLife|0, cls:sp.classId||null, ph:sp.phase||'flying' };
+      if (sp._meteor) {
+        return { ..._base, t:'m', sx:+sp._arcSx.toFixed(1), sy:+sp._arcSy.toFixed(1), ex:+sp._arcEx.toFixed(1), ey:+sp._arcEy.toFixed(1), at:sp._arcT|0, ad:sp._arcDur|0 };
+      } else if (sp._wall) {
+        return { ..._base, t:'w', segs:sp._wallSegs.map(s => ({x:+s.x.toFixed(1),y:+s.y.toFixed(1),hp:s.hp|0,maxHp:s.maxHp|0})) };
+      } else if (sp._orb) {
+        return { ..._base, t:'o', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1) };
+      } else if (sp._torpedo) {
+        return { ..._base, t:'p', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1) };
+      } else if (sp._seeker) {
+        return { ..._base, t:'s', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1), zid:sp._seekerTarget?sp._seekerTarget.zid:(sp.stuckTo?sp.stuckTo.zid:0) };
+      } else {
+        return { ..._base, t:'b', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1), zid:sp.stuckTo?sp.stuckTo.zid:0 };
+      }
+    });
     // Siege walls: only send HP arrays, positions are already known from map gen
     const sLHp = (gameMode === 'siege' && siegeWallLeft.length) ? siegeWallLeft.map(s => s.hp | 0) : null;
     const sRHp = (gameMode === 'siege' && siegeWallRight.length) ? siegeWallRight.map(s => s.hp | 0) : null;
@@ -19627,16 +20137,23 @@ function applyHostState(msg) {
   }
   if (msg.elemZones) { elementZones = msg.elemZones; }
   if (msg.spikes) {
-    // Replace spike list from host (non-host only renders, doesn't simulate)
-    spikes = msg.spikes.map(s => ({
-      x: s.x, y: s.y, vx: s.vx, vy: s.vy,
-      traveling: !!s.tr,
-      stuckTo: null, // tracking handled via host snapshot, not zid lookup on client
-      stuckOffX: 0, stuckOffY: 0,
-      lifetime: s.life, maxLife: s.maxLife,
-      classId: s.cls,
-      _pulseTimer: 0,
-    }));
+    // Replace spike list from host snapshot. Non-host doesn't simulate, only
+    // renders. Reconstruct type-specific fields based on the t marker.
+    spikes = msg.spikes.map(s => {
+      const base = { x:s.x, y:s.y, lifetime:s.life, maxLife:s.maxLife, classId:s.cls, phase:s.ph||'flying', _pulseTimer:0 };
+      if (s.t === 'm') {
+        return { ...base, _meteor:true, _arcSx:s.sx, _arcSy:s.sy, _arcEx:s.ex, _arcEy:s.ey, _arcT:s.at, _arcDur:s.ad };
+      } else if (s.t === 'w') {
+        return { ...base, _wall:true, _wallSegs:s.segs.map(g => ({x:g.x,y:g.y,hp:g.hp,maxHp:g.maxHp,wobble:Math.random()*Math.PI*2})) };
+      } else if (s.t === 'o') {
+        return { ...base, _orb:true, vx:s.vx||0, vy:s.vy||0 };
+      } else if (s.t === 'p') {
+        return { ...base, _torpedo:true, vx:s.vx||0, vy:s.vy||0 };
+      } else if (s.t === 's') {
+        return { ...base, _seeker:true, vx:s.vx||0, vy:s.vy||0 };
+      }
+      return { ...base, vx:s.vx||0, vy:s.vy||0 };
+    });
   }
   // Siege wall HP sync
   if (msg.sLHp && siegeWallLeft.length) {
@@ -22332,71 +22849,286 @@ function render() {
   } // end _renderBeacons loop
 
   // ---- SPIKES ----
-  // Spike projectile (in-flight) is a small glitching cube tinted by class.
-  // Stuck spike adds a pulsing aura and a faint vertical antenna so it reads
-  // from across the room.
+  // Class-dispatched render — each class is a different visual, big VFX
+  // emphasis on impact moments (meteor crater, torpedo shockwave, seeker eruption).
   for (const sp of spikes) {
     const c = _spikeColor(sp);
     const _spt = performance.now();
-    if (sp.traveling) {
-      // In-flight: spinning cube
-      ctx.save();
-      ctx.translate(sp.x, sp.y);
-      ctx.rotate(_spt * 0.02);
-      ctx.shadowColor = c; ctx.shadowBlur = 14;
-      ctx.fillStyle = c;
-      ctx.fillRect(-4, -4, 8, 8);
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(-2, -2, 4, 4);
-      // Trail
-      ctx.shadowColor = c; ctx.shadowBlur = 8;
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = c;
-      ctx.fillRect(-12, -1.5, 8, 3);
-      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-      ctx.restore();
-    } else {
-      // Stuck: pulsing aura ring + central spike + lifetime fade
-      const lifeT = sp.lifetime / sp.maxLife;
-      const pulse = 0.6 + Math.sin(_spt * 0.012) * 0.4;
-      // Aura ring sized by class effect radius
-      let auraR = 0;
-      if (sp.classId === 'thermal') auraR = 60;
-      else if (sp.classId === 'cryo') auraR = 50;
-      else if (sp.classId === 'arc') auraR = 60;
-      else if (sp.classId === 'pulse') auraR = 70;
-      else if (sp.classId === 'corrupt') auraR = 80;
-      if (auraR > 0) {
-        const r = auraR * ((runMods||{}).spikeWide > 0 ? 1.3 : 1);
+    const lifeT = Math.max(0, Math.min(1, sp.lifetime / Math.max(1, sp.maxLife)));
+    const _radBoost = (runMods||{}).spikeWide > 0 ? 1.3 : 1;
+    if (sp._meteor) {
+      // ---- THERMAL: METEOR ----
+      if (sp.phase === 'flying') {
+        // Parabolic Y dip — the meteor visually arches above the line
+        const t = sp._arcT / sp._arcDur;
+        const arcDip = Math.sin(t * Math.PI) * 80;
+        const drawY = sp.y - arcDip;
+        // Comet tail — long fading streak behind
         ctx.save();
-        ctx.globalAlpha = 0.12 * pulse * lifeT;
-        ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 24;
+        ctx.translate(sp.x, drawY);
+        const ang = Math.atan2(sp._arcEy - sp._arcSy, sp._arcEx - sp._arcSx);
+        ctx.rotate(ang);
+        // Outer fire halo
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 24;
+        ctx.fillStyle = '#f80';
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI*2); ctx.fill();
+        // Inner fire core
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = '#ff0';
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
+        // White hot center
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
+        // Trailing streak
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = '#f80';
+        ctx.beginPath();
+        ctx.moveTo(-8, -3); ctx.lineTo(-32, 0); ctx.lineTo(-8, 3); ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
+        // Landing target reticle on the floor
+        ctx.save();
+        ctx.translate(sp._arcEx, sp._arcEy);
+        const tgPulse = 0.5 + Math.sin(_spt * 0.02) * 0.3;
+        ctx.globalAlpha = tgPulse * 0.85;
+        ctx.strokeStyle = '#f80'; ctx.lineWidth = 2;
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 14;
+        const _trgR = 20 + (1 - t) * 30; // shrinks as meteor closes in
+        ctx.beginPath(); ctx.arc(0, 0, _trgR, 0, Math.PI * 2); ctx.stroke();
+        // Cross hair
+        ctx.beginPath();
+        ctx.moveTo(-_trgR - 6, 0); ctx.lineTo(-_trgR + 4, 0);
+        ctx.moveTo(_trgR - 4, 0); ctx.lineTo(_trgR + 6, 0);
+        ctx.moveTo(0, -_trgR - 6); ctx.lineTo(0, -_trgR + 4);
+        ctx.moveTo(0, _trgR - 4); ctx.lineTo(0, _trgR + 6);
+        ctx.stroke();
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
+      } else if (sp.phase === 'landed') {
+        // Glowing crater on the floor
+        const r = 90 * _radBoost;
+        const cratePulse = 0.6 + Math.sin(_spt * 0.012) * 0.35;
+        ctx.save();
+        // Outer fiery aura
+        ctx.globalAlpha = 0.18 * cratePulse * lifeT;
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 32;
+        ctx.fillStyle = '#f80';
         ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI*2); ctx.fill();
-        ctx.shadowBlur = 0;
-        // Outer ring outline
-        ctx.globalAlpha = 0.5 * pulse * lifeT;
-        ctx.strokeStyle = c; ctx.lineWidth = 1.5;
-        ctx.shadowColor = c; ctx.shadowBlur = 10;
+        // Inner orange ring
+        ctx.globalAlpha = 0.35 * cratePulse * lifeT;
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#fa0';
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, r * 0.7, 0, Math.PI*2); ctx.fill();
+        // Hot core
+        ctx.globalAlpha = 0.55 * cratePulse * lifeT;
+        ctx.shadowBlur = 14;
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, r * 0.4, 0, Math.PI*2); ctx.fill();
+        // Outline ring
+        ctx.globalAlpha = 0.7 * lifeT;
+        ctx.strokeStyle = '#f40'; ctx.lineWidth = 2;
+        ctx.shadowColor = '#f80'; ctx.shadowBlur = 10;
         ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI*2); ctx.stroke();
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
         ctx.restore();
       }
-      // Central spike — small upright triangle with a glowing core
+    } else if (sp._wall) {
+      // ---- CRYO: FROST WALL ----
+      const wallPulse = 0.5 + Math.sin(_spt * 0.005) * 0.25;
+      for (const seg of sp._wallSegs) {
+        if (seg.hp <= 0) continue;
+        const segLifeT = Math.min(1, lifeT * 1.1);
+        const hpT = seg.hp / seg.maxHp;
+        ctx.save();
+        ctx.translate(seg.x, seg.y);
+        // Wobble: subtle tilt
+        ctx.rotate(Math.sin(_spt * 0.003 + seg.wobble) * 0.05);
+        // Outer mist halo
+        ctx.globalAlpha = 0.18 * wallPulse * segLifeT;
+        ctx.shadowColor = '#8ef'; ctx.shadowBlur = 28;
+        ctx.fillStyle = '#8ef';
+        ctx.beginPath(); ctx.arc(0, 0, 28, 0, Math.PI*2); ctx.fill();
+        // Crystal spire — tall faceted shape
+        ctx.shadowBlur = 14;
+        ctx.globalAlpha = 0.85 * segLifeT;
+        ctx.fillStyle = '#cff';
+        ctx.beginPath();
+        ctx.moveTo(0, -22 * hpT - 10);
+        ctx.lineTo(8, -4); ctx.lineTo(6, 16);
+        ctx.lineTo(-6, 16); ctx.lineTo(-8, -4);
+        ctx.closePath();
+        ctx.fill();
+        // Inner light core
+        ctx.globalAlpha = wallPulse * segLifeT;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.moveTo(0, -10); ctx.lineTo(3, 0); ctx.lineTo(0, 8); ctx.lineTo(-3, 0);
+        ctx.closePath();
+        ctx.fill();
+        // Edges (cyan outline)
+        ctx.strokeStyle = '#8ef'; ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.95 * segLifeT;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.moveTo(0, -22 * hpT - 10);
+        ctx.lineTo(8, -4); ctx.lineTo(6, 16);
+        ctx.lineTo(-6, 16); ctx.lineTo(-8, -4);
+        ctx.closePath();
+        ctx.stroke();
+        // Cracks if damaged
+        if (hpT < 0.7) {
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.globalAlpha = 0.6 * segLifeT;
+          ctx.shadowBlur = 4;
+          ctx.beginPath(); ctx.moveTo(-4, -8); ctx.lineTo(2, 4); ctx.lineTo(-2, 12); ctx.stroke();
+        }
+        if (hpT < 0.4) {
+          ctx.beginPath(); ctx.moveTo(3, -10); ctx.lineTo(-2, 0); ctx.lineTo(4, 8); ctx.stroke();
+        }
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+    } else if (sp._orb) {
+      // ---- ARC: TESLA ORB ----
       ctx.save();
       ctx.translate(sp.x, sp.y);
-      ctx.shadowColor = c; ctx.shadowBlur = 12;
-      ctx.fillStyle = c; ctx.globalAlpha = 0.9 * lifeT;
-      ctx.beginPath();
-      ctx.moveTo(0, -8); ctx.lineTo(4, 4); ctx.lineTo(-4, 4); ctx.closePath();
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      // Bright core
+      const orbPulse = 0.55 + Math.sin(_spt * 0.018) * 0.4;
+      // Outer crackling halo
+      ctx.globalAlpha = 0.25 * orbPulse * lifeT;
+      ctx.shadowColor = '#4ff'; ctx.shadowBlur = 30;
+      ctx.fillStyle = '#4ff';
+      ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI*2); ctx.fill();
+      // Inner sphere
+      ctx.shadowBlur = 16;
+      ctx.globalAlpha = 0.8 * lifeT;
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI*2); ctx.fill();
+      // White core
+      ctx.shadowBlur = 8;
       ctx.fillStyle = '#fff';
-      ctx.globalAlpha = lifeT * pulse;
-      ctx.fillRect(-1.5, -2, 3, 3);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = orbPulse * lifeT;
+      ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI*2); ctx.fill();
+      // Random arcs spitting outward
+      ctx.strokeStyle = '#4ff'; ctx.lineWidth = 1.5;
+      ctx.shadowColor = '#4ff'; ctx.shadowBlur = 6;
+      ctx.globalAlpha = 0.7 * lifeT;
+      for (let ai = 0; ai < 4; ai++) {
+        const aa = Math.random() * Math.PI * 2;
+        const ar = 14 + Math.random() * 8;
+        const mx = Math.cos(aa) * (ar + (Math.random() - 0.5) * 4);
+        const my = Math.sin(aa) * (ar + (Math.random() - 0.5) * 4);
+        ctx.beginPath();
+        ctx.moveTo(0, 0); ctx.lineTo(mx * 0.5, my * 0.5); ctx.lineTo(mx, my);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       ctx.restore();
+    } else if (sp._torpedo) {
+      // ---- PULSE: KINETIC TORPEDO ----
+      // Streaking projectile with bright trail
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      const ang = Math.atan2(sp.vy, sp.vx);
+      ctx.rotate(ang);
+      // Tail
+      ctx.shadowColor = '#cef'; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#cef';
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.moveTo(-26, -6); ctx.lineTo(8, 0); ctx.lineTo(-26, 6); ctx.closePath();
+      ctx.fill();
+      // Mid-body
+      ctx.globalAlpha = 0.85;
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(-12, -3); ctx.lineTo(8, 0); ctx.lineTo(-12, 3); ctx.closePath();
+      ctx.fill();
+      // Front spike
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = '#cef';
+      ctx.fillRect(4, -2, 6, 4);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    } else if (sp._seeker) {
+      // ---- CORRUPT: VIRAL SEEKER ----
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      const seekPulse = 0.55 + Math.sin(_spt * 0.025) * 0.35;
+      if (sp.phase === 'flying') {
+        // Glitchy orb chasing target
+        ctx.shadowColor = '#a4f'; ctx.shadowBlur = 18;
+        ctx.fillStyle = '#a4f';
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = '#f0f';
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 5;
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = seekPulse;
+        ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, Math.PI*2); ctx.fill();
+        // Target line — faint dotted line to current target
+        if (sp._seekerTarget && sp._seekerTarget.hp > 0) {
+          const tx = sp._seekerTarget.x - sp.x, ty = sp._seekerTarget.y - sp.y;
+          ctx.globalAlpha = 0.25 * seekPulse;
+          ctx.strokeStyle = '#a4f'; ctx.lineWidth = 1;
+          ctx.setLineDash([3, 4]);
+          ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(tx, ty); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      } else {
+        // Stuck — pulse halo + central glitchy node
+        const r = 70 * _radBoost;
+        ctx.globalAlpha = 0.16 * seekPulse * lifeT;
+        ctx.shadowColor = '#a4f'; ctx.shadowBlur = 26;
+        ctx.fillStyle = '#a4f';
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 0.5 * seekPulse * lifeT;
+        ctx.strokeStyle = '#f0f'; ctx.lineWidth = 1.5;
+        ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.stroke();
+        // Central node
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#f0f';
+        ctx.globalAlpha = 0.9 * lifeT;
+        ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = seekPulse * lifeT;
+        ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    } else {
+      // ---- BASE / NO CLASS ----
+      if (sp.phase === 'flying') {
+        ctx.save();
+        ctx.translate(sp.x, sp.y);
+        ctx.rotate(_spt * 0.02);
+        ctx.shadowColor = c; ctx.shadowBlur = 14;
+        ctx.fillStyle = c;
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(-2, -2, 4, 4);
+        ctx.restore();
+      } else {
+        // Stuck base spike — small triangle
+        ctx.save();
+        ctx.translate(sp.x, sp.y);
+        ctx.shadowColor = c; ctx.shadowBlur = 10;
+        ctx.fillStyle = c; ctx.globalAlpha = 0.9 * lifeT;
+        ctx.beginPath();
+        ctx.moveTo(0, -8); ctx.lineTo(4, 4); ctx.lineTo(-4, 4); ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
+      }
     }
   }
 
