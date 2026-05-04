@@ -958,7 +958,8 @@ const BASE_GUN = { damage: 20, fireRate: 150, bulletSpeed: 300, spread: 0.02, bu
 const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 2;       // life=2, speed=300: frame 1 sweeps 0-300px (full range), frame 2 cleans up
-const GUN_EFFECTIVE_RANGE = 210;   // actual hitscan range in px
+const GUN_EFFECTIVE_RANGE = 210;   // base hitscan range in px
+function _getGunRange() { const _lr = (runMods && runMods.longReach) || 0; return GUN_EFFECTIVE_RANGE * (1 + (_lr >= 2 ? 0.70 : _lr >= 1 ? 0.40 : 0)); }
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 let _gunReloading = false;
@@ -1649,6 +1650,9 @@ const UPGRADE_POOL = [
   { id:'impact_echo', name:'IMPACT ECHO', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['EXPOSED enemies that collide with other enemies apply EXPOSED to those they hit.'],
     flavor:'the impact keeps spreading.', prereqs:['pulse_shot|kinetic_wake'] },
+  { id:'long_reach', name:'LONG REACH', rarity:'rare', max:2, icon:'↔', color:'#cef',
+    descs:['LEVEL 1: +40% gun range.','LEVEL 2: +70% gun range.'],
+    flavor:'extended targeting field.', prereqs:['pulse_shot|kinetic_wake'] },
   // Corrupt passives
   { id:'dark_harvest', name:'DARK HARVEST', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['Health pickups heal 30% more. COMPROMISED enemies drop 50% more bits.'],
@@ -1915,7 +1919,7 @@ function rebuildRunMods() {
     pyromaniac: 0, thermalRunaway: 0, scorchedEarth: 0,
     coldBlood: 0, hypothermia: 0, deepFreeze: 0,
     voltaicArmor: 0, superconductor: 0, lightningRod: 0,
-    momentum: 0, shockfront: 0, impactEcho: 0,
+    momentum: 0, shockfront: 0, impactEcho: 0, longReach: 0,
     darkHarvest: 0, siphon: 0, infectionVector: 0,
     // Crit windows
     precisionBreach: 0, shatterpoint: 0, meltdown: 0, surgeBreak: 0, killSwitch: 0,
@@ -1989,6 +1993,7 @@ function rebuildRunMods() {
       case 'momentum':          m.momentum          = n; break;
       case 'shockfront':        m.shockfront        = n; break;
       case 'impact_echo':       m.impactEcho        = n; break;
+      case 'long_reach':        m.longReach         += n; break;
       case 'dark_harvest':      m.darkHarvest       = n; break;
       case 'siphon':            m.siphon            = n; break;
       case 'infection_vector':  m.infectionVector   = n; break;
@@ -2180,7 +2185,7 @@ const _CARD_CLASS_MAP = {};
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
@@ -7186,8 +7191,8 @@ let shootButtonHeld = false; // when true, auto-aim engages
 // Retargets every 6 frames (~0.1s), not every frame. Threshold required to switch.
 
 // Ranges are screen-relative (computed from canvas size at runtime)
-function _aaHardLockRange() { return GUN_EFFECTIVE_RANGE; }
-function _aaFallbackRange() { return GUN_EFFECTIVE_RANGE * 1.2; }
+function _aaHardLockRange() { return _getGunRange(); }
+function _aaFallbackRange() { return _getGunRange() * 1.2; }
 const AA_PANIC_RADIUS = 60;        // emergency override distance
 const AA_RETARGET_INTERVAL = 1;    // retarget every frame — always track closest
 const AA_SWITCH_THRESHOLD = 0;     // no threshold — switch immediately
@@ -11887,7 +11892,8 @@ function fireWeaponForPlayer(p) {
     const _ma = p.angle + _shotWiggle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
     const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
     const _ec = (runMods && runMods.dominantClass) ? (_ELEM_COLOR[runMods.dominantClass] || '#fff') : '#fff';
-    const _range = 185 + Math.floor(_shotSeed * 50); // 185-235px varied range per shot
+    const _gunR = _getGunRange();
+    const _range = (_gunR * 0.88) + Math.floor(_shotSeed * _gunR * 0.24); // varied ±12% around effective range
     const _endX = _mx + _mc * _range, _endY = _my + _ms * _range;
     const _perpX = -_ms, _perpY = _mc;
 
@@ -13396,6 +13402,7 @@ function updatePayload() {
     if (_m.clusterBomb > 0) {
       const count = _m.clusterBomb >= 2 ? 5 : 3;
       const _gx = g.x, _gy = g.y, _cRadius = radius, _cDmg = dmg, _cGc = gc2;
+      const _napLv = _m.napalmZone || 0; // capture napalm for closure
       for (let ci = 0; ci < count; ci++) {
         const ca = (ci / count) * Math.PI * 2 + Math.random() * 0.6;
         const cd = 40 + Math.random() * 35;
@@ -13413,6 +13420,12 @@ function updatePayload() {
           for (let i = 0; i < 8; i++) { const a2=Math.random()*Math.PI*2,s2=1+Math.random()*2;
             particles.push({x:cx+(Math.random()-0.5)*14,y:cy+(Math.random()-0.5)*14,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:26,maxLife:26,size:6+Math.random()*5,color:'#222',type:'smoke',_smokeAlpha:0.3+Math.random()*0.15}); }
           decals.push({x:cx,y:cy,size:_cRadius*0.5,alpha:0.4,color:'#333'});
+          // NAPALM ZONE: fire puddle at each cluster explosion too
+          if (_napLv > 0) {
+            const _nR = _napLv >= 2 ? Math.floor(_cRadius*0.5) : Math.floor(_cRadius*0.4);
+            const _nL = _napLv >= 2 ? 300 : 180;
+            burnoutPuddles.push({ x: cx, y: cy, radius: _nR, life: _nL, maxLife: _nL });
+          }
           screenShake.intensity = Math.max(screenShake.intensity, 10);
           playSound(40, 0.2, 'sawtooth', 0.1); playSound(80, 0.15, 'square', 0.08);
         }, 80 + ci * 60);
@@ -16846,7 +16859,7 @@ function update() {
                   // Range check — skip enemies beyond effective gun range
                   if (b._originX != null) {
                     const _erd = (z.x-b._originX)**2+(z.y-b._originY)**2;
-                    if (_erd > (GUN_EFFECTIVE_RANGE+z.radius)**2) continue;
+                    if (_erd > (_getGunRange()+z.radius)**2) continue;
                   }
                   // Wall LOS check — skip enemies behind walls
                   if (b._originX != null && !hasLineOfSight(_bpx, _bpy, z.x, z.y)) continue;
@@ -16854,7 +16867,7 @@ function update() {
                   if (_bfast && b._originX != null && b.pierce <= 0) {
                     // Clamp sweep endpoint to effective range
                     const _erDx = b.x-_bpx, _erDy = b.y-_bpy, _erD = Math.sqrt(_erDx*_erDx+_erDy*_erDy)||1;
-                    const _erClampD = Math.min(_erD, GUN_EFFECTIVE_RANGE);
+                    const _erClampD = Math.min(_erD, _getGunRange());
                     const _erEx = _bpx+(_erDx/_erD)*_erClampD, _erEy = _bpy+(_erDy/_erD)*_erClampD;
                     const _nearZ = raycastZombies(_bpx, _bpy, _erEx, _erEy, b.size);
                     if (_nearZ && _nearZ.zombie !== z) continue;
