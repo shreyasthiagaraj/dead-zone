@@ -633,8 +633,7 @@ body.mobile #mobile-buttons { display: block; }
     <!-- Bottom action bar: small DISCONNECT + prominent COMPILE MOD -->
     <div style="display:flex;flex-direction:row;gap:14px;margin-top:10px;width:100%;align-items:center;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px">
       <button id="btn-shop-leave" style="padding:10px 32px;font-size:13px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15);min-width:120px">SKIP</button>
-      <button id="btn-shop-powerup" style="padding:10px 32px;font-size:13px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,200,0,0.06);border:2px solid #fc0;border-radius:10px;color:#fc0;cursor:pointer;text-shadow:0 0 4px rgba(255,200,0,0.3);box-shadow:0 0 6px rgba(255,200,0,0.15);min-width:120px">★ POWER UP</button>
-      <button class="menu-btn" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:120px">PURCHASE MOD</button>
+      <button class="menu-btn" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:160px">PURCHASE MOD</button>
     </div>
   </div>
 </div>
@@ -2873,7 +2872,7 @@ function spawnShopChest(x, y) {
 }
 
 // Shop cadence — one shop chest per N cleared sections. Tracked per-run.
-const SHOP_SECTION_INTERVAL = 2;
+const SHOP_SECTION_INTERVAL = 1; // reward EVERY section
 let _sectionsSinceLastShop = 0;
 function shouldSpawnShopChest() {
   _sectionsSinceLastShop++;
@@ -3007,18 +3006,29 @@ function generateDataLinkChoice() {
   const lp = getLocalPlayer();
   const hpPct = lp ? (lp.hp / lp.maxHp) : 1;
   const lastChoice = _dlChoiceHistory.length > 0 ? _dlChoiceHistory[_dlChoiceHistory.length - 1] : null;
+  const ownedCount = Object.keys(runUpgrades).filter(id => runUpgrades[id] > 0).length;
 
-  // Single terminal system — usually mod, occasionally utility
+  // Every section gives a reward — weighted random from: mod, bits, repair, reforge
   let roll = Math.random();
-  // Repair: 20% when hurt, 30% when critical, 0% if last was repair or full HP
+
+  // Repair: high priority when hurt
   if (lastChoice !== 'repair' && hpPct < 0.5) {
-    const repairChance = hpPct < 0.3 ? 0.30 : 0.20;
+    const repairChance = hpPct < 0.25 ? 0.40 : 0.25;
     if (roll < repairChance) return ['repair'];
     roll = (roll - repairChance) / (1 - repairChance);
   }
-  // Bits: 10% chance (skip if last was bits)
-  if (lastChoice !== 'bits' && roll < 0.10) return ['bits'];
 
+  // Reforge (power-up): available when player has cards to power up
+  if (lastChoice !== 'reforge' && ownedCount >= 2) {
+    const hasUpgradeable = Object.keys(runUpgrades).some(id => runUpgrades[id] > 0 && (runUpgradePower[id] || 0) < 2);
+    if (hasUpgradeable && roll < 0.25) return ['reforge'];
+    if (hasUpgradeable) roll = (roll - 0.25) / 0.75;
+  }
+
+  // Bits: 15% chance
+  if (lastChoice !== 'bits' && roll < 0.15) return ['bits'];
+
+  // Default: mod terminal
   return ['mod'];
 }
 
@@ -3117,9 +3127,9 @@ function claimDataLinkChest(barrel) {
     }
 
     case 'reforge':
-      // Reforge is UI-based — open the panel
-      openReforge();
-      addFloatingText(bx, by - 30, 'REFORGE', '#f80');
+      // Reforge → Power Up screen
+      openPowerUp();
+      addFloatingText(bx, by - 30, 'POWER UP', '#fc0');
       break;
 
     case 'trial':
@@ -3188,55 +3198,72 @@ function openShopDirect() {
 }
 
 // --- REFORGE UI ---
-function openReforge() {
+function openPowerUp() {
   gameState = 'reforge';
   _resetJoysticks();
   const container = document.getElementById('reforge-cards');
   if (!container) { gameState = 'playing'; return; }
   container.innerHTML = '';
 
-  // List all owned cards
   const ownedIds = Object.keys(runUpgrades).filter(id => runUpgrades[id] > 0);
   if (ownedIds.length === 0) {
-    // Fallback — nothing to reforge, give a free MOD instead
     gameState = 'playing';
     openShopDirect();
     return;
   }
 
+  // Title update
+  const titleEl = document.querySelector('#reforge-screen .reforge-title');
+  if (titleEl) titleEl.textContent = '★ POWER UP';
+
   for (const id of ownedIds) {
     const u = UPGRADE_POOL.find(c => c.id === id);
     if (!u) continue;
-    const curLv = runUpgrades[id];
-    const isMaxed = curLv >= u.max;
+    const curPower = runUpgradePower[id] || 0;
+    const isMaxed = curPower >= 2;
+    const cost = isMaxed ? 0 : POWER_COST[curPower];
+    const canAfford = !isMaxed && metaShards >= cost;
+    const stars = '★'.repeat(curPower + 1) + '☆'.repeat(2 - curPower);
     const card = document.createElement('div');
     card.className = 'reforge-card' + (isMaxed ? ' maxed' : '');
-    card.style.borderColor = isMaxed ? 'rgba(255,255,255,0.1)' : u.color;
-    if (!isMaxed) card.style.boxShadow = `0 0 10px ${u.color}30`;
-
-    let nextDesc = 'MAX LEVEL';
-    if (!isMaxed && u.descs && u.descs[curLv]) {
-      nextDesc = u.descs[curLv].replace(/^LEVEL \d+:\s*/i, '');
-    }
+    card.style.borderColor = isMaxed ? '#4f4' : (canAfford ? '#fc0' : 'rgba(255,255,255,0.1)');
+    if (canAfford) card.style.boxShadow = `0 0 10px rgba(255,200,0,0.3)`;
 
     card.innerHTML = `
       <div class="rf-icon">${u.icon}</div>
       <div class="rf-name" style="color:${u.color}">${u.name}</div>
-      <div class="rf-level" style="color:#aab">Lv ${curLv}/${u.max}</div>
-      ${isMaxed ? '<div class="rf-next" style="color:#667">MAXED</div>' : `<div class="rf-next">NEXT: ${nextDesc}</div>`}
+      <div style="font-size:14px;color:#fc0;letter-spacing:2px;margin:4px 0">${stars}</div>
+      ${isMaxed ? '<div class="rf-next" style="color:#4f4">MAX POWER</div>' :
+        `<div class="rf-next" style="color:${canAfford?'#fc0':'#555'}">◆ ${cost} BITS → ${stars.replace('☆','★')}</div>`}
     `;
 
-    if (!isMaxed) {
+    if (canAfford) {
+      const _id = id, _cost = cost;
       const handler = (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        applyReforge(id, card);
+        ev.preventDefault(); ev.stopPropagation();
+        if (metaShards < _cost) return;
+        metaShards -= _cost;
+        runUpgradePower[_id] = (runUpgradePower[_id] || 0) + 1;
+        rebuildRunMods();
+        const lp = getLocalPlayer();
+        if (lp) {
+          addFloatingText(lp.x, lp.y - 40, `★ ${u.name} POWERED UP`, '#fc0');
+          for (let i = 0; i < 16; i++) {
+            const a = Math.random()*Math.PI*2, s = 2+Math.random()*3;
+            particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:2.5,color:'#fc0',type:'spark'});
+          }
+        }
+        playSfx('level_up', 0.3) || playSound(900, 0.1, 'sine', 0.15);
+        triggerGlitchSurge(0.35, 20);
+        openPowerUp(); // refresh
       };
       card.addEventListener('click', handler);
       card.addEventListener('touchend', handler, { passive: false });
     }
     container.appendChild(card);
   }
+  // Keep old openReforge as alias
+  function openReforge() { openPowerUp(); }
 
   // Skip button handler
   const skipBtn = document.getElementById('btn-reforge-skip');
@@ -9935,9 +9962,7 @@ addBtn('pause-close-x', () => { togglePauseMenu(); });
 addBtn('btn-resume', () => { togglePauseMenu(); });
 addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
 addBtn('btn-shop-leave', () => { closeShop(); });
-addBtn('btn-shop-powerup', () => { _openPowerUpScreen(); });
-
-// ---- POWER UP SCREEN ----
+// ---- POWER UP SCREEN (opened via reforge terminal, NOT from shop) ----
 function _openPowerUpScreen() {
   const list = document.getElementById('shop-cards');
   if (!list) return;
