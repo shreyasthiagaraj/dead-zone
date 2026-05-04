@@ -4142,46 +4142,32 @@ const TRENCH_TEMPLATES = {
 
 // Select a template based on enemy types and section depth
 function selectTrenchTemplate(types, sectionIdx, isBoss) {
-  if (isBoss) return 'wide_arena'; // bosses get big open arenas
-  if (sectionIdx < 2) return 'arena'; // first 2 = open learning
-  const pool = [];
-  const hasRanged = types.some(t => ['spitter','strafe','mini','mortar','caster'].includes(t));
-  const hasMelee = types.some(t => ['normal','fast','brute','stalker','leaper','drone'].includes(t));
-  const hasControl = types.some(t => ['anchor','shieldbot','phaser'].includes(t));
-  // Domain 1 (0-9): mix of small + standard, learning stages
-  // Dungeon layouts: ~30% chance from section 4+, always available from 10+
-  const _dungeonPool = ['dungeon_snake', 'dungeon_rooms', 'dungeon_lshape', 'dungeon_split'];
-  const _dungeonChance = sectionIdx < 2 ? 0 : 0.50;
-  if (Math.random() < _dungeonChance) {
-    return _dungeonPool[Math.floor(Math.random() * _dungeonPool.length)];
+  if (isBoss) return 'wide_arena';
+  if (sectionIdx < 2) return 'arena';
+  // 30% dungeon chance (maze corridors) in D3+
+  if (sectionIdx >= 20 && Math.random() < 0.30) {
+    return ['dungeon_snake','dungeon_rooms','dungeon_lshape','dungeon_split'][Math.floor(Math.random()*4)];
   }
+  let pool;
   if (sectionIdx < 10) {
-    pool.push('arena', 'crossroads', 'tight', 'tight_pillars');
-    if (sectionIdx >= 4) pool.push('pillars', 'corridor');
-    if (sectionIdx >= 7) pool.push('tight_corridor', 'lshape');
-  }
-  // Domain 2 (10-19): standard + some large, ranged pressure needs cover
-  else if (sectionIdx < 20) {
-    pool.push('pillars', 'corridor', 'islands', 'crossroads');
-    if (hasRanged) pool.push('columns', 'bunker', 'split');
-    if (hasMelee) pool.push('tight', 'tight_pillars', 'gauntlet');
-    if (sectionIdx >= 15) pool.push('wide_pillars', 'fortress');
-  }
-  // Domain 3 (20-29): more large stages, fortress/maze for support hunting
-  else if (sectionIdx < 30) {
-    pool.push('fortress', 'maze', 'columns', 'wide_pillars');
-    if (hasControl) pool.push('bunker', 'split', 'islands');
-    pool.push('tight_corridor', 'gauntlet');
-  }
-  // Domain 4 (30-39): full variety — anything goes
-  else if (sectionIdx < 40) {
-    pool.push('maze', 'fortress', 'columns', 'wide_pillars', 'gauntlet');
-    pool.push('tight', 'tight_corridor', 'bunker', 'lshape');
-  }
-  // Domain 5 (40+): everything, emphasis on large + complex
-  else {
-    pool.push('fortress', 'maze', 'columns', 'wide_arena', 'wide_pillars');
-    pool.push('gauntlet', 'bunker', 'tight', 'tight_corridor');
+    // D1: TIGHT CORRIDORS — cramped, claustrophobic
+    pool = ['tight', 'tight_pillars', 'tight_corridor'];
+    if (sectionIdx >= 5) pool.push('corridor', 'lshape');
+  } else if (sectionIdx < 20) {
+    // D2: OPEN BATTLEFIELDS — wide spaces, scattered cover
+    pool = ['wide_arena', 'wide_pillars', 'columns', 'islands', 'bunker'];
+    if (sectionIdx >= 15) pool.push('split', 'crossroads');
+  } else if (sectionIdx < 30) {
+    // D3: MAZE FORTRESS — complex internal walls, labyrinthine
+    pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape'];
+    pool.push('bunker', 'split');
+  } else if (sectionIdx < 40) {
+    // D4: GAUNTLET ARENAS — linear, push-forward, relentless
+    pool = ['gauntlet', 'corridor', 'bunker', 'split', 'lshape'];
+    pool.push('tight_corridor', 'crossroads');
+  } else {
+    // D5: MASSIVE VOIDS — huge open spaces, minimal cover
+    pool = ['wide_arena', 'wide_arena', 'columns', 'wide_pillars'];
   }
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -4493,27 +4479,31 @@ function initTrenchSections() {
     const isDark = i > 5 && i % 5 === 4;
     const domain = getTrenchDomain(i);
     const modifier = rollSectionModifier(i);
-    // Wave count — bumped early sections so the first 10 feel less empty.
-    // Sections 4-5 are guaranteed multi-wave to push difficulty before the
-    // enemy-type ramp at 5+; they're the "first real fight" of a run.
-    let waveCount = 1;
-    if (!isBoss && i >= 1) {
-      const r = Math.random();
-      if (i < 3)        waveCount = r < 0.30 ? 3 : 2;                  // 1-2: always 2+, 30% chance 3
-      else if (i < 6)   waveCount = r < 0.50 ? 3 : 2;                  // 3-5: always 2, 50% chance 3
-      else if (i < 10)  waveCount = r < 0.25 ? 3 : r < 0.70 ? 2 : 1;   // 6-9: slight bump
-      else if (i < 20)  waveCount = r < 0.25 ? 3 : r < 0.70 ? 2 : 1;   // 10-19: 25/45/30
-      else              waveCount = r < 0.40 ? 3 : r < 0.80 ? 2 : 1;
+    // Domain-specific wave count and enemy density
+    let waveCount = 1, baseEnemies = 4;
+    const r = Math.random();
+    if (isBoss) { waveCount = 1; baseEnemies = 2; }
+    else if (i <= 9) {
+      // D1: Tight Corridors — 2-3 waves, 4-5 enemies, fast spawns
+      waveCount = i < 2 ? 2 : (r < 0.40 ? 3 : 2);
+      baseEnemies = 4 + Math.floor(i * 0.15);
+    } else if (i <= 19) {
+      // D2: Open Battlefields — 2-3 waves, 5-6 enemies
+      waveCount = r < 0.35 ? 3 : 2;
+      baseEnemies = 5 + Math.floor(Math.random() * 2);
+    } else if (i <= 29) {
+      // D3: Maze Fortress — 2 waves, 4-5 enemies, spread out
+      waveCount = r < 0.20 ? 3 : 2;
+      baseEnemies = 4 + Math.floor(Math.random() * 2);
+    } else if (i <= 39) {
+      // D4: Gauntlet — 3-4 waves, 5-7 enemies, HIGH pressure
+      waveCount = r < 0.50 ? 4 : 3;
+      baseEnemies = 5 + Math.floor(Math.random() * 3);
+    } else {
+      // D5: Massive Voids — 2-3 waves, 4-5 enemies, just harder
+      waveCount = r < 0.40 ? 3 : 2;
+      baseEnemies = 4 + Math.floor(Math.random() * 2);
     }
-    // Quality over quantity — late game caps lower so encounters
-    // are either a few strong enemies OR a swarm of weak, not both.
-    let baseEnemies;
-    if (i <= 9) baseEnemies = 4 + Math.floor(i * 0.15);       // 4-5
-    else if (i <= 19) baseEnemies = 4 + Math.floor((i-10)*0.1); // 4-5
-    else if (i <= 29) baseEnemies = 4;                          // 4 flat
-    else if (i <= 39) baseEnemies = 4;                          // 4 flat
-    else baseEnemies = 3 + Math.floor(Math.random() * 2);       // 3-4
-    baseEnemies = Math.min(5, baseEnemies);
     if (modifier && modifier.id === 'doubletime') baseEnemies = Math.floor(baseEnemies * 2);
     const waves = [];
     for (let w = 0; w < waveCount; w++) {
@@ -4615,12 +4605,13 @@ function spawnTrenchWave(idx, waveIdx) {
   // Prevents unfair projectile density where every enemy is firing at once.
   const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder', 'strafe', 'mortar', 'caster', 'disc', 'scatter', 'spiker', 'splasher']);
   let _rangedCount = 0;
-  const _maxRanged = sec.isBoss ? 0 : (idx < 8 ? 1 : (idx < 20 ? 2 : 3));
+  // Domain-specific caps: D1=tight melee, D4=everything, D5=elite-heavy
+  const _maxRanged = sec.isBoss ? 0 : (idx < 10 ? 1 : (idx < 30 ? 2 : (idx < 40 ? 4 : 3)));
   // Cap elite/heavy enemies per wave — prevents the "wall of tanks" feeling.
   // Elites are high-HP, high-threat targets that demand focused attention.
   const _eliteTypes = new Set(['tank', 'brute', 'stalker', 'anchor', 'shieldbot', 'reaper', 'crusher', 'bull', 'lash']);
   let _eliteCount = 0;
-  const _maxElite = sec.isBoss ? 0 : (idx < 15 ? 1 : (idx < 30 ? 2 : 3));
+  const _maxElite = sec.isBoss ? 0 : (idx < 10 ? 1 : (idx < 30 ? 2 : (idx < 40 ? 4 : 99)));
   // Melee filler pool — when caps are hit, reroll to these approachable types.
   // Keeps late waves feeling dense without being unfair.
   const _meleeFillers = ['normal', 'fast', 'drone', 'leaper', 'exploder'];
@@ -4653,7 +4644,14 @@ function spawnTrenchWave(idx, waveIdx) {
       ey = (2 + Math.random() * (TRENCH_HEIGHT - 4)) * CELL_SIZE;
       _spawnAttempts++;
     } while (_spawnAttempts < 20 && !(dungeonGrid[Math.floor(ey/CELL_SIZE)] && dungeonGrid[Math.floor(ey/CELL_SIZE)][Math.floor(ex/CELL_SIZE)]));
-    const _spIdle = ZOMBIE_SPAWN_IDLE_MIN + Math.floor(Math.random() * (ZOMBIE_SPAWN_IDLE_MAX - ZOMBIE_SPAWN_IDLE_MIN));
+    // Domain-specific spawn idle — D1 rushes fast, D3 lurks, D4 is relentless
+    let _spIdleMin = ZOMBIE_SPAWN_IDLE_MIN, _spIdleMax = ZOMBIE_SPAWN_IDLE_MAX;
+    if (idx < 10) { _spIdleMin = 15; _spIdleMax = 35; }         // D1: fast rush
+    else if (idx < 20) { _spIdleMin = 25; _spIdleMax = 45; }    // D2: normal
+    else if (idx < 30) { _spIdleMin = 40; _spIdleMax = 70; }    // D3: lurk in maze
+    else if (idx < 40) { _spIdleMin = 10; _spIdleMax = 25; }    // D4: relentless
+    else { _spIdleMin = 25; _spIdleMax = 45; }                   // D5: normal
+    const _spIdle = _spIdleMin + Math.floor(Math.random() * (_spIdleMax - _spIdleMin));
     // No early nerfs — full strength from section 0
     const _earlyHp = 1.0;
     const _earlySpd = 0;
