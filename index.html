@@ -67,11 +67,15 @@ body.mobile .joystick-zone { display: block; }
 body.mobile #mobile-buttons { display: block; }
 .mobile-btn { position: fixed; z-index: 25; border-radius: 50%; border: 2px solid #0ff4; background: transparent; color: #0ff6; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; text-align: center; line-height: 1; box-shadow: 0 0 6px rgba(0,255,255,0.15); transition: transform 0.08s, opacity 0.12s linear; }
 .mobile-btn svg { display: block; filter: drop-shadow(0 0 6px currentColor) drop-shadow(0 0 12px currentColor); }
-/* Action buttons: diamond layout (top=mark, right=dash, bottom=shoot) */
-/* Diamond center: right 78px, bottom 140px */
-#btn-mark { width: 68px; height: 68px; right: calc(56px + env(safe-area-inset-right) * 0.5); bottom: calc(190px + env(safe-area-inset-bottom)); }
-#btn-dash { width: 68px; height: 68px; right: calc(4px + env(safe-area-inset-right) * 0.5); bottom: calc(125px + env(safe-area-inset-bottom)); }
+/* Action buttons: diamond layout (top=mark, right=dash, bottom=shoot, left=spike) */
+/* Diamond center: right 56px, bottom 125px */
+#btn-mark  { width: 68px; height: 68px; right: calc(56px + env(safe-area-inset-right) * 0.5); bottom: calc(190px + env(safe-area-inset-bottom)); }
+#btn-dash  { width: 68px; height: 68px; right: calc(4px + env(safe-area-inset-right) * 0.5); bottom: calc(125px + env(safe-area-inset-bottom)); }
 #btn-shoot { width: 68px; height: 68px; right: calc(56px + env(safe-area-inset-right) * 0.5); bottom: calc(60px + env(safe-area-inset-bottom)); }
+#btn-spike { width: 68px; height: 68px; right: calc(108px + env(safe-area-inset-right) * 0.5); bottom: calc(125px + env(safe-area-inset-bottom)); }
+.mobile-btn.spike-ready { border-color: #a4f; color: #a4f; box-shadow: 0 0 14px rgba(170,68,255,0.4); text-shadow: 0 0 8px rgba(170,68,255,0.6); }
+.mobile-btn.spike-cooldown { border-color: #a4f; color: #a4f; pointer-events: none; }
+.mobile-btn.spike-cooldown svg { filter: drop-shadow(0 0 4px currentColor); }
 #btn-reload { position:fixed; z-index:25; right: calc(32px + env(safe-area-inset-right) * 0.5); bottom: calc(18px + env(safe-area-inset-bottom)); width:104px; height:30px; border-radius:6px; border:2px solid #fa0; background:rgba(255,170,0,0.08); color:#fa0; font-family:'Courier New',monospace; font-size:12px; font-weight:bold; letter-spacing:2px; text-align:center; line-height:26px; cursor:pointer; -webkit-tap-highlight-color:transparent; box-shadow:0 0 10px rgba(255,170,0,0.3); }
 .mobile-btn.mark-ready { border-color: #f44; color: #f44; box-shadow: 0 0 14px rgba(255,68,68,0.4); text-shadow: 0 0 8px rgba(255,68,68,0.6); }
 .mobile-btn.mark-cooldown { border-color: #633; color: #633; pointer-events: none; opacity: 0.5; }
@@ -464,6 +468,15 @@ body.mobile #mobile-buttons { display: block; }
       <line x1="20" y1="25" x2="20" y2="32" stroke-width="2.5"/>
       <line x1="8" y1="20" x2="15" y2="20" stroke-width="2.5"/>
       <line x1="25" y1="20" x2="32" y2="20" stroke-width="2.5"/>
+    </svg>
+  </div>
+  <div class="mobile-btn spike-ready" id="btn-spike" aria-label="Spike">
+    <svg viewBox="0 0 40 40" width="32" height="32" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+      <!-- Spike — diamond head + shaft, pointing right -->
+      <polygon points="32 20 24 13 16 20 24 27" fill="currentColor"/>
+      <line x1="6" y1="20" x2="16" y2="20" stroke-width="2.5"/>
+      <line x1="8" y1="14" x2="6" y2="14" stroke-width="1.5" opacity="0.6"/>
+      <line x1="8" y1="26" x2="6" y2="26" stroke-width="1.5" opacity="0.6"/>
     </svg>
   </div>
   <div id="btn-reload" aria-label="Reload" style="display:none">RELOAD</div>
@@ -1589,6 +1602,35 @@ const UPGRADE_POOL = [
   { id:'syn_breach_protocol', name:'BREACH PROTOCOL', rarity:'epic', max:1, icon:'⚠', color:'#c8f',
     descs:['LEVEL 1: EXPOSED + COMPROMISED = 2x damage. COMBO: killing them triggers a corruption wave.'],
     flavor:'every vulnerability compounds.', prereqs:['pulse_shot|kinetic_wake','viral_payload|glitch_wake'] },
+  // ---- SPIKE CLASS CARDS (4th button: throw a spike that pulses class effect) ----
+  // Mutually exclusive — picking one replaces the others. Reforge bumps potency.
+  { id:'thermal_spike', name:'IGNITE SPIKE', rarity:'rare', max:1, icon:'🔥', color:'#f80',
+    descs:['Spike sticks → fire pool that ticks OVERHEAT in a 60px radius.'],
+    flavor:'thrown daemon. burning soil.' },
+  { id:'cryo_spike', name:'FROST SPIKE', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
+    descs:['Spike sticks → frost aura that applies CHILL stacks in a 50px radius.'],
+    flavor:'cold node. matter slows around it.' },
+  { id:'arc_spike', name:'CHAIN SPIKE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
+    descs:['Spike sticks → arcs to 2 nearest enemies every 0.6s, applies CHARGED.'],
+    flavor:'live conduit. follow the current.' },
+  { id:'pulse_spike', name:'KINETIC SPIKE', rarity:'rare', max:1, icon:'💨', color:'#cef',
+    descs:['Spike sticks → kinetic mine. Anyone in 70px gets knocked back + EXPOSED.'],
+    flavor:'pressure plate. step in, fly out.' },
+  { id:'corrupt_spike', name:'VIRAL SPIKE', rarity:'rare', max:1, icon:'☣', color:'#a4f',
+    descs:['Spike sticks → spreads CORRUPT in an 80px radius every 0.5s.'],
+    flavor:'malware in the soil. it crawls outward.' },
+  // ---- SPIKE ENHANCEMENTS (universal — work with any class spike, including base) ----
+  { id:'spike_loop', name:'SPIKE LOOP', rarity:'common', max:1, icon:'⟳', color:'#a4f',
+    descs:['+1 spike charge.'], flavor:'extra slot in the queue.' },
+  { id:'rapid_spike', name:'RAPID SPIKE', rarity:'common', max:1, icon:'⏱', color:'#a4f',
+    descs:['Spike charges recharge 50% faster.'], flavor:'shorter compile time.' },
+  { id:'wide_spike', name:'WIDE SPIKE', rarity:'common', max:1, icon:'◯', color:'#a4f',
+    descs:['Spike effect radius +30%.'], flavor:'broader reach. wider blast.' },
+  { id:'persistent_spike', name:'PERSISTENT SPIKE', rarity:'common', max:1, icon:'⏳', color:'#a4f',
+    descs:['Spike lifetime +50%.'], flavor:'slow expiration. long-running daemon.' },
+  { id:'twin_spike', name:'TWIN SPIKE', rarity:'rare', max:1, icon:'⊕', color:'#a4f',
+    descs:['Each throw fires two spikes at a slight off-axis angle.'],
+    flavor:'parallel processes. both stick.' },
   // ---- BEACON MODS ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:1, icon:'💣', color:'#fa0',
     descs:['Press special again to detonate the beacon — class-flavored blast (150px, 150 dmg).'], flavor:'beacon doubles as an explosive charge.' },
@@ -1869,6 +1911,8 @@ function rebuildRunMods() {
     synFlashBoil: false, synLiveWire: false, synHeatWave: false, synViralBurn: false,
     synPermafrost: false, synShatterForce: false, synFrozenCorrupt: false,
     synStormSurge: false, synFaultLine: false, synBreachProtocol: false,
+    // Spike (4th-button daemon): one class flavor + universal enhancements
+    spikeClass: null, spikeTwin: 0, spikeRapid: 0, spikeWide: 0, spikePersist: 0, spikeExtraCharge: 0,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
@@ -1957,6 +2001,18 @@ function rebuildRunMods() {
       case 'syn_storm_surge':     m.synStormSurge = true; break;
       case 'syn_fault_line':      m.synFaultLine = true; break;
       case 'syn_breach_protocol': m.synBreachProtocol = true; break;
+      // Spike class cards (mutually exclusive — handled in shop logic)
+      case 'thermal_spike':   m.spikeClass = 'thermal'; break;
+      case 'cryo_spike':      m.spikeClass = 'cryo'; break;
+      case 'arc_spike':       m.spikeClass = 'arc'; break;
+      case 'pulse_spike':     m.spikeClass = 'pulse'; break;
+      case 'corrupt_spike':   m.spikeClass = 'corrupt'; break;
+      // Spike enhancements
+      case 'spike_loop':      m.spikeExtraCharge = n; break;
+      case 'rapid_spike':     m.spikeRapid = n; break;
+      case 'wide_spike':      m.spikeWide = n; break;
+      case 'persistent_spike': m.spikePersist = n; break;
+      case 'twin_spike':      m.spikeTwin = n; break;
       // Utility
       case 'swift':   m.moveSpeedMult    += 0.08 * n; break;
       case 'magnet':  m.magnetRadiusMult += 0.40 * n; break;
@@ -2162,11 +2218,11 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 // Card-to-class mapping for affinity weighting
 const _CARD_CLASS_MAP = {};
 {
-  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth'];
-  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze'];
-  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach'];
-  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector'];
+  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_spike'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike'];
+  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
   for (const id of _arc)     _CARD_CLASS_MAP[id] = 'arc';
@@ -2679,6 +2735,11 @@ function buyShopCard(upgradeId) {
   const _beaconElemIds = ['beacon_thermal', 'beacon_cryo', 'beacon_arc', 'beacon_corrupt'];
   if (_beaconElemIds.includes(upgradeId)) {
     for (const tid of _beaconElemIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
+  }
+  // Spike class cards are mutually exclusive — picking one swaps the equipped flavor
+  const _spikeClassIds = ['thermal_spike', 'cryo_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike'];
+  if (_spikeClassIds.includes(upgradeId)) {
+    for (const tid of _spikeClassIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
@@ -3303,6 +3364,10 @@ function applyReforge(cardId, cardEl) {
   const _beaconElemIds = ['beacon_thermal', 'beacon_cryo', 'beacon_arc', 'beacon_corrupt'];
   if (_beaconElemIds.includes(cardId)) {
     for (const tid of _beaconElemIds) { if (tid !== cardId) delete runUpgrades[tid]; }
+  }
+  const _spikeClassIds = ['thermal_spike', 'cryo_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike'];
+  if (_spikeClassIds.includes(cardId)) {
+    for (const tid of _spikeClassIds) { if (tid !== cardId) delete runUpgrades[tid]; }
   }
 
   runUpgrades[cardId] = (runUpgrades[cardId] || 0) + 1;
@@ -7356,6 +7421,7 @@ function createPlayerObj(id, name, color, x, y) {
     hp: baseHp, maxHp: baseHp, speed: baseSpeed,
     weapons: [createWeapon('pistol')], currentWeapon: 0,
     dashCooldown: 0, dashTimer: 0, dashAngle: 0, _dashCharges: 1, _dashChargesMax: 1, _beaconCooldown: 0,
+    _spikeCharges: 2, _spikeChargesMax: 2, _spikeRecharge: 0,
     invincible: 0, damageFlash: 0, alive: true,
     burstLeft: 0, burstTimer: 0,
     moveAngle: 0,
@@ -7610,7 +7676,7 @@ function resumeFromCheckpoint() {
 
   // Restore HUD
   showScreen(null);
-  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'];
+  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark','btn-spike'];
   hudEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
 
@@ -7772,7 +7838,7 @@ function resumeMidRunSession() {
   cameraOffset.x = 0; cameraOffset.y = 0;
   window._camLerp = 0.08; window._camSettleFrames = 30;
   showScreen(null);
-  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'];
+  const hudEls = ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark','btn-spike'];
   hudEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   const domain = getTrenchDomain(trenchSection);
@@ -10888,6 +10954,8 @@ function activateRightJoystickFromButton(touch) {
 }
 document.getElementById('btn-dash').addEventListener('touchstart', (e) => { e.preventDefault(); dash(); if(e.changedTouches[0]) activateRightJoystickFromButton(e.changedTouches[0]); }, { passive: false });
 document.getElementById('btn-dash').addEventListener('mousedown', () => { dash(); });
+document.getElementById('btn-spike').addEventListener('touchstart', (e) => { e.preventDefault(); throwSpike(); }, { passive: false });
+document.getElementById('btn-spike').addEventListener('mousedown', () => { throwSpike(); });
 document.getElementById('btn-mark').addEventListener('touchstart', (e) => { e.preventDefault(); activateSpecial(); }, { passive: false });
 document.getElementById('btn-mark').addEventListener('touchend', (e) => { e.preventDefault(); if (selectedSpecial === 'deadshot') releaseDeadshot(); if (selectedSpecial === 'payload') releasePayload(); if (selectedSpecial === 'discharge') releaseDischarge(); }, { passive: false });
 document.getElementById('btn-mark').addEventListener('mousedown', () => { activateSpecial(); });
@@ -10967,7 +11035,7 @@ function enterShell(fromDeath) {
   cameraOffset.x = 0; cameraOffset.y = 0;
   screenShake.intensity = 0;
   showScreen(null);
-  ['hp-chip','center-hud','minimap','btn-dash','btn-shoot','btn-mark'].forEach(id => {
+  ['hp-chip','center-hud','minimap','btn-dash','btn-shoot','btn-mark','btn-spike'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
   // Update bits display immediately (updateHUD doesn't run in shell state)
@@ -11441,7 +11509,7 @@ function _executeRunStart() {
     // If resume failed, fall through to normal start
   }
   // Restore HUD elements hidden by enterShell
-  ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+  ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark','btn-spike'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   // Clear checkpoint when starting a fresh run from the gateway
   clearCheckpoint();
@@ -11824,6 +11892,7 @@ function handleKeyDown(e) {
     if (e.key === 'e') tryPickup(true);
     if (e.key === ' ') { e.preventDefault(); dash(); }
     if (e.key === 's' || e.key === 'S') { e.preventDefault(); activateSpecial(); }
+    if (e.key === 'q' || e.key === 'Q') { e.preventDefault(); throwSpike(); }
     if ((e.key === 'f' || e.key === 'F') && gameMode === 'siege') { siegeRepairHeld = true; const rb = document.getElementById('btn-repair'); if (rb) rb.classList.add('repairing'); }
   }
 }
@@ -12294,6 +12363,270 @@ const BEACON_FIRE_RATE = 14;    // frames between shots (slower)
 const BEACON_DAMAGE = 8;        // per shot (support fire, not a second player)
 let activeBeacon = null;        // { x, y, timer, angle, fireCd, classId }
 let _beacons = [];              // array for multi-beacon support
+
+// ---- SPIKE: 4th-button thrown daemon ----
+// Tap to throw a spike that travels until it stops at max range, hits a wall,
+// or sticks to a zombie. Once stuck, it pulses class-flavored effects from
+// equipped spike-class card (thermal/cryo/arc/pulse/corrupt). Universal
+// charges system — 2 max, each refills over time.
+const SPIKE_TRAVEL_SPEED = 11;        // px/frame
+const SPIKE_MAX_TRAVEL = 250;         // px before it dies in flight (or sticks to floor)
+const SPIKE_LIFETIME = 270;           // frames stuck (~4.5s)
+const SPIKE_RECHARGE_FRAMES = 240;    // 4s per charge
+const SPIKE_BASE_DAMAGE = 28;         // direct hit damage when no class card
+let spikes = [];  // { x, y, vx, vy, ownerId, traveling, stuckTo, lifetime, classId, _hits, _pulseTimer }
+
+// Resolves which class flavor the spike has, based on equipped spike-class cards.
+function _spikeClass() {
+  const m = runMods || {};
+  if (m.spikeClass) return m.spikeClass; // primary equipped flavor
+  return null; // base/no flavor
+}
+
+// Throws a spike from the local player in their aim direction. Consumes 1
+// charge. No-op if no charges or player is dead.
+function throwSpike() {
+  if (gameState !== 'playing') return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  if ((lp._spikeCharges || 0) <= 0) return;
+  lp._spikeCharges--;
+  if (lp._spikeRecharge <= 0) lp._spikeRecharge = SPIKE_RECHARGE_FRAMES;
+  const a = lp.angle || 0;
+  const _classId = _spikeClass();
+  // Spawn point — at gun barrel tip
+  const sx = lp.x + Math.cos(a) * (PLAYER_RADIUS + 10);
+  const sy = lp.y + Math.sin(a) * (PLAYER_RADIUS + 10);
+  const _twin = (runMods || {}).spikeTwin > 0;
+  const _spawn = (offsetA) => {
+    spikes.push({
+      x: sx, y: sy,
+      vx: Math.cos(a + offsetA) * SPIKE_TRAVEL_SPEED,
+      vy: Math.sin(a + offsetA) * SPIKE_TRAVEL_SPEED,
+      ownerId: lp.id,
+      traveling: true,
+      stuckTo: null,
+      stuckOffX: 0, stuckOffY: 0,
+      travel: 0,
+      lifetime: SPIKE_LIFETIME * (1 + ((runMods || {}).spikePersist > 0 ? 0.5 : 0)),
+      maxLife: SPIKE_LIFETIME,
+      classId: _classId,
+      _pulseTimer: 0,
+      _hits: new Set(),
+    });
+  };
+  _spawn(0);
+  if (_twin) {
+    // Twin Spike: throws a second spike at a slight off-axis angle
+    _spawn(0.18);
+  }
+  // Throw VFX — small magenta puff at spawn point
+  for (let i = 0; i < 4; i++) {
+    const pa = a + (Math.random() - 0.5) * 1.4;
+    particles.push({ x: sx, y: sy, vx: Math.cos(pa) * 1.5, vy: Math.sin(pa) * 1.5,
+      life: 8, maxLife: 8, size: 2, color: '#a4f', type: 'spark' });
+  }
+  playSfx('ui_click', 0.1) || playSound(540, 0.05, 'square', 0.08);
+}
+
+// Per-frame physics + lifetime + pulse for all active spikes.
+function updateSpikes() {
+  if (!isHost) return; // host-authoritative
+  for (let si = spikes.length - 1; si >= 0; si--) {
+    const sp = spikes[si];
+    if (sp.traveling) {
+      // Move forward
+      sp.x += sp.vx; sp.y += sp.vy;
+      sp.travel += SPIKE_TRAVEL_SPEED;
+      // Wall collision — stop and stick to floor
+      if (obstacleCollision(sp.x, sp.y, 4, true)) {
+        sp.x -= sp.vx; sp.y -= sp.vy;
+        sp.traveling = false;
+        sp.vx = 0; sp.vy = 0;
+        _spawnSpikeStuckBurst(sp);
+      }
+      // Out of bounds — drop
+      if (sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
+        spikes.splice(si, 1); continue;
+      }
+      // Zombie collision — stick to first zombie hit
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        if (dx * dx + dy * dy < (z.radius + 4) ** 2) {
+          // Direct impact damage — base or scaled by reforge level if class card present
+          const baseDmg = sp.classId ? Math.floor(SPIKE_BASE_DAMAGE * 0.6) : SPIKE_BASE_DAMAGE;
+          damageZombie(z, baseDmg, sp.vx * 0.4, sp.vy * 0.4);
+          sp.traveling = false;
+          sp.stuckTo = z;
+          sp.stuckOffX = sp.x - z.x;
+          sp.stuckOffY = sp.y - z.y;
+          sp.vx = 0; sp.vy = 0;
+          _spawnSpikeStuckBurst(sp);
+          break;
+        }
+      }
+      // Max travel — drop on floor where it landed
+      if (sp.traveling && sp.travel >= SPIKE_MAX_TRAVEL) {
+        sp.traveling = false;
+        sp.vx = 0; sp.vy = 0;
+        _spawnSpikeStuckBurst(sp);
+      }
+    } else {
+      // Stuck — track host zombie if present
+      if (sp.stuckTo) {
+        if (sp.stuckTo.hp <= 0) {
+          // Host zombie died — drop to floor at last position
+          sp.stuckTo = null;
+        } else {
+          sp.x = sp.stuckTo.x + sp.stuckOffX;
+          sp.y = sp.stuckTo.y + sp.stuckOffY;
+        }
+      }
+      // Lifetime tick
+      sp.lifetime--;
+      sp._pulseTimer++;
+      // Apply class pulse
+      _applySpikePulse(sp);
+      if (sp.lifetime <= 0) {
+        // Final expire burst
+        for (let _ei = 0; _ei < 8; _ei++) {
+          const _ea = Math.random() * Math.PI * 2;
+          particles.push({ x: sp.x, y: sp.y, vx: Math.cos(_ea) * 2, vy: Math.sin(_ea) * 2,
+            life: 14, maxLife: 14, size: 2, color: _spikeColor(sp), type: 'spark' });
+        }
+        spikes.splice(si, 1);
+      }
+    }
+  }
+}
+
+function _spikeColor(sp) {
+  if (!sp.classId) return '#a4f';
+  return sp.classId === 'thermal' ? '#f80'
+    : sp.classId === 'cryo' ? '#8ef'
+    : sp.classId === 'arc' ? '#4ff'
+    : sp.classId === 'pulse' ? '#cef'
+    : sp.classId === 'corrupt' ? '#a4f'
+    : '#fff';
+}
+
+function _spawnSpikeStuckBurst(sp) {
+  const c = _spikeColor(sp);
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 1.5 + Math.random() * 2;
+    particles.push({ x: sp.x, y: sp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 16, maxLife: 16, size: 2.5, color: c, type: 'spark' });
+  }
+  playSfx('ui_click', 0.12) || playSound(880, 0.04, 'square', 0.06);
+}
+
+// Per-frame class effect from a stuck spike — applies status to enemies in
+// the spike's aura. Each class flavor has its own radius + cadence.
+function _applySpikePulse(sp) {
+  if (!sp.classId) return;
+  const m = runMods || {};
+  const _radBoost = (m.spikeWide > 0) ? 1.3 : 1;
+  if (sp.classId === 'thermal') {
+    // Fire pool — applies OVERHEAT to anyone inside, every 18 frames
+    const r = 60 * _radBoost;
+    if (sp._pulseTimer % 18 === 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        if (dx * dx + dy * dy < r * r) applyOverheat(z, _burnStackValue(), 1);
+      }
+      // Fire particles welling up
+      for (let i = 0; i < 3; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const rr = Math.random() * r;
+        particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
+          vx: 0, vy: -1.2 - Math.random() * 1.5, life: 14, maxLife: 14,
+          size: 2 + Math.random() * 2, color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
+      }
+    }
+  } else if (sp.classId === 'cryo') {
+    // Frost spire — chill stacks every 24 frames within 50px aura
+    const r = 50 * _radBoost;
+    if (sp._pulseTimer % 24 === 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        if (dx * dx + dy * dy < r * r) applyChill(z, 1, 1);
+      }
+    }
+    // Slow drifting frost mist
+    if (sp._pulseTimer % 4 === 0) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.random() * r * 0.9;
+      particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
+        vx: (Math.random() - 0.5) * 0.4, vy: -0.3 - Math.random() * 0.4,
+        life: 22, maxLife: 22, size: 1.5 + Math.random(),
+        color: Math.random() > 0.4 ? '#8ef' : '#cff', type: 'spark' });
+    }
+  } else if (sp.classId === 'arc') {
+    // Chain anchor — every 36 frames arc to nearest 2 enemies in 200px
+    const r = 200 * _radBoost;
+    if (sp._pulseTimer % 36 === 0 && sp._pulseTimer > 0) {
+      const _hit = [];
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < r * r) _hit.push({ z, d2 });
+      }
+      _hit.sort((a, b) => a.d2 - b.d2);
+      for (let i = 0; i < Math.min(2, _hit.length); i++) {
+        const z = _hit[i].z;
+        damageZombie(z, 14, 0, 0, true);
+        applyCharged(z);
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+          size: 1, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+      }
+    }
+  } else if (sp.classId === 'pulse') {
+    // Kinetic mine — proximity check every 12 frames; if a zombie enters
+    // 70px radius, get knocked back + EXPOSED. Mine re-arms after each pulse.
+    const r = 70 * _radBoost;
+    if (sp._pulseTimer % 12 === 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < r * r) {
+          const d = Math.sqrt(d2) || 1;
+          z.vx += (dx / d) * 6;
+          z.vy += (dy / d) * 6;
+          applyExposed(z);
+          damageZombie(z, 10, dx / d * 4, dy / d * 4, true);
+        }
+      }
+      // Pulse ring particle
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+        size: r * 0.9, color: '#cef', type: 'wakering' });
+    }
+  } else if (sp.classId === 'corrupt') {
+    // Viral spore — every 30 frames spreads CORRUPT to enemies in 80px
+    const r = 80 * _radBoost;
+    if (sp._pulseTimer % 30 === 0 && sp._pulseTimer > 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        if (dx * dx + dy * dy < r * r) applyCorrupt(z, 1);
+      }
+    }
+    // Glitchy spore particles
+    if (sp._pulseTimer % 6 === 0) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.random() * r * 0.7;
+      particles.push({ x: sp.x + Math.cos(a) * rr, y: sp.y + Math.sin(a) * rr,
+        vx: (Math.random() - 0.5) * 0.6, vy: -0.5 - Math.random() * 0.4,
+        life: 18, maxLife: 18, size: 1.5 + Math.random(),
+        color: Math.random() > 0.5 ? '#a4f' : '#f0f', type: 'spark' });
+    }
+  }
+}
 
 function deployBeacon() {
   if (gameState === 'shell') return;
@@ -16478,7 +16811,25 @@ function update() {
     if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
     // Beacon cooldown + update
     if(lp._beaconCooldown>0)lp._beaconCooldown--;
+    // Spike charge recharge — max scales with the SPIKE LOOP card.
+    {
+      const _spMods = runMods || {};
+      const _spMax = 2 + (_spMods.spikeExtraCharge || 0);
+      lp._spikeChargesMax = _spMax;
+      if (lp._spikeCharges < _spMax) {
+        // Rapid Spike cuts recharge by 50%
+        const _decay = _spMods.spikeRapid > 0 ? 1.5 : 1;
+        lp._spikeRecharge -= _decay;
+        if (lp._spikeRecharge <= 0) {
+          lp._spikeCharges = Math.min(_spMax, lp._spikeCharges + 1);
+          lp._spikeRecharge = lp._spikeCharges < _spMax ? SPIKE_RECHARGE_FRAMES : 0;
+        }
+      } else if (lp._spikeCharges > _spMax) {
+        lp._spikeCharges = _spMax;
+      }
+    }
     updateBeacon();
+    updateSpikes();
     updateDischarge();
     updateResidualFields();
     updatePayload();
@@ -19235,13 +19586,14 @@ function update() {
     const pks = pickups.map(p => ({type:p.type,weaponType:p.weaponType,powerupId:p.powerupId,elementId:p.elementId,orbitalId:p.orbitalId,x:+p.x.toFixed(1),y:+p.y.toFixed(1),amount:p.amount,bobTimer:p.bobTimer}));
     const brs = barrels.map(br => ({x:+br.x.toFixed(1),y:+br.y.toFixed(1),radius:br.radius,_chest:br._chest?1:0,_strideChest:br._strideChest?1:0,_shopChest:br._shopChest?1:0,_signalLab:br._signalLab?1:0,_forge:br._forge?1:0,_armory:br._armory?1:0,_prop:br._prop?1:0,_propType:br._propType||'',_propColors:br._propColors||null}));
     const ezs = elementZones.map(ez => ({x:+ez.x.toFixed(1),y:+ez.y.toFixed(1),radius:ez.radius,element:ez.element,life:ez.life}));
+    const sps = spikes.map(sp => ({x:+sp.x.toFixed(1),y:+sp.y.toFixed(1),vx:+sp.vx.toFixed(1),vy:+sp.vy.toFixed(1),tr:sp.traveling?1:0,life:sp.lifetime|0,maxLife:sp.maxLife|0,cls:sp.classId||null,zid:sp.stuckTo?sp.stuckTo.zid:0}));
     // Siege walls: only send HP arrays, positions are already known from map gen
     const sLHp = (gameMode === 'siege' && siegeWallLeft.length) ? siegeWallLeft.map(s => s.hp | 0) : null;
     const sRHp = (gameMode === 'siege' && siegeWallRight.length) ? siegeWallRight.map(s => s.hp | 0) : null;
     const sWave = gameMode === 'siege' ? (siegeWave || 0) : 0;
     const sWaveSt = gameMode === 'siege' ? (siegeWaveState || 'rest') : null;
     const sWaveTimer = gameMode === 'siege' ? (siegeWaveTimer || 0) : 0;
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
   }
 
   updateHUD();
@@ -19274,6 +19626,18 @@ function applyHostState(msg) {
     }
   }
   if (msg.elemZones) { elementZones = msg.elemZones; }
+  if (msg.spikes) {
+    // Replace spike list from host (non-host only renders, doesn't simulate)
+    spikes = msg.spikes.map(s => ({
+      x: s.x, y: s.y, vx: s.vx, vy: s.vy,
+      traveling: !!s.tr,
+      stuckTo: null, // tracking handled via host snapshot, not zid lookup on client
+      stuckOffX: 0, stuckOffY: 0,
+      lifetime: s.life, maxLife: s.maxLife,
+      classId: s.cls,
+      _pulseTimer: 0,
+    }));
+  }
   // Siege wall HP sync
   if (msg.sLHp && siegeWallLeft.length) {
     for (let i = 0; i < siegeWallLeft.length && i < msg.sLHp.length; i++) {
@@ -19590,6 +19954,33 @@ function updateHUD() {
       // Fully charged
       db.className = 'mobile-btn dash-ready';
       db.style.opacity = '';
+    }
+  }
+  // Spike button — color matches equipped class flavor for instant readability
+  const sb=document.getElementById('btn-spike');
+  if (sb) {
+    const _spMax = lp._spikeChargesMax || 2;
+    const _spCh = lp._spikeCharges || 0;
+    const _scPct = _spCh >= _spMax ? 100 : Math.max(0, Math.min(100, 100 - (lp._spikeRecharge / SPIKE_RECHARGE_FRAMES) * 100));
+    const _spClass = (runMods||{}).spikeClass;
+    const _scColor = _spClass === 'thermal' ? '#f80'
+      : _spClass === 'cryo' ? '#8ef'
+      : _spClass === 'arc' ? '#4ff'
+      : _spClass === 'pulse' ? '#cef'
+      : _spClass === 'corrupt' ? '#a4f'
+      : '#a4f';
+    sb.style.setProperty('--cd-pct', String(_scPct));
+    sb.style.setProperty('--cd-color', _scColor);
+    sb.style.borderColor = _scColor; sb.style.color = _scColor;
+    if (_spCh <= 0) {
+      sb.className = 'mobile-btn spike-cooldown';
+      sb.style.opacity = '0.25';
+    } else if (_spCh < _spMax) {
+      sb.className = 'mobile-btn spike-ready';
+      sb.style.opacity = '0.7';
+    } else {
+      sb.className = 'mobile-btn spike-ready';
+      sb.style.opacity = '';
     }
   }
   // Special button state
@@ -21939,6 +22330,75 @@ function render() {
     ctx.fillStyle = bColor; ctx.fillRect(ab.x-barW/2, ab.y+14, barW*pct, barH);
     ctx.globalAlpha = 1; ctx.restore();
   } // end _renderBeacons loop
+
+  // ---- SPIKES ----
+  // Spike projectile (in-flight) is a small glitching cube tinted by class.
+  // Stuck spike adds a pulsing aura and a faint vertical antenna so it reads
+  // from across the room.
+  for (const sp of spikes) {
+    const c = _spikeColor(sp);
+    const _spt = performance.now();
+    if (sp.traveling) {
+      // In-flight: spinning cube
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      ctx.rotate(_spt * 0.02);
+      ctx.shadowColor = c; ctx.shadowBlur = 14;
+      ctx.fillStyle = c;
+      ctx.fillRect(-4, -4, 8, 8);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-2, -2, 4, 4);
+      // Trail
+      ctx.shadowColor = c; ctx.shadowBlur = 8;
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = c;
+      ctx.fillRect(-12, -1.5, 8, 3);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+    } else {
+      // Stuck: pulsing aura ring + central spike + lifetime fade
+      const lifeT = sp.lifetime / sp.maxLife;
+      const pulse = 0.6 + Math.sin(_spt * 0.012) * 0.4;
+      // Aura ring sized by class effect radius
+      let auraR = 0;
+      if (sp.classId === 'thermal') auraR = 60;
+      else if (sp.classId === 'cryo') auraR = 50;
+      else if (sp.classId === 'arc') auraR = 60;
+      else if (sp.classId === 'pulse') auraR = 70;
+      else if (sp.classId === 'corrupt') auraR = 80;
+      if (auraR > 0) {
+        const r = auraR * ((runMods||{}).spikeWide > 0 ? 1.3 : 1);
+        ctx.save();
+        ctx.globalAlpha = 0.12 * pulse * lifeT;
+        ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 24;
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI*2); ctx.fill();
+        ctx.shadowBlur = 0;
+        // Outer ring outline
+        ctx.globalAlpha = 0.5 * pulse * lifeT;
+        ctx.strokeStyle = c; ctx.lineWidth = 1.5;
+        ctx.shadowColor = c; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI*2); ctx.stroke();
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+      // Central spike — small upright triangle with a glowing core
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      ctx.shadowColor = c; ctx.shadowBlur = 12;
+      ctx.fillStyle = c; ctx.globalAlpha = 0.9 * lifeT;
+      ctx.beginPath();
+      ctx.moveTo(0, -8); ctx.lineTo(4, 4); ctx.lineTo(-4, 4); ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      // Bright core
+      ctx.fillStyle = '#fff';
+      ctx.globalAlpha = lifeT * pulse;
+      ctx.fillRect(-1.5, -2, 3, 3);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+  }
 
   // ---- PICKUP MAGNET TRAILS ----
   // Dotted attraction line from nearby pickups toward the player. Purely
