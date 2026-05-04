@@ -644,9 +644,10 @@ body.mobile #mobile-buttons { display: block; }
     <div id="shop-cards" style="display:flex;flex-direction:row;gap:14px;justify-content:center;margin-top:8px;width:100%"></div>
     <!-- Checkout is now in-place on the selected card — no separate area -->
     <!-- Bottom action bar: small DISCONNECT + prominent COMPILE MOD -->
-    <div style="display:flex;flex-direction:row;gap:14px;margin-top:10px;width:100%;align-items:center;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px">
-      <button id="btn-shop-leave" style="padding:10px 32px;font-size:13px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15);min-width:120px">SKIP</button>
-      <button class="menu-btn" id="btn-shop-confirm" style="padding:10px 32px;font-size:13px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:160px">PURCHASE MOD</button>
+    <div style="display:flex;flex-direction:row;gap:10px;margin-top:10px;width:100%;align-items:center;justify-content:center;border-top:1px solid rgba(0,255,255,0.15);padding-top:12px;flex-wrap:wrap">
+      <button id="btn-shop-leave" style="padding:10px 24px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15);min-width:108px">SKIP</button>
+      <button id="btn-shop-reroll" style="padding:10px 24px;font-size:12px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,0,0.06);border:2px solid #ff0;border-radius:10px;color:#ff0;cursor:pointer;text-shadow:0 0 4px rgba(255,255,0,0.4);box-shadow:0 0 6px rgba(255,255,0,0.18);min-width:120px">REROLL ◆ 100</button>
+      <button class="menu-btn" id="btn-shop-confirm" style="padding:10px 28px;font-size:12px;letter-spacing:3px;opacity:0.3;pointer-events:none;min-width:148px">PURCHASE MOD</button>
     </div>
   </div>
 </div>
@@ -2475,6 +2476,65 @@ function openShop(chest) {
   }, 1900);
 }
 
+// Reroll the shop hand at a fixed bit cost. Lets players force a fresh draw
+// when none of the offered cards fit their build. Cost scales with number of
+// rerolls this visit so a single Mod Terminal can't be infinitely milked.
+const SHOP_REROLL_COST = 100;
+let _shopRerollCount = 0;
+function rerollShop() {
+  if (!shopCards || _shopPurchased) return;
+  const cost = SHOP_REROLL_COST + _shopRerollCount * 50; // 100, 150, 200, ...
+  if (metaShards < cost) {
+    // Pulse the bits line red so the player understands they're broke
+    const _bl = document.getElementById('shop-bits-line');
+    if (_bl) {
+      _bl.style.transition = 'color 0.15s';
+      _bl.style.color = '#f44';
+      setTimeout(() => { _bl.style.color = '#ff0'; }, 380);
+    }
+    playSfx('ui_click', 0.15) || playSound(180, 0.06, 'sawtooth', 0.08);
+    return;
+  }
+  const _prevBits = metaShards;
+  metaShards -= cost;
+  try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
+  _shopRerollCount++;
+  _shopSelectedId = null;
+  // Redraw cards: same draft mode as initial open (boss-reward vs generic)
+  // _pendingBossShop has already been consumed at openShop time, so we reroll
+  // with the standard shop draft. If rerolling a boss reward is desired we
+  // could persist a flag — keeping it simple for now.
+  shopCards = draftShopCards(3);
+  _renderShopCards();
+  _updateShopBitsDisplay(_prevBits);
+  // Reset card entrance animation
+  const cards = document.querySelectorAll('.shop-card-wrap');
+  cards.forEach((c, i) => { c.classList.remove('card-in'); setTimeout(() => c.classList.add('card-in'), i * 80); });
+  // Reset confirm button (selection is cleared)
+  const confirmBtn = document.getElementById('btn-shop-confirm');
+  if (confirmBtn) { confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; confirmBtn.textContent = 'PURCHASE MOD'; }
+  // Update reroll button label with new cost + glitch
+  _updateRerollButtonLabel();
+  triggerGlitchSurge(0.2, 14);
+  playSfx('ui_click', 0.2) || playSound(720, 0.08, 'sine', 0.1);
+  playSound(1100, 0.05, 'sine', 0.06);
+}
+
+function _updateRerollButtonLabel() {
+  const rb = document.getElementById('btn-shop-reroll');
+  if (!rb) return;
+  const cost = SHOP_REROLL_COST + _shopRerollCount * 50;
+  rb.textContent = `REROLL ◆ ${cost}`;
+  // Dim if can't afford
+  if (metaShards < cost) {
+    rb.style.opacity = '0.45';
+    rb.style.cursor = 'not-allowed';
+  } else {
+    rb.style.opacity = '1';
+    rb.style.cursor = 'pointer';
+  }
+}
+
 function closeShop() {
   const el = document.getElementById('shop-screen');
   if (el) {
@@ -2488,6 +2548,11 @@ function closeShop() {
       if (confirmBtn) { confirmBtn.style.display = ''; confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; confirmBtn.textContent = 'PURCHASE MOD'; }
       const leaveBtn = document.getElementById('btn-shop-leave');
       if (leaveBtn) { leaveBtn.style.display = ''; leaveBtn.style.opacity = '1'; leaveBtn.style.pointerEvents = 'auto'; }
+      // Reroll button — reset for next visit
+      const rerollBtn = document.getElementById('btn-shop-reroll');
+      if (rerollBtn) { rerollBtn.style.display = ''; rerollBtn.style.opacity = '1'; rerollBtn.style.pointerEvents = 'auto'; }
+      _shopRerollCount = 0;
+      _updateRerollButtonLabel();
       // Reset loading/content phases
       const loadEl = document.getElementById('shop-loading');
       if (loadEl) loadEl.style.display = 'flex';
@@ -2524,6 +2589,8 @@ function _updateShopBitsDisplay(animateFrom) {
   } else {
     el.textContent = `◆ ${metaShards} BITS`;
   }
+  // Keep the reroll button label/affordability state in sync with bits
+  if (typeof _updateRerollButtonLabel === 'function') _updateRerollButtonLabel();
 }
 
 function _renderFocusRow() {
@@ -2775,8 +2842,10 @@ function buyShopCard(upgradeId) {
   // Buttons become unselectable during the exit (no accidental taps).
   const confirmBtn = document.getElementById('btn-shop-confirm');
   const leaveBtn = document.getElementById('btn-shop-leave');
+  const rerollBtn = document.getElementById('btn-shop-reroll');
   if (confirmBtn) { confirmBtn.style.opacity = '0.3'; confirmBtn.style.pointerEvents = 'none'; }
   if (leaveBtn) { leaveBtn.style.opacity = '0.3'; leaveBtn.style.pointerEvents = 'none'; }
+  if (rerollBtn) { rerollBtn.style.opacity = '0.3'; rerollBtn.style.pointerEvents = 'none'; }
   // Transition non-selected cards out
   // Slide out unselected cards — selected card stays exactly as it was (no content change)
   document.querySelectorAll('.shop-card-wrap').forEach(wrap => {
@@ -10030,6 +10099,7 @@ addBtn('pause-close-x', () => { togglePauseMenu(); });
 addBtn('btn-resume', () => { togglePauseMenu(); });
 addBtn('btn-levelup-confirm', () => { confirmUpgradeCard(); });
 addBtn('btn-shop-leave', () => { closeShop(); });
+addBtn('btn-shop-reroll', () => { rerollShop(); });
 // ---- POWER UP SCREEN (opened via reforge terminal, NOT from shop) ----
 function _openPowerUpScreen() {
   const list = document.getElementById('shop-cards');
