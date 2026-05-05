@@ -678,8 +678,9 @@ body.mobile #mobile-buttons { display: block; }
     <div style="color:#ff0;font-size:18px;font-weight:bold;letter-spacing:4px;text-shadow:0 0 12px #ff0">⚙ DEBUG MOD PICKER</div>
     <div style="color:#889;font-size:10px;margin-top:4px">Tap mods to equip. Free. For testing.</div>
   </div>
-  <div id="debug-tabs" style="display:flex;flex-direction:row;gap:6px;margin-bottom:8px;flex-wrap:wrap;justify-content:center"></div>
-  <div id="debug-cards" style="display:flex;flex-direction:row;gap:8px;justify-content:center;flex-wrap:wrap;max-width:800px;width:100%;overflow-y:auto;max-height:65vh"></div>
+  <div id="debug-tabs-row1" style="display:flex;flex-direction:row;gap:5px;margin-bottom:4px;justify-content:center"></div>
+  <div id="debug-tabs-row2" style="display:flex;flex-direction:row;gap:5px;margin-bottom:8px;justify-content:center"></div>
+  <div id="debug-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:500px;width:100%;overflow-y:auto;max-height:62vh;padding:4px"></div>
   <button id="btn-debug-close" style="margin-top:10px;padding:8px 28px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer">CLOSE</button>
 </div>
 
@@ -10166,33 +10167,35 @@ function openDebugPicker() {
   if (!el) return;
   el.style.display = 'flex';
   _renderDebugTab('all');
-  // Build tabs
-  const tabs = document.getElementById('debug-tabs');
-  if (tabs) {
-    tabs.innerHTML = '';
-    const classes = [
-      { id: 'all', label: 'ALL', color: '#fff' },
-      { id: 'thermal', label: '🔥 THERMAL', color: '#f80' },
-      { id: 'cryo', label: '🧊 CRYO', color: '#8ef' },
-      { id: 'arc', label: '⚡ ARC', color: '#4ff' },
-      { id: 'pulse', label: '💨 PULSE', color: '#cef' },
-      { id: 'corrupt', label: '☣ CORRUPT', color: '#a4f' },
-      { id: 'core', label: '⚙ CORE', color: '#aaa' },
-      { id: 'beacon', label: '◎ BEACON', color: '#0ff' },
-      { id: 'discharge', label: '⚡ DISCHARGE', color: '#f80' },
-      { id: 'payload', label: '💣 PAYLOAD', color: '#fa0' },
-      { id: 'deadshot', label: '◆ DEADSHOT', color: '#f44' },
-    ];
-    for (const cls of classes) {
-      const btn = document.createElement('button');
-      btn.style.cssText = `padding:5px 10px;font-size:10px;letter-spacing:1px;font-family:'Courier New',monospace;font-weight:bold;border:1.5px solid ${cls.color}44;border-radius:6px;background:rgba(10,10,20,0.8);color:${cls.color};cursor:pointer;-webkit-tap-highlight-color:transparent`;
-      btn.textContent = cls.label;
-      const handler = (ev) => { ev.preventDefault(); _renderDebugTab(cls.id); };
-      btn.addEventListener('click', handler);
-      btn.addEventListener('touchend', handler, { passive: false });
-      tabs.appendChild(btn);
-    }
-  }
+  // Build tabs — row 1: classes, row 2: weapons
+  const row1 = document.getElementById('debug-tabs-row1');
+  const row2 = document.getElementById('debug-tabs-row2');
+  const classesRow = [
+    { id: 'all', label: 'ALL', color: '#fff' },
+    { id: 'thermal', label: '🔥 THERMAL', color: '#f80' },
+    { id: 'cryo', label: '🧊 CRYO', color: '#8ef' },
+    { id: 'arc', label: '⚡ ARC', color: '#4ff' },
+    { id: 'pulse', label: '💨 PULSE', color: '#cef' },
+    { id: 'corrupt', label: '☣ CORRUPT', color: '#a4f' },
+  ];
+  const weaponsRow = [
+    { id: 'core', label: '⚙ CORE', color: '#aaa' },
+    { id: 'beacon', label: '◎ BEACON', color: '#0ff' },
+    { id: 'discharge', label: '⚡ DISCH', color: '#f80' },
+    { id: 'payload', label: '💣 PAYLOAD', color: '#fa0' },
+    { id: 'deadshot', label: '◆ DEADSHOT', color: '#f44' },
+  ];
+  const _makeTab = (cls, parent) => {
+    const btn = document.createElement('button');
+    btn.style.cssText = `padding:5px 8px;font-size:9px;letter-spacing:1px;font-family:'Courier New',monospace;font-weight:bold;border:1.5px solid ${cls.color}44;border-radius:6px;background:rgba(10,10,20,0.8);color:${cls.color};cursor:pointer;-webkit-tap-highlight-color:transparent`;
+    btn.textContent = cls.label;
+    const handler = (ev) => { ev.preventDefault(); _renderDebugTab(cls.id); };
+    btn.addEventListener('click', handler);
+    btn.addEventListener('touchend', handler, { passive: false });
+    parent.appendChild(btn);
+  };
+  if (row1) { row1.innerHTML = ''; for (const cls of classesRow) _makeTab(cls, row1); }
+  if (row2) { row2.innerHTML = ''; for (const cls of weaponsRow) _makeTab(cls, row2); }
 }
 function _renderDebugTab(classId) {
   const container = document.getElementById('debug-cards');
@@ -10221,15 +10224,14 @@ function _renderDebugTab(classId) {
       <div style="font-size:7px;color:#889;text-align:center;line-height:1.2">${u.descs[0].slice(0,50)}${u.descs[0].length>50?'...':''}</div>
       ${owned ? '<div style="font-size:7px;color:#4f4;letter-spacing:1px">✓ EQUIPPED</div>' : ''}
     `;
+    const _uid = u.id;
     const handler = (ev) => {
       ev.preventDefault(); ev.stopPropagation();
-      if (owned) {
-        // Remove
-        delete runUpgrades[u.id];
-        delete runUpgradePower[u.id];
+      if ((runUpgrades[_uid] || 0) > 0) {
+        delete runUpgrades[_uid];
+        delete runUpgradePower[_uid];
       } else {
-        // Add
-        runUpgrades[u.id] = 1;
+        runUpgrades[_uid] = 1;
       }
       rebuildRunMods();
       _renderDebugTab(classId);
@@ -10250,7 +10252,7 @@ addBtn('btn-debug-close', () => { closeDebugPicker(); });
   const btn = document.createElement('button');
   btn.id = 'btn-debug-mods';
   btn.textContent = '⚙ MODS';
-  btn.style.cssText = 'display:none;position:fixed;top:10px;right:10px;z-index:50;padding:8px 14px;font-size:11px;letter-spacing:2px;font-family:"Courier New",monospace;font-weight:bold;background:rgba(255,255,0,0.1);border:2px solid #ff0;border-radius:8px;color:#ff0;cursor:pointer;-webkit-tap-highlight-color:transparent';
+  btn.style.cssText = 'display:none;position:fixed;top:50px;right:10px;z-index:50;padding:8px 14px;font-size:11px;letter-spacing:2px;font-family:"Courier New",monospace;font-weight:bold;background:rgba(255,255,0,0.1);border:2px solid #ff0;border-radius:8px;color:#ff0;cursor:pointer;-webkit-tap-highlight-color:transparent';
   document.body.appendChild(btn);
   const handler = (ev) => { ev.preventDefault(); openDebugPicker(); };
   btn.addEventListener('click', handler);
