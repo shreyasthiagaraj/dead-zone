@@ -3080,7 +3080,7 @@ function shouldShowDataLink() {
 
 // --- Check if boss section (end of each domain: 10, 20, 30, 40, then every 10) ---
 function _isBossSection(si) {
-  return si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
+  return si === 10 || si === 20 || si === 30 || (si >= 40 && (si - 30) % 10 === 0);
 }
 
 // --- Check if domain transition ---
@@ -4041,12 +4041,46 @@ const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
-  { name: 'ENTRY CACHE',       sections: [0, 9],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: 'dust' },
-  { name: 'CORRUPTED SUBNET',  sections: [10, 19],  wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember' },
-  { name: 'DEEP STORAGE',      sections: [20, 29],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice' },
-  { name: 'KERNEL BOUNDARY',   sections: [30, 39],  wallColor: '#1a0410', wallStroke: '#f44', floorTint: 'rgba(255,40,80,0.05)',     accentColor: '#f44', fogR:30,fogG:4,fogB:16,  glitchMult: 2.5, noFog: false, ambientType: 'ember_heavy' },
-  { name: 'THE CORE',          sections: [40, 999], wallColor: '#181818', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 0,   noFog: true,  ambientType: 'gold' },
+  { name: 'ENTRY CACHE',       sections: [0, 9],    wallColor: '#1a0a1a', wallStroke: '#b06', floorTint: null,                       accentColor: '#b06', fogR:20,fogG:8,fogB:30,  glitchMult: 1.0, noFog: false, ambientType: 'dust',       floorPattern: 'grid' },
+  { name: 'CORRUPTED SUBNET',  sections: [10, 19],  wallColor: '#1a0808', wallStroke: '#f80', floorTint: 'rgba(255,40,20,0.03)',     accentColor: '#f80', fogR:30,fogG:8,fogB:8,   glitchMult: 1.5, noFog: false, ambientType: 'ember',      floorPattern: 'checker' },
+  { name: 'DEEP STORAGE',      sections: [20, 29],  wallColor: '#081018', wallStroke: '#4ef', floorTint: 'rgba(80,160,255,0.03)',    accentColor: '#4ef', fogR:8,fogG:12,fogB:24,  glitchMult: 1.0, noFog: false, ambientType: 'ice',        floorPattern: 'frost' },
+  { name: 'THE CORE',          sections: [30, 999], wallColor: '#0a0a0a', wallStroke: '#fff', floorTint: 'rgba(255,255,255,0.02)',   accentColor: '#ff0', fogR:0,fogG:0,fogB:0,    glitchMult: 2.5, noFog: true,  ambientType: 'gold',       floorPattern: 'wireframe' },
 ];
+// ---- WAVE COMPOSITIONS — designed encounters per domain ----
+const WAVE_COMPOSITIONS = {
+  // D1: Entry Cache — melee rushers in tight corridors
+  PATROL:    { enemies: ['normal','normal','normal','fast'], minSection: 0 },
+  RUSH:      { enemies: ['fast','fast','prowler','drone','drone'], minSection: 3 },
+  SCOUTING:  { enemies: ['normal','normal','drone','drone','spitter'], minSection: 5 },
+  AMBUSH_1:  { enemies: ['prowler','prowler','stalker','fast','fast'], minSection: 6 },
+  VANGUARD:  { enemies: ['spitter','spiker','normal','normal','prowler'], minSection: 7 },
+  // D2: Corrupted Subnet — ranged crossfire on open battlefields
+  CROSSFIRE: { enemies: ['strafe','strafe','normal','normal','prowler'], minSection: 10 },
+  SIEGE:     { enemies: ['mortar','mortar','brute','fast','fast'], minSection: 10 },
+  BLITZ:     { enemies: ['bull','lancer','fast','fast','prowler'], minSection: 12 },
+  FIRESTORM: { enemies: ['exploder','exploder','splasher','strafe','normal'], minSection: 14 },
+  PINCER:    { enemies: ['reaper','lash','leaper','prowler','prowler'], minSection: 15 },
+  ARTILLERY: { enemies: ['mortar','disc','strafe','grappler','normal'], minSection: 15 },
+  // D3: Deep Storage — ambush predators in frozen mazes
+  AMBUSH_3:  { enemies: ['phaser','phaser','fast','fast','leaper'], minSection: 20 },
+  GARRISON:  { enemies: ['shieldbot','caster','caster','normal','lash'], minSection: 20 },
+  STALKERS:  { enemies: ['phaser','stalker','stalker','prowler','prowler'], minSection: 22 },
+  FORTRESS:  { enemies: ['shieldbot','shieldbot','tank','mini','strafe'], minSection: 23 },
+  JUGGERNAUT:{ enemies: ['crusher','shieldbot','caster','fast','fast'], minSection: 25 },
+  // D4: The Core — everything, max pressure
+  LOCKDOWN:  { enemies: ['anchor','anchor','reaper','fast','fast'], minSection: 30 },
+  DEATHBALL: { enemies: ['shieldbot','shieldbot','crusher','caster','beam'], minSection: 30 },
+  GAUNTLET_W:{ enemies: ['bull','bull','lancer','lancer','exploder'], minSection: 32 },
+  OVERLOAD:  { enemies: ['mortar','scatter','disc','strafe','phaser'], minSection: 34 },
+  APOCALYPSE:{ enemies: ['anchor','crusher','reaper','beam','shieldbot'], minSection: 36 },
+};
+const DOMAIN_WAVE_KEYS = [
+  ['PATROL','RUSH','SCOUTING','AMBUSH_1','VANGUARD'],                    // D1
+  ['CROSSFIRE','SIEGE','BLITZ','FIRESTORM','PINCER','ARTILLERY'],        // D2
+  ['AMBUSH_3','GARRISON','STALKERS','FORTRESS','JUGGERNAUT'],            // D3
+  ['LOCKDOWN','DEATHBALL','GAUNTLET_W','OVERLOAD','APOCALYPSE'],         // D4
+];
+
 function getTrenchDomain(sectionIdx) {
   for (const d of TRENCH_DOMAINS) { if (sectionIdx >= d.sections[0] && sectionIdx <= d.sections[1]) return d; }
   return TRENCH_DOMAINS[0];
@@ -4638,76 +4672,39 @@ function initTrenchSections() {
     const isDark = i > 5 && i % 5 === 4;
     const domain = getTrenchDomain(i);
     const modifier = rollSectionModifier(i);
-    // Domain-specific wave count and enemy density
-    let waveCount = 1, baseEnemies = 4;
+    // Domain-specific wave count + designed compositions
+    const domainIdx = Math.min(3, Math.floor(i / 10));
+    let waveCount = 1;
     const r = Math.random();
-    if (isBoss) { waveCount = 1; baseEnemies = 2; }
-    else if (i <= 9) {
-      // D1: Tight Corridors — 2-3 waves, 4-5 enemies, fast spawns
-      waveCount = i < 2 ? 2 : (r < 0.40 ? 3 : 2);
-      baseEnemies = 4 + Math.floor(i * 0.15);
-    } else if (i <= 19) {
-      // D2: Open Battlefields — 2-3 waves, 5-6 enemies
-      waveCount = r < 0.35 ? 3 : 2;
-      baseEnemies = 5 + Math.floor(Math.random() * 2);
-    } else if (i <= 29) {
-      // D3: Maze Fortress — 2 waves, 4-5 enemies, spread out
-      waveCount = r < 0.20 ? 3 : 2;
-      baseEnemies = 4 + Math.floor(Math.random() * 2);
-    } else if (i <= 39) {
-      // D4: Gauntlet — 3-4 waves, 5-7 enemies, HIGH pressure
-      waveCount = r < 0.50 ? 4 : 3;
-      baseEnemies = 5 + Math.floor(Math.random() * 3);
-    } else {
-      // D5: Massive Voids — 2-3 waves, 4-5 enemies, just harder
-      waveCount = r < 0.40 ? 3 : 2;
-      baseEnemies = 4 + Math.floor(Math.random() * 2);
-    }
-    if (modifier && modifier.id === 'doubletime') baseEnemies = Math.floor(baseEnemies * 2);
+    if (isBoss) { waveCount = 1; }
+    else if (domainIdx === 0) { waveCount = i < 2 ? 2 : (r < 0.40 ? 3 : 2); }
+    else if (domainIdx === 1) { waveCount = r < 0.35 ? 3 : 2; }
+    else if (domainIdx === 2) { waveCount = 2; }
+    else { waveCount = r < 0.50 ? 4 : 3; }
+    // Pick compositions for each wave from the domain's pool
+    const _domWaveKeys = DOMAIN_WAVE_KEYS[domainIdx] || DOMAIN_WAVE_KEYS[3];
+    const _availComps = _domWaveKeys.filter(k => WAVE_COMPOSITIONS[k] && i >= WAVE_COMPOSITIONS[k].minSection);
+    const _waveComps = []; // composition key per wave
     const waves = [];
     for (let w = 0; w < waveCount; w++) {
-      let count = baseEnemies;
-      if (isBoss) count = Math.floor(count * 0.4);
-      if (w > 0) count = Math.max(2, Math.floor(count * 0.85));
-      waves.push(count);
+      if (isBoss) { waves.push(2); _waveComps.push(null); continue; }
+      // Pick a composition not already used in this section
+      const _unused = _availComps.filter(k => !_waveComps.includes(k));
+      const _pool = _unused.length > 0 ? _unused : _availComps;
+      const _pick = _pool[Math.floor(Math.random() * _pool.length)];
+      _waveComps.push(_pick);
+      const comp = WAVE_COMPOSITIONS[_pick];
+      waves.push(comp ? comp.enemies.length : 4);
     }
-    // Domain-based enemy composition (10 sections per domain)
-    let types;
-    if (i <= 9) {
-      // Domain 1: Breakdown Zone — learn fundamentals
-      types = ['normal', 'normal', 'fast'];
-      if (i >= 3) types.push('drone', 'drone');
-      if (i >= 4) types.push('prowler');
-      if (i >= 5) types.push('spitter');
-      if (i >= 7) types.push('stalker', 'spiker');
-    } else if (i <= 19) {
-      // Domain 2: Crossfire Zone — ranged pressure + melee filler
-      types = ['strafe', 'brute', 'spitter', 'mortar', 'normal', 'fast', 'bull', 'prowler'];
-      if (i >= 12) types.push('reaper', 'lash');
-      if (i >= 13) types.push('leaper', 'lancer');
-      if (i >= 14) types.push('splasher');
-      if (i >= 15) types.push('exploder', 'stalker', 'disc', 'grappler');
-    } else if (i <= 29) {
-      // Domain 3: Siege Zone — support + priority + melee padding
-      types = ['shieldbot', 'mini', 'phaser', 'strafe', 'caster', 'fast', 'leaper', 'bull', 'splasher', 'lash', 'lancer', 'grappler'];
-      if (i >= 22) types.push('beam', 'scatter', 'reaper');
-      if (i >= 23) types.push('tank');
-      if (i >= 25) types.push('crusher');
-      if (i >= 26) types.push('mortar', 'disc');
-    } else if (i <= 39) {
-      // Domain 4: Control Zone — movement denial + melee pressure
-      types = ['anchor', 'phaser', 'leaper', 'mortar', 'brute', 'caster', 'fast', 'exploder', 'beam', 'reaper', 'crusher', 'disc', 'scatter', 'bull', 'splasher', 'prowler', 'lash', 'lancer', 'grappler'];
-      if (i >= 33) types.push('shieldbot');
-      if (i >= 36) types.push('stalker');
-    } else {
-      // Domain 5: Collapse Zone — everything, with melee filler to prevent all-elite waves
-      types = ['phaser', 'mortar', 'anchor', 'shieldbot', 'leaper', 'strafe', 'tank', 'caster', 'stalker', 'fast', 'exploder', 'leaper', 'beam', 'reaper', 'crusher', 'disc', 'scatter', 'bull', 'splasher', 'prowler', 'lash', 'lancer', 'grappler'];
-    }
+    if (modifier && modifier.id === 'doubletime') { for (let w = 0; w < waves.length; w++) waves[w] = Math.floor(waves[w] * 1.5); }
+    // types is kept as fallback for the spawn system
+    let types = ['normal','fast','drone'];
     const hazards = [];
     trenchSections.push({
       x: sectionX,
       width: secW * CELL_SIZE,
       waves,
+      waveComps: _waveComps,
       currentWave: 0,
       waveSpawnTimer: 0,
       types,
@@ -4747,12 +4744,13 @@ function spawnTrenchWave(idx, waveIdx) {
   if (!sec) return;
   const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
   const enemyCount = sec.waves[waveIdx];
-  // Per-section difficulty scaling + modifier adjustments
-  // Base floor: sections 0-9 start at 1.3x HP and +0.3 speed so early game isn't trivial
-  let hpScale = 1.3 + idx * 0.15;
-  let speedBoost = 0.15 + idx * 0.02;
-  const dmgScale = 1 + idx * 0.08;
-  // Section 15+: enemies resist 15% of bullet damage
+  // Per-section difficulty scaling — piecewise curve with domain bumps
+  const _dIdx = Math.min(3, Math.floor(idx / 10));
+  const _dLocal = idx % 10;
+  const _domainBaseHp = [1.0, 2.0, 3.5, 5.0];
+  let hpScale = _domainBaseHp[_dIdx] + _dLocal * 0.15;
+  let speedBoost = 0.15 + _dIdx * 0.15 + _dLocal * 0.015;
+  const dmgScale = 1.0 + _dIdx * 0.5 + _dLocal * 0.06;
   const _lateGameArmor = idx >= 15 ? 0.85 : 1.0;
   // DOUBLE TIME modifier: enemies have 60% HP
   if (sec.modifier && sec.modifier.id === 'doubletime') hpScale *= 0.6;
@@ -4774,11 +4772,14 @@ function spawnTrenchWave(idx, waveIdx) {
   // Melee filler pool — when caps are hit, reroll to these approachable types.
   // Keeps late waves feeling dense without being unfair.
   const _meleeFillers = ['normal', 'fast', 'drone', 'leaper', 'exploder'];
+  // Use wave composition if available, else fallback to random
+  const _compKey = sec.waveComps && sec.waveComps[waveIdx];
+  const _compEnemies = _compKey && WAVE_COMPOSITIONS[_compKey] ? WAVE_COMPOSITIONS[_compKey].enemies : null;
   for (let ei = 0; ei < enemyCount; ei++) {
-    let tk = sec.types[Math.floor(Math.random() * sec.types.length)];
+    let tk = _compEnemies && ei < _compEnemies.length ? _compEnemies[ei] : sec.types[Math.floor(Math.random() * sec.types.length)];
     // If we've hit the ranged cap, reroll to a non-ranged type
     if (_rangedTypes.has(tk) && _rangedCount >= _maxRanged) {
-      const nonRanged = sec.types.filter(t => !_rangedTypes.has(t));
+      const nonRanged = (_compEnemies || sec.types).filter(t => !_rangedTypes.has(t));
       if (nonRanged.length > 0) tk = nonRanged[Math.floor(Math.random() * nonRanged.length)];
       else tk = _meleeFillers[Math.floor(Math.random() * _meleeFillers.length)];
     }
@@ -4898,12 +4899,11 @@ function spawnTrenchSection(idx) {
   }
   // Boss spawns once with the first wave (uses the same per-section scaling)
   if (sec.isBoss) {
-    // Domain-specific boss
+    // Domain-specific boss (4 domains)
     let bossType = 'boss'; // default Warden
     if (idx >= 10 && idx < 20) bossType = 'boss_firewall';
     else if (idx >= 20 && idx < 30) bossType = 'boss_archivist';
-    else if (idx >= 30 && idx < 40) bossType = 'boss_watchdog';
-    else if (idx >= 40) bossType = ['boss', 'boss_firewall', 'boss_archivist', 'boss_watchdog'][idx % 4];
+    else if (idx >= 30) bossType = ['boss_watchdog', 'boss', 'boss_firewall', 'boss_archivist'][(idx - 30) % 4] || 'boss_watchdog';
     const bt = ZOMBIE_TYPES[bossType];
     const tier = Math.floor(idx / 10);
     const bossHp = (bt.hp + tier * 200) * (1 + idx * 0.10);
@@ -21086,23 +21086,77 @@ function render() {
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
         continue;
       }
-      // Floor cell — dark with neon grid lines
+      // Floor cell — domain-specific pattern
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
-      ctx.fillStyle=theme.floor;
-      ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
-      // Domain floor tint overlay
-      if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE); }
-      // Grid lines added to batched path (stroked once after the loop)
-      _floorPath.rect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
+      const _px=cx*CELL_SIZE, _py=cy*CELL_SIZE, _CS=CELL_SIZE;
+      const _fp = gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern;
+      if (_fp === 'checker') {
+        // D2: Checker pattern — alternating dark/light tiles
+        const _isLight = (cx + cy) % 2 === 0;
+        ctx.fillStyle = _isLight ? '#100808' : '#0c0606';
+        ctx.fillRect(_px, _py, _CS, _CS);
+        if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(_px, _py, _CS, _CS); }
+        if (_isLight) {
+          // Crack marks on lighter tiles
+          ctx.globalAlpha = 0.12; ctx.strokeStyle = '#f80'; ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(_px+2, _py+2); ctx.lineTo(_px+_CS-2, _py+_CS-2); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+        if (!_isLight) _floorPath.rect(_px, _py, _CS, _CS); // grid only on dark tiles
+      } else if (_fp === 'frost') {
+        // D3: Frost pattern — ice crystal lines
+        ctx.fillStyle = '#060a10';
+        ctx.fillRect(_px, _py, _CS, _CS);
+        if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(_px, _py, _CS, _CS); }
+        _floorPath.rect(_px, _py, _CS, _CS);
+        // Frost crystals on ~40% of cells (deterministic)
+        if ((cx * 7 + cy * 13) % 10 < 4) {
+          ctx.globalAlpha = 0.1; ctx.strokeStyle = '#8ef'; ctx.lineWidth = 0.5;
+          const _fcx = _px + _CS * 0.5, _fcy = _py + _CS * 0.5;
+          const _seed = (cx * 31 + cy * 17) % 6;
+          for (let _fi = 0; _fi < 3; _fi++) {
+            const _fa = (_seed + _fi * 2) * Math.PI / 3;
+            const _fl = 8 + (_fi * 3);
+            ctx.beginPath(); ctx.moveTo(_fcx, _fcy); ctx.lineTo(_fcx+Math.cos(_fa)*_fl, _fcy+Math.sin(_fa)*_fl); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        }
+        // Frost creep along walls
+        if (cy>0&&dungeonGrid[cy-1]&&!dungeonGrid[cy-1][cx]) {
+          ctx.globalAlpha = 0.08; ctx.fillStyle = '#8ef'; ctx.fillRect(_px, _py, _CS, 3); ctx.globalAlpha = 1;
+        }
+      } else if (_fp === 'wireframe') {
+        // D4: Wireframe — black with cross-hatch grid + gold nodes
+        ctx.fillStyle = '#030303';
+        ctx.fillRect(_px, _py, _CS, _CS);
+        // Thin white grid
+        ctx.globalAlpha = 0.2; ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.3;
+        ctx.strokeRect(_px, _py, _CS, _CS);
+        // Diagonal cross-hatch
+        ctx.globalAlpha = 0.06; ctx.beginPath();
+        ctx.moveTo(_px, _py); ctx.lineTo(_px+_CS, _py+_CS);
+        ctx.moveTo(_px+_CS, _py); ctx.lineTo(_px, _py+_CS);
+        ctx.stroke();
+        // Gold node dots at intersections
+        ctx.globalAlpha = 0.25; ctx.fillStyle = '#ff0';
+        ctx.fillRect(_px-1, _py-1, 2, 2);
+        ctx.globalAlpha = 1;
+      } else {
+        // D1: Standard grid (default)
+        ctx.fillStyle = theme.floor;
+        ctx.fillRect(_px, _py, _CS, _CS);
+        if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(_px, _py, _CS, _CS); }
+        _floorPath.rect(_px, _py, _CS, _CS);
+      }
       _gridStrokeColor = _domainGridColor || theme.grid;
       // Corridor neon strip — center line in corridors (not in rooms)
-      if(ri<0){const px=cx*CELL_SIZE,py=cy*CELL_SIZE;
+      if(ri<0&&_fp!=='wireframe'){const px=_px,py=_py;
         const hFloor=(cx>0&&dungeonGrid[cy][cx-1])&&(cx<GRID_W-1&&dungeonGrid[cy][cx+1]);
         const vFloor=(cy>0&&dungeonGrid[cy-1]&&dungeonGrid[cy-1][cx])&&(cy<_gridH-1&&dungeonGrid[cy+1]&&dungeonGrid[cy+1][cx]);
         ctx.globalAlpha=0.32;ctx.fillStyle=_domainGridColor||'#a4f';
-        if(hFloor)ctx.fillRect(px,py+CELL_SIZE/2-1,CELL_SIZE,2);
-        if(vFloor)ctx.fillRect(px+CELL_SIZE/2-1,py,2,CELL_SIZE);
+        if(hFloor)ctx.fillRect(px,py+_CS/2-1,_CS,2);
+        if(vFloor)ctx.fillRect(px+_CS/2-1,py,2,_CS);
         ctx.globalAlpha=1;}
     } else {
       ctx.fillStyle = _domainWallColor || '#050508';
@@ -21139,6 +21193,13 @@ function render() {
   ctx.globalAlpha = 0.4; // dim the grid lines
   ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
   ctx.globalAlpha = 1;
+  // Wireframe scan line (D4 only) — horizontal gold line sweeping down
+  if (gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern==='wireframe') {
+    const _scanY = ((performance.now() * 0.03) % (TRENCH_HEIGHT * CELL_SIZE));
+    ctx.globalAlpha = 0.08; ctx.fillStyle = '#ff0';
+    ctx.fillRect(0, _scanY, ARENA_W, 2);
+    ctx.globalAlpha = 1;
+  }
   const _renderH=ARENA_H;
   const _borderColor = _domainGridColor || '#b06';
   ctx.strokeStyle=_borderColor;ctx.lineWidth=3;ctx.strokeRect(0,0,ARENA_W,_renderH);
