@@ -10195,18 +10195,19 @@ function openDebugPicker() {
   if (row1) { row1.innerHTML = ''; for (const cls of classesRow) _makeTab(cls, row1); }
   if (row2) { row2.innerHTML = ''; for (const cls of weaponsRow) _makeTab(cls, row2); }
 }
+let _debugActiveTab = 'all';
 function _renderDebugTab(classId) {
+  _debugActiveTab = classId;
   const container = document.getElementById('debug-cards');
   if (!container) return;
   container.innerHTML = '';
   const _specialMap = typeof _SPECIAL_CARD_MAP !== 'undefined' ? _SPECIAL_CARD_MAP : {};
   for (const u of UPGRADE_POOL) {
-    // Filter by class
     if (classId !== 'all') {
       const cardClass = _CARD_CLASS_MAP[u.id];
       const specialWeapon = _specialMap[u.id];
       if (classId === 'core') {
-        if (cardClass || specialWeapon) continue; // core = unclassed non-weapon
+        if (cardClass || specialWeapon) continue;
       } else if (classId === 'beacon' || classId === 'discharge' || classId === 'payload' || classId === 'deadshot') {
         if (specialWeapon !== classId) continue;
       } else {
@@ -10214,30 +10215,39 @@ function _renderDebugTab(classId) {
       }
     }
     const owned = (runUpgrades[u.id] || 0) > 0;
-    const card = document.createElement('button');
-    card.style.cssText = `width:140px;min-height:60px;padding:6px;border:1.5px solid ${owned?'#4f4':u.color+'66'};border-radius:8px;background:${owned?'rgba(0,60,0,0.3)':'rgba(6,8,16,0.9)'};display:flex;flex-direction:column;gap:2px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent`;
-    card.innerHTML = `
-      <div style="font-size:16px;pointer-events:none">${u.icon}</div>
-      <div style="font-size:8px;font-weight:bold;letter-spacing:1px;color:${u.color};text-align:center;pointer-events:none">${u.name}</div>
-      <div style="font-size:7px;color:#889;text-align:center;line-height:1.2;pointer-events:none">${u.descs[0].slice(0,50)}${u.descs[0].length>50?'...':''}</div>
-      ${owned ? '<div style="font-size:7px;color:#4f4;letter-spacing:1px;pointer-events:none">✓ EQUIPPED</div>' : ''}
-    `;
-    const _uid = u.id, _classId = classId;
-    card.addEventListener('pointerdown', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      if ((runUpgrades[_uid] || 0) > 0) {
-        delete runUpgrades[_uid];
-        delete runUpgradePower[_uid];
-      } else {
-        runUpgrades[_uid] = 1;
-      }
-      rebuildRunMods();
-      _renderDebugTab(_classId);
-    });
+    const card = document.createElement('div');
+    card.dataset.modId = u.id;
+    card.style.cssText = `padding:6px;border:1.5px solid ${owned?'#4f4':u.color+'66'};border-radius:8px;background:${owned?'rgba(0,60,0,0.3)':'rgba(6,8,16,0.9)'};display:flex;flex-direction:column;gap:2px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none`;
+    card.innerHTML = `<div style="font-size:16px;pointer-events:none">${u.icon}</div><div style="font-size:8px;font-weight:bold;letter-spacing:1px;color:${u.color};text-align:center;pointer-events:none">${u.name}</div>${owned?'<div style="font-size:7px;color:#4f4;letter-spacing:1px;pointer-events:none">✓ EQUIPPED</div>':''}`;
     container.appendChild(card);
   }
 }
+// Event delegation: single listener on the container handles all card taps
+(() => {
+  const _setupDelegation = () => {
+    const container = document.getElementById('debug-cards');
+    if (!container || container._debugDelegated) return;
+    container._debugDelegated = true;
+    container.addEventListener('pointerdown', (e) => {
+      const card = e.target.closest('[data-mod-id]');
+      if (!card) return;
+      e.preventDefault(); e.stopPropagation();
+      const id = card.dataset.modId;
+      if ((runUpgrades[id] || 0) > 0) {
+        delete runUpgrades[id];
+        delete runUpgradePower[id];
+      } else {
+        runUpgrades[id] = 1;
+      }
+      rebuildRunMods();
+      _renderDebugTab(_debugActiveTab);
+    }, { passive: false });
+  };
+  // Try immediately, retry after DOM ready
+  _setupDelegation();
+  document.addEventListener('DOMContentLoaded', _setupDelegation);
+  setTimeout(_setupDelegation, 500);
+})();
 function closeDebugPicker() {
   _debugPickerOpen = false;
   const el = document.getElementById('debug-picker');
