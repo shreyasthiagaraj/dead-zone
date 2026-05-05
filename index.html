@@ -4337,8 +4337,8 @@ const TRENCH_TEMPLATES = {
 function selectTrenchTemplate(types, sectionIdx, isBoss) {
   if (isBoss) return 'wide_arena';
   if (sectionIdx < 2) return 'arena';
-  // 30% dungeon chance (maze corridors) in D3+
-  if (sectionIdx >= 20 && Math.random() < 0.30) {
+  // 60% dungeon chance in D3 (frozen mazes), 20% in D4
+  if (sectionIdx >= 20 && Math.random() < (sectionIdx < 30 ? 0.60 : 0.20)) {
     return ['dungeon_snake','dungeon_rooms','dungeon_lshape','dungeon_split'][Math.floor(Math.random()*4)];
   }
   let pool;
@@ -4354,13 +4354,14 @@ function selectTrenchTemplate(types, sectionIdx, isBoss) {
     // D3: MAZE FORTRESS — complex internal walls, labyrinthine
     pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape'];
     pool.push('bunker', 'split');
-  } else if (sectionIdx < 40) {
-    // D4: GAUNTLET ARENAS — linear, push-forward, relentless
-    pool = ['gauntlet', 'corridor', 'bunker', 'split', 'lshape'];
-    pool.push('tight_corridor', 'crossroads');
   } else {
-    // D5: MASSIVE VOIDS — huge open spaces, minimal cover
-    pool = ['wide_arena', 'wide_arena', 'columns', 'wide_pillars'];
+    // D4: THE CORE — alternates tight gauntlets and massive voids
+    const _localSec = sectionIdx % 10;
+    if (_localSec < 3 || (_localSec >= 6 && _localSec < 8)) {
+      pool = ['gauntlet', 'tight_corridor', 'corridor', 'bunker']; // tight
+    } else {
+      pool = ['wide_arena', 'wide_pillars', 'columns', 'wide_arena']; // huge
+    }
   }
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -5388,11 +5389,10 @@ const PROP_DEFS = {
 
 // Domain color palettes for props
 const _PROP_DOMAIN_COLORS = [
-  { primary: '#a8f', secondary: '#0ff', accent: '#c6f', body: '#0a0612' },  // Entry Cache
-  { primary: '#f80', secondary: '#f44', accent: '#fa0', body: '#120804' },  // Corrupted Subnet
-  { primary: '#4af', secondary: '#8ef', accent: '#4cf', body: '#040810' },  // Deep Storage
-  { primary: '#f4a', secondary: '#f44', accent: '#f80', body: '#100408' },  // Kernel Boundary
-  { primary: '#fff', secondary: '#ff0', accent: '#eef', body: '#101010' },  // The Core
+  { primary: '#a8f', secondary: '#0ff', accent: '#c6f', body: '#0a0612' },  // D1: Entry Cache
+  { primary: '#f80', secondary: '#f44', accent: '#fa0', body: '#120804' },  // D2: Corrupted Subnet
+  { primary: '#4af', secondary: '#8ef', accent: '#4cf', body: '#040810' },  // D3: Deep Storage
+  { primary: '#fff', secondary: '#ff0', accent: '#eef', body: '#0a0a0a' },  // D4: The Core
 ];
 
 // ---- VIGNETTE-BASED PROP PLACEMENT ----
@@ -5741,7 +5741,7 @@ function spawnSectionProps(idx) {
   const domain = sec.domain || getTrenchDomain(idx);
   const domainIdx = TRENCH_DOMAINS.indexOf(domain);
   const vigPool = _pickVignettesForDomain(domainIdx);
-  const colors = _PROP_DOMAIN_COLORS[Math.max(0, Math.min(4, domainIdx))];
+  const colors = _PROP_DOMAIN_COLORS[Math.max(0, Math.min(3, domainIdx))];
   const secW = (_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W;
   const usedCells = new Set();
   // 2-4 vignettes per section (more in larger sections)
@@ -19139,12 +19139,23 @@ function update() {
           z._mortarTimer=(z._mortarTimer||0)+1;
           if(z._mortarTimer>=Math.floor(z.fireRate/16.67)&&zd<400){
             z._chargeUp = (z._chargeUp || 0) + 1;
+            // Rotating targeting reticle VFX during charge
+            if (z._chargeUp > 5 && gameTime%2===0) {
+              const _cProg = z._chargeUp / 35;
+              const _reticleR = z.radius + 8 + _cProg * 12;
+              for (let _ri = 0; _ri < 4; _ri++) {
+                const _ra = (gameTime * 0.08) + _ri * Math.PI/2;
+                particles.push({x:z.x+Math.cos(_ra)*_reticleR, y:z.y+Math.sin(_ra)*_reticleR,
+                  vx:0, vy:0, life:3, maxLife:3, size:2+_cProg*2, color:'#f44', type:'spark'});
+              }
+            }
             if (z._chargeUp >= 35) {
               z._chargeUp = 0; z._mortarTimer=0;
               const bx=np.x+(Math.random()-0.5)*40, by=np.y+(Math.random()-0.5)*40;
               pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90,_damage:z.damage,_radius:60,bobTimer:0});
-              for(let pi=0;pi<6;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:12,maxLife:12,size:3,color:'#f44',type:'spark'});}
-              playSound(300,0.06,'sine',0.08);
+              for(let pi=0;pi<10;pi++){const pa=Math.random()*Math.PI*2,ps=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.3?'#f44':'#fff',type:'spark'});}
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:z.radius+20,color:'#f44',type:'wakering'});
+              playSound(200,0.1,'sawtooth',0.08); playSound(400,0.06,'sine',0.06);
             }
           } else { z._chargeUp = 0; }
         }
@@ -19211,10 +19222,14 @@ function update() {
                 for(const p of players){if(!p.alive)continue;const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
                   if(pd<50){let da=Math.atan2(pdy,pdx)-z._slashAngle;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;
                     if(Math.abs(da)<0.8){damagePlayerObj(p,z.damage*1.5,z);screenShake.intensity=Math.max(screenShake.intensity,5);}}}
-                // VFX: slash arc
-                for(let si=0;si<12;si++){const sa=z._slashAngle+(si/12-0.5)*1.6,sr=20+Math.random()*30;
-                  particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:10,maxLife:10,size:3+Math.random()*2,color:'#eef',type:'spark'});}
-                playSound(500,0.08,'sawtooth',0.06);
+                // VFX: glowing slash arc + lightning arc lines
+                for(let si=0;si<16;si++){const sa=z._slashAngle+(si/16-0.5)*1.8,sr=20+Math.random()*35;
+                  particles.push({x:z.x+Math.cos(sa)*sr,y:z.y+Math.sin(sa)*sr,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:12,maxLife:12,size:3+Math.random()*3,color:si<4?'#fff':'#eef',type:'spark'});}
+                // Arc sweep lines
+                for(let li=-2;li<=2;li++){const la=z._slashAngle+li*0.35;
+                  particles.push({x:z.x,y:z.y,tx:z.x+Math.cos(la)*55,ty:z.y+Math.sin(la)*55,vx:0,vy:0,life:8,maxLife:8,size:1.5,color:'#eef',type:'lightning'});}
+                particles.push({x:z.x,y:z.y,vx:0,vy:0,life:6,maxLife:6,size:50,color:'#eef',type:'wakering'});
+                playSound(500,0.1,'sawtooth',0.08); screenShake.intensity=Math.max(screenShake.intensity,4);
               }
               if (z._slashTimer <= 0) { z._slashState = null; z._phaseTimer = 0; }
             }
@@ -19225,10 +19240,19 @@ function update() {
               z._phaseTimer=0;
               const oldX=z.x,oldY=z.y;
               z.x=z.x+(np.x-z.x)*0.6;z.y=z.y+(np.y-z.y)*0.6;
-              for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2,ps=2+Math.random()*3;
-                particles.push({x:oldX,y:oldY,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});
-                particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});}
-              playSound(900,0.05,'sine',0.06);
+              // Origin: static tear (jagged vertical line) + sparks
+              for(let _ti=0;_ti<5;_ti++){
+                const _ty=oldY-20+_ti*10, _tx=oldX+(Math.random()-0.5)*8;
+                particles.push({x:_tx,y:_ty,tx:_tx+(Math.random()-0.5)*12,ty:_ty+10,vx:0,vy:0,life:12,maxLife:12,size:1.5,color:'#fff',type:'lightning'});
+              }
+              for(let pi=0;pi<10;pi++){const pa=Math.random()*Math.PI*2,ps=3+Math.random()*4;
+                particles.push({x:oldX,y:oldY,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#eef',type:'spark'});}
+              // Destination: unfolding ring + sparks
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:10,maxLife:10,size:z.radius+25,color:'#eef',type:'wakering'});
+              for(let pi=0;pi<10;pi++){const pa=Math.random()*Math.PI*2,ps=2+Math.random()*4;
+                particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3,color:'#fff',type:'spark'});}
+              playSound(900,0.08,'sine',0.08); playSound(1200,0.04,'sine',0.04);
+              triggerGlitchSurge(0.15, 6);
               // After teleport → slash
               z._slashState = 'windup'; z._slashTimer = 12;
             }
@@ -19244,7 +19268,18 @@ function update() {
           z._castTimer=(z._castTimer||0)+1;
           if(z._castTimer>=Math.floor(z.fireRate/16.67)&&zd<350){
             z._chargeUp = (z._chargeUp || 0) + 1;
-            if (z._chargeUp < 40) { /* telegraph phase — rendered below */ }
+            if (z._chargeUp < 40) {
+              // Hex spell circle telegraph
+              if (gameTime%3===0) {
+                const _hexR = z.radius + 10 + (z._chargeUp/40)*12;
+                const _hexRot = gameTime * 0.02;
+                for (let _hi=0;_hi<6;_hi++) {
+                  const _ha = _hexRot + _hi*Math.PI/3;
+                  const _hx = z.x+Math.cos(_ha)*_hexR, _hy = z.y+Math.sin(_ha)*_hexR;
+                  particles.push({x:_hx,y:_hy,vx:0,vy:0,life:4,maxLife:4,size:2+z._chargeUp/20,color:'#f4f',type:'spark'});
+                }
+              }
+            }
             else { z._chargeUp = 0; z._castTimer=0;
             const ca=z.angle;
             // Large, slow, glowing orb — size 10, speed 3.5, long life
@@ -19384,8 +19419,11 @@ function update() {
           } else if(z._bullState==='charge'){
             z.vx=Math.cos(z._bullAng)*z.speed*4;z.vy=Math.sin(z._bullAng)*z.speed*4;
             z._bullTimer--;
-            // Trail particles
-            particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:10,maxLife:10,size:3+Math.random()*2,color:'#f90',type:'spark'});
+            // Heavy charge trail — sparks + afterimage + ground scorch
+            for(let _ct=0;_ct<3;_ct++){particles.push({x:z.x+(Math.random()-0.5)*z.radius,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.3?'#f90':'#fff',type:'spark'});}
+            // Motion blur afterimage (ghost trail behind)
+            particles.push({x:z.x-z.vx*0.5,y:z.y-z.vy*0.5,vx:0,vy:0,life:6,maxLife:6,size:z.radius,color:'#f90',type:'dashtrail'});
+            if(gameTime%3===0)decals.push({x:z.x,y:z.y,size:8,alpha:0.15,color:'#421'});
             // Damage on contact
             for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);
               if(pd<z.radius+PLAYER_RADIUS+6)damagePlayerObj(p,z.damage,z);}
