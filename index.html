@@ -672,6 +672,17 @@ body.mobile #mobile-buttons { display: block; }
   <button id="btn-reforge-skip" style="margin-top:14px;padding:10px 32px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.3);box-shadow:0 0 6px rgba(255,40,40,0.15)">SKIP</button>
 </div>
 
+<!-- ---- DEBUG MOD PICKER ---- -->
+<div id="debug-picker" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:65;background:rgba(3,3,12,0.92);font-family:'Courier New',monospace;align-items:center;justify-content:flex-start;flex-direction:column;padding:10px;box-sizing:border-box;overflow-y:auto;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
+  <div style="text-align:center;margin-bottom:8px">
+    <div style="color:#ff0;font-size:18px;font-weight:bold;letter-spacing:4px;text-shadow:0 0 12px #ff0">⚙ DEBUG MOD PICKER</div>
+    <div style="color:#889;font-size:10px;margin-top:4px">Tap mods to equip. Free. For testing.</div>
+  </div>
+  <div id="debug-tabs" style="display:flex;flex-direction:row;gap:6px;margin-bottom:8px;flex-wrap:wrap;justify-content:center"></div>
+  <div id="debug-cards" style="display:flex;flex-direction:row;gap:8px;justify-content:center;flex-wrap:wrap;max-width:800px;width:100%;overflow-y:auto;max-height:65vh"></div>
+  <button id="btn-debug-close" style="margin-top:10px;padding:8px 28px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,40,40,0.06);border:2px solid #f44;border-radius:10px;color:#f44;cursor:pointer">CLOSE</button>
+</div>
+
 <!-- ---- SIGNAL LAB OVERLAY ---- -->
 <div id="signallab-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:62;background:rgba(3,3,12,0.88);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
   <div style="text-align:center;margin-bottom:16px">
@@ -10146,6 +10157,107 @@ function _openPowerUpScreen() {
     list.appendChild(card);
   }
 }
+
+// ---- DEBUG MOD PICKER ----
+let _debugPickerOpen = false;
+function openDebugPicker() {
+  _debugPickerOpen = true;
+  const el = document.getElementById('debug-picker');
+  if (!el) return;
+  el.style.display = 'flex';
+  _renderDebugTab('all');
+  // Build tabs
+  const tabs = document.getElementById('debug-tabs');
+  if (tabs) {
+    tabs.innerHTML = '';
+    const classes = [
+      { id: 'all', label: 'ALL', color: '#fff' },
+      { id: 'thermal', label: '🔥 THERMAL', color: '#f80' },
+      { id: 'cryo', label: '🧊 CRYO', color: '#8ef' },
+      { id: 'arc', label: '⚡ ARC', color: '#4ff' },
+      { id: 'pulse', label: '💨 PULSE', color: '#cef' },
+      { id: 'corrupt', label: '☣ CORRUPT', color: '#a4f' },
+      { id: 'core', label: '⚙ CORE', color: '#aaa' },
+      { id: 'beacon', label: '◎ BEACON', color: '#0ff' },
+      { id: 'discharge', label: '⚡ DISCHARGE', color: '#f80' },
+      { id: 'payload', label: '💣 PAYLOAD', color: '#fa0' },
+      { id: 'deadshot', label: '◆ DEADSHOT', color: '#f44' },
+    ];
+    for (const cls of classes) {
+      const btn = document.createElement('button');
+      btn.style.cssText = `padding:5px 10px;font-size:10px;letter-spacing:1px;font-family:'Courier New',monospace;font-weight:bold;border:1.5px solid ${cls.color}44;border-radius:6px;background:rgba(10,10,20,0.8);color:${cls.color};cursor:pointer;-webkit-tap-highlight-color:transparent`;
+      btn.textContent = cls.label;
+      const handler = (ev) => { ev.preventDefault(); _renderDebugTab(cls.id); };
+      btn.addEventListener('click', handler);
+      btn.addEventListener('touchend', handler, { passive: false });
+      tabs.appendChild(btn);
+    }
+  }
+}
+function _renderDebugTab(classId) {
+  const container = document.getElementById('debug-cards');
+  if (!container) return;
+  container.innerHTML = '';
+  const _specialMap = typeof _SPECIAL_CARD_MAP !== 'undefined' ? _SPECIAL_CARD_MAP : {};
+  for (const u of UPGRADE_POOL) {
+    // Filter by class
+    if (classId !== 'all') {
+      const cardClass = _CARD_CLASS_MAP[u.id];
+      const specialWeapon = _specialMap[u.id];
+      if (classId === 'core') {
+        if (cardClass || specialWeapon) continue; // core = unclassed non-weapon
+      } else if (classId === 'beacon' || classId === 'discharge' || classId === 'payload' || classId === 'deadshot') {
+        if (specialWeapon !== classId) continue;
+      } else {
+        if (cardClass !== classId) continue;
+      }
+    }
+    const owned = (runUpgrades[u.id] || 0) > 0;
+    const card = document.createElement('button');
+    card.style.cssText = `width:140px;min-height:60px;padding:6px;border:1.5px solid ${owned?'#4f4':u.color+'66'};border-radius:8px;background:${owned?'rgba(0,60,0,0.3)':'rgba(6,8,16,0.9)'};display:flex;flex-direction:column;gap:2px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent`;
+    card.innerHTML = `
+      <div style="font-size:16px">${u.icon}</div>
+      <div style="font-size:8px;font-weight:bold;letter-spacing:1px;color:${u.color};text-align:center">${u.name}</div>
+      <div style="font-size:7px;color:#889;text-align:center;line-height:1.2">${u.descs[0].slice(0,50)}${u.descs[0].length>50?'...':''}</div>
+      ${owned ? '<div style="font-size:7px;color:#4f4;letter-spacing:1px">✓ EQUIPPED</div>' : ''}
+    `;
+    const handler = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (owned) {
+        // Remove
+        delete runUpgrades[u.id];
+        delete runUpgradePower[u.id];
+      } else {
+        // Add
+        runUpgrades[u.id] = 1;
+      }
+      rebuildRunMods();
+      _renderDebugTab(classId);
+    };
+    card.addEventListener('click', handler);
+    card.addEventListener('touchend', handler, { passive: false });
+    container.appendChild(card);
+  }
+}
+function closeDebugPicker() {
+  _debugPickerOpen = false;
+  const el = document.getElementById('debug-picker');
+  if (el) el.style.display = 'none';
+}
+addBtn('btn-debug-close', () => { closeDebugPicker(); });
+// Floating debug button — visible in shell only
+(() => {
+  const btn = document.createElement('button');
+  btn.id = 'btn-debug-mods';
+  btn.textContent = '⚙ MODS';
+  btn.style.cssText = 'display:none;position:fixed;top:10px;right:10px;z-index:50;padding:8px 14px;font-size:11px;letter-spacing:2px;font-family:"Courier New",monospace;font-weight:bold;background:rgba(255,255,0,0.1);border:2px solid #ff0;border-radius:8px;color:#ff0;cursor:pointer;-webkit-tap-highlight-color:transparent';
+  document.body.appendChild(btn);
+  const handler = (ev) => { ev.preventDefault(); openDebugPicker(); };
+  btn.addEventListener('click', handler);
+  btn.addEventListener('touchend', handler, { passive: false });
+  // Show/hide based on game state
+  setInterval(() => { btn.style.display = (gameState === 'shell' && !_debugPickerOpen) ? '' : 'none'; }, 200);
+})();
 
 // Equipped-mods loadout panel. Opened from the pause menu (not a HUD badge).
 // When opened from pause, closing returns to the pause screen; when opened
