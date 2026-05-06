@@ -1559,7 +1559,7 @@ const UPGRADE_POOL = [
   { id:'superconductor', name:'SUPERCONDUCTOR', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['Chain range +15% per CHARGED enemy on screen. Spread CHARGED to extend your reach.'],
     flavor:'more nodes. longer reach.', prereqs:['arc_rounds|static_wake'] },
-  { id:'lightning_rod', name:'LIGHTNING ROD', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
+  { id:'lightning_rod', name:'LIVE WIRE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['While firing, arc bolts automatically zap all CHARGED enemies within 150px (10 dmg, 2x/sec).'],
     flavor:'they marked themselves.', prereqs:['arc_rounds|static_wake'] },
   // Pulse passives
@@ -6913,9 +6913,13 @@ function applyExposed(z) {
   const _wasExposed = z._exposed;
   z._exposed = true;
   z._exposedTimer = Math.max(z._exposedTimer || 0, 180); // 3s
-  // (Storm Surge single-status cross-apply removed — combo fires on-hit when
-  // both EXPOSED + CHARGED are present.)
-  // VFX: only show label on first application
+  // Pulse slide: convert any existing knockback velocity into smooth slide
+  const _kbSpeed = Math.sqrt((z.vx||0)*(z.vx||0) + (z.vy||0)*(z.vy||0));
+  if (_kbSpeed > 3) {
+    z._slideVx = (z._slideVx || 0) + z.vx * 0.6;
+    z._slideVy = (z._slideVy || 0) + z.vy * 0.6;
+    z._slideTimer = Math.max(z._slideTimer || 0, 25);
+  }
   if (!_wasExposed) {
     particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});
     floatingTexts.push({x:z.x, y:z.y - z.radius - 14, text:'EXPOSED', color:'#cef', vx:0, vy:-1.2, life:24, maxLife:24});
@@ -12889,7 +12893,7 @@ function throwSpike() {
       const _aA = a + offsetA;
       spikes.push({
         x: sx, y: sy, ownerId: lp.id, classId: 'pulse',
-        vx: Math.cos(_aA) * 22, vy: Math.sin(_aA) * 22,
+        vx: Math.cos(_aA) * 14, vy: Math.sin(_aA) * 14,
         phase: 'flying', _torpedo: true,
         travel: 0,
         _piercedSet: new Set(),
@@ -13040,10 +13044,10 @@ function throwSpike() {
         if (d2 < _r * _r) {
           const d = Math.sqrt(d2) || 1;
           // Smooth sliding push — sets slide velocity that decays over time
-          const _push = 26 * (1 - d / _r) + 10;
+          const _push = 20 * (1 - d / _r) + 8;
           z._slideVx = (z._slideVx || 0) + (dx / d) * _push;
           z._slideVy = (z._slideVy || 0) + (dy / d) * _push;
-          z._slideTimer = 50; // ~0.83s of sliding
+          z._slideTimer = 40; // ~0.67s of sliding
           damageZombie(z, 35, dx / d * 6, dy / d * 6);
           applyExposed(z);
           // Per-enemy: directional spark spray
@@ -13062,10 +13066,10 @@ function throwSpike() {
           }
         }
       }
-      // Expanding ripple waves — staggered timing, fast start → slow fade
+      // Fast expanding ripple waves — rapid cascade outward
       for (let r = 0; r < 6; r++) {
         particles.push({ x: px, y: py, vx: 0, vy: 0,
-          life: 12+r*6, maxLife: 14+r*6, size: _r*(0.5+r*0.2),
+          life: 8+r*3, maxLife: 10+r*3, size: _r*(0.4+r*0.22),
           color: r<2?'#fff':r<4?'#cef':'#8cf', type: 'wakering' });
       }
       // 48 radial speed lines — dense blast pattern
@@ -13895,7 +13899,7 @@ function _updateRingZone(sp, _radBoost) {
           size: 2, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
         screenShake.intensity = Math.max(screenShake.intensity, 3);
         playSfx('zap', 0.12);
-        if (!_next) { sp.lifetime = 0; return; } // no more targets — bolt expires
+        // No next target — bolt keeps flying in current direction
         break;
       }
     }
@@ -18977,7 +18981,7 @@ function update() {
                       if (!_sp._orb || _sp.phase !== 'planted') continue;
                       const _rdx = z.x - _sp.x, _rdy = z.y - _sp.y;
                       if (_rdx*_rdx + _rdy*_rdy < _rodR2) {
-                        const _rodDmg = Math.floor(_dmg * 0.5);
+                        const _rodDmg = Math.floor(_dmg * 0.35);
                         damageZombie(z, _rodDmg, 0, 0);
                         applyCharged(z);
                         // Lightning bolt from rod to enemy
