@@ -4734,6 +4734,7 @@ function initTrenchSections() {
       cleared: false,
       multiDoor: _multiDoor,
       doorReward: _doorReward,
+      doorSide: (!isBoss && i >= 2 && !_isDomainTrans && Math.random() < 0.3) ? 'top' : 'right',
       isBoss,
       isDark,
       hazards,
@@ -5258,42 +5259,80 @@ function updateTrench() {
       }
     }
   }
-  // Door trigger: when cleared and any player is at the right wall
+  // Door trigger: when cleared and any player reaches the door
   if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
-    const rightWallX = sec.x + TW - CELL_SIZE;
-    const triggerX = rightWallX - PLAYER_RADIUS - 6;
-    if (sec.multiDoor) {
-      // Multi-door: two doors, top and bottom (must match rendering dimensions)
-      const _gap = 1.5 * CELL_SIZE, _doorH = 4 * CELL_SIZE;
-      const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
-      const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
-      const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
-      for (const p of players) {
-        if (!p.alive) continue;
-        if (p.x >= triggerX) {
-          let _chosenReward = null;
-          if (p.y + PLAYER_RADIUS >= _topY1 && p.y - PLAYER_RADIUS <= _topY2) _chosenReward = sec.multiDoor.top;
-          else if (p.y + PLAYER_RADIUS >= _botY1 && p.y - PLAYER_RADIUS <= _botY2) _chosenReward = sec.multiDoor.bottom;
-          if (_chosenReward) {
+    const _side = sec.doorSide || 'right';
+    const _DOOR_W = 4 * CELL_SIZE; // door width (used for top-side doors)
+    const _DOOR_GAP = 1.5 * CELL_SIZE;
+    if (_side === 'top') {
+      const topWallY = CELL_SIZE;
+      const triggerY = topWallY + PLAYER_RADIUS + 6;
+      const secMidX = sec.x + TW / 2;
+      if (sec.multiDoor) {
+        const _lx1 = secMidX - _DOOR_GAP/2 - _DOOR_W, _lx2 = secMidX - _DOOR_GAP/2;
+        const _rx1 = secMidX + _DOOR_GAP/2, _rx2 = secMidX + _DOOR_GAP/2 + _DOOR_W;
+        for (const p of players) {
+          if (!p.alive) continue;
+          if (p.y <= triggerY) {
+            let _chosenReward = null;
+            if (p.x + PLAYER_RADIUS >= _lx1 && p.x - PLAYER_RADIUS <= _lx2) _chosenReward = sec.multiDoor.top;
+            else if (p.x + PLAYER_RADIUS >= _rx1 && p.x - PLAYER_RADIUS <= _rx2) _chosenReward = sec.multiDoor.bottom;
+            if (_chosenReward) {
+              _trenchPendingNext = trenchSection + 1;
+              window._pendingDoorReward = _chosenReward;
+              startTrenchFade();
+              addFloatingText(p.x, p.y - 30, _chosenReward.toUpperCase() + ' CHOSEN', '#fc0');
+              break;
+            }
+          }
+        }
+      } else {
+        const _dx1 = secMidX - _DOOR_W/2, _dx2 = secMidX + _DOOR_W/2;
+        for (const p of players) {
+          if (!p.alive) continue;
+          if (p.y <= triggerY && p.x + PLAYER_RADIUS >= _dx1 && p.x - PLAYER_RADIUS <= _dx2) {
             _trenchPendingNext = trenchSection + 1;
-            window._pendingDoorReward = _chosenReward;
+            window._pendingDoorReward = sec.doorReward || null;
             startTrenchFade();
-            addFloatingText(p.x, p.y - 30, _chosenReward.toUpperCase() + ' CHOSEN', '#fc0');
             break;
           }
         }
       }
     } else {
-      // Single door — centered
-      const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
-      const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
-      for (const p of players) {
-        if (!p.alive) continue;
-        if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
-          _trenchPendingNext = trenchSection + 1;
-          window._pendingDoorReward = sec.doorReward || null;
-          startTrenchFade();
-          break;
+      // Right wall
+      const rightWallX = sec.x + TW - CELL_SIZE;
+      const triggerX = rightWallX - PLAYER_RADIUS - 6;
+      if (sec.multiDoor) {
+        const _gap = _DOOR_GAP, _doorH = _DOOR_W;
+        const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
+        const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
+        const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
+        for (const p of players) {
+          if (!p.alive) continue;
+          if (p.x >= triggerX) {
+            let _chosenReward = null;
+            if (p.y + PLAYER_RADIUS >= _topY1 && p.y - PLAYER_RADIUS <= _topY2) _chosenReward = sec.multiDoor.top;
+            else if (p.y + PLAYER_RADIUS >= _botY1 && p.y - PLAYER_RADIUS <= _botY2) _chosenReward = sec.multiDoor.bottom;
+            if (_chosenReward) {
+              _trenchPendingNext = trenchSection + 1;
+              window._pendingDoorReward = _chosenReward;
+              startTrenchFade();
+              addFloatingText(p.x, p.y - 30, _chosenReward.toUpperCase() + ' CHOSEN', '#fc0');
+              break;
+            }
+          }
+        }
+      } else {
+        const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
+        const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
+        for (const p of players) {
+          if (!p.alive) continue;
+          if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
+            _trenchPendingNext = trenchSection + 1;
+            window._pendingDoorReward = sec.doorReward || null;
+            startTrenchFade();
+            break;
+          }
         }
       }
     }
@@ -23714,106 +23753,126 @@ function render() {
     ctx.beginPath();ctx.moveTo(bx2-bLen,by2);ctx.lineTo(bx2,by2);ctx.lineTo(bx2,by2-bLen);ctx.stroke();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
-  // Trench door(s) + reward runway
+  // Trench door(s) — color-coded by reward
   if(gameMode==='trench'&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
     const TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
-    const dx1=sec.x+TW-CELL_SIZE;
-    const dx2=sec.x+TW;
     const open=sec.cleared && !_dlChoicePending;
     const isLast=trenchSection>=TRENCH_NUM_SECTIONS-1;
+    const _side = sec.doorSide || 'right';
     const _rewardColors = { health:'#4f4', bits:'#ff0', mod:'#0ff', upgrade:'#f80' };
+    const _DOOR_W = 4 * CELL_SIZE;
+    const _DOOR_GAP = 1.5 * CELL_SIZE;
+    const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
 
-    // --- Short colored runway glow in front of door ---
-    const _drawRunway = (doorY1, doorY2, rewardType, isOpen) => {
-      if (!rewardType) return;
-      const rc = _rewardColors[rewardType] || '#0ff';
-      const doorMidY = (doorY1 + doorY2) / 2;
-      const runwayLen = 1.5 * CELL_SIZE;
-      const runwayW = (doorY2 - doorY1) * 0.8;
-      const runwayX1 = dx1 - runwayLen;
-      const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
-      const bright = isOpen ? 1.0 : 0.35;
-
-      // Floor glow — short colored strip right at the door
-      for (let strip = 0; strip < 4; strip++) {
-        const t = strip / 4;
-        const sx = runwayX1 + t * runwayLen;
-        const sw = runwayLen / 4;
-        const alpha = bright * (t * t * 0.35 * pulse + 0.04);
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = rc;
-        ctx.fillRect(sx, doorMidY - runwayW/2, sw, runwayW);
+    // --- Door portal: thick bright slit + wide floor glow ---
+    // Works for both right-wall (vertical slit) and top-wall (horizontal slit)
+    const _drawPortal = (x1, y1, x2, y2, color, isHoriz) => {
+      const b = open ? 1.0 : 0.3;
+      const mx = (x1+x2)/2, my = (y1+y2)/2;
+      const len = isHoriz ? (x2-x1) : (y2-y1);
+      // Wide ambient glow — visible across the room
+      ctx.globalAlpha = b * 0.2 * pulse;
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(mx, my, len * 0.8, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = b * 0.08;
+      ctx.beginPath(); ctx.arc(mx, my, len * 1.4, 0, Math.PI * 2); ctx.fill();
+      // Short runway glow on the floor in front of the door
+      const rLen = 1.5 * CELL_SIZE;
+      if (isHoriz) {
+        // Glow extends downward from top wall
+        for (let s = 0; s < 4; s++) {
+          const t = s / 4;
+          ctx.globalAlpha = b * ((1-t)*(1-t) * 0.4 * pulse + 0.03);
+          ctx.fillStyle = color;
+          ctx.fillRect(x1, y1 + t * rLen, x2 - x1, rLen / 4);
+        }
+      } else {
+        // Glow extends leftward from right wall
+        for (let s = 0; s < 4; s++) {
+          const t = s / 4;
+          ctx.globalAlpha = b * (t * t * 0.4 * pulse + 0.03);
+          ctx.fillStyle = color;
+          ctx.fillRect(x1 - rLen + t * rLen, y1, rLen / 4, y2 - y1);
+        }
       }
-
-      // Edge lines
-      ctx.globalAlpha = bright * 0.5 * pulse;
-      ctx.strokeStyle = rc; ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 6]);
-      ctx.beginPath();
-      ctx.moveTo(runwayX1, doorMidY - runwayW/2);
-      ctx.lineTo(dx1 - 4, doorMidY - runwayW/2);
-      ctx.moveTo(runwayX1, doorMidY + runwayW/2);
-      ctx.lineTo(dx1 - 4, doorMidY + runwayW/2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      // Thick bright slit
+      ctx.globalAlpha = b * (0.7 + 0.3 * pulse);
+      ctx.strokeStyle = color; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      // Inner bright core
+      ctx.globalAlpha = b * (0.9 + 0.1 * pulse);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      // Fill behind slit
+      if (isHoriz) {
+        ctx.globalAlpha = b * 0.15 * pulse; ctx.fillStyle = color;
+        ctx.fillRect(x1, y1 - 4, x2 - x1, 8);
+      } else {
+        ctx.globalAlpha = b * 0.15 * pulse; ctx.fillStyle = color;
+        ctx.fillRect(x1 - 4, y1, 8, y2 - y1);
+      }
       ctx.globalAlpha = 1;
     };
 
-    // --- Door slit on the wall ---
-    const _drawDoor = (y1, y2, color, label) => {
-      const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
-      ctx.globalAlpha=open?0.8*pulse:0.25;
-      ctx.strokeStyle=color;ctx.lineWidth=4;
-      ctx.beginPath();ctx.moveTo(dx1,y1);ctx.lineTo(dx1,y2);ctx.stroke();
-      ctx.globalAlpha=open?0.25*pulse:0.05;ctx.fillStyle=color;
-      ctx.fillRect(dx1-3,y1,6,y2-y1);
-      ctx.globalAlpha=1;
-      ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillStyle=color;
-      ctx.fillText(label,dx1,(y1+y2)/2);
-      ctx.textBaseline='alphabetic';
-    };
-
-    if (sec.multiDoor && !isLast) {
-      // Two doors — top and bottom
-      const _gap = 1.5 * CELL_SIZE;
-      const _doorH = 4 * CELL_SIZE;
-      const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
-      const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
-      const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
-      const _topCol = open ? (_rewardColors[sec.multiDoor.top]||'#0ff') : '#f44';
-      const _botCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
-      // Runways — always visible (dimmed if locked)
-      _drawRunway(_topY1, _topY2, sec.multiDoor.top, open);
-      _drawRunway(_botY1, _botY2, sec.multiDoor.bottom, open);
-      // Door slits
-      _drawDoor(_topY1, _topY2, _topCol, open ? '\u25B2' : '\u2715');
-      _drawDoor(_botY1, _botY2, _botCol, open ? '\u25BC' : '\u2715');
-      // Divider + CHOOSE label
-      const _divAlpha = open ? (0.5+Math.sin(gameTime*0.1)*0.3) : 0.2;
-      ctx.globalAlpha=_divAlpha;ctx.strokeStyle='#aaa';ctx.lineWidth=1;
-      ctx.setLineDash([4,6]);
-      ctx.beginPath();ctx.moveTo(dx1-7*CELL_SIZE,_midY);ctx.lineTo(dx1,_midY);ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillStyle=open?'#fff':'#888';
-      ctx.fillText(open?'CHOOSE YOUR PATH':'CLEAR TO UNLOCK',dx1-4*CELL_SIZE,_midY);
-      ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
-    } else if (!isLast) {
-      // Single door — centered, with reward runway
+    if (isLast) {
+      // Escape door — always right wall, green
       const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
       const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
-      const _sr = sec.doorReward || null;
-      if (_sr) _drawRunway(doorY1, doorY2, _sr, open);
-      const dColor=open?(_sr?(_rewardColors[_sr]||'#0ff'):'#0ff'):_dlChoicePending?'#f80':'#f44';
-      const lbl=open?'\u25B6 OPEN \u25B6':_dlChoicePending?'\u25C6 CHOOSE \u25C6':'\u2715 LOCKED \u2715';
-      _drawDoor(doorY1, doorY2, dColor, lbl);
+      const dx=sec.x+TW-CELL_SIZE;
+      _drawPortal(dx, doorY1, dx, doorY2, open?'#0f0':'#f44', false);
+    } else if (_side === 'top') {
+      const topY = CELL_SIZE;
+      const secMidX = sec.x + TW / 2;
+      if (sec.multiDoor) {
+        const _lx1 = secMidX - _DOOR_GAP/2 - _DOOR_W, _lx2 = secMidX - _DOOR_GAP/2;
+        const _rx1 = secMidX + _DOOR_GAP/2, _rx2 = secMidX + _DOOR_GAP/2 + _DOOR_W;
+        const _lCol = open ? (_rewardColors[sec.multiDoor.top]||'#0ff') : '#f44';
+        const _rCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
+        _drawPortal(_lx1, topY, _lx2, topY, _lCol, true);
+        _drawPortal(_rx1, topY, _rx2, topY, _rCol, true);
+        // Divider
+        ctx.globalAlpha = open ? 0.4 : 0.15;
+        ctx.strokeStyle='#aaa';ctx.lineWidth=1;ctx.setLineDash([4,6]);
+        ctx.beginPath();ctx.moveTo(secMidX,topY);ctx.lineTo(secMidX,topY+4*CELL_SIZE);ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillStyle=open?'#fff':'#888';
+        ctx.fillText(open?'CHOOSE':'LOCKED',secMidX,topY+2.5*CELL_SIZE);
+        ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
+      } else {
+        const _dx1 = secMidX - _DOOR_W/2, _dx2 = secMidX + _DOOR_W/2;
+        const _sr = sec.doorReward || null;
+        const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : _dlChoicePending ? '#f80' : '#f44';
+        _drawPortal(_dx1, topY, _dx2, topY, dColor, true);
+      }
     } else {
-      // Last section — escape
-      const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
-      const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
-      _drawDoor(doorY1, doorY2, open?'#0f0':'#f44', open?'\u2605 ESCAPE \u2605':'\u2715 LOCKED \u2715');
+      // Right wall
+      const dx = sec.x + TW - CELL_SIZE;
+      if (sec.multiDoor) {
+        const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
+        const _topY1 = _midY - _DOOR_GAP/2 - _DOOR_W, _topY2 = _midY - _DOOR_GAP/2;
+        const _botY1 = _midY + _DOOR_GAP/2, _botY2 = _midY + _DOOR_GAP/2 + _DOOR_W;
+        const _topCol = open ? (_rewardColors[sec.multiDoor.top]||'#0ff') : '#f44';
+        const _botCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
+        _drawPortal(dx, _topY1, dx, _topY2, _topCol, false);
+        _drawPortal(dx, _botY1, dx, _botY2, _botCol, false);
+        // Divider
+        ctx.globalAlpha = open ? 0.4 : 0.15;
+        ctx.strokeStyle='#aaa';ctx.lineWidth=1;ctx.setLineDash([4,6]);
+        ctx.beginPath();ctx.moveTo(dx-4*CELL_SIZE,_midY);ctx.lineTo(dx,_midY);ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillStyle=open?'#fff':'#888';
+        ctx.fillText(open?'CHOOSE':'LOCKED',dx-2.5*CELL_SIZE,_midY);
+        ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
+      } else {
+        const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
+        const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
+        const _sr = sec.doorReward || null;
+        const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : _dlChoicePending ? '#f80' : '#f44';
+        _drawPortal(dx, doorY1, dx, doorY2, dColor, false);
+      }
     }
   }
 
@@ -25245,27 +25304,37 @@ function render() {
         fctx.fillStyle = _fbGrad;
         fctx.fillRect(_fbx - _fbR, _fby - _fbR, _fbR * 2, _fbR * 2);
       }
-      // DOOR LIGHTSOURCE: colored door glow carves through fog
+      // DOOR LIGHTSOURCE: door glow carves through fog
       if (gameMode === 'trench' && trenchSections[trenchSection]) {
         const _fSec = trenchSections[trenchSection];
         const _fTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
-        const _fDx = _fSec.x + _fTW - CELL_SIZE;
-        const _signCenters = [];
-        if (_fSec.multiDoor) {
-          const _fMid = (TRENCH_HEIGHT/2)*CELL_SIZE;
-          const _fGap = 1.5*CELL_SIZE, _fDH = 4*CELL_SIZE;
-          _signCenters.push({ x: _fDx - CELL_SIZE, y: _fMid - _fGap/2 - _fDH/2 });
-          _signCenters.push({ x: _fDx - CELL_SIZE, y: _fMid + _fGap/2 + _fDH/2 });
-        } else if (_fSec.doorReward) {
-          const _fDoorMid = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE + TRENCH_DOOR_HEIGHT*CELL_SIZE/2;
-          _signCenters.push({ x: _fDx - CELL_SIZE, y: _fDoorMid });
+        const _fSide = _fSec.doorSide || 'right';
+        const _fogDoorPts = [];
+        if (_fSide === 'top') {
+          const _fMidX = _fSec.x + _fTW / 2;
+          if (_fSec.multiDoor) {
+            _fogDoorPts.push({ x: _fMidX - 2*CELL_SIZE, y: 2*CELL_SIZE });
+            _fogDoorPts.push({ x: _fMidX + 2*CELL_SIZE, y: 2*CELL_SIZE });
+          } else {
+            _fogDoorPts.push({ x: _fMidX, y: 2*CELL_SIZE });
+          }
+        } else {
+          const _fDx = _fSec.x + _fTW - CELL_SIZE;
+          if (_fSec.multiDoor) {
+            const _fMid = (TRENCH_HEIGHT/2)*CELL_SIZE;
+            _fogDoorPts.push({ x: _fDx, y: _fMid - 3*CELL_SIZE });
+            _fogDoorPts.push({ x: _fDx, y: _fMid + 3*CELL_SIZE });
+          } else {
+            const _fDoorMid = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE + TRENCH_DOOR_HEIGHT*CELL_SIZE/2;
+            _fogDoorPts.push({ x: _fDx, y: _fDoorMid });
+          }
         }
-        for (const _sc of _signCenters) {
+        for (const _sc of _fogDoorPts) {
           const _scx = _sc.x + fox, _scy = _sc.y + foy;
-          const _scR = 2.5 * CELL_SIZE;
+          const _scR = 3 * CELL_SIZE;
           const _scGrad = fctx.createRadialGradient(_scx, _scy, 0, _scx, _scy, _scR);
-          _scGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
-          _scGrad.addColorStop(0.4, 'rgba(0,0,0,0.35)');
+          _scGrad.addColorStop(0, 'rgba(0,0,0,0.8)');
+          _scGrad.addColorStop(0.4, 'rgba(0,0,0,0.4)');
           _scGrad.addColorStop(1, 'rgba(0,0,0,0)');
           fctx.fillStyle = _scGrad;
           fctx.fillRect(_scx - _scR, _scy - _scR, _scR * 2, _scR * 2);
