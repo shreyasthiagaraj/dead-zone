@@ -4701,6 +4701,16 @@ function initTrenchSections() {
     // types is kept as fallback for the spawn system
     let types = ['normal','fast','drone'];
     const hazards = [];
+    // Multi-door choice: ~40% of non-boss sections after section 3
+    const _DOOR_REWARDS = ['health','bits','mod','powerup'];
+    let _multiDoor = null;
+    if (!isBoss && i >= 3 && Math.random() < 0.40) {
+      // Pick 2 different rewards
+      const _r1 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
+      let _r2 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
+      while (_r2 === _r1) _r2 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
+      _multiDoor = { top: _r1, bottom: _r2 };
+    }
     trenchSections.push({
       x: sectionX,
       width: secW * CELL_SIZE,
@@ -4711,6 +4721,7 @@ function initTrenchSections() {
       types,
       spawned: false,
       cleared: false,
+      multiDoor: _multiDoor,
       isBoss,
       isDark,
       hazards,
@@ -5188,23 +5199,49 @@ function updateTrench() {
         }
       }
       // Regular cadence: Data Link choice chests every 2 sections
-      else if (shouldShowDataLink()) {
+      // Skip if this section has multi-door (door reward replaces data link)
+      else if (!sec.multiDoor && shouldShowDataLink()) {
         setTimeout(() => spawnDataLinkChests(), 400);
       }
     }
   }
-  // Door trigger: when cleared and any player is at the right wall — blocked during shop/reforge/choice pending
+  // Door trigger: when cleared and any player is at the right wall
   if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
-    const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
-    const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
     const triggerX = rightWallX - PLAYER_RADIUS - 6;
-    for (const p of players) {
-      if (!p.alive) continue;
-      if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
-        _trenchPendingNext = trenchSection + 1;
-        startTrenchFade();
-        break;
+    if (sec.multiDoor) {
+      // Multi-door: two doors, top and bottom
+      const _gap = 2 * CELL_SIZE, _doorH = 3 * CELL_SIZE;
+      const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
+      const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
+      const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
+      for (const p of players) {
+        if (!p.alive) continue;
+        if (p.x >= triggerX) {
+          let _chosenReward = null;
+          if (p.y + PLAYER_RADIUS >= _topY1 && p.y - PLAYER_RADIUS <= _topY2) _chosenReward = sec.multiDoor.top;
+          else if (p.y + PLAYER_RADIUS >= _botY1 && p.y - PLAYER_RADIUS <= _botY2) _chosenReward = sec.multiDoor.bottom;
+          if (_chosenReward) {
+            _trenchPendingNext = trenchSection + 1;
+            window._pendingDoorReward = _chosenReward;
+            startTrenchFade();
+            addFloatingText(p.x, p.y - 30, _chosenReward.toUpperCase() + ' CHOSEN', '#fc0');
+            break;
+          }
+        }
+      }
+    } else {
+      // Single door — centered
+      const doorY1 = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
+      const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
+      for (const p of players) {
+        if (!p.alive) continue;
+        if (p.x >= triggerX && p.y + PLAYER_RADIUS >= doorY1 && p.y - PLAYER_RADIUS <= doorY2) {
+          _trenchPendingNext = trenchSection + 1;
+          window._pendingDoorReward = null;
+          startTrenchFade();
+          break;
+        }
       }
     }
   }
@@ -5268,6 +5305,26 @@ function updateTrenchFade() {
           // Clear leftover zombie projectiles from prev section so nothing lingers
           bullets = bullets.filter(b => b.owner !== 'zombie');
           spawnTrenchSection(newIdx);
+          // Apply door reward if the player chose a multi-door
+          if (window._pendingDoorReward) {
+            const _dr = window._pendingDoorReward;
+            window._pendingDoorReward = null;
+            const lp = getLocalPlayer();
+            if (_dr === 'health' && lp) {
+              const _heal = Math.min(40, lp.maxHp - lp.hp);
+              lp.hp = Math.min(lp.maxHp, lp.hp + 40);
+              if (lp) addFloatingText(lp.x, lp.y - 30, '+' + _heal + ' HP', '#4f4');
+            } else if (_dr === 'bits') {
+              const _amt = 40 + Math.floor(Math.random() * 40);
+              metaShards += _amt;
+              if (lp) addFloatingText(lp.x, lp.y - 30, '+' + _amt + ' BITS', '#ff0');
+            } else if (_dr === 'mod') {
+              // Open mod terminal at next opportunity
+              setTimeout(() => { if (gameState === 'playing') { _dlChoicePending = true; spawnShopChest(lp ? lp.x + 60 : 200, (TRENCH_HEIGHT/2)*CELL_SIZE); addFloatingText(lp?lp.x:200, lp?lp.y-30:200, 'MOD TERMINAL', '#0ff'); } }, 800);
+            } else if (_dr === 'powerup') {
+              setTimeout(() => { if (gameState === 'playing') { openPowerUp(); addFloatingText(lp?lp.x:200, lp?lp.y-30:200, 'POWER UP', '#fc0'); } }, 800);
+            }
+          }
           // Extra safety: snapshot the run each time the player reaches a new
           // section. iOS/Android sometimes kills a background app without
           // firing our visibilitychange hook, so leaning solely on exit
@@ -23619,30 +23676,59 @@ function render() {
     ctx.beginPath();ctx.moveTo(bx2-bLen,by2);ctx.lineTo(bx2,by2);ctx.lineTo(bx2,by2-bLen);ctx.stroke();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
-  // Trench door
+  // Trench door(s)
   if(gameMode==='trench'&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
     const TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
-    const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
-    const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
     const dx1=sec.x+TW-CELL_SIZE;
     const dx2=sec.x+TW;
-    const open=sec.cleared && !_dlChoicePending; // door stays locked until choice is made
+    const open=sec.cleared && !_dlChoicePending;
     const isLast=trenchSection>=TRENCH_NUM_SECTIONS-1;
-    const dColor=isLast?'#0f0':open?'#0ff':_dlChoicePending?'#f80':'#f44';
-    const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
-    ctx.globalAlpha=open?0.6*pulse:0.3;
-    ctx.shadowColor=dColor;ctx.shadowBlur=12;
-    ctx.strokeStyle=dColor;ctx.lineWidth=4;
-    ctx.beginPath();ctx.moveTo(dx1,doorY1);ctx.lineTo(dx1,doorY2);ctx.stroke();
-    ctx.globalAlpha=0.18;ctx.fillStyle=dColor;
-    ctx.fillRect(dx1-2,doorY1,(dx2-dx1)+2,doorY2-doorY1);
-    ctx.shadowBlur=0;ctx.globalAlpha=1;
-    ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillStyle=dColor;ctx.shadowColor=dColor;ctx.shadowBlur=8;
-    const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ DOOR OPEN ▶':_dlChoicePending?'◆ CHOOSE ◆':'✕ LOCKED ✕';
-    ctx.fillText(lbl,dx1,(doorY1+doorY2)/2);
-    ctx.shadowBlur=0;ctx.textBaseline='alphabetic';
+    const _rewardIcons = { health:'♥', bits:'◆', mod:'★', powerup:'⚒' };
+    const _rewardColors = { health:'#4f4', bits:'#ff0', mod:'#0ff', powerup:'#fc0' };
+    const _drawDoor = (y1, y2, color, label, rewardType) => {
+      const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
+      ctx.globalAlpha=open?0.6*pulse:0.3;
+      ctx.shadowColor=color;ctx.shadowBlur=10;
+      ctx.strokeStyle=color;ctx.lineWidth=3;
+      ctx.beginPath();ctx.moveTo(dx1,y1);ctx.lineTo(dx1,y2);ctx.stroke();
+      ctx.globalAlpha=0.15;ctx.fillStyle=color;
+      ctx.fillRect(dx1-2,y1,(dx2-dx1)+2,y2-y1);
+      ctx.shadowBlur=0;ctx.globalAlpha=1;
+      ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=6;
+      ctx.fillText(label,dx1,(y1+y2)/2);
+      if (rewardType && open) {
+        const _rc = _rewardColors[rewardType] || '#fff';
+        const _ri = _rewardIcons[rewardType] || '?';
+        ctx.fillStyle=_rc;ctx.font='bold 14px monospace';
+        ctx.fillText(_ri,dx1-18,(y1+y2)/2);
+        ctx.font='bold 8px monospace';ctx.fillStyle=_rc;
+        ctx.fillText(rewardType.toUpperCase(),dx1,(y1+y2)/2+12);
+      }
+      ctx.shadowBlur=0;ctx.textBaseline='alphabetic';
+    };
+    if (sec.multiDoor && !isLast) {
+      // Two doors — top and bottom halves of right wall
+      const _gap = 2 * CELL_SIZE; // gap between doors
+      const _doorH = 3 * CELL_SIZE; // each door is 3 cells tall
+      const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
+      const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
+      const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
+      const _topCol = open ? (_rewardColors[sec.multiDoor.top]||'#0ff') : '#f44';
+      const _botCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
+      const _topLbl = open ? '▲' : '✕';
+      const _botLbl = open ? '▼' : '✕';
+      _drawDoor(_topY1, _topY2, _topCol, _topLbl, open ? sec.multiDoor.top : null);
+      _drawDoor(_botY1, _botY2, _botCol, _botLbl, open ? sec.multiDoor.bottom : null);
+    } else {
+      // Single door — centered
+      const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
+      const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
+      const dColor=isLast?'#0f0':open?'#0ff':_dlChoicePending?'#f80':'#f44';
+      const lbl=isLast&&open?'★ ESCAPE ★':open?'▶ OPEN ▶':_dlChoicePending?'◆ CHOOSE ◆':'✕ LOCKED ✕';
+      _drawDoor(doorY1, doorY2, dColor, lbl, null);
+    }
   }
 
   // Exit portal
