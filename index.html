@@ -12960,23 +12960,26 @@ function throwSpike() {
     } else if (_classId === 'cryodome') {
       // ======== CRYO BLAST — gas cloud forward then ice wall at end ========
       const _dir = a;
-      const _gasMaxDist = 130 * _radW;
-      // Wall segments at the end of gas travel
+      const _gasMaxDist = 120 * _radW;
+      // Wall: 7 tightly-packed segments forming one continuous jagged wall
       const _perp = _dir + Math.PI / 2;
       const _wallCx = px + Math.cos(_dir) * _gasMaxDist;
       const _wallCy = py + Math.sin(_dir) * _gasMaxDist;
-      const _segCount = 3;
+      const _segCount = 7;
       const _segs = [];
       for (let i = 0; i < _segCount; i++) {
-        const t = (i - (_segCount-1)/2) * 36;
-        _segs.push({ x: _wallCx+Math.cos(_perp)*t, y: _wallCy+Math.sin(_perp)*t,
-          hp: 100, maxHp: 100, wobble: Math.random()*Math.PI*2, erupted: false });
+        const t = (i - (_segCount-1)/2) * 18; // tight 18px spacing
+        const _jag = (i % 2 === 0 ? -4 : 4); // jagged forward/back offset
+        _segs.push({
+          x: _wallCx + Math.cos(_perp)*t + Math.cos(_dir)*_jag,
+          y: _wallCy + Math.sin(_perp)*t + Math.sin(_dir)*_jag,
+          hp: 120, maxHp: 120, wobble: Math.random()*Math.PI*2, erupted: false });
       }
       spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'cryodome',
         phase: 'gas', _ring: true, _gasDir: _dir, _gasDist: 0, _gasMaxDist: _gasMaxDist,
         _gasSpeed: 5, _gasWidth: 40 * _radW,
         _wallSegs: _segs, _wallAng: _perp,
-        lifetime: Math.floor(180 * _persist), maxLife: 180, _pulseTimer: 0 });
+        lifetime: Math.floor(300 * _persist), maxLife: 300, _pulseTimer: 0 });
       // Origin cryo burst — big smokey frost cloud
       for (let i = 0; i < 20; i++) {
         const ba = _dir + (Math.random()-0.5)*1.0, bs = 3+Math.random()*6;
@@ -13034,11 +13037,12 @@ function throwSpike() {
         const d2 = dx * dx + dy * dy;
         if (d2 < _r * _r) {
           const d = Math.sqrt(d2) || 1;
-          // EXTREME push — enemies launched across the entire room and slide
-          const _push = 120 * (1 - d / _r) + 30;
-          z.vx += (dx / d) * _push;
-          z.vy += (dy / d) * _push;
-          damageZombie(z, 35, dx / d * 14, dy / d * 14);
+          // Smooth sliding push — sets slide velocity that decays over time
+          const _push = 18 * (1 - d / _r) + 6;
+          z._slideVx = (z._slideVx || 0) + (dx / d) * _push;
+          z._slideVy = (z._slideVy || 0) + (dy / d) * _push;
+          z._slideTimer = 45; // ~0.75s of sliding
+          damageZombie(z, 35, dx / d * 6, dy / d * 6);
           applyExposed(z);
           // Per-enemy: directional spark spray
           for (let j = 0; j < 8; j++) {
@@ -19287,6 +19291,8 @@ function update() {
       if (z._tracerMarked > 0) z._tracerMarked--;
       // _hitByDischarge persists for 3s after wave ends so CASCADE works on delayed kills
       if (z._hitByDischarge && !_dischargeActive) { z._hitByDischargeTimer = (z._hitByDischargeTimer || 180) - 1; if (z._hitByDischargeTimer <= 0) z._hitByDischarge = false; }
+      // PULSE SLIDE: smooth knockback that decays over time (like ice physics)
+      if(z._slideTimer>0){z._slideTimer--;z._slideVx*=0.92;z._slideVy*=0.92;z.x+=z._slideVx;z.y+=z._slideVy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._slideTimer<=0){z._slideVx=0;z._slideVy=0;}if(Math.abs(z._slideVx)+Math.abs(z._slideVy)>2)continue;}
       if(z.staggerTimer>0){z.staggerTimer--;z.vx*=0.7;z.vy*=0.7;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(gameTime%4===0)particles.push({x:z.x+(Math.random()-0.5)*8,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:2,color:'#ff8',type:'spark'});continue;}
       let np=z._np, zd=z._npD;
       if(!np)continue;
@@ -24147,34 +24153,59 @@ function render() {
       ctx.save();
       ctx.translate(sp.x, sp.y);
       if (sp.classId === 'cryodome' && sp.phase === 'wall' && sp._wallSegs) {
-        // ICE WALL PILLARS
-        ctx.restore(); // undo the translate — draw each seg at its own pos
-        for (const seg of sp._wallSegs) {
-          if (seg.hp <= 0 || !seg.erupted) continue;
+        // ICE WALL — one continuous jagged structure
+        ctx.restore();
+        const _liveSegs = sp._wallSegs.filter(s => s.hp > 0 && s.erupted);
+        if (_liveSegs.length > 0) {
+          const _wallAng = sp._wallAng || 0;
+          const _perpX = Math.cos(_wallAng), _perpY = Math.sin(_wallAng);
+          const _fwdX = Math.cos(sp._gasDir || 0), _fwdY = Math.sin(sp._gasDir || 0);
+          // Draw continuous jagged wall body
           ctx.save();
-          ctx.translate(seg.x, seg.y);
-          const _hpRatio = seg.hp / seg.maxHp;
-          const _wobble = Math.sin(_spt * 0.003 + seg.wobble) * 2;
-          // Pillar body — tall icy rectangle
+          const _avgHp = _liveSegs.reduce((a,s) => a + s.hp/s.maxHp, 0) / _liveSegs.length;
+          ctx.globalAlpha = 0.85 * _avgHp;
+          // Build jagged outline path
           ctx.fillStyle = '#0a1a2a';
-          ctx.globalAlpha = 0.8 * _hpRatio;
-          ctx.fillRect(-10, -16 + _wobble, 20, 32);
-          // Ice surface
-          ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2;
-          ctx.globalAlpha = 0.7 * _hpRatio;
-          ctx.strokeRect(-10, -16 + _wobble, 20, 32);
-          // Inner frost glow
+          ctx.beginPath();
+          // Front edge (jagged)
+          const _first = _liveSegs[0], _last = _liveSegs[_liveSegs.length-1];
+          ctx.moveTo(_first.x - _fwdX*12 - _perpX*10, _first.y - _fwdY*12 - _perpY*10);
+          for (const seg of _liveSegs) {
+            const _jag = Math.sin(seg.wobble + _spt*0.002) * 4;
+            ctx.lineTo(seg.x + _fwdX*(10+_jag), seg.y + _fwdY*(10+_jag));
+          }
+          // Back edge (smoother)
+          for (let i = _liveSegs.length-1; i >= 0; i--) {
+            const seg = _liveSegs[i];
+            ctx.lineTo(seg.x - _fwdX*12, seg.y - _fwdY*12);
+          }
+          ctx.closePath();
+          ctx.fill();
+          // Ice edge glow
+          ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2.5;
+          ctx.globalAlpha = 0.7 * _avgHp;
+          ctx.stroke();
+          // Inner frost glow fill
           ctx.fillStyle = '#8ef';
-          ctx.globalAlpha = 0.2 * _hpRatio;
-          ctx.fillRect(-8, -14 + _wobble, 16, 28);
-          // Top highlight
-          ctx.fillStyle = '#cff';
-          ctx.globalAlpha = 0.6 * _hpRatio;
-          ctx.fillRect(-6, -16 + _wobble, 12, 3);
+          ctx.globalAlpha = 0.15 * _avgHp;
+          ctx.fill();
+          // Jagged spikes on top (front edge)
+          ctx.fillStyle = '#adf';
+          ctx.globalAlpha = 0.5 * _avgHp;
+          for (let i = 0; i < _liveSegs.length; i += 2) {
+            const seg = _liveSegs[i];
+            const _spH = 6 + Math.sin(seg.wobble) * 3;
+            ctx.beginPath();
+            ctx.moveTo(seg.x + _fwdX*10 - _perpX*6, seg.y + _fwdY*10 - _perpY*6);
+            ctx.lineTo(seg.x + _fwdX*(10+_spH), seg.y + _fwdY*(10+_spH));
+            ctx.lineTo(seg.x + _fwdX*10 + _perpX*6, seg.y + _fwdY*10 + _perpY*6);
+            ctx.closePath();
+            ctx.fill();
+          }
           ctx.globalAlpha = 1;
           ctx.restore();
         }
-        ctx.save(); ctx.translate(sp.x, sp.y); // re-enter save/translate for the final restore
+        ctx.save(); ctx.translate(sp.x, sp.y);
       } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
         // MINE: circular body with blinking red light
         const _blink = Math.sin(_spt * 0.008) > 0.3;
