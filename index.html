@@ -4701,10 +4701,15 @@ function initTrenchSections() {
     // types is kept as fallback for the spawn system
     let types = ['normal','fast','drone'];
     const hazards = [];
-    // Multi-door choice: ~40% of non-boss sections after section 3
+    // Multi-door choice: guaranteed every 3rd non-boss section (3,6,12,15...),
+    // plus random 40% on other eligible sections. Skip domain transitions & pre-boss.
     const _DOOR_REWARDS = ['health','bits','mod','powerup'];
     let _multiDoor = null;
-    if (!isBoss && i >= 3 && Math.random() < 0.40) {
+    const _isDomainTrans = (i === 9 || i === 19 || i === 29 || i === 39);
+    const _multiDoorEligible = !isBoss && i >= 3 && !_isDomainTrans;
+    const _multiDoorGuaranteed = _multiDoorEligible && (i % 3 === 0);
+    const _multiDoorRandom = _multiDoorEligible && Math.random() < 0.40;
+    if (_multiDoorGuaranteed || _multiDoorRandom) {
       // Pick 2 different rewards
       const _r1 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
       let _r2 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
@@ -5210,8 +5215,8 @@ function updateTrench() {
     const rightWallX = sec.x + TW - CELL_SIZE;
     const triggerX = rightWallX - PLAYER_RADIUS - 6;
     if (sec.multiDoor) {
-      // Multi-door: two doors, top and bottom
-      const _gap = 2 * CELL_SIZE, _doorH = 3 * CELL_SIZE;
+      // Multi-door: two doors, top and bottom (must match rendering dimensions)
+      const _gap = 1.5 * CELL_SIZE, _doorH = 4 * CELL_SIZE;
       const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
       const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
       const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
@@ -23710,8 +23715,8 @@ function render() {
     };
     if (sec.multiDoor && !isLast) {
       // Two doors — top and bottom halves of right wall
-      const _gap = 2 * CELL_SIZE; // gap between doors
-      const _doorH = 3 * CELL_SIZE; // each door is 3 cells tall
+      const _gap = 1.5 * CELL_SIZE; // gap between doors
+      const _doorH = 4 * CELL_SIZE; // each door is 4 cells tall
       const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
       const _topY1 = _midY - _gap/2 - _doorH, _topY2 = _midY - _gap/2;
       const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
@@ -23721,6 +23726,14 @@ function render() {
       const _botLbl = open ? '▼' : '✕';
       _drawDoor(_topY1, _topY2, _topCol, _topLbl, open ? sec.multiDoor.top : null);
       _drawDoor(_botY1, _botY2, _botCol, _botLbl, open ? sec.multiDoor.bottom : null);
+      // "CHOOSE" label between doors when open
+      if (open) {
+        const _cp = 0.6+Math.sin(gameTime*0.1)*0.4;
+        ctx.globalAlpha=_cp;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillStyle='#fff';ctx.shadowColor='#fff';ctx.shadowBlur=8;
+        ctx.fillText('CHOOSE',dx1-14,_midY);
+        ctx.shadowBlur=0;ctx.globalAlpha=1;
+      }
     } else {
       // Single door — centered
       const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
