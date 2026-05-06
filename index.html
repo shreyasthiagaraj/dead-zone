@@ -18658,6 +18658,31 @@ function update() {
       }
       bullets[i]=bullets[bullets.length-1],bullets.pop();continue;
     }
+    // Fast bullets (hitscan): check if sweep line crosses any spike wall segment
+    if(_bfast && typeof spikes !== 'undefined'){
+      let _spikeWallHit = false;
+      for (const _sp of spikes) {
+        if (!_sp._wallSegs) continue;
+        if (!_sp._wall && _sp.phase !== 'wall') continue;
+        for (const _seg of _sp._wallSegs) {
+          if (_seg.hp <= 0 || !_seg.erupted) continue;
+          if (lineCircleHit(_bpx, _bpy, b.x, b.y, _seg.x, _seg.y, 20) >= 0) {
+            // Hit the wall — kill bullet at the intersection point
+            const _t = lineCircleHit(_bpx, _bpy, b.x, b.y, _seg.x, _seg.y, 20);
+            const _hx = _bpx + (b.x-_bpx)*_t, _hy = _bpy + (b.y-_bpy)*_t;
+            // Ice spark VFX
+            for (let _wi = 0; _wi < 5; _wi++) {
+              const _wa = Math.random()*Math.PI*2, _ws = 2+Math.random()*3;
+              particles.push({ x:_hx, y:_hy, vx:Math.cos(_wa)*_ws, vy:Math.sin(_wa)*_ws,
+                life:8+Math.random()*4, maxLife:12, size:2+Math.random(), color:Math.random()>0.5?'#8ef':'#fff', type:'spark' });
+            }
+            _spikeWallHit = true; break;
+          }
+        }
+        if (_spikeWallHit) break;
+      }
+      if (_spikeWallHit) { bullets[i]=bullets[bullets.length-1],bullets.pop();continue; }
+    }
     if(b.life<=0){
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
       // Splasher: split into 3 fragment projectiles on expiry
