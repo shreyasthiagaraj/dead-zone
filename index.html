@@ -12827,7 +12827,7 @@ function throwSpike() {
       _segs.push({
         x: _wallCx + Math.cos(_perp) * t,
         y: _wallCy + Math.sin(_perp) * t,
-        hp: 80, maxHp: 80,
+        hp: 80, maxHp: 80, erupted: true,
         wobble: Math.random() * Math.PI * 2,
       });
     }
@@ -13460,7 +13460,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
       if (!sp._carrying) {
         // Grab this enemy
         sp._carrying = z;
-        damageZombie(z, 30, nx * 4, ny * 4);
+        damageZombie(z, 15, nx * 4, ny * 4);
         applyExposed(z);
         // Grab VFX
         for (let i = 0; i < 8; i++) {
@@ -13475,7 +13475,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
         const side = (dx * (-ny) + dy * nx) > 0 ? 1 : -1;
         z.vx += (-ny) * 14 * side + nx * 4;
         z.vy += nx * 14 * side + ny * 4;
-        damageZombie(z, 15, (-ny) * 3 * side, nx * 3 * side);
+        damageZombie(z, 8, (-ny) * 3 * side, nx * 3 * side);
         // Side-swipe spark
         for (let j = 0; j < 4; j++) {
           const ja = Math.random() * Math.PI * 2;
@@ -13499,13 +13499,13 @@ function _updateTorpedoSpike(sp, _radBoost) {
   }
   // Wall hit / max travel / out of bounds → detonate
   const _shouldDetonate = obstacleCollision(sp.x, sp.y, 6, true)
-    || sp.travel >= 500
+    || sp.travel >= 280
     || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H;
   if (_shouldDetonate) {
     if (obstacleCollision(sp.x, sp.y, 6, true)) { sp.x -= sp.vx; sp.y -= sp.vy; }
     // Carried enemy takes massive wall-slam damage
     if (sp._carrying && sp._carrying.hp > 0) {
-      damageZombie(sp._carrying, 80, nx * 6, ny * 6);
+      damageZombie(sp._carrying, 35, nx * 6, ny * 6);
       addFloatingText(sp._carrying.x, sp._carrying.y - 20, 'WALL SLAM', '#fff');
     }
     // Massive shockwave
@@ -13519,7 +13519,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
         const _close = 1 - d / _shockR;
         z.vx += (dx / d) * 18 * _close;
         z.vy += (dy / d) * 18 * _close;
-        damageZombie(z, Math.floor(60 * _close + 10), dx / d * 6, dy / d * 6);
+        damageZombie(z, Math.floor(25 * _close + 8), dx / d * 6, dy / d * 6);
         applyExposed(z);
       }
     }
@@ -14037,9 +14037,11 @@ function _updateBaseSpike(sp) {
 // Used by the obstacle collision system so walls block both players + zombies.
 function _spikeWallCollision(ox, oy, r) {
   for (const sp of spikes) {
-    if (!sp._wall) continue;
+    if (!sp._wallSegs) continue;
+    // Check both frost wall (_wall) and cryo blast wall (phase==='wall')
+    if (!sp._wall && sp.phase !== 'wall') continue;
     for (const seg of sp._wallSegs) {
-      if (seg.hp <= 0) continue;
+      if (seg.hp <= 0 || !seg.erupted) continue;
       const dx = ox - seg.x, dy = oy - seg.y;
       if (dx * dx + dy * dy < (r + 18) ** 2) return true;
     }
@@ -24125,6 +24127,73 @@ function render() {
         ctx.globalAlpha = seekPulse * lifeT;
         ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    } else if (sp._ring) {
+      // ---- RING SPIKE CLASSES — custom rendered bodies ----
+      ctx.save();
+      ctx.translate(sp.x, sp.y);
+      if (sp.classId === 'cryodome' && sp.phase === 'wall' && sp._wallSegs) {
+        // ICE WALL PILLARS
+        ctx.restore(); // undo the translate — draw each seg at its own pos
+        for (const seg of sp._wallSegs) {
+          if (seg.hp <= 0 || !seg.erupted) continue;
+          ctx.save();
+          ctx.translate(seg.x, seg.y);
+          const _hpRatio = seg.hp / seg.maxHp;
+          const _wobble = Math.sin(_spt * 0.003 + seg.wobble) * 2;
+          // Pillar body — tall icy rectangle
+          ctx.fillStyle = '#0a1a2a';
+          ctx.globalAlpha = 0.8 * _hpRatio;
+          ctx.fillRect(-10, -16 + _wobble, 20, 32);
+          // Ice surface
+          ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.7 * _hpRatio;
+          ctx.strokeRect(-10, -16 + _wobble, 20, 32);
+          // Inner frost glow
+          ctx.fillStyle = '#8ef';
+          ctx.globalAlpha = 0.2 * _hpRatio;
+          ctx.fillRect(-8, -14 + _wobble, 16, 28);
+          // Top highlight
+          ctx.fillStyle = '#cff';
+          ctx.globalAlpha = 0.6 * _hpRatio;
+          ctx.fillRect(-6, -16 + _wobble, 12, 3);
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+        ctx.save(); ctx.translate(sp.x, sp.y); // re-enter save/translate for the final restore
+      } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
+        // MINE: circular body with blinking red light
+        const _blink = Math.sin(_spt * 0.008) > 0.3;
+        const _mR = 10;
+        // Dark body
+        ctx.fillStyle = '#1a0a00';
+        ctx.beginPath(); ctx.arc(0, 0, _mR, 0, Math.PI*2); ctx.fill();
+        // Orange rim
+        ctx.strokeStyle = '#f80'; ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath(); ctx.arc(0, 0, _mR, 0, Math.PI*2); ctx.stroke();
+        // Inner segments (mine look)
+        ctx.strokeStyle = '#a50'; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+        for (let i = 0; i < 4; i++) {
+          const sa = (i/4)*Math.PI*2;
+          ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(sa)*_mR, Math.sin(sa)*_mR); ctx.stroke();
+        }
+        // Blinking red LED
+        if (_blink) {
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#f22';
+          ctx.beginPath(); ctx.arc(0, -1, 3, 0, Math.PI*2); ctx.fill();
+          // LED glow
+          ctx.globalAlpha = 0.4;
+          ctx.fillStyle = '#f44';
+          ctx.beginPath(); ctx.arc(0, -1, 7, 0, Math.PI*2); ctx.fill();
+        } else {
+          ctx.globalAlpha = 0.4;
+          ctx.fillStyle = '#600';
+          ctx.beginPath(); ctx.arc(0, -1, 2.5, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
       }
       ctx.restore();
     } else {
