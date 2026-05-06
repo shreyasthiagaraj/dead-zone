@@ -9250,7 +9250,7 @@ function pushOutOfObstacles(e, r, canCrossGaps) {
   if (typeof spikes !== 'undefined') {
     for (const sp of spikes) {
       if (!sp._wallSegs) continue;
-      if (!sp._wall && sp.phase !== 'wall') continue;
+      if (!sp._wall && sp.phase !== 'wall' && sp.phase !== 'growing') continue;
       for (const seg of sp._wallSegs) {
         if (seg.hp <= 0 || !seg.erupted) continue;
         const dx = e.x - seg.x, dy = e.y - seg.y;
@@ -13805,55 +13805,81 @@ function _updateRingZone(sp, _radBoost) {
           life: 12+Math.random()*6, maxLife: 18, size: 2+Math.random()*2,
           color: Math.random()>0.4?'#8ef':'#cff', type: 'spark' });
       }
-      // Gas reached max distance → spawn ice wall
-      if (sp._gasDist >= sp._gasMaxDist) {
-        sp.phase = 'wall';
-        for (const seg of sp._wallSegs) { seg.erupted = true; }
-        // Push player behind the wall if they're standing where it spawns
+      // Gas pushes enemies near the wall spawn point outward smoothly
+      for (const seg of sp._wallSegs) {
+        for (const z of zombies) {
+          if (z.hp <= 0) continue;
+          const dx = z.x - seg.x, dy = z.y - seg.y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < (z.radius + 24) ** 2) {
+            const d = Math.sqrt(d2) || 1;
+            z.vx += (dx/d) * 2;
+            z.vy += (dy/d) * 2;
+          }
+        }
+        // Also nudge player away from wall spawn during gas phase
         const _lp = getLocalPlayer();
         if (_lp && _lp.alive) {
-          for (const seg of sp._wallSegs) {
-            const _pdx = _lp.x - seg.x, _pdy = _lp.y - seg.y;
-            if (_pdx*_pdx + _pdy*_pdy < (PLAYER_RADIUS + 22) ** 2) {
-              // Push player back toward their original position (behind wall)
-              const _backDir = sp._gasDir + Math.PI; // opposite of gas direction
-              _lp.x = seg.x + Math.cos(_backDir) * (PLAYER_RADIUS + 26);
-              _lp.y = seg.y + Math.sin(_backDir) * (PLAYER_RADIUS + 26);
-              _lp.vx = 0; _lp.vy = 0;
-              break;
-            }
+          const _pdx = _lp.x - seg.x, _pdy = _lp.y - seg.y;
+          const _pd = Math.sqrt(_pdx*_pdx + _pdy*_pdy) || 1;
+          if (_pd < PLAYER_RADIUS + 24) {
+            _lp.x += (_pdx/_pd) * 2.5;
+            _lp.y += (_pdy/_pd) * 2.5;
           }
         }
-        // Wall eruption VFX
+      }
+      // Gas reached max distance → start wall grow
+      if (sp._gasDist >= sp._gasMaxDist) {
+        sp.phase = 'growing';
+        sp._growT = 0;
+        for (const seg of sp._wallSegs) { seg.erupted = true; }
+        // Eruption VFX
         for (const seg of sp._wallSegs) {
-          for (let i = 0; i < 14; i++) {
-            const ia = Math.random()*Math.PI*2, is2 = 2+Math.random()*5;
-            particles.push({ x: seg.x, y: seg.y, vx: Math.cos(ia)*is2, vy: Math.sin(ia)*is2 - 2,
-              life: 16+Math.random()*8, maxLife: 24, size: 2+Math.random()*3,
+          for (let i = 0; i < 10; i++) {
+            const ia = Math.random()*Math.PI*2, is2 = 2+Math.random()*4;
+            particles.push({ x: seg.x, y: seg.y, vx: Math.cos(ia)*is2, vy: Math.sin(ia)*is2 - 1.5,
+              life: 14+Math.random()*8, maxLife: 22, size: 2+Math.random()*2.5,
               color: Math.random()>0.3?'#8ef':'#fff', type: 'spark' });
           }
-          for (let i = 0; i < 3; i++) {
-            particles.push({ x: seg.x+(Math.random()-0.5)*12, y: seg.y+(Math.random()-0.5)*12,
-              vx: 0, vy: -1-Math.random(), life: 26, maxLife: 26,
-              size: 5+Math.random()*4, color: '#adf', type: 'smoke', _smokeAlpha: 0.2 });
-          }
-          decals.push({ type: 'scorch', x: seg.x, y: seg.y, size: 12,
-            color: 'rgba(100,180,255,0.3)', alpha: 0.3, _fade: 0.001 });
+          decals.push({ type: 'scorch', x: seg.x, y: seg.y, size: 10,
+            color: 'rgba(100,180,255,0.25)', alpha: 0.25, _fade: 0.001 });
         }
-        screenShake.intensity = Math.max(screenShake.intensity, 6);
+        screenShake.intensity = Math.max(screenShake.intensity, 5);
         playSound(200, 0.1, 'sine', 0.1);
+        playSound(350, 0.06, 'sine', 0.06);
       }
+    } else if (sp.phase === 'growing') {
+      // Wall grows over ~20 frames
+      sp._growT = Math.min(1, (sp._growT || 0) + 0.05);
+      // Frost mist during grow
+      if (sp._pulseTimer % 3 === 0) {
+        const seg = sp._wallSegs[Math.floor(Math.random()*sp._wallSegs.length)];
+        if (seg && seg.erupted) {
+          particles.push({ x: seg.x+(Math.random()-0.5)*10, y: seg.y+(Math.random()-0.5)*10,
+            vx: (Math.random()-0.5)*1, vy: -1-Math.random()*0.8,
+            life: 18, maxLife: 18, size: 3+Math.random()*3,
+            color: '#adf', type: 'smoke', _smokeAlpha: 0.2 });
+        }
+      }
+      if (sp._growT >= 1) sp.phase = 'wall';
     } else if (sp.phase === 'wall') {
-      // Indestructible ice wall — blocks everything, just ambient VFX
+      // Indestructible ice wall — ambient frost gas + sparkles
       for (const seg of sp._wallSegs) {
         if (!seg.erupted) continue;
-        // Ambient frost sparkles
-        if (sp._pulseTimer % 5 === 0 && Math.random() > 0.3) {
+        // Frost sparkles
+        if (sp._pulseTimer % 6 === 0 && Math.random() > 0.3) {
           const pa = Math.random()*Math.PI*2;
-          particles.push({ x: seg.x+Math.cos(pa)*14, y: seg.y+Math.sin(pa)*14,
-            vx: (Math.random()-0.5)*0.4, vy: -0.6-Math.random()*0.5,
-            life: 20, maxLife: 20, size: 1.5+Math.random()*1.5,
+          particles.push({ x: seg.x+Math.cos(pa)*10, y: seg.y+Math.sin(pa)*10,
+            vx: (Math.random()-0.5)*0.4, vy: -0.5-Math.random()*0.4,
+            life: 18, maxLife: 18, size: 1.5+Math.random(),
             color: Math.random()>0.5?'#8ef':'#cff', type: 'spark' });
+        }
+        // Occasional cold mist wisps
+        if (sp._pulseTimer % 16 === 0 && Math.random() > 0.5) {
+          particles.push({ x: seg.x+(Math.random()-0.5)*8, y: seg.y+(Math.random()-0.5)*8,
+            vx: (Math.random()-0.5)*0.5, vy: -0.4-Math.random()*0.3,
+            life: 22, maxLife: 22, size: 3+Math.random()*2,
+            color: '#adf', type: 'smoke', _smokeAlpha: 0.12 });
         }
       }
       sp.lifetime--;
@@ -14049,7 +14075,7 @@ function _spikeWallCollision(ox, oy, r) {
   for (const sp of spikes) {
     if (!sp._wallSegs) continue;
     // Check both frost wall (_wall) and cryo blast wall (phase==='wall')
-    if (!sp._wall && sp.phase !== 'wall') continue;
+    if (!sp._wall && sp.phase !== 'wall' && sp.phase !== 'growing') continue;
     for (const seg of sp._wallSegs) {
       if (seg.hp <= 0 || !seg.erupted) continue;
       const dx = ox - seg.x, dy = oy - seg.y;
@@ -18663,7 +18689,7 @@ function update() {
       let _spikeWallHit = false;
       for (const _sp of spikes) {
         if (!_sp._wallSegs) continue;
-        if (!_sp._wall && _sp.phase !== 'wall') continue;
+        if (!_sp._wall && _sp.phase !== 'wall' && _sp.phase !== 'growing') continue;
         for (const _seg of _sp._wallSegs) {
           if (_seg.hp <= 0 || !_seg.erupted) continue;
           if (lineCircleHit(_bpx, _bpy, b.x, b.y, _seg.x, _seg.y, 20) >= 0) {
@@ -24186,56 +24212,58 @@ function render() {
       // ---- RING SPIKE CLASSES — custom rendered bodies ----
       ctx.save();
       ctx.translate(sp.x, sp.y);
-      if (sp.classId === 'cryodome' && sp.phase === 'wall' && sp._wallSegs) {
-        // ICE WALL — one continuous jagged structure
+      if (sp.classId === 'cryodome' && (sp.phase === 'wall' || sp.phase === 'growing') && sp._wallSegs) {
+        // ICE WALL — thin solid wall with grow animation
         ctx.restore();
         const _liveSegs = sp._wallSegs.filter(s => s.hp > 0 && s.erupted);
         if (_liveSegs.length > 0) {
           const _wallAng = sp._wallAng || 0;
           const _perpX = Math.cos(_wallAng), _perpY = Math.sin(_wallAng);
           const _fwdX = Math.cos(sp._gasDir || 0), _fwdY = Math.sin(sp._gasDir || 0);
-          // Draw continuous jagged wall body
+          const _grow = sp.phase === 'growing' ? (sp._growT || 0) : 1;
+          // Wall half-thickness: thin (6px full, grows from 0)
+          const _halfT = 6 * _grow;
           ctx.save();
-          const _avgHp = _liveSegs.reduce((a,s) => a + s.hp/s.maxHp, 0) / _liveSegs.length;
-          ctx.globalAlpha = 0.85 * _avgHp;
-          // Build jagged outline path
-          ctx.fillStyle = '#0a1a2a';
+          ctx.globalAlpha = 0.9;
+          // Build wall outline path — front and back edges
+          ctx.fillStyle = '#081828';
           ctx.beginPath();
-          // Front edge (jagged)
+          // Front edge with small jags
           const _first = _liveSegs[0], _last = _liveSegs[_liveSegs.length-1];
-          ctx.moveTo(_first.x - _fwdX*12 - _perpX*10, _first.y - _fwdY*12 - _perpY*10);
+          ctx.moveTo(_first.x + _fwdX*_halfT - _perpX*8, _first.y + _fwdY*_halfT - _perpY*8);
           for (const seg of _liveSegs) {
-            const _jag = Math.sin(seg.wobble + _spt*0.002) * 4;
-            ctx.lineTo(seg.x + _fwdX*(10+_jag), seg.y + _fwdY*(10+_jag));
+            const _jag = Math.sin(seg.wobble) * 2 * _grow;
+            ctx.lineTo(seg.x + _fwdX*(_halfT+_jag), seg.y + _fwdY*(_halfT+_jag));
           }
-          // Back edge (smoother)
+          // End cap
+          ctx.lineTo(_last.x + _fwdX*_halfT + _perpX*8, _last.y + _fwdY*_halfT + _perpY*8);
+          // Back edge
+          ctx.lineTo(_last.x - _fwdX*_halfT + _perpX*8, _last.y - _fwdY*_halfT + _perpY*8);
           for (let i = _liveSegs.length-1; i >= 0; i--) {
-            const seg = _liveSegs[i];
-            ctx.lineTo(seg.x - _fwdX*12, seg.y - _fwdY*12);
+            ctx.lineTo(_liveSegs[i].x - _fwdX*_halfT, _liveSegs[i].y - _fwdY*_halfT);
           }
+          ctx.lineTo(_first.x - _fwdX*_halfT - _perpX*8, _first.y - _fwdY*_halfT - _perpY*8);
           ctx.closePath();
           ctx.fill();
-          // Ice edge glow
-          ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2.5;
-          ctx.globalAlpha = 0.7 * _avgHp;
+          // Bright ice edge
+          ctx.strokeStyle = '#8ef'; ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.8 * _grow;
           ctx.stroke();
-          // Inner frost glow fill
+          // Inner frost glow
           ctx.fillStyle = '#8ef';
-          ctx.globalAlpha = 0.15 * _avgHp;
+          ctx.globalAlpha = 0.12 * _grow;
           ctx.fill();
-          // Jagged spikes on top (front edge)
-          ctx.fillStyle = '#adf';
-          ctx.globalAlpha = 0.5 * _avgHp;
-          for (let i = 0; i < _liveSegs.length; i += 2) {
+          // Top frost highlight along front edge
+          ctx.globalAlpha = 0.5 * _grow;
+          ctx.strokeStyle = '#cef'; ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let i = 0; i < _liveSegs.length; i++) {
             const seg = _liveSegs[i];
-            const _spH = 6 + Math.sin(seg.wobble) * 3;
-            ctx.beginPath();
-            ctx.moveTo(seg.x + _fwdX*10 - _perpX*6, seg.y + _fwdY*10 - _perpY*6);
-            ctx.lineTo(seg.x + _fwdX*(10+_spH), seg.y + _fwdY*(10+_spH));
-            ctx.lineTo(seg.x + _fwdX*10 + _perpX*6, seg.y + _fwdY*10 + _perpY*6);
-            ctx.closePath();
-            ctx.fill();
+            const _jag = Math.sin(seg.wobble) * 2 * _grow;
+            if (i === 0) ctx.moveTo(seg.x + _fwdX*(_halfT+_jag), seg.y + _fwdY*(_halfT+_jag));
+            else ctx.lineTo(seg.x + _fwdX*(_halfT+_jag), seg.y + _fwdY*(_halfT+_jag));
           }
+          ctx.stroke();
           ctx.globalAlpha = 1;
           ctx.restore();
         }
