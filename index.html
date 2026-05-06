@@ -1620,9 +1620,6 @@ const UPGRADE_POOL = [
   { id:'thermal_spike', name:'METEOR', rarity:'rare', max:1, icon:'☄', color:'#f80',
     descs:['Lobs an arcing fireball that lands at target. 90px crater detonates + pulses OVERHEAT for 3s.'],
     flavor:'orbital strike. compiled mid-flight.' },
-  { id:'cryo_spike', name:'FROST WALL', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
-    descs:['Instantly raises a 3-spire ice wall ahead of you. Blocks movement, pulses CHILL. Walls shatter on damage.'],
-    flavor:'cold geometry. drop. retreat. kite.' },
   { id:'arc_spike', name:'LIGHTNING ROD', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['Throw a rod that sticks to the ground. Enemies you shoot near the rod get a free bonus arc from it. Amplifier, not turret.'],
     flavor:'plant it. fight near it. every hit doubles.' },
@@ -2254,7 +2251,7 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 const _CARD_CLASS_MAP = {};
 {
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring'];
-  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_spike','cryo_dome'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike','discharge_ring'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring'];
@@ -2838,7 +2835,7 @@ function buyShopCard(upgradeId) {
     for (const tid of _beaconElemIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
   // Spike class cards are mutually exclusive — picking one swaps the equipped flavor
-  const _spikeClassIds = ['thermal_spike', 'cryo_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike', 'eruption_ring', 'cryo_dome', 'discharge_ring', 'impact_ring', 'plague_ring'];
+  const _spikeClassIds = ['thermal_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike', 'eruption_ring', 'cryo_dome', 'discharge_ring', 'impact_ring', 'plague_ring'];
   if (_spikeClassIds.includes(upgradeId)) {
     for (const tid of _spikeClassIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
   }
@@ -3468,7 +3465,7 @@ function applyReforge(cardId, cardEl) {
   if (_beaconElemIds.includes(cardId)) {
     for (const tid of _beaconElemIds) { if (tid !== cardId) delete runUpgrades[tid]; }
   }
-  const _spikeClassIds = ['thermal_spike', 'cryo_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike', 'eruption_ring', 'cryo_dome', 'discharge_ring', 'impact_ring', 'plague_ring'];
+  const _spikeClassIds = ['thermal_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike', 'eruption_ring', 'cryo_dome', 'discharge_ring', 'impact_ring', 'plague_ring'];
   if (_spikeClassIds.includes(cardId)) {
     for (const tid of _spikeClassIds) { if (tid !== cardId) delete runUpgrades[tid]; }
   }
@@ -19302,8 +19299,8 @@ function update() {
       else if(z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}continue;}
       // Chill immunity countdown after freeze thaw
       if(z._chillImmune>0)z._chillImmune--;
-      // CHILL: slow based on stacks (-20% per stack) — restore speed on expiry
-      if(z._chill>0&&z._chillTimer>0){z._chillTimer--;const slowFactor=Math.max(0.1,1-z._chill*0.2);z.speed=(ZOMBIE_TYPES[z.type]?.speed||2)*slowFactor;if(z._chillTimer<=0){z._chill=0;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}
+      // CHILL: slow movement (-20%/stack) + slow attack rate (+30%/stack) — restore on expiry
+      if(z._chill>0&&z._chillTimer>0){z._chillTimer--;const slowFactor=Math.max(0.1,1-z._chill*0.2);z.speed=(ZOMBIE_TYPES[z.type]?.speed||2)*slowFactor;z._fireRateMult=1+z._chill*0.3;if(z._chillTimer<=0){z._chill=0;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._fireRateMult=1;}
         // Frost breath particles — more with more stacks
         if(gameTime%(6-Math.min(4,z._chill))===0){const fa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(fa)*z.radius,y:z.y+Math.sin(fa)*z.radius,vx:Math.cos(fa)*0.8,vy:-0.8-Math.random()*0.5,life:16+z._chill*3,maxLife:28,size:1.5+z._chill*0.5,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});}
       }
@@ -19490,7 +19487,7 @@ function update() {
         else if(zt?.spreadShot&&(gameMode==='siege'||zd<300)){
           if(gameMode==='siege'){z.vx=(zdx/zd)*z.speed*0.9;z.vy=(zdy/zd)*z.speed*0.9;}
           else if(zd<120){z.vx=-zdx/zd*z.speed*0.6;z.vy=-zdy/zd*z.speed*0.6;}else{z.vx*=0.9;z.vy*=0.9;}
-          if(_now-z.lastFired>z.fireRate){
+          if(_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){
             // Telegraph: glow for 30 frames before firing
             z._chargeUp = (z._chargeUp || 0) + 1;
             if (z._chargeUp >= 30) {
@@ -19502,7 +19499,7 @@ function update() {
         // ---- BOMBER: throws bombs that land and explode after 2s ----
         else if(zt?.bomber){
           z.vx=(zdx/zd)*z.speed*0.7;z.vy=(zdy/zd)*z.speed*0.7;
-          if(zd<250&&_now-z.lastFired>z.fireRate){z.lastFired=_now;
+          if(zd<250&&_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){z.lastFired=_now;
             const bx=np.x+(Math.random()-0.5)*40,by=np.y+(Math.random()-0.5)*40;
             pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:120,_damage:35,_radius:70,bobTimer:0});}
         }
@@ -20187,7 +20184,7 @@ function update() {
           if(zd<120){z.vx=-_chaseDx*z.speed*0.6;z.vy=-_chaseDy*z.speed*0.6;}
           else if(zd>200){z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;}
           else{z.vx*=0.9;z.vy*=0.9;}
-          if(_now-z.lastFired>z.fireRate){
+          if(_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){
             z._chargeUp=(z._chargeUp||0)+1;
             if(z._chargeUp%8===0)particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:3,color:'#f8f',type:'spark'});
             if(z._chargeUp>=35){
@@ -20245,7 +20242,7 @@ function update() {
           if(zd<120){z.vx=-_chaseDx*z.speed*0.5;z.vy=-_chaseDy*z.speed*0.5;}
           else if(zd>200){z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;}
           else{z.vx*=0.9;z.vy*=0.9;}
-          if(_now-z.lastFired>z.fireRate){
+          if(_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){
             z._chargeUp=(z._chargeUp||0)+1;
             if(z._chargeUp%6===0)particles.push({x:z.x,y:z.y,vx:0,vy:-0.8,life:6,maxLife:6,size:2,color:'#4f8',type:'spark'});
             if(z._chargeUp>=25){
@@ -20335,7 +20332,7 @@ function update() {
           if(zd<120){z.vx=-_chaseDx*z.speed*0.6;z.vy=-_chaseDy*z.speed*0.6;}
           else if(zd>200){z.vx=_chaseDx*z.speed*0.8;z.vy=_chaseDy*z.speed*0.8;}
           else{const _perpX=-_chaseDy,_perpY=_chaseDx;if(!z._strafeDir)z._strafeDir=Math.random()>0.5?1:-1;z.vx=_perpX*z.speed*0.5*z._strafeDir;z.vy=_perpY*z.speed*0.5*z._strafeDir;if(Math.random()<0.008)z._strafeDir*=-1;}
-          if(_now-z.lastFired>z.fireRate){
+          if(_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){
             z._chargeUp=(z._chargeUp||0)+1;
             if(z._chargeUp%6===0)particles.push({x:z.x+Math.cos(z.angle)*z.radius,y:z.y+Math.sin(z.angle)*z.radius,vx:0,vy:0,life:6,maxLife:6,size:3,color:'#fd0',type:'spark'});
             if(z._chargeUp>=30){
@@ -20353,7 +20350,7 @@ function update() {
           if(zd<100){z.vx=-_chaseDx*z.speed*0.5;z.vy=-_chaseDy*z.speed*0.5;}
           else if(zd>180){z.vx=_chaseDx*z.speed;z.vy=_chaseDy*z.speed;}
           else{z.vx*=0.9;z.vy*=0.9;}
-          if(_now-z.lastFired>z.fireRate){
+          if(_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){
             z._chargeUp=(z._chargeUp||0)+1;
             if(z._chargeUp%5===0)particles.push({x:z.x,y:z.y,vx:0,vy:-0.5,life:6,maxLife:6,size:2,color:'#f8a',type:'spark'});
             if(z._chargeUp>=20){
@@ -20715,7 +20712,7 @@ function update() {
           }
         }
       }
-      if(z.attackCooldown>0)z.attackCooldown--;
+      if(z.attackCooldown>0){const _cdRate=(z._fireRateMult||1)>1?0.5:1;z.attackCooldown-=_cdRate;}
     }
     // Trench: hard-clamp zombies to current section's interior so wind/blast knockback can't tunnel them through walls
     if (gameMode === 'trench') {
