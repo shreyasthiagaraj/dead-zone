@@ -1623,9 +1623,9 @@ const UPGRADE_POOL = [
   { id:'cryo_spike', name:'FROST WALL', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
     descs:['Instantly raises a 3-spire ice wall ahead of you. Blocks movement, pulses CHILL. Walls shatter on damage.'],
     flavor:'cold geometry. drop. retreat. kite.' },
-  { id:'arc_spike', name:'TESLA ORB', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['Hovering turret in mid-air. Every 0.5s arcs main bolt + 2-target chain to nearest enemies. CHARGED on hit.'],
-    flavor:'sentry compiled. fires while you reposition.' },
+  { id:'arc_spike', name:'LIGHTNING ROD', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
+    descs:['Throw a rod that sticks to the ground. Enemies you shoot near the rod get a free bonus arc from it. Amplifier, not turret.'],
+    flavor:'plant it. fight near it. every hit doubles.' },
   { id:'pulse_spike', name:'KINETIC TORPEDO', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['Torpedo grabs the first enemy and carries it until wall impact. Bulldozes others aside. Wall hit = massive detonation.'],
     flavor:'one target. maximum force.' },
@@ -1651,9 +1651,9 @@ const UPGRADE_POOL = [
   { id:'cryo_dome', name:'CRYO BLAST', rarity:'rare', max:1, icon:'\u2744', color:'#8ef',
     descs:['Blast freezing gas forward (0.5s). Chills everything in its path. Ice wall spikes up at the end, blocking enemies for 2s.'],
     flavor:'freeze the lane. wall it off.' },
-  { id:'discharge_ring', name:'STATIC CAGE', rarity:'rare', max:1, icon:'\u26A1', color:'#4ff',
-    descs:['6 electric nodes appear around you. Lightning fence arcs between them. Enemies crossing = zapped. Inside = chain lightning.'],
-    flavor:'nobody leaves the cage.' },
+  { id:'discharge_ring', name:'CHAIN BOLT', rarity:'rare', max:1, icon:'\u26A1', color:'#4ff',
+    descs:['Fire an electric bolt that bounces off walls and chains through every uncharged enemy it touches. Clears entire rooms.'],
+    flavor:'one bolt. every target. total coverage.' },
   { id:'impact_ring', name:'KINETIC NOVA', rarity:'rare', max:1, icon:'\uD83D\uDCA5', color:'#cef',
     descs:['360\u00B0 shockwave sends everything FLYING across the room. Enemies slide for days. The panic button.'],
     flavor:'get. off. me.' },
@@ -13012,35 +13012,23 @@ function throwSpike() {
       playSound(100, 0.06, 'sawtooth', 0.08);
 
     } else if (_classId === 'discharge') {
-      // ======== STATIC CAGE — 6 electric nodes forming a fence ========
-      const _cageR = 80 * _radW;
-      const _nodeCount = 6;
-      const _nodes = [];
-      for (let i = 0; i < _nodeCount; i++) {
-        const na = (i / _nodeCount) * Math.PI * 2;
-        _nodes.push({ x: px + Math.cos(na)*_cageR, y: py + Math.sin(na)*_cageR });
+      // ======== CHAIN BOLT — bouncing electric projectile that chains through uncharged enemies ========
+      spikes.push({ x: sx, y: sy, ownerId: lp.id, classId: 'discharge',
+        phase: 'flying', _ring: true,
+        vx: Math.cos(a) * 14, vy: Math.sin(a) * 14,
+        travel: 0, _bounces: 0, _maxBounces: 6,
+        _chainedSet: new Set(), // zids already chained — skip charged
+        lifetime: Math.floor(180 * _persist), maxLife: 180, _pulseTimer: 0 });
+      // Launch VFX
+      for (let i = 0; i < 10; i++) {
+        const pa = a + (Math.random()-0.5)*0.6, ps = 3+Math.random()*5;
+        particles.push({ x: sx, y: sy, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+          life: 10+Math.random()*6, maxLife: 16, size: 2+Math.random()*2,
+          color: Math.random()>0.4?'#4ff':'#fff', type: 'spark' });
       }
-      spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'discharge',
-        phase: 'active', _ring: true, _cageNodes: _nodes, _ringR: _cageR,
-        lifetime: Math.floor(240 * _persist), maxLife: 240, _pulseTimer: 0 });
-      // Deployment lightning bolts from player to each node
-      for (const nd of _nodes) {
-        particles.push({ x: px, y: py, vx: 0, vy: 0, life: 18, maxLife: 18,
-          size: 2, color: '#4ff', type: 'lightning', tx: nd.x, ty: nd.y });
-        // Spark burst at each node
-        for (let j = 0; j < 6; j++) {
-          const ja = Math.random()*Math.PI*2, js = 2+Math.random()*3;
-          particles.push({ x: nd.x, y: nd.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
-            life: 10+Math.random()*6, maxLife: 16, size: 2+Math.random(),
-            color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
-        }
-      }
-      // Central flash
-      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 14, maxLife: 14, size: _cageR*0.4, color: '#4ff', type: 'wakering' });
-      screenShake.intensity = Math.max(screenShake.intensity, 8);
-      triggerGlitchSurge(0.15, 10);
-      playSfx('lightning_fire', 0.25) || playSound(1400, 0.08, 'sine', 0.1);
-      playSound(200, 0.06, 'sawtooth', 0.08);
+      particles.push({ x: sx, y: sy, vx: 0, vy: 0, life: 10, maxLife: 10, size: 30, color: '#4ff', type: 'wakering' });
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      playSfx('lightning_fire', 0.2) || playSound(1200, 0.06, 'sine', 0.08);
 
     } else if (_classId === 'impact') {
       // ======== KINETIC NOVA — MASSIVE 360° blast, enemies SLIDE across the room ========
@@ -13368,87 +13356,36 @@ function _updateOrbSpike(sp, _radBoost) {
   if (sp.phase === 'flying') {
     sp.x += sp.vx; sp.y += sp.vy;
     sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
-    // Wall hit — drop on floor at impact
     if (obstacleCollision(sp.x, sp.y, 4, true)) {
       sp.x -= sp.vx; sp.y -= sp.vy;
-      sp.phase = 'hovering'; sp.vx = 0; sp.vy = 0;
+      sp.phase = 'planted'; sp.vx = 0; sp.vy = 0;
     }
-    if (sp.travel >= 250) { sp.phase = 'hovering'; sp.vx = 0; sp.vy = 0; }
+    if (sp.travel >= 250) { sp.phase = 'planted'; sp.vx = 0; sp.vy = 0; }
     if (sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) { sp.lifetime = 0; }
-    // In-flight crackle particles
     if (sp._pulseTimer % 2 === 0) {
       const a = Math.random() * Math.PI * 2;
-      particles.push({ x: sp.x + Math.cos(a) * 6, y: sp.y + Math.sin(a) * 6,
-        vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5,
-        life: 8, maxLife: 8, size: 1.5, color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark' });
+      particles.push({ x: sp.x + Math.cos(a)*6, y: sp.y + Math.sin(a)*6,
+        vx: (Math.random()-0.5)*1.5, vy: (Math.random()-0.5)*1.5,
+        life: 8, maxLife: 8, size: 1.5, color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
     }
-  } else if (sp.phase === 'hovering') {
-    sp._hoverFire = (sp._hoverFire || 0) + 1;
-    // Bob in place
-    sp.y += Math.sin(sp._pulseTimer * 0.08) * 0.15;
-    // Fire main chain bolt every 30 frames
-    const _r = 250 * _radBoost;
-    if (sp._hoverFire >= 30) {
-      sp._hoverFire = 0;
-      // Find nearest zombie
-      let best = null, bestD2 = _r * _r;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; best = z; }
-      }
-      if (best) {
-        // Main bolt
-        damageZombie(best, 25, 0, 0);
-        applyCharged(best);
-        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 16, maxLife: 16,
-          size: 2, color: '#4ff', type: 'lightning', tx: best.x, ty: best.y });
-        // Chain to up to 2 more
-        const chainSet = new Set([best.zid || -1]);
-        let lastZ = best;
-        for (let i = 0; i < 2; i++) {
-          let next = null, nextD2 = 200 * 200;
-          for (const z of zombies) {
-            if (z.hp <= 0) continue;
-            if (chainSet.has(z.zid)) continue;
-            const dx = z.x - lastZ.x, dy = z.y - lastZ.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < nextD2) { nextD2 = d2; next = z; }
-          }
-          if (!next) break;
-          chainSet.add(next.zid);
-          damageZombie(next, 12, 0, 0);
-          applyCharged(next);
-          particles.push({ x: lastZ.x, y: lastZ.y, vx: 0, vy: 0, life: 14, maxLife: 14,
-            size: 2, color: '#4ff', type: 'lightning', tx: next.x, ty: next.y });
-          lastZ = next;
-        }
-        playSfx('lightning_fire', 0.18) || playSound(1400, 0.04, 'sine', 0.08);
-        screenShake.intensity = Math.max(screenShake.intensity, 3);
-      }
-    }
-    // Continuous arcing aura — small bolts to nearby foes
-    if (sp._pulseTimer % 8 === 0) {
-      let ambient = null, ambD2 = 90 * 90;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < ambD2) { ambD2 = d2; ambient = z; }
-      }
-      if (ambient) {
-        damageZombie(ambient, 4, 0, 0, true);
-        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8,
-          size: 1, color: '#4ff', type: 'lightning', tx: ambient.x, ty: ambient.y });
-      }
-    }
-    // Crackle particles around orb
-    if (sp._pulseTimer % 3 === 0) {
+  } else if (sp.phase === 'planted') {
+    // LIGHTNING ROD — passive amplifier. Doesn't fire on its own.
+    // The bonus arc is triggered from bullet hit code (checks for nearby planted rod).
+    // Here we just handle ambient VFX + lifetime.
+    const _rodR = 200 * _radBoost;
+    // Ambient crackle
+    if (sp._pulseTimer % 4 === 0) {
       const a = Math.random() * Math.PI * 2;
-      particles.push({ x: sp.x + Math.cos(a) * 10, y: sp.y + Math.sin(a) * 10,
-        vx: -Math.cos(a) * 0.6, vy: -Math.sin(a) * 0.6,
-        life: 10, maxLife: 10, size: 1.5, color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+      particles.push({ x: sp.x + Math.cos(a)*8, y: sp.y + Math.sin(a)*8,
+        vx: -Math.cos(a)*0.5, vy: -Math.sin(a)*0.5,
+        life: 10, maxLife: 10, size: 1.5, color: Math.random()>0.4?'#4ff':'#fff', type: 'spark' });
+    }
+    // Occasional ambient arc to nearby wall/floor
+    if (sp._pulseTimer % 20 === 0) {
+      const _ra = Math.random()*Math.PI*2, _rd = 15+Math.random()*20;
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 6, maxLife: 6,
+        size: 1, color: '#4ff', type: 'lightning',
+        tx: sp.x+Math.cos(_ra)*_rd, ty: sp.y+Math.sin(_ra)*_rd });
     }
     sp.lifetime--;
   }
@@ -13885,67 +13822,86 @@ function _updateRingZone(sp, _radBoost) {
       sp.lifetime--;
     }
 
-  // ======== STATIC CAGE — electric fence between 6 nodes ========
+  // ======== CHAIN BOLT — bouncing electric projectile, chains through uncharged ========
   } else if (sp.classId === 'discharge') {
-    const nodes = sp._cageNodes;
-    const nc = nodes.length;
-    // Lightning arcs between adjacent nodes every frame (visible fence)
-    if (sp._pulseTimer % 3 === 0) {
-      for (let i = 0; i < nc; i++) {
-        const n1 = nodes[i], n2 = nodes[(i+1)%nc];
-        particles.push({ x: n1.x, y: n1.y, vx: 0, vy: 0, life: 5, maxLife: 5,
-          size: 1.5, color: '#4ff', type: 'lightning', tx: n2.x, ty: n2.y });
-      }
+    if (sp.phase !== 'flying') { sp.lifetime = 0; return; }
+    const _prevX = sp.x, _prevY = sp.y;
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+    // Electric trail — continuous lightning from prev to current pos
+    particles.push({ x: _prevX, y: _prevY, vx: 0, vy: 0, life: 12, maxLife: 12,
+      size: 2, color: '#4ff', type: 'lightning', tx: sp.x, ty: sp.y });
+    // Crackling sparks along path
+    if (sp._pulseTimer % 2 === 0) {
+      const _ta = Math.random()*Math.PI*2;
+      particles.push({ x: sp.x+Math.cos(_ta)*4, y: sp.y+Math.sin(_ta)*4,
+        vx: Math.cos(_ta)*2, vy: Math.sin(_ta)*2,
+        life: 8+Math.random()*4, maxLife: 12, size: 2+Math.random(),
+        color: Math.random()>0.4?'#4ff':'#fff', type: 'spark' });
     }
-    // Node crackle sparks
-    if (sp._pulseTimer % 6 === 0) {
-      const nd = nodes[Math.floor(Math.random()*nc)];
-      for (let j = 0; j < 3; j++) {
-        const ja = Math.random()*Math.PI*2, js = 1+Math.random()*2;
-        particles.push({ x: nd.x, y: nd.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
-          life: 8+Math.random()*4, maxLife: 12, size: 1.5+Math.random(),
-          color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
+    // Wall bounce
+    if (obstacleCollision(sp.x, sp.y, 4, true)) {
+      sp.x = _prevX; sp.y = _prevY;
+      // Reflect — try X then Y
+      if (obstacleCollision(sp.x + sp.vx, sp.y, 4, true)) sp.vx = -sp.vx;
+      if (obstacleCollision(sp.x, sp.y + sp.vy, 4, true)) sp.vy = -sp.vy;
+      sp._bounces++;
+      // Bounce spark burst
+      for (let i = 0; i < 8; i++) {
+        const ba = Math.random()*Math.PI*2, bs = 2+Math.random()*4;
+        particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+          life: 8+Math.random()*4, maxLife: 12, size: 2+Math.random()*1.5,
+          color: Math.random()>0.4?'#4ff':'#fff', type: 'spark' });
       }
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 20, color: '#4ff', type: 'wakering' });
+      screenShake.intensity = Math.max(screenShake.intensity, 2);
+      if (sp._bounces > sp._maxBounces) { sp.lifetime = 0; return; }
     }
-    // Fence crossing detection — enemies between adjacent nodes get zapped
-    if (sp._pulseTimer % 8 === 0) {
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        // Check if enemy is near any fence segment (line between adjacent nodes)
-        for (let i = 0; i < nc; i++) {
-          const n1 = nodes[i], n2 = nodes[(i+1)%nc];
-          const _lx = n2.x-n1.x, _ly = n2.y-n1.y, _ll = Math.sqrt(_lx*_lx+_ly*_ly) || 1;
-          const _t = Math.max(0, Math.min(1, ((z.x-n1.x)*_lx+(z.y-n1.y)*_ly)/(_ll*_ll)));
-          const _cx = n1.x+_t*_lx, _cy = n1.y+_t*_ly;
-          const _dist = Math.sqrt((z.x-_cx)**2+(z.y-_cy)**2);
-          if (_dist < z.radius + 12) {
-            damageZombie(z, 12, 0, 0);
-            applyCharged(z);
-            // Zap VFX
-            particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 8, maxLife: 8,
-              size: 1.5, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
-            for (let j = 0; j < 4; j++) {
-              const ja = Math.random()*Math.PI*2;
-              particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*3, vy: Math.sin(ja)*3,
-                life: 8, maxLife: 8, size: 2, color: '#4ff', type: 'spark' });
-            }
-            break;
-          }
+    // Chain through uncharged enemies
+    for (const z of zombies) {
+      if (z.hp <= 0 || sp._chainedSet.has(z.zid)) continue;
+      if (z._charged) continue; // skip already charged — the key mechanic
+      const dx = z.x - sp.x, dy = z.y - sp.y;
+      if (dx*dx + dy*dy < (z.radius + 8) ** 2) {
+        sp._chainedSet.add(z.zid);
+        damageZombie(z, 25, 0, 0);
+        applyCharged(z);
+        // Redirect bolt toward next uncharged enemy
+        let _next = null, _nd2 = 180*180;
+        for (const oz of zombies) {
+          if (oz.hp <= 0 || oz === z || sp._chainedSet.has(oz.zid) || oz._charged) continue;
+          const odx = oz.x-z.x, ody = oz.y-z.y;
+          const od2 = odx*odx + ody*ody;
+          if (od2 < _nd2) { _nd2 = od2; _next = oz; }
         }
+        if (_next) {
+          // Redirect toward next target
+          const _na = Math.atan2(_next.y - z.y, _next.x - z.x);
+          const _spd = Math.hypot(sp.vx, sp.vy);
+          sp.vx = Math.cos(_na) * _spd;
+          sp.vy = Math.sin(_na) * _spd;
+          sp.x = z.x; sp.y = z.y;
+        }
+        // Hit VFX — big electric burst at enemy
+        for (let i = 0; i < 10; i++) {
+          const ha = Math.random()*Math.PI*2, hs = 3+Math.random()*5;
+          particles.push({ x: z.x, y: z.y, vx: Math.cos(ha)*hs, vy: Math.sin(ha)*hs,
+            life: 10+Math.random()*6, maxLife: 16, size: 2+Math.random()*2.5,
+            color: Math.random()>0.3?'#4ff':'#fff', type: 'spark' });
+        }
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: z.radius*2, color: '#4ff', type: 'wakering' });
+        // Lightning bolt from bolt to enemy
+        particles.push({ x: _prevX, y: _prevY, vx: 0, vy: 0, life: 14, maxLife: 14,
+          size: 2, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+        screenShake.intensity = Math.max(screenShake.intensity, 3);
+        playSfx('zap', 0.12);
+        if (!_next) { sp.lifetime = 0; return; } // no more targets — bolt expires
+        break;
       }
     }
-    // Enemies INSIDE the cage — periodic chain lightning every 24 frames
-    if (sp._pulseTimer % 24 === 0) {
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x-sp.x, dy = z.y-sp.y;
-        if (dx*dx+dy*dy < sp._ringR*sp._ringR*0.85) {
-          damageZombie(z, 8, 0, 0);
-          applyCharged(z);
-          particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 10, maxLife: 10,
-            size: 1.5, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
-        }
-      }
+    // Max travel or OOB
+    if (sp.travel >= 800 || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
+      sp.lifetime = 0; return;
     }
     sp.lifetime--;
 
@@ -19013,6 +18969,33 @@ function update() {
                       screenShake.intensity=Math.max(screenShake.intensity,6);
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
+                  }
+                  // LIGHTNING ROD: bonus arc from nearby planted rod on any bullet hit
+                  if (_isLocal) {
+                    const _rodR2 = 200 * 200;
+                    for (const _sp of spikes) {
+                      if (!_sp._orb || _sp.phase !== 'planted') continue;
+                      const _rdx = z.x - _sp.x, _rdy = z.y - _sp.y;
+                      if (_rdx*_rdx + _rdy*_rdy < _rodR2) {
+                        const _rodDmg = Math.floor(_dmg * 0.5);
+                        damageZombie(z, _rodDmg, 0, 0);
+                        applyCharged(z);
+                        // Lightning bolt from rod to enemy
+                        particles.push({ x:_sp.x, y:_sp.y, vx:0, vy:0, life:14, maxLife:14,
+                          size:2, color:'#4ff', type:'lightning', tx:z.x, ty:z.y });
+                        particles.push({ x:_sp.x, y:_sp.y, vx:0, vy:0, life:10, maxLife:10,
+                          size:1, color:'#fff', type:'lightning', tx:z.x, ty:z.y });
+                        // Sparks at both ends
+                        for (let _ri = 0; _ri < 4; _ri++) {
+                          const _ra = Math.random()*Math.PI*2, _rs = 2+Math.random()*3;
+                          particles.push({ x:z.x, y:z.y, vx:Math.cos(_ra)*_rs, vy:Math.sin(_ra)*_rs,
+                            life:8, maxLife:8, size:2+Math.random(), color:'#4ff', type:'spark' });
+                          particles.push({ x:_sp.x, y:_sp.y, vx:Math.cos(_ra)*_rs*0.5, vy:Math.sin(_ra)*_rs*0.5,
+                            life:6, maxLife:6, size:1.5, color:'#4ff', type:'spark' });
+                        }
+                        break; // only one rod bonus per hit
+                      }
+                    }
                   }
                   // UNIVERSAL CHAIN: any bullet hitting a Charged enemy discharges a chain arc to nearby enemies.
                   // Works for all classes of rounds, beacon bullets, even base pistol shots.
