@@ -1645,21 +1645,21 @@ const UPGRADE_POOL = [
     descs:['Each throw fires two spikes at a slight off-axis angle.'],
     flavor:'parallel processes. both stick.' },
   // ---- SPIKE RING CLASSES (AoE centered on player — no projectile) ----
-  { id:'eruption_ring', name:'ERUPTION RING', rarity:'rare', max:1, icon:'\uD83D\uDD25', color:'#f80',
-    descs:['Fire erupts in a 90px ring around you. All enemies hit take damage + OVERHEAT. Leaves a burning zone for 3s.'],
-    flavor:'ring of fire. step inside.' },
-  { id:'cryo_dome', name:'CRYO DOME', rarity:'rare', max:1, icon:'\u2744', color:'#8ef',
-    descs:['Ice dome expands 100px from you. Enemies get CHILL, close enemies FREEZE. Cold zone persists 2.5s.'],
-    flavor:'cold radiates outward.' },
-  { id:'discharge_ring', name:'DISCHARGE RING', rarity:'rare', max:1, icon:'\u26A1', color:'#4ff',
-    descs:['Electric shockwave blasts 110px outward. All enemies CHARGED + chain arcs between them. Instant.'],
-    flavor:'ripple effect. nobody is safe.' },
-  { id:'impact_ring', name:'IMPACT RING', rarity:'rare', max:1, icon:'\uD83D\uDCA5', color:'#cef',
-    descs:['Kinetic blast 100px around you. Enemies launched outward hard + EXPOSED. The panic button.'],
-    flavor:'collateral damage.' },
-  { id:'plague_ring', name:'PLAGUE RING', rarity:'rare', max:1, icon:'\u2620', color:'#a4f',
-    descs:['Corruption wave pulses 80px from you. 3 CORRUPT stacks to all enemies. COMPROMISED take bonus damage.'],
-    flavor:'infection radius. nobody escapes.' },
+  { id:'eruption_ring', name:'ERUPTION', rarity:'rare', max:1, icon:'\uD83D\uDD25', color:'#f80',
+    descs:['Fire shockwave expands outward over 1s. Enemies hit by the wavefront get launched + ignited. Ground burns for 4s.'],
+    flavor:'the floor is lava.' },
+  { id:'cryo_dome', name:'GLACIAL SPIKE', rarity:'rare', max:1, icon:'\u2744', color:'#8ef',
+    descs:['Ice pillars erupt in a line ahead of you. Enemies hit get frozen + knocked sideways. Pillars persist as cover for 3s.'],
+    flavor:'cold geometry. freeze. retreat. kite.' },
+  { id:'discharge_ring', name:'STATIC CAGE', rarity:'rare', max:1, icon:'\u26A1', color:'#4ff',
+    descs:['6 electric nodes appear around you. Lightning fence arcs between them. Enemies crossing = zapped. Inside = chain lightning.'],
+    flavor:'nobody leaves the cage.' },
+  { id:'impact_ring', name:'KINETIC NOVA', rarity:'rare', max:1, icon:'\uD83D\uDCA5', color:'#cef',
+    descs:['360\u00B0 blast launches everything outward. Wall-slam bonus damage. The panic button.'],
+    flavor:'get. off. me.' },
+  { id:'plague_ring', name:'MIASMA', rarity:'rare', max:1, icon:'\u2620', color:'#a4f',
+    descs:['Rolling corruption fog drifts forward 250px over 3s. Enemies inside corrupt FAST. Deaths inside spawn sub-clouds.'],
+    flavor:'the fog eats everything.' },
   // ---- BEACON MODS ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:1, icon:'💣', color:'#fa0',
     descs:['Press special again to detonate the beacon — class-flavored blast (150px, 150 dmg).'], flavor:'beacon doubles as an explosive charge.' },
@@ -12929,161 +12929,191 @@ function throwSpike() {
     }
     playSound(520, 0.08, 'sawtooth', 0.1);
 
-  // ---- RING SPIKE CLASSES — AoE centered on player, no projectile ----
+  // ==== RING SPIKE CLASSES — unique AoE abilities, no projectile ====
   } else if (_classId === 'eruption' || _classId === 'cryodome' || _classId === 'discharge' || _classId === 'impact' || _classId === 'plague') {
     const _radW = (runMods || {}).spikeWide > 0 ? 1.3 : 1;
-    const _ringColors = { eruption:'#f80', cryodome:'#8ef', discharge:'#4ff', impact:'#cef', plague:'#a4f' };
-    const _rc = _ringColors[_classId] || '#fff';
+    const px = lp.x, py = lp.y;
 
     if (_classId === 'eruption') {
-      // ERUPTION RING — fire burst + persistent burn zone
-      const _r = 90 * _radW;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - lp.x, dy = z.y - lp.y;
-        if (dx * dx + dy * dy < _r * _r) {
-          damageZombie(z, 35, dx * 0.02, dy * 0.02);
-          applyOverheat(z, _burnStackValue(), 1.5);
-        }
+      // ======== ERUPTION — expanding fire shockwave + burn zone ========
+      const _maxR = 120 * _radW;
+      spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'eruption',
+        phase: 'expanding', _ring: true, _ringR: 10, _maxR: _maxR,
+        _hitSet: new Set(),
+        lifetime: Math.floor(300 * _persist), maxLife: 300, _pulseTimer: 0 });
+      // Origin detonation burst — 30 fire sparks radiating outward
+      for (let i = 0; i < 30; i++) {
+        const ba = (i/30)*Math.PI*2, bs = 2+Math.random()*6;
+        particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+          life: 20+Math.random()*12, maxLife: 32, size: 3+Math.random()*4,
+          color: ['#f80','#fa0','#f40','#ff0','#fff'][Math.floor(Math.random()*5)], type: 'explosion' });
       }
-      // Persistent burn zone
-      spikes.push({ x: lp.x, y: lp.y, ownerId: lp.id, classId: 'eruption',
-        phase: 'zone', _ring: true, _ringR: _r,
-        lifetime: Math.floor(180 * _persist), maxLife: 180, _pulseTimer: 0 });
-      // VFX
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: _r, color: '#f80', type: 'wakering' });
-      for (let i = 0; i < 24; i++) {
-        const ba = (i/24)*Math.PI*2, bs = 3+Math.random()*5;
-        particles.push({ x: lp.x, y: lp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 18+Math.random()*10, maxLife: 28, size: 3+Math.random()*3,
-          color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
+      // Smoke pillar
+      for (let i = 0; i < 6; i++) {
+        const sa = Math.random()*Math.PI*2;
+        particles.push({ x: px+Math.cos(sa)*6, y: py+Math.sin(sa)*6,
+          vx: Math.cos(sa)*0.5, vy: -2-Math.random()*2,
+          life: 40, maxLife: 40, size: 5+Math.random()*4, color: '#444', type: 'smoke', _smokeAlpha: 0.25 });
       }
-      screenShake.intensity = Math.max(screenShake.intensity, 8);
+      // Scorch decal at epicenter
+      decals.push({ type: 'scorch', x: px, y: py, size: 20, color: 'rgba(40,20,10,0.7)', alpha: 0.5 });
+      screenShake.intensity = Math.max(screenShake.intensity, 10);
+      triggerGlitchSurge(0.2, 14);
       playExplosionSound();
 
     } else if (_classId === 'cryodome') {
-      // CRYO DOME — freeze pulse + persistent cold zone
-      const _r = 100 * _radW;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - lp.x, dy = z.y - lp.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < _r * _r) {
-          const d = Math.sqrt(d2) || 1;
-          applyChill(z, d < _r * 0.4 ? 4 : 2, 1.5); // close = freeze, far = chill
-          damageZombie(z, 20, dx / d * 2, dy / d * 2);
-        }
+      // ======== GLACIAL SPIKE — line of ice pillars erupting forward ========
+      const _dir = a;
+      const _pillarCount = 5;
+      const _pillarGap = 32;
+      const _pillars = [];
+      for (let i = 0; i < _pillarCount; i++) {
+        const dist = 40 + i * _pillarGap;
+        _pillars.push({
+          x: px + Math.cos(_dir) * dist,
+          y: py + Math.sin(_dir) * dist,
+          hp: 80, maxHp: 80,
+          erupted: false, eruptFrame: i * 6, // staggered eruption
+          wobble: Math.random() * Math.PI * 2,
+        });
       }
-      spikes.push({ x: lp.x, y: lp.y, ownerId: lp.id, classId: 'cryodome',
-        phase: 'zone', _ring: true, _ringR: _r,
-        lifetime: Math.floor(150 * _persist), maxLife: 150, _pulseTimer: 0 });
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: _r, color: '#8ef', type: 'wakering' });
-      for (let i = 0; i < 20; i++) {
-        const ba = Math.random()*Math.PI*2, bs = 2+Math.random()*4;
-        particles.push({ x: lp.x, y: lp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 20, maxLife: 20, size: 2+Math.random()*2,
-          color: Math.random()>0.5?'#8ef':'#cff', type: 'spark' });
+      spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'cryodome',
+        phase: 'launching', _ring: true, _wallSegs: _pillars, _wallAng: _dir + Math.PI/2,
+        _launchFrame: 0,
+        lifetime: Math.floor(240 * _persist), maxLife: 240, _pulseTimer: 0 });
+      // Origin frost burst
+      for (let i = 0; i < 16; i++) {
+        const ba = _dir + (Math.random()-0.5)*1.2, bs = 3+Math.random()*5;
+        particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+          life: 16+Math.random()*8, maxLife: 24, size: 2+Math.random()*3,
+          color: Math.random()>0.4?'#8ef':'#cff', type: 'spark' });
+      }
+      // Ground frost line
+      for (let i = 0; i < _pillarCount; i++) {
+        const fx = px + Math.cos(_dir)*(40+i*_pillarGap);
+        const fy = py + Math.sin(_dir)*(40+i*_pillarGap);
+        decals.push({ type: 'scorch', x: fx, y: fy, size: 10, color: 'rgba(100,180,255,0.3)', alpha: 0.3, _fade: 0.001 });
       }
       screenShake.intensity = Math.max(screenShake.intensity, 6);
-      playSound(200, 0.1, 'sine', 0.15);
+      playSound(300, 0.1, 'sine', 0.12);
+      playSound(120, 0.08, 'square', 0.06);
 
     } else if (_classId === 'discharge') {
-      // DISCHARGE RING — instant shockwave, no persistent zone
-      const _r = 110 * _radW;
-      let _lastHit = null;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - lp.x, dy = z.y - lp.y;
-        if (dx * dx + dy * dy < _r * _r) {
-          damageZombie(z, 30, 0, 0);
-          applyCharged(z);
-          _lastHit = z;
+      // ======== STATIC CAGE — 6 electric nodes forming a fence ========
+      const _cageR = 80 * _radW;
+      const _nodeCount = 6;
+      const _nodes = [];
+      for (let i = 0; i < _nodeCount; i++) {
+        const na = (i / _nodeCount) * Math.PI * 2;
+        _nodes.push({ x: px + Math.cos(na)*_cageR, y: py + Math.sin(na)*_cageR });
+      }
+      spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'discharge',
+        phase: 'active', _ring: true, _cageNodes: _nodes, _ringR: _cageR,
+        lifetime: Math.floor(240 * _persist), maxLife: 240, _pulseTimer: 0 });
+      // Deployment lightning bolts from player to each node
+      for (const nd of _nodes) {
+        particles.push({ x: px, y: py, vx: 0, vy: 0, life: 18, maxLife: 18,
+          size: 2, color: '#4ff', type: 'lightning', tx: nd.x, ty: nd.y });
+        // Spark burst at each node
+        for (let j = 0; j < 6; j++) {
+          const ja = Math.random()*Math.PI*2, js = 2+Math.random()*3;
+          particles.push({ x: nd.x, y: nd.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
+            life: 10+Math.random()*6, maxLife: 16, size: 2+Math.random(),
+            color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
         }
       }
-      // Chain arcs between hit enemies
-      if (_lastHit) {
-        const _hitSet = new Set();
-        let _chainFrom = _lastHit;
-        _hitSet.add(_chainFrom.zid);
-        for (let ci = 0; ci < 4; ci++) {
-          let _next = null, _nd2 = 150*150;
-          for (const z of zombies) {
-            if (z.hp <= 0 || _hitSet.has(z.zid)) continue;
-            const cdx = z.x-_chainFrom.x, cdy = z.y-_chainFrom.y;
-            const cd2 = cdx*cdx+cdy*cdy;
-            if (cd2 < _nd2) { _nd2 = cd2; _next = z; }
-          }
-          if (!_next) break;
-          _hitSet.add(_next.zid);
-          particles.push({ x:_chainFrom.x, y:_chainFrom.y, vx:0, vy:0, life:14, maxLife:14,
-            size:2, color:'#4ff', type:'lightning', tx:_next.x, ty:_next.y });
-          _chainFrom = _next;
-        }
-      }
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: _r, color: '#4ff', type: 'wakering' });
-      for (let i = 0; i < 16; i++) {
-        const ba = Math.random()*Math.PI*2, bs = 3+Math.random()*5;
-        particles.push({ x: lp.x, y: lp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 12, maxLife: 12, size: 2, color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
-      }
-      screenShake.intensity = Math.max(screenShake.intensity, 7);
-      playSfx('lightning_fire', 0.2) || playSound(1400, 0.06, 'sine', 0.08);
+      // Central flash
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 14, maxLife: 14, size: _cageR*0.4, color: '#4ff', type: 'wakering' });
+      screenShake.intensity = Math.max(screenShake.intensity, 8);
+      triggerGlitchSurge(0.15, 10);
+      playSfx('lightning_fire', 0.25) || playSound(1400, 0.08, 'sine', 0.1);
+      playSound(200, 0.06, 'sawtooth', 0.08);
 
     } else if (_classId === 'impact') {
-      // IMPACT RING — massive knockback blast, instant
-      const _r = 100 * _radW;
+      // ======== KINETIC NOVA — instant 360° blast ========
+      const _r = 110 * _radW;
       for (const z of zombies) {
         if (z.hp <= 0) continue;
-        const dx = z.x - lp.x, dy = z.y - lp.y;
+        const dx = z.x - px, dy = z.y - py;
         const d2 = dx * dx + dy * dy;
         if (d2 < _r * _r) {
           const d = Math.sqrt(d2) || 1;
-          const _push = 18 * (1 - d / _r) + 6;
+          const _push = 22 * (1 - d / _r) + 8;
           z.vx += (dx / d) * _push;
           z.vy += (dy / d) * _push;
-          damageZombie(z, 25, dx / d * 6, dy / d * 6);
+          damageZombie(z, 30, dx / d * 8, dy / d * 8);
           applyExposed(z);
+          // Per-enemy impact spark cluster
+          for (let j = 0; j < 4; j++) {
+            const ja = Math.random()*Math.PI*2, js = 2+Math.random()*3;
+            particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*js + dx/d*4, vy: Math.sin(ja)*js + dy/d*4,
+              life: 10+Math.random()*6, maxLife: 16, size: 2+Math.random()*2,
+              color: Math.random()>0.4?'#cef':'#fff', type: 'spark' });
+          }
         }
       }
+      // Triple expanding wakering — staggered timing
       for (let r = 0; r < 3; r++) {
-        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
-          life: 16+r*4, maxLife: 20, size: _r*(1+r*0.12), color: '#cef', type: 'wakering' });
+        particles.push({ x: px, y: py, vx: 0, vy: 0,
+          life: 18+r*5, maxLife: 22, size: _r*(0.9+r*0.15), color: r===0?'#fff':'#cef', type: 'wakering' });
       }
-      for (let i = 0; i < 28; i++) {
-        const ba = (i/28)*Math.PI*2, bs = 5+Math.random()*6;
-        particles.push({ x: lp.x, y: lp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 18+Math.random()*8, maxLife: 26, size: 2+Math.random()*2,
-          color: Math.random()>0.4?'#cef':'#fff', type: 'spark' });
+      // 36 radial speed lines
+      for (let i = 0; i < 36; i++) {
+        const ba = (i/36)*Math.PI*2, bs = 6+Math.random()*8;
+        particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+          life: 16+Math.random()*8, maxLife: 24, size: 2+Math.random()*2.5,
+          color: i%3===0?'#fff':'#cef', type: 'spark' });
       }
-      screenShake.intensity = Math.max(screenShake.intensity, 12);
-      triggerGlitchSurge(0.3, 18);
+      // 8 glitch characters blasted outward
+      const _novaGlyphs = '\u2588\u2591\u2593\u2592\u2573\u25C6\u25AA\u25E2\u25E3';
+      for (let i = 0; i < 8; i++) {
+        const ga = (i/8)*Math.PI*2, gs = 3+Math.random()*4;
+        particles.push({ x: px+Math.cos(ga)*15, y: py+Math.sin(ga)*15,
+          vx: Math.cos(ga)*gs, vy: Math.sin(ga)*gs,
+          life: 20, maxLife: 20, size: 14, color: ['#cef','#fff','#8cf'][i%3],
+          type: 'glitchtext', text: _novaGlyphs[Math.floor(Math.random()*_novaGlyphs.length)] });
+      }
+      // Ground crack decals radiating from center
+      for (let i = 0; i < 8; i++) {
+        const ca = (i/8)*Math.PI*2, cr = 20+Math.random()*(_r*0.6);
+        decals.push({ type: 'scorch', x: px+Math.cos(ca)*cr, y: py+Math.sin(ca)*cr,
+          size: 3+Math.random()*4, color: 'rgba(180,220,255,0.25)', alpha: 0.3, _fade: 0.002 });
+      }
+      decals.push({ type: 'scorch', x: px, y: py, size: 14, color: 'rgba(180,220,255,0.35)', alpha: 0.4, _fade: 0.001 });
+      screenShake.intensity = Math.max(screenShake.intensity, 15);
+      triggerGlitchSurge(0.4, 22);
       playExplosionSound();
+      playSound(100, 0.15, 'sawtooth', 0.1);
+      playSound(800, 0.06, 'sine', 0.06);
 
     } else if (_classId === 'plague') {
-      // PLAGUE RING — corruption wave + persistent corruption zone
-      const _r = 80 * _radW;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - lp.x, dy = z.y - lp.y;
-        if (dx * dx + dy * dy < _r * _r) {
-          applyCorrupt(z, 3);
-          // Bonus damage if already COMPROMISED
-          if (z._compromised) damageZombie(z, 40, 0, 0);
-          else damageZombie(z, 15, 0, 0);
-        }
+      // ======== MIASMA — rolling corruption fog drifting forward ========
+      const _cloudR = 60 * _radW;
+      const _dirX = Math.cos(a), _dirY = Math.sin(a);
+      spikes.push({ x: px + _dirX*20, y: py + _dirY*20, ownerId: lp.id, classId: 'plague',
+        phase: 'drifting', _ring: true, _ringR: _cloudR,
+        vx: _dirX * 1.5, vy: _dirY * 1.5, travel: 0, _maxTravel: 250,
+        _hitAccum: {}, // zid → frames inside
+        lifetime: Math.floor(210 * _persist), maxLife: 210, _pulseTimer: 0 });
+      // Origin corruption burst
+      for (let i = 0; i < 20; i++) {
+        const ba = a + (Math.random()-0.5)*2.0, bs = 1+Math.random()*3;
+        particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+          life: 20+Math.random()*10, maxLife: 30, size: 3+Math.random()*3,
+          color: Math.random()>0.4?'#a4f':'#f0f', type: 'spark' });
       }
-      spikes.push({ x: lp.x, y: lp.y, ownerId: lp.id, classId: 'plague',
-        phase: 'zone', _ring: true, _ringR: _r,
-        lifetime: Math.floor(150 * _persist), maxLife: 150, _pulseTimer: 0 });
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: _r, color: '#a4f', type: 'wakering' });
-      for (let i = 0; i < 18; i++) {
-        const ba = Math.random()*Math.PI*2, bs = 2+Math.random()*4;
-        particles.push({ x: lp.x, y: lp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 18, maxLife: 18, size: 2+Math.random()*2,
-          color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
+      // Glitch text eruption
+      const _mGlyphs = '\u2588\u2591\u2593\u2620\u2623\u25C6';
+      for (let i = 0; i < 4; i++) {
+        const ga = a + (Math.random()-0.5)*1.5, gs = 1+Math.random()*2;
+        particles.push({ x: px, y: py, vx: Math.cos(ga)*gs, vy: Math.sin(ga)*gs,
+          life: 22, maxLife: 22, size: 11, color: Math.random()>0.5?'#a4f':'#f0f',
+          type: 'glitchtext', text: _mGlyphs[Math.floor(Math.random()*_mGlyphs.length)] });
       }
-      screenShake.intensity = Math.max(screenShake.intensity, 6);
-      playSound(180, 0.12, 'sawtooth', 0.12);
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 16, maxLife: 16, size: _cloudR*0.6, color: '#a4f', type: 'wakering' });
+      screenShake.intensity = Math.max(screenShake.intensity, 5);
+      playSound(140, 0.1, 'sawtooth', 0.14);
+      playSound(80, 0.06, 'square', 0.1);
     }
 
   } else {
@@ -13596,64 +13626,322 @@ function _updateSeekerSpike(sp, _radBoost) {
   }
 }
 
-// ---------- RING ZONES — persistent AoE at cast position ----------
+// ---------- RING/AOE SPIKE UPDATE — unique mechanics per class ----------
 function _updateRingZone(sp, _radBoost) {
-  const r = sp._ringR || 80;
   sp._pulseTimer++;
+
+  // ======== ERUPTION — expanding fire shockwave then burn zone ========
   if (sp.classId === 'eruption') {
-    // Burn zone — pulse OVERHEAT every 18 frames
-    if (sp._pulseTimer % 18 === 0) {
+    if (sp.phase === 'expanding') {
+      sp._ringR += 2.2;
+      const r = sp._ringR;
+      // Wavefront damage — enemies entering the expanding band
+      const _bandInner = Math.max(0, r - 18), _bandOuter = r;
       for (const z of zombies) {
-        if (z.hp <= 0) continue;
+        if (z.hp <= 0 || sp._hitSet.has(z.zid)) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < r * r) {
-          applyOverheat(z, _burnStackValue(), 1);
-          damageZombie(z, 5, 0, 0);
+        const d = Math.sqrt(dx*dx+dy*dy) || 1;
+        if (d >= _bandInner && d < _bandOuter) {
+          sp._hitSet.add(z.zid);
+          // Launch outward + ignite
+          const _push = 10 + (1 - d/sp._maxR) * 8;
+          z.vx += (dx/d) * _push;
+          z.vy += (dy/d) * _push;
+          damageZombie(z, 35, dx/d * 5, dy/d * 5);
+          applyOverheat(z, _burnStackValue(), 1.5);
+          // Per-hit fire burst
+          for (let j = 0; j < 6; j++) {
+            const ja = Math.random()*Math.PI*2, js = 2+Math.random()*4;
+            particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*js+dx/d*2, vy: Math.sin(ja)*js+dy/d*2,
+              life: 12+Math.random()*8, maxLife: 20, size: 3+Math.random()*3,
+              color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)], type: 'explosion' });
+          }
         }
       }
-      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
-        life: 12, maxLife: 12, size: r * 0.9, color: '#f80', type: 'wakering' });
+      // Expanding edge VFX — fire embers along the ring perimeter
+      if (sp._pulseTimer % 2 === 0) {
+        for (let i = 0; i < 5; i++) {
+          const ea = Math.random()*Math.PI*2;
+          particles.push({ x: sp.x+Math.cos(ea)*r, y: sp.y+Math.sin(ea)*r,
+            vx: Math.cos(ea)*1.5, vy: -1.5-Math.random()*2,
+            life: 14+Math.random()*6, maxLife: 20, size: 2+Math.random()*3,
+            color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
+        }
+        // Smoke along the edge
+        const sa = Math.random()*Math.PI*2;
+        particles.push({ x: sp.x+Math.cos(sa)*r*0.8, y: sp.y+Math.sin(sa)*r*0.8,
+          vx: Math.cos(sa)*0.3, vy: -1.8-Math.random(),
+          life: 28, maxLife: 28, size: 4+Math.random()*3, color: '#553', type: 'smoke', _smokeAlpha: 0.2 });
+      }
+      // Expanding wakering every 10 frames
+      if (sp._pulseTimer % 10 === 0) {
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: r, color: '#f80', type: 'wakering' });
+      }
+      // Scorch trail as ring expands
+      if (sp._pulseTimer % 8 === 0) {
+        for (let i = 0; i < 3; i++) {
+          const da = Math.random()*Math.PI*2, dr = r*(0.5+Math.random()*0.4);
+          decals.push({ type: 'scorch', x: sp.x+Math.cos(da)*dr, y: sp.y+Math.sin(da)*dr,
+            size: 3+Math.random()*5, color: 'rgba(40,20,10,0.6)', alpha: 0.4 });
+        }
+      }
+      if (r >= sp._maxR) { sp.phase = 'burning'; sp._ringR = sp._maxR; }
+    } else if (sp.phase === 'burning') {
+      const r = sp._ringR;
+      // Burn zone — pulse OVERHEAT every 18 frames to anyone inside
+      if (sp._pulseTimer % 18 === 0) {
+        for (const z of zombies) {
+          if (z.hp <= 0) continue;
+          const dx = z.x - sp.x, dy = z.y - sp.y;
+          if (dx*dx+dy*dy < r*r) { applyOverheat(z, _burnStackValue(), 1); damageZombie(z, 8, 0, 0); }
+        }
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r*0.9, color: '#f80', type: 'wakering' });
+      }
+      // Constant fire plume + embers
+      if (sp._pulseTimer % 3 === 0) {
+        for (let i = 0; i < 3; i++) {
+          const fa = Math.random()*Math.PI*2, fr = Math.random()*r*0.85;
+          particles.push({ x: sp.x+Math.cos(fa)*fr, y: sp.y+Math.sin(fa)*fr,
+            vx: (Math.random()-0.5)*0.6, vy: -1.5-Math.random()*1.8, life: 16, maxLife: 16,
+            size: 2+Math.random()*3, color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
+        }
+      }
+      // Smoke
+      if (sp._pulseTimer % 6 === 0) {
+        const sa = Math.random()*Math.PI*2, sr = Math.random()*r*0.6;
+        particles.push({ x: sp.x+Math.cos(sa)*sr, y: sp.y+Math.sin(sa)*sr,
+          vx: 0, vy: -1.2-Math.random(), life: 30, maxLife: 30, size: 4+Math.random()*3,
+          color: '#443', type: 'smoke', _smokeAlpha: 0.15 });
+      }
+      sp.lifetime--;
     }
-    if (sp._pulseTimer % 4 === 0) {
-      const fa = Math.random() * Math.PI * 2, fr = Math.random() * r * 0.8;
-      particles.push({ x: sp.x + Math.cos(fa)*fr, y: sp.y + Math.sin(fa)*fr,
-        vx: 0, vy: -1.2-Math.random(), life: 14, maxLife: 14, size: 2+Math.random()*2,
-        color: ['#f80','#fa0','#f40'][Math.floor(Math.random()*3)], type: 'explosion' });
-    }
+
+  // ======== GLACIAL SPIKE — line of frost pillars erupting forward ========
   } else if (sp.classId === 'cryodome') {
-    // Cold zone — pulse CHILL every 24 frames
+    sp._launchFrame = (sp._launchFrame || 0) + 1;
+    const _chillR = 50 * _radBoost;
+    let alive = false;
+    for (const seg of sp._wallSegs) {
+      if (seg.hp <= 0) continue;
+      alive = true;
+      // Staggered eruption
+      if (!seg.erupted && sp._launchFrame >= seg.eruptFrame) {
+        seg.erupted = true;
+        // Eruption VFX — ice shard explosion at pillar position
+        for (let i = 0; i < 12; i++) {
+          const ia = Math.random()*Math.PI*2, is2 = 2+Math.random()*5;
+          particles.push({ x: seg.x, y: seg.y, vx: Math.cos(ia)*is2, vy: Math.sin(ia)*is2 - 2,
+            life: 16+Math.random()*8, maxLife: 24, size: 2+Math.random()*3,
+            color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
+        }
+        // Frost mist cloud
+        for (let i = 0; i < 4; i++) {
+          const ma = Math.random()*Math.PI*2;
+          particles.push({ x: seg.x+Math.cos(ma)*8, y: seg.y+Math.sin(ma)*8,
+            vx: Math.cos(ma)*0.5, vy: -1-Math.random(), life: 24, maxLife: 24,
+            size: 4+Math.random()*3, color: '#adf', type: 'smoke', _smokeAlpha: 0.18 });
+        }
+        // Freeze + knockback sideways for nearby enemies
+        const _perp = sp._wallAng;
+        for (const z of zombies) {
+          if (z.hp <= 0) continue;
+          const dx = z.x - seg.x, dy = z.y - seg.y;
+          if (dx*dx+dy*dy < 40*40) {
+            applyChill(z, 4, 1.5);
+            damageZombie(z, 25, 0, 0);
+            // Knock sideways (perpendicular to line direction)
+            const side = (dx*Math.cos(_perp) + dy*Math.sin(_perp)) > 0 ? 1 : -1;
+            z.vx += Math.cos(_perp) * 8 * side;
+            z.vy += Math.sin(_perp) * 8 * side;
+          }
+        }
+        screenShake.intensity = Math.max(screenShake.intensity, 3);
+        decals.push({ type: 'scorch', x: seg.x, y: seg.y, size: 8,
+          color: 'rgba(100,180,255,0.3)', alpha: 0.3, _fade: 0.0008 });
+      }
+      if (!seg.erupted) continue;
+      // Standing pillar — chill pulse + contact damage to zombies
+      if (sp._pulseTimer % 30 === 0) {
+        for (const z of zombies) {
+          if (z.hp <= 0) continue;
+          const dx = z.x - seg.x, dy = z.y - seg.y;
+          if (dx*dx+dy*dy < _chillR*_chillR) applyChill(z, 1, 1);
+        }
+      }
+      // Zombie contact — damages segment
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - seg.x, dy = z.y - seg.y;
+        if (dx*dx+dy*dy < (z.radius+18)**2 && sp._pulseTimer % 10 === 0) {
+          seg.hp -= 5;
+          if (seg.hp <= 0) {
+            // Shatter burst — big ice crystal explosion
+            for (let i = 0; i < 18; i++) {
+              const sa2 = Math.random()*Math.PI*2, ss2 = 3+Math.random()*5;
+              particles.push({ x: seg.x, y: seg.y, vx: Math.cos(sa2)*ss2, vy: Math.sin(sa2)*ss2,
+                life: 20+Math.random()*8, maxLife: 28, size: 2+Math.random()*3,
+                color: Math.random()>0.4?'#8ef':'#fff', type: 'spark' });
+            }
+            particles.push({ x: seg.x, y: seg.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 40, color: '#8ef', type: 'wakering' });
+            // Shatter chill burst
+            for (const oz of zombies) {
+              if (oz.hp <= 0) continue;
+              const odx = oz.x-seg.x, ody = oz.y-seg.y;
+              if (odx*odx+ody*ody < 60*60) applyChill(oz, 2, 1);
+            }
+            screenShake.intensity = Math.max(screenShake.intensity, 4);
+          }
+        }
+      }
+      // Ambient frost particles from standing pillars
+      if (sp._pulseTimer % 5 === 0 && Math.random() > 0.4) {
+        const pa = Math.random()*Math.PI*2, pr = Math.random()*20;
+        particles.push({ x: seg.x+Math.cos(pa)*pr, y: seg.y+Math.sin(pa)*pr,
+          vx: (Math.random()-0.5)*0.3, vy: -0.6-Math.random()*0.4,
+          life: 22, maxLife: 22, size: 1.5+Math.random(),
+          color: Math.random()>0.5?'#8ef':'#cff', type: 'spark' });
+      }
+    }
+    if (!alive) sp.lifetime = 0;
+    else sp.lifetime--;
+
+  // ======== STATIC CAGE — electric fence between 6 nodes ========
+  } else if (sp.classId === 'discharge') {
+    const nodes = sp._cageNodes;
+    const nc = nodes.length;
+    // Lightning arcs between adjacent nodes every frame (visible fence)
+    if (sp._pulseTimer % 3 === 0) {
+      for (let i = 0; i < nc; i++) {
+        const n1 = nodes[i], n2 = nodes[(i+1)%nc];
+        particles.push({ x: n1.x, y: n1.y, vx: 0, vy: 0, life: 5, maxLife: 5,
+          size: 1.5, color: '#4ff', type: 'lightning', tx: n2.x, ty: n2.y });
+      }
+    }
+    // Node crackle sparks
+    if (sp._pulseTimer % 6 === 0) {
+      const nd = nodes[Math.floor(Math.random()*nc)];
+      for (let j = 0; j < 3; j++) {
+        const ja = Math.random()*Math.PI*2, js = 1+Math.random()*2;
+        particles.push({ x: nd.x, y: nd.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
+          life: 8+Math.random()*4, maxLife: 12, size: 1.5+Math.random(),
+          color: Math.random()>0.5?'#4ff':'#fff', type: 'spark' });
+      }
+    }
+    // Fence crossing detection — enemies between adjacent nodes get zapped
+    if (sp._pulseTimer % 8 === 0) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        // Check if enemy is near any fence segment (line between adjacent nodes)
+        for (let i = 0; i < nc; i++) {
+          const n1 = nodes[i], n2 = nodes[(i+1)%nc];
+          const _lx = n2.x-n1.x, _ly = n2.y-n1.y, _ll = Math.sqrt(_lx*_lx+_ly*_ly) || 1;
+          const _t = Math.max(0, Math.min(1, ((z.x-n1.x)*_lx+(z.y-n1.y)*_ly)/(_ll*_ll)));
+          const _cx = n1.x+_t*_lx, _cy = n1.y+_t*_ly;
+          const _dist = Math.sqrt((z.x-_cx)**2+(z.y-_cy)**2);
+          if (_dist < z.radius + 12) {
+            damageZombie(z, 12, 0, 0);
+            applyCharged(z);
+            // Zap VFX
+            particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 8, maxLife: 8,
+              size: 1.5, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+            for (let j = 0; j < 4; j++) {
+              const ja = Math.random()*Math.PI*2;
+              particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*3, vy: Math.sin(ja)*3,
+                life: 8, maxLife: 8, size: 2, color: '#4ff', type: 'spark' });
+            }
+            break;
+          }
+        }
+      }
+    }
+    // Enemies INSIDE the cage — periodic chain lightning every 24 frames
     if (sp._pulseTimer % 24 === 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
-        const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < r * r) applyChill(z, 1, 1);
+        const dx = z.x-sp.x, dy = z.y-sp.y;
+        if (dx*dx+dy*dy < sp._ringR*sp._ringR*0.85) {
+          damageZombie(z, 8, 0, 0);
+          applyCharged(z);
+          particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+            size: 1.5, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+        }
       }
     }
-    if (sp._pulseTimer % 6 === 0) {
-      const fa = Math.random() * Math.PI * 2, fr = Math.random() * r * 0.7;
-      particles.push({ x: sp.x + Math.cos(fa)*fr, y: sp.y + Math.sin(fa)*fr,
-        vx: (Math.random()-0.5)*0.4, vy: -0.5-Math.random()*0.4, life: 20, maxLife: 20,
-        size: 1.5+Math.random(), color: Math.random()>0.5?'#8ef':'#cff', type: 'spark' });
-    }
+    sp.lifetime--;
+
+  // ======== MIASMA — rolling corruption fog drifting forward ========
   } else if (sp.classId === 'plague') {
-    // Corruption zone — pulse CORRUPT every 30 frames
-    if (sp._pulseTimer % 30 === 0) {
+    const r = sp._ringR;
+    // Drift forward
+    if (sp.phase === 'drifting') {
+      sp.x += sp.vx; sp.y += sp.vy;
+      sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
+      if (sp.travel >= sp._maxTravel || obstacleCollision(sp.x, sp.y, 8, true)) {
+        sp.phase = 'dissipating';
+        sp.vx = 0; sp.vy = 0;
+      }
+    }
+    // Corrupt enemies inside — every 10 frames (FAST)
+    if (sp._pulseTimer % 10 === 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < r * r) applyCorrupt(z, 1);
+        if (dx*dx+dy*dy < r*r) {
+          applyCorrupt(z, 1);
+          // Death inside cloud → spawn sub-cloud
+          if (z.hp <= 0 && sp.phase === 'drifting') {
+            spikes.push({ x: z.x, y: z.y, ownerId: sp.ownerId, classId: 'plague',
+              phase: 'dissipating', _ring: true, _ringR: r * 0.5,
+              vx: 0, vy: 0, travel: 999, _maxTravel: 0, _hitAccum: {},
+              lifetime: 60, maxLife: 60, _pulseTimer: 0 });
+            // Death burst
+            for (let i = 0; i < 10; i++) {
+              const da = Math.random()*Math.PI*2, ds = 1+Math.random()*3;
+              particles.push({ x: z.x, y: z.y, vx: Math.cos(da)*ds, vy: Math.sin(da)*ds,
+                life: 16, maxLife: 16, size: 3+Math.random()*2,
+                color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
+            }
+          }
+        }
       }
-      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
-        life: 14, maxLife: 14, size: r * 0.85, color: '#a4f', type: 'wakering' });
     }
-    if (sp._pulseTimer % 6 === 0) {
-      const fa = Math.random() * Math.PI * 2, fr = Math.random() * r * 0.7;
-      particles.push({ x: sp.x + Math.cos(fa)*fr, y: sp.y + Math.sin(fa)*fr,
-        vx: (Math.random()-0.5)*0.5, vy: -0.5-Math.random()*0.3, life: 16, maxLife: 16,
-        size: 1.5+Math.random(), color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
+    // Dense fog particles — the cloud body
+    if (sp._pulseTimer % 2 === 0) {
+      for (let i = 0; i < 3; i++) {
+        const fa = Math.random()*Math.PI*2, fr = Math.random()*r*0.8;
+        particles.push({ x: sp.x+Math.cos(fa)*fr, y: sp.y+Math.sin(fa)*fr,
+          vx: sp.vx*0.3+(Math.random()-0.5)*0.8, vy: sp.vy*0.3-0.3-Math.random()*0.5,
+          life: 26+Math.random()*10, maxLife: 36, size: 5+Math.random()*5,
+          color: Math.random()>0.6?'#314':'#201020', type: 'smoke', _smokeAlpha: 0.22 });
+      }
+      // Bright corruption sparks within the cloud
+      const sa = Math.random()*Math.PI*2, sr = Math.random()*r*0.6;
+      particles.push({ x: sp.x+Math.cos(sa)*sr, y: sp.y+Math.sin(sa)*sr,
+        vx: (Math.random()-0.5)*1, vy: -0.5-Math.random()*0.5,
+        life: 14+Math.random()*6, maxLife: 20, size: 2+Math.random()*2,
+        color: Math.random()>0.4?'#a4f':'#f0f', type: 'spark' });
     }
+    // Glitch text characters drifting in the fog
+    if (sp._pulseTimer % 18 === 0) {
+      const _mGlyphs = '\u2588\u2591\u2593\u2620\u2623\u25C6\u2666';
+      const ga = Math.random()*Math.PI*2, gr = Math.random()*r*0.5;
+      particles.push({ x: sp.x+Math.cos(ga)*gr, y: sp.y+Math.sin(ga)*gr,
+        vx: sp.vx*0.2+(Math.random()-0.5)*0.5, vy: -0.4-Math.random()*0.3,
+        life: 24, maxLife: 24, size: 10,
+        color: Math.random()>0.5?'#a4f':'#f0f',
+        type: 'glitchtext', text: _mGlyphs[Math.floor(Math.random()*_mGlyphs.length)] });
+    }
+    // Corruption wake ring pulse every 20 frames
+    if (sp._pulseTimer % 20 === 0) {
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: r*0.7, color: '#a4f', type: 'wakering' });
+    }
+    // Ground corruption trail
+    if (sp.phase === 'drifting' && sp._pulseTimer % 12 === 0) {
+      decals.push({ type: 'scorch', x: sp.x, y: sp.y, size: r*0.3,
+        color: 'rgba(60,20,80,0.4)', alpha: 0.3, _fade: 0.001 });
+    }
+    sp.lifetime--;
   }
-  sp.lifetime--;
 }
 
 // ---------- BASE: NO CLASS ----------
