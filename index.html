@@ -9246,6 +9246,20 @@ function pushOutOfObstacles(e, r, canCrossGaps) {
   const mnx=Math.max(0,Math.floor((e.x-r-CELL_SIZE)/CELL_SIZE)), mxx=Math.min(GRID_W-1,Math.floor((e.x+r+CELL_SIZE)/CELL_SIZE));
   const mny=Math.max(0,Math.floor((e.y-r-CELL_SIZE)/CELL_SIZE)), mxy=Math.min(GRID_H-1,Math.floor((e.y+r+CELL_SIZE)/CELL_SIZE));
   for (let gy=mny;gy<=mxy;gy++) for (let gx=mnx;gx<=mxx;gx++) { if (_isWalkerBlocked(gy,gx,canCrossGaps)) { const wx=gx*CELL_SIZE,wy=gy*CELL_SIZE; const cx=Math.max(wx,Math.min(e.x,wx+CELL_SIZE)),cy=Math.max(wy,Math.min(e.y,wy+CELL_SIZE)); const dx=e.x-cx,dy=e.y-cy; const d=Math.sqrt(dx*dx+dy*dy); if (d<r) { if (d===0){e.x+=1;continue;} const p=(r-d)/d; e.x+=dx*p; e.y+=dy*p; } } }
+  // Push out of spike wall segments (ice walls)
+  if (typeof spikes !== 'undefined') {
+    for (const sp of spikes) {
+      if (!sp._wallSegs) continue;
+      if (!sp._wall && sp.phase !== 'wall') continue;
+      for (const seg of sp._wallSegs) {
+        if (seg.hp <= 0 || !seg.erupted) continue;
+        const dx = e.x - seg.x, dy = e.y - seg.y;
+        const d = Math.sqrt(dx*dx + dy*dy) || 0.1;
+        const overlap = (r + 18) - d;
+        if (overlap > 0) { e.x += (dx/d) * overlap; e.y += (dy/d) * overlap; }
+      }
+    }
+  }
 }
 function hasLineOfSight(ax,ay,bx,by) { const dx=bx-ax,dy=by-ay,dist=Math.sqrt(dx*dx+dy*dy); const steps=Math.min(50,Math.ceil(dist/(CELL_SIZE*0.5))); for (let i=1;i<steps;i++) { const t=i/steps,cx=ax+dx*t,cy=ay+dy*t,gx=Math.floor(cx/CELL_SIZE),gy=Math.floor(cy/CELL_SIZE); if (gx<0||gx>=GRID_W||gy<0||gy>=GRID_H) return false; if (!dungeonGrid[gy]||!dungeonGrid[gy][gx]) return false; } return true; }
 // Raycast from (ax,ay) in direction angle until hitting a wall or reaching maxDist.
@@ -12973,7 +12987,7 @@ function throwSpike() {
         _segs.push({
           x: _wallCx + Math.cos(_perp)*t + Math.cos(_dir)*_jag,
           y: _wallCy + Math.sin(_perp)*t + Math.sin(_dir)*_jag,
-          hp: 120, maxHp: 120, wobble: Math.random()*Math.PI*2, erupted: false });
+          hp: 99999, maxHp: 99999, wobble: Math.random()*Math.PI*2, erupted: false });
       }
       spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'cryodome',
         phase: 'gas', _ring: true, _gasDir: _dir, _gasDist: 0, _gasMaxDist: _gasMaxDist,
@@ -13794,7 +13808,22 @@ function _updateRingZone(sp, _radBoost) {
       if (sp._gasDist >= sp._gasMaxDist) {
         sp.phase = 'wall';
         for (const seg of sp._wallSegs) { seg.erupted = true; }
-        // Wall eruption VFX — big ice shatter burst at wall position
+        // Push player behind the wall if they're standing where it spawns
+        const _lp = getLocalPlayer();
+        if (_lp && _lp.alive) {
+          for (const seg of sp._wallSegs) {
+            const _pdx = _lp.x - seg.x, _pdy = _lp.y - seg.y;
+            if (_pdx*_pdx + _pdy*_pdy < (PLAYER_RADIUS + 22) ** 2) {
+              // Push player back toward their original position (behind wall)
+              const _backDir = sp._gasDir + Math.PI; // opposite of gas direction
+              _lp.x = seg.x + Math.cos(_backDir) * (PLAYER_RADIUS + 26);
+              _lp.y = seg.y + Math.sin(_backDir) * (PLAYER_RADIUS + 26);
+              _lp.vx = 0; _lp.vy = 0;
+              break;
+            }
+          }
+        }
+        // Wall eruption VFX
         for (const seg of sp._wallSegs) {
           for (let i = 0; i < 14; i++) {
             const ia = Math.random()*Math.PI*2, is2 = 2+Math.random()*5;
@@ -13814,40 +13843,19 @@ function _updateRingZone(sp, _radBoost) {
         playSound(200, 0.1, 'sine', 0.1);
       }
     } else if (sp.phase === 'wall') {
-      // Wall segments — block enemies, NO chill on contact, just physical barrier
-      let alive = false;
+      // Indestructible ice wall — blocks everything, just ambient VFX
       for (const seg of sp._wallSegs) {
-        if (seg.hp <= 0) continue;
-        alive = true;
-        // Zombie contact damages wall
-        for (const z of zombies) {
-          if (z.hp <= 0) continue;
-          const dx = z.x - seg.x, dy = z.y - seg.y;
-          if (dx*dx+dy*dy < (z.radius+18)**2 && sp._pulseTimer % 10 === 0) {
-            seg.hp -= 6;
-            if (seg.hp <= 0) {
-              for (let i = 0; i < 16; i++) {
-                const sa = Math.random()*Math.PI*2, ss = 3+Math.random()*5;
-                particles.push({ x: seg.x, y: seg.y, vx: Math.cos(sa)*ss, vy: Math.sin(sa)*ss,
-                  life: 18+Math.random()*8, maxLife: 26, size: 2+Math.random()*2.5,
-                  color: Math.random()>0.4?'#8ef':'#fff', type: 'spark' });
-              }
-              particles.push({ x: seg.x, y: seg.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 35, color: '#8ef', type: 'wakering' });
-              screenShake.intensity = Math.max(screenShake.intensity, 3);
-            }
-          }
-        }
+        if (!seg.erupted) continue;
         // Ambient frost sparkles
-        if (sp._pulseTimer % 6 === 0 && Math.random() > 0.4) {
+        if (sp._pulseTimer % 5 === 0 && Math.random() > 0.3) {
           const pa = Math.random()*Math.PI*2;
-          particles.push({ x: seg.x+Math.cos(pa)*12, y: seg.y+Math.sin(pa)*12,
-            vx: (Math.random()-0.5)*0.3, vy: -0.5-Math.random()*0.4,
-            life: 18, maxLife: 18, size: 1.5+Math.random(),
+          particles.push({ x: seg.x+Math.cos(pa)*14, y: seg.y+Math.sin(pa)*14,
+            vx: (Math.random()-0.5)*0.4, vy: -0.6-Math.random()*0.5,
+            life: 20, maxLife: 20, size: 1.5+Math.random()*1.5,
             color: Math.random()>0.5?'#8ef':'#cff', type: 'spark' });
         }
       }
-      if (!alive) sp.lifetime = 0;
-      else sp.lifetime--;
+      sp.lifetime--;
     }
 
   // ======== STATIC CAGE — electric fence between 6 nodes ========
