@@ -1644,6 +1644,22 @@ const UPGRADE_POOL = [
   { id:'twin_spike', name:'TWIN SPIKE', rarity:'rare', max:1, icon:'⊕', color:'#a4f',
     descs:['Each throw fires two spikes at a slight off-axis angle.'],
     flavor:'parallel processes. both stick.' },
+  // ---- SPIKE RING MODS (class-specific AoE rings) ----
+  { id:'eruption_ring', name:'ERUPTION RING', rarity:'uncommon', max:1, icon:'\uD83D\uDD25', color:'#f80',
+    descs:['Meteor crater edge burns. Enemies crossing the ring perimeter get OVERHEAT.'],
+    flavor:'ring of fire. step inside.' },
+  { id:'cryo_dome', name:'CRYO DOME', rarity:'uncommon', max:1, icon:'\u2744', color:'#8ef',
+    descs:['Frost wall emits a wide freezing dome pulse. Enemies in range get CHILL every beat.'],
+    flavor:'cold radiates outward.' },
+  { id:'discharge_ring', name:'DISCHARGE RING', rarity:'uncommon', max:1, icon:'\u26A1', color:'#4ff',
+    descs:['Tesla orb bolts also emit an expanding ring that CHARGES everything it passes.'],
+    flavor:'ripple effect. nobody is safe.' },
+  { id:'impact_ring', name:'IMPACT RING', rarity:'uncommon', max:1, icon:'\uD83D\uDCA5', color:'#cef',
+    descs:['Torpedo hit releases a 100px shockwave. Knocks back and EXPOSES all nearby enemies.'],
+    flavor:'collateral damage.' },
+  { id:'plague_ring', name:'PLAGUE RING', rarity:'uncommon', max:1, icon:'\u2620', color:'#a4f',
+    descs:['Seeker impact releases a corruption ring. All enemies it passes gain CORRUPT stacks.'],
+    flavor:'infection radius. nobody escapes.' },
   // ---- BEACON MODS ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:1, icon:'💣', color:'#fa0',
     descs:['Press special again to detonate the beacon — class-flavored blast (150px, 150 dmg).'], flavor:'beacon doubles as an explosive charge.' },
@@ -1926,6 +1942,7 @@ function rebuildRunMods() {
     synStormSurge: false, synFaultLine: false, synBreachProtocol: false,
     // Spike (4th-button daemon): one class flavor + universal enhancements
     spikeClass: null, spikeTwin: 0, spikeRapid: 0, spikeWide: 0, spikePersist: 0, spikeExtraCharge: 0,
+    spikeRingThermal: 0, spikeRingCryo: 0, spikeRingArc: 0, spikeRingPulse: 0, spikeRingCorrupt: 0,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
@@ -2026,6 +2043,12 @@ function rebuildRunMods() {
       case 'wide_spike':      m.spikeWide = n; break;
       case 'persistent_spike': m.spikePersist = n; break;
       case 'twin_spike':      m.spikeTwin = n; break;
+      // Spike ring mods
+      case 'eruption_ring':   m.spikeRingThermal = n; break;
+      case 'cryo_dome':       m.spikeRingCryo = n; break;
+      case 'discharge_ring':  m.spikeRingArc = n; break;
+      case 'impact_ring':     m.spikeRingPulse = n; break;
+      case 'plague_ring':     m.spikeRingCorrupt = n; break;
       // Utility
       case 'swift':   m.moveSpeedMult    += 0.08 * n; break;
       case 'magnet':  m.magnetRadiusMult += 0.40 * n; break;
@@ -2231,11 +2254,11 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 // Card-to-class mapping for affinity weighting
 const _CARD_CLASS_MAP = {};
 {
-  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike'];
-  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_spike'];
-  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike'];
-  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike'];
+  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring'];
+  const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_spike','cryo_dome'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike','discharge_ring'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring'];
+  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
   for (const id of _arc)     _CARD_CLASS_MAP[id] = 'arc';
@@ -13049,6 +13072,23 @@ function _updateMeteorSpike(sp, _radBoost) {
         if (dx * dx + dy * dy < r * r) applyOverheat(z, _burnStackValue(), 1);
       }
     }
+    // ERUPTION RING: burn enemies crossing the crater edge
+    const m = runMods || {};
+    if (m.spikeRingThermal > 0 && sp._pulseTimer % 12 === 0) {
+      const _innerR = r * 0.65, _outerR = r * 1.15;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= _innerR * _innerR && d2 < _outerR * _outerR) {
+          applyOverheat(z, _burnStackValue(), 1.5);
+          damageZombie(z, 8, 0, 0);
+        }
+      }
+      // Fire ring VFX
+      particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+        life: 14, maxLife: 14, size: r, color: '#f80', type: 'wakering' });
+    }
     // Continuous fire/ember plume
     if (sp._pulseTimer % 3 === 0) {
       for (let i = 0; i < 2; i++) {
@@ -13108,6 +13148,20 @@ function _updateWallSpike(sp, _radBoost) {
         life: 24, maxLife: 24, size: 1.5 + Math.random(),
         color: Math.random() > 0.4 ? '#8ef' : '#cff', type: 'spark' });
     }
+  }
+  // CRYO DOME: wide frost pulse centered on the wall
+  const m = runMods || {};
+  if (alive && m.spikeRingCryo > 0 && sp._pulseTimer % 36 === 0) {
+    const _domeR = 120 * _radBoost;
+    for (const z of zombies) {
+      if (z.hp <= 0) continue;
+      const dx = z.x - sp.x, dy = z.y - sp.y;
+      if (dx * dx + dy * dy < _domeR * _domeR) {
+        applyChill(z, 2, 1.2);
+      }
+    }
+    particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+      life: 18, maxLife: 18, size: _domeR, color: '#8ef', type: 'wakering' });
   }
   if (!alive) sp.lifetime = 0; // all segments destroyed
   else sp.lifetime--;
@@ -13177,6 +13231,21 @@ function _updateOrbSpike(sp, _radBoost) {
         }
         playSfx('lightning_fire', 0.18) || playSound(1400, 0.04, 'sine', 0.08);
         screenShake.intensity = Math.max(screenShake.intensity, 3);
+        // DISCHARGE RING: expanding ring on bolt pulse
+        const _rm = runMods || {};
+        if (_rm.spikeRingArc > 0) {
+          const _ringR = 100 * _radBoost;
+          for (const z of zombies) {
+            if (z.hp <= 0) continue;
+            const rdx = z.x - sp.x, rdy = z.y - sp.y;
+            if (rdx * rdx + rdy * rdy < _ringR * _ringR) {
+              applyCharged(z);
+              damageZombie(z, 6, 0, 0);
+            }
+          }
+          particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+            life: 16, maxLife: 16, size: _ringR, color: '#4ff', type: 'wakering' });
+        }
       }
     }
     // Continuous arcing aura — small bolts to nearby foes
@@ -13233,6 +13302,27 @@ function _updateTorpedoSpike(sp, _radBoost) {
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
         life: 16, maxLife: 16, size: 60, color: '#cef', type: 'wakering' });
       screenShake.intensity = Math.max(screenShake.intensity, 7);
+      // IMPACT RING: shockwave knocks back all nearby enemies
+      const _rm = runMods || {};
+      if (_rm.spikeRingPulse > 0) {
+        const _impR = 100 * _radBoost;
+        for (const oz of zombies) {
+          if (oz.hp <= 0 || oz === z) continue;
+          const rdx = oz.x - z.x, rdy = oz.y - z.y;
+          const rd2 = rdx * rdx + rdy * rdy;
+          if (rd2 < _impR * _impR) {
+            const rd = Math.sqrt(rd2) || 1;
+            const _push = 12 * (1 - rd / _impR);
+            oz.vx += (rdx / rd) * _push;
+            oz.vy += (rdy / rd) * _push;
+            damageZombie(oz, 15, rdx / rd * 3, rdy / rd * 3);
+            applyExposed(oz);
+          }
+        }
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
+          life: 18, maxLife: 18, size: _impR, color: '#cef', type: 'wakering' });
+        screenShake.intensity = Math.max(screenShake.intensity, 10);
+      }
       _torpHit = true;
       break;
     }
@@ -13345,6 +13435,20 @@ function _updateSeekerSpike(sp, _radBoost) {
             color: Math.random() > 0.4 ? '#a4f' : '#f0f', type: 'spark' });
         }
         screenShake.intensity = Math.max(screenShake.intensity, 5);
+        // PLAGUE RING: corruption ring on impact
+        const _rm = runMods || {};
+        if (_rm.spikeRingCorrupt > 0) {
+          const _plagueR = 90 * _radBoost;
+          for (const oz of zombies) {
+            if (oz.hp <= 0 || oz === sp._seekerTarget) continue;
+            const rdx = oz.x - sp.x, rdy = oz.y - sp.y;
+            if (rdx * rdx + rdy * rdy < _plagueR * _plagueR) {
+              applyCorrupt(oz, 3);
+            }
+          }
+          particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0,
+            life: 20, maxLife: 20, size: _plagueR, color: '#a4f', type: 'wakering' });
+        }
       }
     }
     if (sp.travel >= 1000 || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
