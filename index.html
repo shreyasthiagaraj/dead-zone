@@ -4389,6 +4389,7 @@ let _checkpointRoomActive = false; // true while player is in the checkpoint saf
 let _checkpointContinues = 2; // legacy — unused now (unlimited checkpoint continues)
 let _sectionContinues = 2; // per-section continues (reset on entering a new section)
 let _sectionRewardsClaimed = false; // true once rewards (shop/DL chests/stride) were given this section
+let _pendingClearReward = null; // reward to spawn when current section is cleared (from previous door choice)
 
 // Pre-compute section widths from templates
 let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
@@ -4701,11 +4702,11 @@ function initTrenchSections() {
     // types is kept as fallback for the spawn system
     let types = ['normal','fast','drone'];
     const hazards = [];
-    // Door reward system: EVERY section shows what reward awaits.
+    // Door reward system: EVERY door shows what reward awaits after clearing.
     // Multi-door = choice between 2 rewards. Single-door = 1 predetermined reward shown.
-    const _DOOR_REWARDS = ['health','bits','mod','powerup'];
+    const _DOOR_REWARDS = ['health','bits','mod','upgrade'];
     let _multiDoor = null;
-    let _doorReward = null; // single-door reward (shown on door)
+    let _doorReward = null;
     const _isDomainTrans = (i === 9 || i === 19 || i === 29 || i === 39);
     const _doorEligible = !isBoss && i >= 1 && !_isDomainTrans;
     // Multi-door: every 2nd eligible section guaranteed + 55% random on others
@@ -4718,9 +4719,8 @@ function initTrenchSections() {
       while (_r2 === _r1) _r2 = _DOOR_REWARDS[Math.floor(Math.random()*_DOOR_REWARDS.length)];
       _multiDoor = { top: _r1, bottom: _r2 };
     } else if (_doorEligible) {
-      // Single-door: assign a visible reward (weighted)
       const _rw = Math.random();
-      _doorReward = _rw < 0.40 ? 'mod' : _rw < 0.65 ? 'health' : _rw < 0.85 ? 'bits' : 'powerup';
+      _doorReward = _rw < 0.40 ? 'mod' : _rw < 0.65 ? 'health' : _rw < 0.85 ? 'bits' : 'upgrade';
     }
     trenchSections.push({
       x: sectionX,
@@ -4749,6 +4749,7 @@ function startTrench() {
   _trenchPrevSection = 0;
   _trenchPendingNext = -1;
   _checkpointRoomActive = false;
+  _pendingClearReward = null;
   trenchFadeAlpha = 0;
   trenchFadeDir = 0;
   decor = [];
@@ -5215,6 +5216,46 @@ function updateTrench() {
       else if (!sec.multiDoor && !sec.doorReward && shouldShowDataLink()) {
         setTimeout(() => spawnDataLinkChests(), 400);
       }
+      // ---- DOOR REWARD: spawn physical reward from previous door choice ----
+      // The door sign showed what reward awaits — now deliver it.
+      if (_pendingClearReward && !_dlTrialBonusPending && !sec.isBoss && !_isDomainTransition(trenchSection)) {
+        const _cr = _pendingClearReward;
+        _pendingClearReward = null;
+        const _rewardColors2 = { health:'#4f4', bits:'#ff0', mod:'#0ff', upgrade:'#f80' };
+        const _rc2 = _rewardColors2[_cr] || '#fff';
+        setTimeout(() => {
+          const _lp = getLocalPlayer();
+          if (!_lp || !_lp.alive) return;
+          const _rx = _lp.x + 60, _ry = _lp.y;
+          if (_cr === 'health') {
+            pickups.push({ type: 'health', amount: 30, x: _rx, y: _ry - 15, bobTimer: Math.random()*Math.PI*2 });
+            pickups.push({ type: 'health', amount: 20, x: _rx + 15, y: _ry + 15, bobTimer: Math.random()*Math.PI*2 });
+            addFloatingText(_lp.x, _lp.y - 40, 'REPAIR DROPS', '#4f4');
+          } else if (_cr === 'bits') {
+            const _amt = 50 + Math.floor(Math.random()*40);
+            metaShards += _amt;
+            addFloatingText(_lp.x, _lp.y - 40, '+' + _amt + ' BITS', '#ff0');
+            for (let _bi = 0; _bi < 6; _bi++) {
+              const _a = Math.random()*Math.PI*2, _s = 1+Math.random()*2;
+              particles.push({ x:_lp.x, y:_lp.y, vx:Math.cos(_a)*_s, vy:Math.sin(_a)*_s, life:30, maxLife:30, size:3, color:'#ff0', type:'spark' });
+            }
+          } else if (_cr === 'mod') {
+            _dlChoicePending = true;
+            _pendingBossShop = true;
+            spawnShopChest(_rx, _ry);
+            addFloatingText(_lp.x, _lp.y - 40, 'MOD TERMINAL', '#0ff');
+          } else if (_cr === 'upgrade') {
+            openPowerUp();
+            addFloatingText(_lp.x, _lp.y - 40, 'POWER UP!', '#fc0');
+          }
+          // Celebration burst
+          screenShake.intensity = Math.max(screenShake.intensity, 4);
+          for (let _pi = 0; _pi < 10; _pi++) {
+            const _a = Math.random()*Math.PI*2, _s = 1+Math.random()*2.5;
+            particles.push({ x:_lp.x, y:_lp.y, vx:Math.cos(_a)*_s, vy:Math.sin(_a)*_s, life:25, maxLife:25, size:2.5, color:_rc2, type:'spark' });
+          }
+        }, 600);
+      }
     }
   }
   // Door trigger: when cleared and any player is at the right wall
@@ -5317,25 +5358,10 @@ function updateTrenchFade() {
           // Clear leftover zombie projectiles from prev section so nothing lingers
           bullets = bullets.filter(b => b.owner !== 'zombie');
           spawnTrenchSection(newIdx);
-          // Apply door reward if the player chose a multi-door
+          // Store door reward — it spawns AFTER the player clears this section
           if (window._pendingDoorReward) {
-            const _dr = window._pendingDoorReward;
+            _pendingClearReward = window._pendingDoorReward;
             window._pendingDoorReward = null;
-            const lp = getLocalPlayer();
-            if (_dr === 'health' && lp) {
-              const _heal = Math.min(40, lp.maxHp - lp.hp);
-              lp.hp = Math.min(lp.maxHp, lp.hp + 40);
-              if (lp) addFloatingText(lp.x, lp.y - 30, '+' + _heal + ' HP', '#4f4');
-            } else if (_dr === 'bits') {
-              const _amt = 40 + Math.floor(Math.random() * 40);
-              metaShards += _amt;
-              if (lp) addFloatingText(lp.x, lp.y - 30, '+' + _amt + ' BITS', '#ff0');
-            } else if (_dr === 'mod') {
-              // Open mod terminal at next opportunity
-              setTimeout(() => { if (gameState === 'playing') { _dlChoicePending = true; spawnShopChest(lp ? lp.x + 60 : 200, (TRENCH_HEIGHT/2)*CELL_SIZE); addFloatingText(lp?lp.x:200, lp?lp.y-30:200, 'MOD TERMINAL', '#0ff'); } }, 800);
-            } else if (_dr === 'powerup') {
-              setTimeout(() => { if (gameState === 'playing') { openPowerUp(); addFloatingText(lp?lp.x:200, lp?lp.y-30:200, 'POWER UP', '#fc0'); } }, 800);
-            }
           }
           // Extra safety: snapshot the run each time the player reaches a new
           // section. iOS/Android sometimes kills a background app without
@@ -23688,7 +23714,7 @@ function render() {
     ctx.beginPath();ctx.moveTo(bx2-bLen,by2);ctx.lineTo(bx2,by2);ctx.lineTo(bx2,by2-bLen);ctx.stroke();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
-  // Trench door(s) + reward runway
+  // Trench door(s) + neon reward signs
   if(gameMode==='trench'&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
     const TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
@@ -23696,112 +23722,108 @@ function render() {
     const dx2=sec.x+TW;
     const open=sec.cleared && !_dlChoicePending;
     const isLast=trenchSection>=TRENCH_NUM_SECTIONS-1;
-    const _rewardIcons = { health:'\u2764', bits:'\u25C6', mod:'\u2605', powerup:'\u26A1' };
-    const _rewardNames = { health:'REPAIR', bits:'BITS', mod:'MOD', powerup:'POWER UP' };
-    const _rewardColors = { health:'#4f4', bits:'#ff0', mod:'#0ff', powerup:'#fc0' };
-    const _rewardColorsDark = { health:'#1a3a1a', bits:'#3a3a0a', mod:'#0a2a2a', powerup:'#3a2a0a' };
+    const _rewardIcons = { health:'\u2764', bits:'\u25C6', mod:'\u2605', upgrade:'\u26A1' };
+    const _rewardNames = { health:'HEALTH', bits:'BITS', mod:'MOD', upgrade:'UPGRADE' };
+    const _rewardColors = { health:'#4f4', bits:'#ff0', mod:'#0ff', upgrade:'#f80' };
 
-    // --- Reward runway: colored floor lane + hovering icon beacon ---
-    const _drawRunway = (doorY1, doorY2, rewardType, isOpen) => {
+    // --- NEON SIGN: giant glowing doormat sign on the floor in front of door ---
+    const _drawNeonSign = (doorY1, doorY2, rewardType, isOpen) => {
       if (!rewardType) return;
       const rc = _rewardColors[rewardType] || '#0ff';
-      const rcDark = _rewardColorsDark[rewardType] || '#0a2a2a';
       const ri = _rewardIcons[rewardType] || '?';
       const rn = _rewardNames[rewardType] || '';
       const doorMidY = (doorY1 + doorY2) / 2;
-      const runwayLen = 6 * CELL_SIZE;
-      const runwayW = (doorY2 - doorY1) * 0.7;
-      const runwayX1 = dx1 - runwayLen;
-      const runwayX2 = dx1;
-      const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.3;
-      const fastPulse = 0.4 + Math.sin(gameTime * 0.12) * 0.4;
+      const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
+      const fastPulse = 0.5 + Math.sin(gameTime * 0.1) * 0.5;
+      const intensity = isOpen ? 1.0 : 0.3;
 
-      // Floor lane — gradient from transparent to reward color toward door
-      for (let strip = 0; strip < 8; strip++) {
-        const t = strip / 8;
-        const sx = runwayX1 + t * runwayLen;
-        const sw = runwayLen / 8;
-        const alpha = isOpen ? (t * t * 0.18 * pulse) : (t * t * 0.06);
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = rc;
-        ctx.fillRect(sx, doorMidY - runwayW/2, sw, runwayW);
-      }
+      // Sign dimensions — wide rectangle on the floor, parallel to door
+      const signW = 5 * CELL_SIZE; // width (extends left from door)
+      const signH = (doorY2 - doorY1) + CELL_SIZE; // taller than door
+      const signX = dx1 - signW - 6; // left edge
+      const signY = doorMidY - signH / 2; // top edge
 
-      // Edge lines along the runway (like landing strip markers)
+      // ---- OUTER GLOW (massive) — the lightsource effect ----
+      const glowR = signW * 0.9;
+      const gcx = signX + signW / 2, gcy = doorMidY;
+      ctx.globalAlpha = intensity * 0.15 * pulse;
+      ctx.fillStyle = rc;
+      ctx.beginPath(); ctx.arc(gcx, gcy, glowR, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = intensity * 0.08;
+      ctx.beginPath(); ctx.arc(gcx, gcy, glowR * 1.5, 0, Math.PI * 2); ctx.fill();
+
+      // ---- SIGN BACKGROUND ----
+      ctx.globalAlpha = intensity * 0.25;
+      ctx.fillStyle = rc;
+      ctx.fillRect(signX, signY, signW, signH);
+      // Darker inner fill
+      ctx.globalAlpha = intensity * 0.7;
+      ctx.fillStyle = '#050510';
+      ctx.fillRect(signX + 3, signY + 3, signW - 6, signH - 6);
+
+      // ---- NEON BORDER — thick bright double-line ----
+      ctx.globalAlpha = intensity * (0.6 + 0.4 * pulse);
+      ctx.strokeStyle = rc; ctx.lineWidth = 3;
+      ctx.strokeRect(signX, signY, signW, signH);
+      // Inner border line
+      ctx.globalAlpha = intensity * (0.3 + 0.2 * pulse);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(signX + 5, signY + 5, signW - 10, signH - 10);
+
+      // ---- GIANT ICON ----
+      ctx.globalAlpha = intensity * (0.8 + 0.2 * fastPulse);
+      ctx.font = 'bold 28px monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = rc;
+      ctx.fillText(ri, signX + signW / 2, doorMidY - 8);
+      // Icon glow (draw it bigger and dimmer behind)
+      ctx.globalAlpha = intensity * 0.2 * pulse;
+      ctx.font = 'bold 36px monospace';
+      ctx.fillText(ri, signX + signW / 2, doorMidY - 8);
+
+      // ---- REWARD NAME — large bold text ----
+      ctx.globalAlpha = intensity * (0.9 + 0.1 * pulse);
+      ctx.font = 'bold 14px monospace';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(rn, signX + signW / 2, doorMidY + 18);
+
+      // ---- CONNECTOR LINE from sign to door ----
+      ctx.globalAlpha = intensity * (0.4 + 0.3 * pulse);
+      ctx.strokeStyle = rc; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(signX + signW, doorMidY - signH * 0.3);
+      ctx.lineTo(dx1, doorY1);
+      ctx.moveTo(signX + signW, doorMidY + signH * 0.3);
+      ctx.lineTo(dx1, doorY2);
+      ctx.stroke();
+
+      // ---- ANIMATED CHEVRONS pointing right toward door ----
       if (isOpen) {
-        ctx.globalAlpha = 0.25 * pulse;
-        ctx.strokeStyle = rc; ctx.lineWidth = 1;
-        ctx.setLineDash([6, 8]);
-        ctx.beginPath();
-        ctx.moveTo(runwayX1 + CELL_SIZE, doorMidY - runwayW/2);
-        ctx.lineTo(runwayX2 - 4, doorMidY - runwayW/2);
-        ctx.moveTo(runwayX1 + CELL_SIZE, doorMidY + runwayW/2);
-        ctx.lineTo(runwayX2 - 4, doorMidY + runwayW/2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-
-      // Chevron arrows on the floor pointing toward door
-      if (isOpen) {
-        const _numChevrons = 3;
-        for (let ci = 0; ci < _numChevrons; ci++) {
-          const ct = 0.25 + ci * 0.22;
-          // Animate: slide chevrons toward door
-          const _slide = ((gameTime * 0.008 + ci * 0.33) % 1.0);
-          const cx = runwayX1 + (ct + _slide * 0.15) * runwayLen;
-          if (cx > runwayX2 - 10) continue;
-          const cSize = 6;
-          const cAlpha = 0.3 * pulse * (1 - Math.abs(_slide - 0.5) * 2);
+        for (let ci = 0; ci < 3; ci++) {
+          const _t = ((gameTime * 0.012 + ci * 0.33) % 1.0);
+          const cx = signX + signW + _t * (dx1 - signX - signW);
+          const cAlpha = intensity * 0.5 * (1 - Math.abs(_t - 0.5) * 2);
           ctx.globalAlpha = cAlpha;
-          ctx.strokeStyle = rc; ctx.lineWidth = 2;
+          ctx.strokeStyle = rc; ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.moveTo(cx - cSize, doorMidY - cSize);
-          ctx.lineTo(cx + cSize, doorMidY);
-          ctx.lineTo(cx - cSize, doorMidY + cSize);
+          ctx.moveTo(cx - 5, doorMidY - 6);
+          ctx.lineTo(cx + 5, doorMidY);
+          ctx.lineTo(cx - 5, doorMidY + 6);
           ctx.stroke();
         }
       }
 
-      // Holographic beacon — large floating icon
-      const beaconX = runwayX1 + CELL_SIZE * 2.5;
-      const beaconY = doorMidY;
-      const bob = Math.sin(gameTime * 0.04) * 3;
-      const beaconAlpha = isOpen ? (0.7 + fastPulse * 0.3) : 0.25;
-
-      // Glow circle on floor under beacon
-      ctx.globalAlpha = isOpen ? 0.12 * pulse : 0.04;
-      ctx.fillStyle = rc;
-      ctx.beginPath(); ctx.arc(beaconX, beaconY, 22, 0, Math.PI * 2); ctx.fill();
-
-      // Outer ring
-      ctx.globalAlpha = isOpen ? 0.3 * pulse : 0.1;
-      ctx.strokeStyle = rc; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(beaconX, beaconY, 24 + Math.sin(gameTime * 0.05) * 2, 0, Math.PI * 2); ctx.stroke();
-
-      // Large reward icon
-      ctx.globalAlpha = beaconAlpha;
-      ctx.font = 'bold 22px monospace';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = rc;
-      ctx.fillText(ri, beaconX, beaconY + bob - 2);
-
-      // Reward name label below icon
-      ctx.font = 'bold 9px monospace';
-      ctx.globalAlpha = beaconAlpha * 0.9;
-      ctx.fillStyle = '#fff';
-      ctx.fillText(rn, beaconX, beaconY + bob + 16);
-
       ctx.globalAlpha = 1;
+      ctx.textBaseline = 'alphabetic';
     };
 
     // --- Door slit on the wall ---
     const _drawDoor = (y1, y2, color, label) => {
       const pulse=0.5+Math.sin(gameTime*0.08)*0.3;
-      ctx.globalAlpha=open?0.7*pulse:0.3;
+      ctx.globalAlpha=open?0.8*pulse:0.25;
       ctx.strokeStyle=color;ctx.lineWidth=4;
       ctx.beginPath();ctx.moveTo(dx1,y1);ctx.lineTo(dx1,y2);ctx.stroke();
-      // Glowing fill behind door slit
-      ctx.globalAlpha=open?0.2*pulse:0.06;ctx.fillStyle=color;
+      ctx.globalAlpha=open?0.25*pulse:0.05;ctx.fillStyle=color;
       ctx.fillRect(dx1-3,y1,6,y2-y1);
       ctx.globalAlpha=1;
       ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
@@ -23811,7 +23833,7 @@ function render() {
     };
 
     if (sec.multiDoor && !isLast) {
-      // Two doors — top and bottom halves of right wall
+      // Two doors — top and bottom
       const _gap = 1.5 * CELL_SIZE;
       const _doorH = 4 * CELL_SIZE;
       const _midY = (TRENCH_HEIGHT/2) * CELL_SIZE;
@@ -23819,48 +23841,36 @@ function render() {
       const _botY1 = _midY + _gap/2, _botY2 = _midY + _gap/2 + _doorH;
       const _topCol = open ? (_rewardColors[sec.multiDoor.top]||'#0ff') : '#f44';
       const _botCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
-      // Runways — always visible (dimmed if locked)
-      _drawRunway(_topY1, _topY2, sec.multiDoor.top, open);
-      _drawRunway(_botY1, _botY2, sec.multiDoor.bottom, open);
+      // Neon signs
+      _drawNeonSign(_topY1, _topY2, sec.multiDoor.top, open);
+      _drawNeonSign(_botY1, _botY2, sec.multiDoor.bottom, open);
       // Door slits
       _drawDoor(_topY1, _topY2, _topCol, open ? '\u25B2' : '\u2715');
       _drawDoor(_botY1, _botY2, _botCol, open ? '\u25BC' : '\u2715');
-      // Divider line + CHOOSE label between doors
-      ctx.strokeStyle='#888';ctx.lineWidth=1;ctx.globalAlpha=0.3;
-      ctx.setLineDash([4,4]);
-      ctx.beginPath();ctx.moveTo(dx1-6*CELL_SIZE,_midY);ctx.lineTo(dx1,_midY);ctx.stroke();
+      // Divider + CHOOSE label
+      const _divAlpha = open ? (0.5+Math.sin(gameTime*0.1)*0.3) : 0.2;
+      ctx.globalAlpha=_divAlpha;ctx.strokeStyle='#aaa';ctx.lineWidth=1;
+      ctx.setLineDash([4,6]);
+      ctx.beginPath();ctx.moveTo(dx1-7*CELL_SIZE,_midY);ctx.lineTo(dx1,_midY);ctx.stroke();
       ctx.setLineDash([]);
-      if (open) {
-        const _cp=0.6+Math.sin(gameTime*0.1)*0.4;
-        ctx.globalAlpha=_cp;ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillStyle='#fff';
-        ctx.fillText('CHOOSE YOUR PATH',dx1-3.5*CELL_SIZE,_midY);
-        ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
-      } else {
-        ctx.globalAlpha=0.3;ctx.font='bold 9px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillStyle='#888';
-        ctx.fillText('CLEAR TO UNLOCK',dx1-3.5*CELL_SIZE,_midY);
-        ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
-      }
+      ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=open?'#fff':'#888';
+      ctx.fillText(open?'CHOOSE YOUR PATH':'CLEAR TO UNLOCK',dx1-4*CELL_SIZE,_midY);
+      ctx.globalAlpha=1;ctx.textBaseline='alphabetic';
     } else if (!isLast) {
-      // Single door — centered, with reward runway if applicable
+      // Single door — centered
       const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
       const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
-      const _singleReward = sec.doorReward || null;
-      // Draw reward runway for single door
-      if (_singleReward) {
-        _drawRunway(doorY1, doorY2, _singleReward, open);
-      }
-      const dColor=open?(_singleReward?(_rewardColors[_singleReward]||'#0ff'):'#0ff'):_dlChoicePending?'#f80':'#f44';
+      const _sr = sec.doorReward || null;
+      if (_sr) _drawNeonSign(doorY1, doorY2, _sr, open);
+      const dColor=open?(_sr?(_rewardColors[_sr]||'#0ff'):'#0ff'):_dlChoicePending?'#f80':'#f44';
       const lbl=open?'\u25B6 OPEN \u25B6':_dlChoicePending?'\u25C6 CHOOSE \u25C6':'\u2715 LOCKED \u2715';
       _drawDoor(doorY1, doorY2, dColor, lbl);
     } else {
-      // Last section — escape door
+      // Last section — escape
       const doorY1=Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
       const doorY2=doorY1+TRENCH_DOOR_HEIGHT*CELL_SIZE;
-      const dColor=open?'#0f0':'#f44';
-      const lbl=open?'\u2605 ESCAPE \u2605':'\u2715 LOCKED \u2715';
-      _drawDoor(doorY1, doorY2, dColor, lbl);
+      _drawDoor(doorY1, doorY2, open?'#0f0':'#f44', open?'\u2605 ESCAPE \u2605':'\u2715 LOCKED \u2715');
     }
   }
 
@@ -25291,6 +25301,33 @@ function render() {
         _fbGrad.addColorStop(1, 'rgba(0,0,0,0)');
         fctx.fillStyle = _fbGrad;
         fctx.fillRect(_fbx - _fbR, _fby - _fbR, _fbR * 2, _fbR * 2);
+      }
+      // DOOR SIGN LIGHTSOURCE: neon signs carve through fog so they're always visible
+      if (gameMode === 'trench' && trenchSections[trenchSection]) {
+        const _fSec = trenchSections[trenchSection];
+        const _fTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+        const _fDx = _fSec.x + _fTW - CELL_SIZE;
+        const _signCenters = [];
+        if (_fSec.multiDoor) {
+          const _fMid = (TRENCH_HEIGHT/2)*CELL_SIZE;
+          const _fGap = 1.5*CELL_SIZE, _fDH = 4*CELL_SIZE;
+          _signCenters.push({ x: _fDx - 3*CELL_SIZE, y: _fMid - _fGap/2 - _fDH/2 });
+          _signCenters.push({ x: _fDx - 3*CELL_SIZE, y: _fMid + _fGap/2 + _fDH/2 });
+        } else if (_fSec.doorReward) {
+          const _fDoorMid = Math.floor((TRENCH_HEIGHT - TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE + TRENCH_DOOR_HEIGHT*CELL_SIZE/2;
+          _signCenters.push({ x: _fDx - 3*CELL_SIZE, y: _fDoorMid });
+        }
+        for (const _sc of _signCenters) {
+          const _scx = _sc.x + fox, _scy = _sc.y + foy;
+          const _scR = 4 * CELL_SIZE;
+          const _scGrad = fctx.createRadialGradient(_scx, _scy, 0, _scx, _scy, _scR);
+          _scGrad.addColorStop(0, 'rgba(0,0,0,0.8)');
+          _scGrad.addColorStop(0.3, 'rgba(0,0,0,0.5)');
+          _scGrad.addColorStop(0.6, 'rgba(0,0,0,0.2)');
+          _scGrad.addColorStop(1, 'rgba(0,0,0,0)');
+          fctx.fillStyle = _scGrad;
+          fctx.fillRect(_scx - _scR, _scy - _scR, _scR * 2, _scR * 2);
+        }
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
