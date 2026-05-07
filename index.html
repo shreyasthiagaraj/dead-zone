@@ -4507,9 +4507,12 @@ let _sectionContinues = 2; // per-section continues (reset on entering a new sec
 let _sectionRewardsClaimed = false; // true once rewards (shop/DL chests/stride) were given this section
 let _pendingClearReward = null; // reward to spawn when current section is cleared (from previous door choice)
 
-// Pre-compute section widths from templates
+// Pre-compute section layout from templates
 let _sectionWidths = []; // cells per section (computed during generateTrenchMap)
-let _sectionXPositions = []; // cumulative X in cells
+let _sectionXPositions = []; // X origin in cells (2D placement)
+let _sectionYPositions = []; // Y origin in cells (2D placement)
+let _sectionExitDirs = []; // exit direction per section: 'E','N','S','W'
+let _sectionEntryDirs = []; // entry direction per section (opposite of prev exit)
 let _sectionTemplateNames = []; // template name per section (set once in generateTrenchMap)
 
 function generateTrenchMap(seed) {
@@ -4537,17 +4540,72 @@ function generateTrenchMap(seed) {
       _sectionHeights.push(tmpl && tmpl.h ? tmpl.h : TRENCH_HEIGHT);
     }
   }
-  // Compute cumulative X positions
+  // 2D SECTION PLACEMENT — snake-like path through the dungeon
   _sectionXPositions = [];
-  let _cumX = 0;
+  _sectionYPositions = [];
+  _sectionExitDirs = [];
+  _sectionEntryDirs = [];
+  // Corridor gap between sections (cells)
+  const _CORR_LEN = 4;
+  // Place sections one at a time
+  let _curX = 0, _curY = 0;
+  let _prevExit = null;
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
-    _sectionXPositions.push(_cumX);
-    _cumX += _sectionWidths[si];
+    const sw = _sectionWidths[si], sh = _sectionHeights[si] || TRENCH_HEIGHT;
+    // Entry direction = opposite of previous exit
+    let _entry = 'W'; // first section enters from west (left)
+    if (_prevExit === 'E') _entry = 'W';
+    else if (_prevExit === 'N') _entry = 'S';
+    else if (_prevExit === 'S') _entry = 'N';
+    else if (_prevExit === 'W') _entry = 'E';
+    _sectionEntryDirs.push(_entry);
+    _sectionXPositions.push(_curX);
+    _sectionYPositions.push(_curY);
+    // Pick exit direction — can't be same wall as entry
+    const _exitOpts = ['E','N','S'].filter(d => d !== _entry);
+    // Bias toward E (forward) 60%, N/S 20% each
+    let _exit;
+    const _r = Math.random();
+    if (_exitOpts.includes('E') && _r < 0.6) _exit = 'E';
+    else if (_exitOpts.length > 1) _exit = _exitOpts[_r < 0.8 ? 1 : Math.min(2, _exitOpts.length-1)];
+    else _exit = _exitOpts[0];
+    // Boss sections always exit east (simpler)
+    const _isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
+    if (_isBoss) _exit = _exitOpts.includes('E') ? 'E' : _exitOpts[0];
+    _sectionExitDirs.push(_exit);
+    _prevExit = _exit;
+    // Position next section adjacent to exit wall + corridor
+    const _nextSW = (si + 1 < TRENCH_NUM_SECTIONS) ? _sectionWidths[si + 1] : 0;
+    const _nextSH = (si + 1 < TRENCH_NUM_SECTIONS) ? (_sectionHeights[si + 1] || TRENCH_HEIGHT) : 0;
+    if (_exit === 'E') {
+      _curX = _curX + sw + _CORR_LEN;
+      // Vertically center next section relative to this one's exit door
+      _curY = _curY + Math.floor(sh / 2) - Math.floor(_nextSH / 2);
+    } else if (_exit === 'N') {
+      _curY = _curY - _nextSH - _CORR_LEN;
+      _curX = _curX + Math.floor(sw / 2) - Math.floor(_nextSW / 2);
+    } else if (_exit === 'S') {
+      _curY = _curY + sh + _CORR_LEN;
+      _curX = _curX + Math.floor(sw / 2) - Math.floor(_nextSW / 2);
+    }
   }
-  const totalWCells = _cumX;
+  // Shift all positions so minimum is at (1, 1) — no negative coords
+  let _minSX = Infinity, _minSY = Infinity, _maxSX = 0, _maxSY = 0;
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    _minSX = Math.min(_minSX, _sectionXPositions[si]);
+    _minSY = Math.min(_minSY, _sectionYPositions[si]);
+    _maxSX = Math.max(_maxSX, _sectionXPositions[si] + _sectionWidths[si]);
+    _maxSY = Math.max(_maxSY, _sectionYPositions[si] + (_sectionHeights[si] || TRENCH_HEIGHT));
+  }
+  const _shiftX = 1 - _minSX, _shiftY = 1 - _minSY;
+  for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+    _sectionXPositions[si] += _shiftX;
+    _sectionYPositions[si] += _shiftY;
+  }
+  const totalWCells = (_maxSX - _minSX) + 2;
+  const totalHCells = (_maxSY - _minSY) + 2;
   const totalW = totalWCells * CELL_SIZE;
-  const _maxH = Math.max(TRENCH_HEIGHT, ..._sectionHeights);
-  const totalH = _maxH * CELL_SIZE;
+  const totalH = totalHCells * CELL_SIZE;
   setArenaDimensions(totalW, totalH);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -4560,12 +4618,15 @@ function generateTrenchMap(seed) {
   // Each section: carve interior using its own width, then apply the PRE-SELECTED template
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
     const baseX = _sectionXPositions[si];
+    const baseY = _sectionYPositions[si] || 0;
     const secW = _sectionWidths[si];
     const secH = _sectionHeights[si] || TRENCH_HEIGHT;
-    // Carve interior using per-section height
-    for (let y = 1; y < secH - 1; y++) {
+    // Carve interior using per-section position and dimensions
+    for (let dy = 1; dy < secH - 1; dy++) {
+      const gy = baseY + dy;
       for (let dx = 1; dx < secW - 1; dx++) {
-        if (baseX + dx < GRID_W && y < GRID_H) dungeonGrid[y][baseX + dx] = true;
+        const gx = baseX + dx;
+        if (gx < GRID_W && gy >= 0 && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = true;
       }
     }
     // Use pre-selected template (NOT re-rolling — must match width)
@@ -4573,21 +4634,22 @@ function generateTrenchMap(seed) {
     const tmpl = TRENCH_TEMPLATES[tmplName];
     const tmplCells = tmpl ? tmpl.build() : [];
     for (const c of tmplCells) {
-      const gx = baseX + c.x, gy = c.y;
+      const gx = baseX + c.x, gy = baseY + c.y;
       if (c.x < 6) continue; // spawn zone clear
       if (c.x >= secW - 3) continue; // door zone clear
-      if (gy >= 1 && gy < secH - 1 && gx >= baseX + 1 && gx < baseX + secW - 1) {
-        if (gx < GRID_W && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
+      if (c.y >= 1 && c.y < secH - 1 && gx >= baseX + 1 && gx < baseX + secW - 1) {
+        if (gx < GRID_W && gy >= 0 && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
     // ---- PATHABILITY CHECK: BFS flood-fill from spawn zone to door zone ----
     {
-      const doorCY = Math.floor(secH / 2);
+      const doorCY = baseY + Math.floor(secH / 2);
       const spawnX = baseX + 3, doorX = baseX + secW - 2;
       const visited = new Set();
       const queue = [];
-      for (let sy = 1; sy < secH - 1; sy++) {
-        if (spawnX < GRID_W && dungeonGrid[sy] && dungeonGrid[sy][spawnX]) {
+      for (let dy = 1; dy < secH - 1; dy++) {
+        const sy = baseY + dy;
+        if (spawnX < GRID_W && sy >= 0 && sy < GRID_H && dungeonGrid[sy] && dungeonGrid[sy][spawnX]) {
           const key = spawnX + ',' + sy;
           if (!visited.has(key)) { visited.add(key); queue.push([spawnX, sy]); }
         }
@@ -4600,8 +4662,8 @@ function generateTrenchMap(seed) {
         // Expand neighbors (4-directional)
         const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
         for (const [nx, ny] of neighbors) {
-          if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < 1 || ny >= secH - 1) continue;
-          if (nx >= GRID_W) continue;
+          if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < baseY + 1 || ny >= baseY + secH - 1) continue;
+          if (nx >= GRID_W || ny >= GRID_H) continue;
           const nk = nx + ',' + ny;
           if (!visited.has(nk) && dungeonGrid[ny] && dungeonGrid[ny][nx]) {
             visited.add(nk);
@@ -4613,7 +4675,7 @@ function generateTrenchMap(seed) {
         // Carve a 3-cell-tall corridor at door center height across the entire section
         for (let cx = baseX + 1; cx < baseX + secW - 1 && cx < GRID_W; cx++) {
           for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
-            if (dy >= 1 && dy < secH - 1 && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
+            if (dy >= baseY + 1 && dy < baseY + secH - 1 && dy < GRID_H && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
           }
         }
       }
@@ -4742,9 +4804,53 @@ function generateTrenchMap(seed) {
       }
     }
     const domain = getTrenchDomain(si);
-    rooms.push({ x: baseX, y: 0, w: secW, h: secH,
+    rooms.push({ x: baseX, y: baseY, w: secW, h: secH,
       theme: ROOM_THEMES[4], brightness: domain.noFog ? 1.5 : 1.0, flicker: false,
       _template: tmplName, _domain: domain });
+  }
+  // CARVE CORRIDORS between adjacent sections
+  for (let si = 0; si < TRENCH_NUM_SECTIONS - 1; si++) {
+    const sx = _sectionXPositions[si], sy = _sectionYPositions[si] || 0;
+    const sw = _sectionWidths[si], sh = _sectionHeights[si] || TRENCH_HEIGHT;
+    const nx = _sectionXPositions[si+1], ny = _sectionYPositions[si+1] || 0;
+    const nw = _sectionWidths[si+1], nh = _sectionHeights[si+1] || TRENCH_HEIGHT;
+    const exitD = _sectionExitDirs[si] || 'E';
+    // Corridor: 3 cells wide, connects exit of si to entry of si+1
+    const _cw = 3; // corridor width in cells
+    if (exitD === 'E') {
+      // Horizontal corridor from right wall of si to left wall of si+1
+      const _cy = sy + Math.floor(sh / 2); // corridor center Y
+      const _cx1 = sx + sw; // start X (right edge of si)
+      const _cx2 = nx; // end X (left edge of si+1)
+      for (let cx = _cx1; cx < _cx2; cx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const gy = _cy + dy;
+          if (cx >= 0 && cx < GRID_W && gy >= 0 && gy < GRID_H) dungeonGrid[gy][cx] = true;
+        }
+      }
+    } else if (exitD === 'N') {
+      // Vertical corridor upward from top wall of si to bottom wall of si+1
+      const _cx = sx + Math.floor(sw / 2);
+      const _cy1 = sy; // top edge of si (corridor goes up from here)
+      const _cy2 = ny + nh; // bottom edge of si+1
+      for (let cy = _cy2; cy < _cy1; cy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const gx = _cx + dx;
+          if (gx >= 0 && gx < GRID_W && cy >= 0 && cy < GRID_H) dungeonGrid[cy][gx] = true;
+        }
+      }
+    } else if (exitD === 'S') {
+      // Vertical corridor downward from bottom wall of si to top wall of si+1
+      const _cx = sx + Math.floor(sw / 2);
+      const _cy1 = sy + sh; // bottom edge of si
+      const _cy2 = ny; // top edge of si+1
+      for (let cy = _cy1; cy < _cy2; cy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const gx = _cx + dx;
+          if (gx >= 0 && gx < GRID_W && cy >= 0 && cy < GRID_H) dungeonGrid[cy][gx] = true;
+        }
+      }
+    }
   }
   // Build wall obstacles from grid
   obstacles = [];
@@ -4766,9 +4872,10 @@ function generateTrenchMap(seed) {
     roomGrid[y].fill(-1);
     for (let si = 0; si < TRENCH_NUM_SECTIONS && si < 127; si++) {
       const baseX = _sectionXPositions[si];
+      const _rBaseY = _sectionYPositions[si] || 0;
       const secW = _sectionWidths[si];
       const _rSecH = _sectionHeights[si] || TRENCH_HEIGHT;
-      if (y >= 1 && y < _rSecH - 1) {
+      if (y >= _rBaseY + 1 && y < _rBaseY + _rSecH - 1) {
         for (let dx = 1; dx < secW - 1; dx++) {
           if (baseX + dx < GRID_W) roomGrid[y][baseX + dx] = 0;
         }
@@ -4793,6 +4900,7 @@ function initTrenchSections() {
   }
   for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
     const sectionX = _sectionXPositions[i] * CELL_SIZE;
+    const sectionY = (_sectionYPositions[i] || 0) * CELL_SIZE;
     const secW = _sectionWidths[i];
     // Boss at end of each domain: 10, 20, 30, 40, then every 10 after
     const isBoss = i === 10 || i === 20 || i === 30 || i === 40 || (i > 40 && (i - 40) % 10 === 0);
@@ -4845,7 +4953,9 @@ function initTrenchSections() {
     }
     trenchSections.push({
       x: sectionX,
+      y: sectionY,
       width: secW * CELL_SIZE,
+      height: (_sectionHeights[i] || TRENCH_HEIGHT) * CELL_SIZE,
       waves,
       waveComps: _waveComps,
       currentWave: 0,
@@ -4855,7 +4965,9 @@ function initTrenchSections() {
       cleared: false,
       multiDoor: _multiDoor,
       doorReward: _doorReward,
-      doorSide: (!isBoss && i >= 2 && !_isDomainTrans && Math.random() < 0.3) ? 'top' : 'right',
+      doorSide: _sectionExitDirs[i] === 'N' ? 'top' : _sectionExitDirs[i] === 'S' ? 'bottom' : 'right',
+      entryDir: _sectionEntryDirs[i] || 'W',
+      exitDir: _sectionExitDirs[i] || 'E',
       isBoss,
       isDark,
       hazards,
@@ -5505,8 +5617,16 @@ function updateTrenchFade() {
           _sectionRewardsClaimed = false;
           // Clear recall anchor on section transition
           if (activeBeacon && activeBeacon._recall) { _beacons = _beacons.filter(_b => !_b._recall); activeBeacon = _beacons[0] || null; }
-          const spawnX = newSec.x + 2.5 * CELL_SIZE;
-          const spawnY = (_secH(newIdx) / 2) * CELL_SIZE;
+          // Spawn at entry point based on entry direction
+          const _entryD = newSec.entryDir || 'W';
+          const _nsW = newSec.width, _nsH = newSec.height || (_secH(newIdx) * CELL_SIZE);
+          const _nsY = newSec.y || 0;
+          let spawnX, spawnY;
+          if (_entryD === 'W') { spawnX = newSec.x + 2.5 * CELL_SIZE; spawnY = _nsY + _nsH / 2; }
+          else if (_entryD === 'E') { spawnX = newSec.x + _nsW - 2.5 * CELL_SIZE; spawnY = _nsY + _nsH / 2; }
+          else if (_entryD === 'S') { spawnX = newSec.x + _nsW / 2; spawnY = _nsY + _nsH - 2.5 * CELL_SIZE; }
+          else if (_entryD === 'N') { spawnX = newSec.x + _nsW / 2; spawnY = _nsY + 2.5 * CELL_SIZE; }
+          else { spawnX = newSec.x + 2.5 * CELL_SIZE; spawnY = _nsY + _nsH / 2; }
           for (const p of players) {
             if (p.alive) { p.x = spawnX; p.y = spawnY; p.vx = 0; p.vy = 0; p.angle = 0; p.moveAngle = 0; }
           }
@@ -7834,6 +7954,9 @@ function saveCheckpoint() {
     templateNames: _sectionTemplateNames,
     sectionWidths: _sectionWidths,
     sectionHeights: _sectionHeights,
+    sectionYPositions: _sectionYPositions,
+    sectionExitDirs: _sectionExitDirs,
+    sectionEntryDirs: _sectionEntryDirs,
     // Player state
     hp: lp.hp,
     maxHp: lp.maxHp,
@@ -7894,6 +8017,9 @@ function resumeFromCheckpoint() {
   _sectionTemplateNames = cp.templateNames || [];
   _sectionWidths = cp.sectionWidths || [];
   _sectionHeights = cp.sectionHeights || [];
+  _sectionYPositions = cp.sectionYPositions || [];
+  _sectionExitDirs = cp.sectionExitDirs || [];
+  _sectionEntryDirs = cp.sectionEntryDirs || [];
 
   // Generate the dungeon using saved templates
   window._currentLevelSeed = cp.seed;
@@ -8053,6 +8179,9 @@ function saveMidRunSession() {
     templateNames: _sectionTemplateNames,
     sectionWidths: _sectionWidths,
     sectionHeights: _sectionHeights,
+    sectionYPositions: _sectionYPositions,
+    sectionExitDirs: _sectionExitDirs,
+    sectionEntryDirs: _sectionEntryDirs,
     px: lp.x, py: lp.y, angle: lp.angle || 0,
     hp: lp.hp, maxHp: lp.maxHp,
     dashCooldown: lp.dashCooldown || 0,
@@ -8088,6 +8217,9 @@ function resumeMidRunSession() {
   _sectionTemplateNames = sess.templateNames || [];
   _sectionWidths = sess.sectionWidths || [];
   _sectionHeights = sess.sectionHeights || [];
+  _sectionYPositions = sess.sectionYPositions || [];
+  _sectionExitDirs = sess.sectionExitDirs || [];
+  _sectionEntryDirs = sess.sectionEntryDirs || [];
   window._currentLevelSeed = sess.seed;
   generateTrenchMap(sess.seed);
   initTrenchSections();
@@ -18283,8 +18415,9 @@ function update() {
         const _tTH = _secH(trenchSection) * CELL_SIZE;
         const _tLeft = _tsec.x + CELL_SIZE + PLAYER_RADIUS + 1;
         const _tRight = _tsec.x + _tTW - CELL_SIZE - PLAYER_RADIUS - 1;
-        const _tTop = CELL_SIZE + PLAYER_RADIUS + 1;
-        const _tBot = _tTH - CELL_SIZE - PLAYER_RADIUS - 1;
+        const _tSY = _tsec.y || 0;
+        const _tTop = _tSY + CELL_SIZE + PLAYER_RADIUS + 1;
+        const _tBot = _tSY + _tTH - CELL_SIZE - PLAYER_RADIUS - 1;
         if (lp.x < _tLeft) lp.x = _tLeft;
         if (lp.x > _tRight) lp.x = _tRight;
         if (lp.y < _tTop) lp.y = _tTop;
@@ -20978,8 +21111,9 @@ function update() {
           if (_tz.x < _tLeft) { _tz.x = _tLeft; _tz.vx = 0; }
           if (_tz.x > _tRight) { _tz.x = _tRight; _tz.vx = 0; }
           // Vertical clamp inside the section's playable area
-          const _tTop = CELL_SIZE + _tz.radius + 1;
-          const _tBot = (_secH(trenchSection) - 1) * CELL_SIZE - _tz.radius - 1;
+          const _tzSY = _tsec.y || 0;
+          const _tTop = _tzSY + CELL_SIZE + _tz.radius + 1;
+          const _tBot = _tzSY + (_secH(trenchSection) - 1) * CELL_SIZE - _tz.radius - 1;
           if (_tz.y < _tTop) { _tz.y = _tTop; _tz.vy = 0; }
           if (_tz.y > _tBot) { _tz.y = _tBot; _tz.vy = 0; }
         }
