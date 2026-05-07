@@ -22269,6 +22269,68 @@ function render() {
   // Instead of black beyond the shell walls, render a neon circuit board —
   // grid lines, L-shaped traces, glowing nodes, and traveling data pulses.
   if (gameState === 'shell') _renderShellVoidBackground(vL, vR, vT, vB);
+  // ---- TRENCH VOID DECOR — faint grid + room silhouettes + corridor glow ----
+  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+    const _voidPal = _getSectionPalette(trenchSection);
+    const _voidAccent = _voidPal ? _voidPal.accentColor : '#444';
+    // 1. Faint infinite grid — the simulation substrate
+    ctx.strokeStyle = _voidAccent; ctx.lineWidth = 0.5;
+    ctx.globalAlpha = 0.04;
+    const _gStep = CELL_SIZE * 2; // coarser grid in void
+    const _gMinX = Math.floor(vL / _gStep) * _gStep;
+    const _gMaxX = Math.ceil(vR / _gStep) * _gStep;
+    const _gMinY = Math.floor(vT / _gStep) * _gStep;
+    const _gMaxY = Math.ceil(vB / _gStep) * _gStep;
+    ctx.beginPath();
+    for (let gx = _gMinX; gx <= _gMaxX; gx += _gStep) { ctx.moveTo(gx, _gMinY); ctx.lineTo(gx, _gMaxY); }
+    for (let gy = _gMinY; gy <= _gMaxY; gy += _gStep) { ctx.moveTo(_gMinX, gy); ctx.lineTo(_gMaxX, gy); }
+    ctx.stroke();
+    // 2. Distant room silhouettes — outlines of other sections
+    ctx.strokeStyle = _voidAccent; ctx.lineWidth = 1;
+    for (let _vi = 0; _vi < TRENCH_NUM_SECTIONS; _vi++) {
+      if (_vi === trenchSection) continue;
+      const _vSec = trenchSections[_vi]; if (!_vSec) continue;
+      const _vx = _vSec.x, _vy = _vSec.y || 0;
+      const _vw = _vSec.width, _vh = _vSec.height || (_secH(_vi) * CELL_SIZE);
+      // Only draw if visible on screen
+      if (_vx + _vw < vL || _vx > vR || _vy + _vh < vT || _vy > vB) continue;
+      // Dimmer for sections far from current
+      const _dist = Math.abs(_vi - trenchSection);
+      const _alpha = _dist <= 2 ? 0.08 : _dist <= 5 ? 0.04 : 0.02;
+      ctx.globalAlpha = _alpha;
+      ctx.strokeRect(_vx, _vy, _vw, _vh);
+    }
+    // 3. Corridor glow lines — show the paths between sections
+    ctx.lineWidth = 2;
+    for (let _ci = 0; _ci < TRENCH_NUM_SECTIONS - 1; _ci++) {
+      const _cSec = trenchSections[_ci]; if (!_cSec) continue;
+      const _cNext = trenchSections[_ci + 1]; if (!_cNext) continue;
+      const _cExD = _cSec.exitDir || 'E';
+      const _cY = _cSec.y || 0, _cH = _cSec.height || (_secH(_ci) * CELL_SIZE);
+      const _nY = _cNext.y || 0, _nH = _cNext.height || (_secH(_ci+1) * CELL_SIZE);
+      let _cx1, _cy1, _cx2, _cy2;
+      if (_cExD === 'E') {
+        _cx1 = _cSec.x + _cSec.width; _cy1 = _cY + _cH / 2;
+        _cx2 = _cNext.x; _cy2 = _nY + _nH / 2;
+      } else if (_cExD === 'N') {
+        _cx1 = _cSec.x + _cSec.width / 2; _cy1 = _cY;
+        _cx2 = _cNext.x + _cNext.width / 2; _cy2 = _nY + _nH;
+      } else if (_cExD === 'S') {
+        _cx1 = _cSec.x + _cSec.width / 2; _cy1 = _cY + _cH;
+        _cx2 = _cNext.x + _cNext.width / 2; _cy2 = _nY;
+      }
+      if (_cx1 == null) continue;
+      // Only draw if visible
+      const _clL = Math.min(_cx1,_cx2), _clR = Math.max(_cx1,_cx2);
+      const _clT = Math.min(_cy1,_cy2), _clB = Math.max(_cy1,_cy2);
+      if (_clR < vL || _clL > vR || _clB < vT || _clT > vB) continue;
+      const _cDist = Math.abs(_ci - trenchSection);
+      ctx.globalAlpha = _cDist <= 1 ? 0.12 : _cDist <= 3 ? 0.06 : 0.03;
+      ctx.strokeStyle = _voidAccent;
+      ctx.beginPath(); ctx.moveTo(_cx1, _cy1); ctx.lineTo(_cx2, _cy2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
   // Gap cell accent color — per-domain neon edge that frames each void/grate
   // tile. Bullets fly over gaps, walkers can't cross them (unless flagged).
   let _gapAccent = '#a8f';
