@@ -4447,6 +4447,87 @@ const TRENCH_TEMPLATES = {
     }
     return c;
   }},
+  // ---- SMALL SKIRMISH ROOMS ----
+  tiny_box: { w: 14, h: 12, build: () => [] }, // smallest room — fast fight
+  small_L: { w: 18, h: 16, _dungeon: true, build: () => {
+    // L-shaped room: top-left is open, bottom-right blocked
+    const c = [];
+    for (let x = 10; x < 17; x++) for (let y = 1; y < 8; y++) c.push({x, y});
+    return c;
+  }},
+  small_cross: { w: 16, h: 16, build: () => {
+    // Cross-shaped room: 4 corner blocks
+    const c = [];
+    for (let x = 1; x < 5; x++) for (let y = 1; y < 5; y++) c.push({x, y});
+    for (let x = 11; x < 15; x++) for (let y = 1; y < 5; y++) c.push({x, y});
+    for (let x = 1; x < 5; x++) for (let y = 11; y < 15; y++) c.push({x, y});
+    for (let x = 11; x < 15; x++) for (let y = 11; y < 15; y++) c.push({x, y});
+    return c;
+  }},
+  // ---- MEDIUM DUNGEON ROOMS ----
+  hub_3way: { w: 26, h: 26, _dungeon: true, build: () => {
+    // Central hub with 3 branching paths (N, E, S)
+    const W = 26, H = 26, c = [];
+    const open = new Set();
+    // Central hub (10x10 in the middle)
+    for (let y = 8; y < 18; y++) for (let x = 8; x < 18; x++) open.add(x+','+y);
+    // East corridor
+    for (let x = 18; x < W-1; x++) for (let y = 11; y < 15; y++) open.add(x+','+y);
+    // North corridor
+    for (let y = 1; y < 8; y++) for (let x = 11; x < 15; x++) open.add(x+','+y);
+    // South corridor
+    for (let y = 18; y < H-1; y++) for (let x = 11; x < 15; x++) open.add(x+','+y);
+    // Entry corridor (west)
+    for (let x = 1; x < 8; x++) for (let y = 11; y < 15; y++) open.add(x+','+y);
+    for (let y = 1; y < H-1; y++) for (let x = 6; x < W-3; x++) {
+      if (!open.has(x+','+y)) c.push({x, y});
+    }
+    return c;
+  }},
+  // ---- LARGE ROOMS ----
+  grand_hall: { w: 50, h: 24, _dungeon: true, build: () => {
+    // Long hall with alcoves on both sides
+    const c = [];
+    // Main hall is open (y 6-17, full width)
+    // Top wall with alcove cutouts
+    for (let x = 6; x < 47; x++) {
+      if ((x > 14 && x < 20) || (x > 28 && x < 34)) continue; // alcove openings
+      c.push({x, y: 6});
+    }
+    // Bottom wall with alcove cutouts
+    for (let x = 6; x < 47; x++) {
+      if ((x > 14 && x < 20) || (x > 28 && x < 34)) continue;
+      c.push({x, y: 17});
+    }
+    // Pillars in the hall
+    c.push({x:12,y:10},{x:12,y:11},{x:13,y:10},{x:13,y:11});
+    c.push({x:24,y:10},{x:24,y:11},{x:25,y:10},{x:25,y:11});
+    c.push({x:36,y:10},{x:36,y:11},{x:37,y:10},{x:37,y:11});
+    return c;
+  }},
+  vertical_gauntlet: { w: 12, h: 40, _dungeon: true, build: () => {
+    // Very tall, narrow corridor with alternating obstacles
+    const c = [];
+    for (let y = 6; y < 34; y++) {
+      if (y % 8 < 3) { c.push({x:3,y}); c.push({x:4,y}); } // left obstacles
+      else if (y % 8 >= 4 && y % 8 < 7) { c.push({x:7,y}); c.push({x:8,y}); } // right obstacles
+    }
+    return c;
+  }},
+  twin_rooms: { w: 36, h: 22, _dungeon: true, build: () => {
+    // Two rooms connected by a narrow corridor
+    const c = [];
+    // Dividing wall with small doorway
+    for (let y = 1; y < 21; y++) {
+      if (y >= 9 && y <= 12) continue; // doorway
+      c.push({x: 18, y});
+    }
+    // Pillars in left room
+    c.push({x:7,y:6},{x:8,y:6},{x:7,y:14},{x:8,y:14});
+    // Pillars in right room
+    c.push({x:27,y:6},{x:28,y:6},{x:27,y:14},{x:28,y:14});
+    return c;
+  }},
 };
 
 // Select a template based on enemy types and section depth
@@ -4459,24 +4540,24 @@ function selectTrenchTemplate(types, sectionIdx, isBoss) {
   }
   let pool;
   if (sectionIdx < 10) {
-    // D1: TIGHT CORRIDORS — cramped, claustrophobic
-    pool = ['tight', 'tight_pillars', 'tight_corridor'];
-    if (sectionIdx >= 5) pool.push('corridor', 'lshape');
+    // D1: TIGHT — small rooms, quick skirmishes
+    pool = ['tight', 'tight_pillars', 'tight_corridor', 'tiny_box', 'small_cross'];
+    if (sectionIdx >= 5) pool.push('corridor', 'lshape', 'small_L');
   } else if (sectionIdx < 20) {
-    // D2: OPEN BATTLEFIELDS — wide spaces, scattered cover, some tall rooms
-    pool = ['wide_arena', 'wide_pillars', 'columns', 'islands', 'bunker', 'tall_arena'];
+    // D2: OPEN BATTLEFIELDS — wide spaces, tall rooms, twin rooms
+    pool = ['wide_arena', 'wide_pillars', 'columns', 'islands', 'bunker', 'tall_arena', 'twin_rooms'];
     if (sectionIdx >= 15) pool.push('split', 'crossroads', 'large_complex');
   } else if (sectionIdx < 30) {
-    // D3: MAZE FORTRESS — complex internal walls, tall corridors, large complexes
-    pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape', 'tall_corridor', 'large_complex'];
-    pool.push('bunker', 'split');
+    // D3: MAZE FORTRESS — complex dungeons, hub rooms, grand halls
+    pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape',
+            'tall_corridor', 'large_complex', 'hub_3way', 'grand_hall', 'twin_rooms'];
   } else {
-    // D4: THE CORE — alternates tight gauntlets and massive voids
+    // D4: THE CORE — mix of tight gauntlets and massive voids
     const _localSec = sectionIdx % 10;
     if (_localSec < 3 || (_localSec >= 6 && _localSec < 8)) {
-      pool = ['gauntlet', 'tight_corridor', 'corridor', 'bunker']; // tight
+      pool = ['gauntlet', 'tight_corridor', 'corridor', 'vertical_gauntlet', 'small_cross'];
     } else {
-      pool = ['wide_arena', 'wide_pillars', 'columns', 'wide_arena']; // huge
+      pool = ['wide_arena', 'wide_pillars', 'grand_hall', 'large_complex', 'hub_3way'];
     }
   }
   return pool[Math.floor(Math.random() * pool.length)];
