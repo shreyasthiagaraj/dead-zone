@@ -4097,11 +4097,19 @@ function spawnDescentSection(idx) {
   if (sec.isDark) addFloatingText(cx, sec.y + 130, 'DARKNESS', '#888');
 }
 
-// ---- THE TRENCH (horizontal clone of descent) ----
+// ---- THE TRENCH — dungeon room system ----
 const TRENCH_SECTION_W = 22; // default cells per section (overridden per-section)
-const TRENCH_HEIGHT = 18;    // cells tall
+const TRENCH_HEIGHT = 18;    // DEFAULT cells tall (legacy — per-section heights in _sectionHeights[])
 const TRENCH_NUM_SECTIONS = 50;
-const TRENCH_DOOR_HEIGHT = 4; // cells of door opening at the right wall
+const TRENCH_DOOR_HEIGHT = 4; // cells of door opening
+// Per-section height support — _sectionHeights[] populated during generateTrenchMap()
+let _sectionHeights = [];
+// Helper: get height for a section index (falls back to TRENCH_HEIGHT)
+function _secH(idx) { return (_sectionHeights && _sectionHeights[idx]) || TRENCH_HEIGHT; }
+// Helper: current section height in cells
+function _curSecH() { return _secH(trenchSection); }
+// Helper: current section height in pixels
+function _curSecHpx() { return _secH(trenchSection) * CELL_SIZE; }
 
 // ---- VISUAL DOMAINS — the mesh changes as you descend ----
 const TRENCH_DOMAINS = [
@@ -4395,6 +4403,50 @@ const TRENCH_TEMPLATES = {
     }
     return c;
   }},
+  // ---- TALL ROOMS (variable height) ----
+  tall_arena: { w: 22, h: 28, build: () => {
+    // Open tall room with 4 pillars
+    const c = [];
+    c.push({x:8,y:7},{x:9,y:7},{x:8,y:8},{x:9,y:8});
+    c.push({x:14,y:7},{x:15,y:7},{x:14,y:8},{x:15,y:8});
+    c.push({x:8,y:18},{x:9,y:18},{x:8,y:19},{x:9,y:19});
+    c.push({x:14,y:18},{x:15,y:18},{x:14,y:19},{x:15,y:19});
+    return c;
+  }},
+  tall_corridor: { w: 16, h: 32, build: () => {
+    // Narrow vertical corridor with side alcoves
+    const c = [];
+    // Walls narrowing the corridor to 6 cells wide in the center
+    for (let y = 4; y < 28; y++) {
+      if (y < 10 || y > 22) continue; // open at top/bottom
+      c.push({x:3,y}); c.push({x:4,y}); // left wall
+      c.push({x:11,y}); c.push({x:12,y}); // right wall
+      // Alcove openings
+      if (y === 14 || y === 15) { /* skip — left alcove opening */ }
+      else if (y === 18 || y === 19) { /* skip — right alcove opening */ }
+    }
+    return c;
+  }},
+  large_complex: { w: 40, h: 30, build: () => {
+    // Multi-room complex: entry hall → central arena → side rooms
+    const c = [];
+    // Central dividing walls with doorways
+    for (let y = 1; y < 29; y++) {
+      if (y >= 12 && y <= 16) continue; // doorway
+      c.push({x:14,y});
+    }
+    for (let y = 1; y < 29; y++) {
+      if (y >= 12 && y <= 16) continue; // doorway
+      c.push({x:26,y});
+    }
+    // Horizontal walls in side rooms
+    for (let x = 15; x < 26; x++) {
+      if (x >= 19 && x <= 21) continue; // doorway
+      c.push({x,y:8});
+      c.push({x,y:20});
+    }
+    return c;
+  }},
 };
 
 // Select a template based on enemy types and section depth
@@ -4411,12 +4463,12 @@ function selectTrenchTemplate(types, sectionIdx, isBoss) {
     pool = ['tight', 'tight_pillars', 'tight_corridor'];
     if (sectionIdx >= 5) pool.push('corridor', 'lshape');
   } else if (sectionIdx < 20) {
-    // D2: OPEN BATTLEFIELDS — wide spaces, scattered cover
-    pool = ['wide_arena', 'wide_pillars', 'columns', 'islands', 'bunker'];
-    if (sectionIdx >= 15) pool.push('split', 'crossroads');
+    // D2: OPEN BATTLEFIELDS — wide spaces, scattered cover, some tall rooms
+    pool = ['wide_arena', 'wide_pillars', 'columns', 'islands', 'bunker', 'tall_arena'];
+    if (sectionIdx >= 15) pool.push('split', 'crossroads', 'large_complex');
   } else if (sectionIdx < 30) {
-    // D3: MAZE FORTRESS — complex internal walls, labyrinthine
-    pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape'];
+    // D3: MAZE FORTRESS — complex internal walls, tall corridors, large complexes
+    pool = ['fortress', 'maze', 'dungeon_rooms', 'dungeon_snake', 'dungeon_lshape', 'tall_corridor', 'large_complex'];
     pool.push('bunker', 'split');
   } else {
     // D4: THE CORE — alternates tight gauntlets and massive voids
@@ -4467,13 +4519,22 @@ function generateTrenchMap(seed) {
   const _usePreset = _sectionTemplateNames.length === TRENCH_NUM_SECTIONS && _sectionWidths.length === TRENCH_NUM_SECTIONS;
   if (!_usePreset) {
     _sectionWidths = [];
+    _sectionHeights = [];
     _sectionTemplateNames = [];
     for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
       const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
       const tmplName = selectTrenchTemplate(['normal'], si, isBoss);
       const tmpl = TRENCH_TEMPLATES[tmplName];
       _sectionWidths.push(tmpl ? tmpl.w : TRENCH_SECTION_W);
+      _sectionHeights.push(tmpl && tmpl.h ? tmpl.h : TRENCH_HEIGHT);
       _sectionTemplateNames.push(tmplName);
+    }
+  } else if (_sectionHeights.length === 0) {
+    // Checkpoint resume: heights not saved, rebuild from templates
+    _sectionHeights = [];
+    for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+      const tmpl = TRENCH_TEMPLATES[_sectionTemplateNames[si]];
+      _sectionHeights.push(tmpl && tmpl.h ? tmpl.h : TRENCH_HEIGHT);
     }
   }
   // Compute cumulative X positions
@@ -4485,7 +4546,8 @@ function generateTrenchMap(seed) {
   }
   const totalWCells = _cumX;
   const totalW = totalWCells * CELL_SIZE;
-  const totalH = TRENCH_HEIGHT * CELL_SIZE;
+  const _maxH = Math.max(TRENCH_HEIGHT, ..._sectionHeights);
+  const totalH = _maxH * CELL_SIZE;
   setArenaDimensions(totalW, totalH);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -4499,10 +4561,11 @@ function generateTrenchMap(seed) {
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
     const baseX = _sectionXPositions[si];
     const secW = _sectionWidths[si];
-    // Carve interior
-    for (let y = 1; y < TRENCH_HEIGHT - 1; y++) {
+    const secH = _sectionHeights[si] || TRENCH_HEIGHT;
+    // Carve interior using per-section height
+    for (let y = 1; y < secH - 1; y++) {
       for (let dx = 1; dx < secW - 1; dx++) {
-        if (baseX + dx < GRID_W) dungeonGrid[y][baseX + dx] = true;
+        if (baseX + dx < GRID_W && y < GRID_H) dungeonGrid[y][baseX + dx] = true;
       }
     }
     // Use pre-selected template (NOT re-rolling — must match width)
@@ -4513,20 +4576,17 @@ function generateTrenchMap(seed) {
       const gx = baseX + c.x, gy = c.y;
       if (c.x < 6) continue; // spawn zone clear
       if (c.x >= secW - 3) continue; // door zone clear
-      if (gy >= 1 && gy < TRENCH_HEIGHT - 1 && gx >= baseX + 1 && gx < baseX + secW - 1) {
-        if (gx < GRID_W && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
+      if (gy >= 1 && gy < secH - 1 && gx >= baseX + 1 && gx < baseX + secW - 1) {
+        if (gx < GRID_W && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
     // ---- PATHABILITY CHECK: BFS flood-fill from spawn zone to door zone ----
-    // If no path exists, carve corridors until reachable.
     {
-      const doorCY = Math.floor(TRENCH_HEIGHT / 2);
+      const doorCY = Math.floor(secH / 2);
       const spawnX = baseX + 3, doorX = baseX + secW - 2;
-      // BFS flood-fill from spawn column to door column
       const visited = new Set();
       const queue = [];
-      // Seed from spawn column at all walkable Y positions
-      for (let sy = 1; sy < TRENCH_HEIGHT - 1; sy++) {
+      for (let sy = 1; sy < secH - 1; sy++) {
         if (spawnX < GRID_W && dungeonGrid[sy] && dungeonGrid[sy][spawnX]) {
           const key = spawnX + ',' + sy;
           if (!visited.has(key)) { visited.add(key); queue.push([spawnX, sy]); }
@@ -4540,7 +4600,7 @@ function generateTrenchMap(seed) {
         // Expand neighbors (4-directional)
         const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
         for (const [nx, ny] of neighbors) {
-          if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < 1 || ny >= TRENCH_HEIGHT - 1) continue;
+          if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < 1 || ny >= secH - 1) continue;
           if (nx >= GRID_W) continue;
           const nk = nx + ',' + ny;
           if (!visited.has(nk) && dungeonGrid[ny] && dungeonGrid[ny][nx]) {
@@ -4553,7 +4613,7 @@ function generateTrenchMap(seed) {
         // Carve a 3-cell-tall corridor at door center height across the entire section
         for (let cx = baseX + 1; cx < baseX + secW - 1 && cx < GRID_W; cx++) {
           for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
-            if (dy >= 1 && dy < TRENCH_HEIGHT - 1 && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
+            if (dy >= 1 && dy < secH - 1 && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
           }
         }
       }
@@ -4682,7 +4742,7 @@ function generateTrenchMap(seed) {
       }
     }
     const domain = getTrenchDomain(si);
-    rooms.push({ x: baseX, y: 0, w: secW, h: TRENCH_HEIGHT,
+    rooms.push({ x: baseX, y: 0, w: secW, h: secH,
       theme: ROOM_THEMES[4], brightness: domain.noFog ? 1.5 : 1.0, flicker: false,
       _template: tmplName, _domain: domain });
   }
@@ -4707,7 +4767,8 @@ function generateTrenchMap(seed) {
     for (let si = 0; si < TRENCH_NUM_SECTIONS && si < 127; si++) {
       const baseX = _sectionXPositions[si];
       const secW = _sectionWidths[si];
-      if (y >= 1 && y < TRENCH_HEIGHT - 1) {
+      const _rSecH = _sectionHeights[si] || TRENCH_HEIGHT;
+      if (y >= 1 && y < _rSecH - 1) {
         for (let dx = 1; dx < secW - 1; dx++) {
           if (baseX + dx < GRID_W) roomGrid[y][baseX + dx] = 0;
         }
@@ -7772,6 +7833,7 @@ function saveCheckpoint() {
     seed: window._currentLevelSeed,
     templateNames: _sectionTemplateNames,
     sectionWidths: _sectionWidths,
+    sectionHeights: _sectionHeights,
     // Player state
     hp: lp.hp,
     maxHp: lp.maxHp,
@@ -7831,6 +7893,7 @@ function resumeFromCheckpoint() {
   // Restore template data BEFORE generating the map
   _sectionTemplateNames = cp.templateNames || [];
   _sectionWidths = cp.sectionWidths || [];
+  _sectionHeights = cp.sectionHeights || [];
 
   // Generate the dungeon using saved templates
   window._currentLevelSeed = cp.seed;
@@ -7989,6 +8052,7 @@ function saveMidRunSession() {
     seed: window._currentLevelSeed,
     templateNames: _sectionTemplateNames,
     sectionWidths: _sectionWidths,
+    sectionHeights: _sectionHeights,
     px: lp.x, py: lp.y, angle: lp.angle || 0,
     hp: lp.hp, maxHp: lp.maxHp,
     dashCooldown: lp.dashCooldown || 0,
@@ -8023,6 +8087,7 @@ function resumeMidRunSession() {
   gameMode = 'trench';
   _sectionTemplateNames = sess.templateNames || [];
   _sectionWidths = sess.sectionWidths || [];
+  _sectionHeights = sess.sectionHeights || [];
   window._currentLevelSeed = sess.seed;
   generateTrenchMap(sess.seed);
   initTrenchSections();
