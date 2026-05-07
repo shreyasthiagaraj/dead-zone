@@ -2320,13 +2320,8 @@ function draftShopCards(n, classFilter) {
         return _CARD_CLASS_MAP[u.id] === classFilter; // class-specific cards only
       });
       if (pool.length === 0) break;
-      // Also include synergy cards that have this class as a prereq
-      const synPool = _isCore ? [] : UPGRADE_POOL.filter(u =>
-        u.id.startsWith('syn_') && !attempted.has(u.id) &&
-        (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) &&
-        u.prereqs && u.prereqs.some(g => g.split('|').some(id => _CARD_CLASS_MAP[id] === classFilter))
-      );
-      const combined = [...pool, ...synPool.filter(s => !pool.includes(s))];
+      // Strict class filter — no synergy cards, only cards that belong to this class
+      const combined = pool;
       const totalW = combined.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
       let roll = Math.random() * totalW;
       let chosen = combined[0];
@@ -5308,8 +5303,10 @@ function updateTrench() {
           } else if (_cr.startsWith('mod_')) {
             const _classId = _cr.replace('mod_', '');
             window._pendingClassFilter = _classId;
+            _dlChoicePending = true;
+            _pendingBossShop = true;
+            spawnShopChest(_lp.x + 60, _lp.y);
             addFloatingText(_lp.x, _lp.y - 40, (_meta.label || 'MOD') + ' TERMINAL', _rc2);
-            openShop();
           } else if (_cr === 'upgrade') {
             openPowerUp();
             addFloatingText(_lp.x, _lp.y - 40, 'POWER UP!', '#fc0');
@@ -24734,25 +24731,6 @@ function render() {
     const _DOOR_GAP = 1.5 * CELL_SIZE;
     const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
 
-    // --- Floating reward sign beyond the door (in the black wall area) ---
-    const _signBob = Math.sin(gameTime * 0.04) * 3;
-    const _drawDoorSign = (signX, signY, rewardType, isOpen) => {
-      const meta = _DOOR_REWARD_META[rewardType];
-      if (!meta) return;
-      const _a = isOpen ? (0.7 + 0.3 * pulse) : 0.25;
-      ctx.save();
-      ctx.globalAlpha = _a;
-      ctx.fillStyle = meta.color;
-      ctx.font = 'bold 18px monospace';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(meta.icon, signX, signY + _signBob - 8);
-      ctx.font = 'bold 9px monospace';
-      ctx.fillStyle = '#fff';
-      ctx.globalAlpha = _a * 0.9;
-      ctx.fillText(meta.label, signX, signY + _signBob + 10);
-      ctx.restore();
-    };
-
     // --- Door portal: thick bright slit + wide floor glow ---
     // Works for both right-wall (vertical slit) and top-wall (horizontal slit)
     const _drawPortal = (x1, y1, x2, y2, color, isHoriz) => {
@@ -24813,8 +24791,6 @@ function render() {
         const _rCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
         _drawPortal(_lx1, topY, _lx2, topY, _lCol, true);
         _drawPortal(_rx1, topY, _rx2, topY, _rCol, true);
-        _drawDoorSign((_lx1+_lx2)/2, topY-1.5*CELL_SIZE, sec.multiDoor.top, open);
-        _drawDoorSign((_rx1+_rx2)/2, topY-1.5*CELL_SIZE, sec.multiDoor.bottom, open);
         // Divider
         ctx.globalAlpha = open ? 0.4 : 0.15;
         ctx.strokeStyle='#aaa';ctx.lineWidth=1;ctx.setLineDash([4,6]);
@@ -24829,7 +24805,6 @@ function render() {
         const _sr = sec.doorReward || null;
         const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : _dlChoicePending ? '#f80' : '#f44';
         _drawPortal(_dx1, topY, _dx2, topY, dColor, true);
-        if (_sr) _drawDoorSign(secMidX, topY-1.5*CELL_SIZE, _sr, open);
       }
     } else {
       // Right wall
@@ -24842,8 +24817,6 @@ function render() {
         const _botCol = open ? (_rewardColors[sec.multiDoor.bottom]||'#0ff') : '#f44';
         _drawPortal(dx, _topY1, dx, _topY2, _topCol, false);
         _drawPortal(dx, _botY1, dx, _botY2, _botCol, false);
-        _drawDoorSign(dx + 1.5*CELL_SIZE, (_topY1+_topY2)/2, sec.multiDoor.top, open);
-        _drawDoorSign(dx + 1.5*CELL_SIZE, (_botY1+_botY2)/2, sec.multiDoor.bottom, open);
         // Divider
         ctx.globalAlpha = open ? 0.4 : 0.15;
         ctx.strokeStyle='#aaa';ctx.lineWidth=1;ctx.setLineDash([4,6]);
@@ -24859,7 +24832,6 @@ function render() {
         const _sr = sec.doorReward || null;
         const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : _dlChoicePending ? '#f80' : '#f44';
         _drawPortal(dx, doorY1, dx, doorY2, dColor, false);
-        if (_sr) _drawDoorSign(dx + 1.5*CELL_SIZE, (doorY1+doorY2)/2, _sr, open);
       }
     }
   }
@@ -26330,6 +26302,51 @@ function render() {
       }
       fctx.globalCompositeOperation = 'source-over';
       ctx.drawImage(fc, 0, 0);
+    }
+
+    // ---- DOOR SIGNS ON TOP OF FOG ----
+    if (gameMode === 'trench' && trenchSections[trenchSection]) {
+      const _dsSec = trenchSections[trenchSection];
+      const _dsTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+      const _dsOpen = _dsSec.cleared && !_dlChoicePending;
+      const _dsSide = _dsSec.doorSide || 'right';
+      const _dsPulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
+      const _dsBob = Math.sin(gameTime * 0.04) * 3;
+      const _dsLast = trenchSection >= TRENCH_NUM_SECTIONS - 1;
+      const _dsSign = (sx, sy, rType, isOp) => {
+        const m = _DOOR_REWARD_META[rType]; if (!m) return;
+        const a = isOp ? (0.8 + 0.2 * _dsPulse) : 0.35;
+        ctx.save(); ctx.globalAlpha = a;
+        ctx.fillStyle = m.color;
+        ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(m.icon, sx, sy + _dsBob - 9);
+        ctx.font = 'bold 10px monospace'; ctx.fillStyle = '#fff'; ctx.globalAlpha = a * 0.95;
+        ctx.fillText(m.label, sx, sy + _dsBob + 11);
+        ctx.restore();
+      };
+      if (!_dsLast) {
+        if (_dsSide === 'top') {
+          const _dsMx = _dsSec.x + _dsTW / 2, _dsTopY = CELL_SIZE;
+          if (_dsSec.multiDoor) {
+            const _DW = 4*CELL_SIZE, _DG = 1.5*CELL_SIZE;
+            _dsSign((_dsMx-_DG/2-_DW+_dsMx-_DG/2)/2, _dsTopY-1.5*CELL_SIZE, _dsSec.multiDoor.top, _dsOpen);
+            _dsSign((_dsMx+_DG/2+_dsMx+_DG/2+_DW)/2, _dsTopY-1.5*CELL_SIZE, _dsSec.multiDoor.bottom, _dsOpen);
+          } else if (_dsSec.doorReward) {
+            _dsSign(_dsMx, _dsTopY-1.5*CELL_SIZE, _dsSec.doorReward, _dsOpen);
+          }
+        } else {
+          const _dsDx = _dsSec.x + _dsTW - CELL_SIZE;
+          if (_dsSec.multiDoor) {
+            const _DW = 4*CELL_SIZE, _DG = 1.5*CELL_SIZE, _dsMidY = (TRENCH_HEIGHT/2)*CELL_SIZE;
+            _dsSign(_dsDx+1.5*CELL_SIZE, _dsMidY-_DG/2-_DW/2, _dsSec.multiDoor.top, _dsOpen);
+            _dsSign(_dsDx+1.5*CELL_SIZE, _dsMidY+_DG/2+_DW/2, _dsSec.multiDoor.bottom, _dsOpen);
+          } else if (_dsSec.doorReward) {
+            const _dsDY1 = Math.floor((TRENCH_HEIGHT-TRENCH_DOOR_HEIGHT)/2)*CELL_SIZE;
+            const _dsDY2 = _dsDY1 + TRENCH_DOOR_HEIGHT*CELL_SIZE;
+            _dsSign(_dsDx+1.5*CELL_SIZE, (_dsDY1+_dsDY2)/2, _dsSec.doorReward, _dsOpen);
+          }
+        }
+      }
     }
 
     // ---- RIM LIGHT: thin colored silhouettes on enemies, visible through fog ----
