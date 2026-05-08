@@ -5379,13 +5379,13 @@ function updateCheckpointRoom(sec, TW) {
     saveCheckpoint();
     hapticCheckpoint();
 
-    // Clear any obstacles inside the checkpoint section — it's a safe room and
-    // the generator template left dark blocks that looked like scenery. Open
-    // the whole interior so the player can freely walk to either terminal.
+    // Clear any obstacles inside the checkpoint section — it's a safe room
     {
       const _gxStart = Math.floor(sec.x / CELL_SIZE);
       const _gxEnd = Math.floor((sec.x + TW) / CELL_SIZE);
-      for (let _gy = 1; _gy < TRENCH_HEIGHT - 1; _gy++) {
+      const _cpSecCellY = Math.floor((sec.y || 0) / CELL_SIZE);
+      const _cpSecCellH = sec.height ? Math.floor(sec.height / CELL_SIZE) : _curSecH();
+      for (let _gy = _cpSecCellY + 1; _gy < _cpSecCellY + _cpSecCellH - 1; _gy++) {
         if (!dungeonGrid[_gy]) continue;
         for (let _gx = _gxStart + 1; _gx < _gxEnd - 1; _gx++) {
           dungeonGrid[_gy][_gx] = true;
@@ -5393,14 +5393,12 @@ function updateCheckpointRoom(sec, TW) {
       }
     }
 
-    // Place terminals in a horizontal row, centered below the CHECKPOINT/HP
-    // RESTORED label stack so the player sees them on entry and can walk down
-    // to whichever one they want. Signal Lab (left), Mod Terminal (middle,
-    // the required boss-reward pick), Forge (right, meta-progression spend).
+    // Place terminals in a horizontal row
     _pendingBossShop = true;
-    _dlChoicePending = true; // lock door until mod terminal is used
+    _dlChoicePending = true;
     const midX = sec.x + TW * 0.5;
-    const termY = (_curSecH() / 2) * CELL_SIZE + 130;
+    const _cpSY = sec.y || 0;
+    const termY = _cpSY + (_curSecH() / 2) * CELL_SIZE + 130;
     const termGap = 120;
     // Signal Lab — research focus swap
     barrels.push({
@@ -5435,9 +5433,11 @@ function updateCheckpointRoom(sec, TW) {
     playSound(1200, 0.08, 'sine', 0.1);
   }
 
-  // Door logic: player can walk to the right wall door once shop is used
+  // Door logic: player can walk to the exit door once shop is used
   if (_trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && gameState !== 'signallab' && !_dlChoicePending) {
-    const doorY1 = Math.floor((_curSecH() - TRENCH_DOOR_HEIGHT) / 2) * CELL_SIZE;
+    const _cpDoorSY = sec.y || 0;
+    const _cpDoorSH = sec.height || (_curSecH() * CELL_SIZE);
+    const doorY1 = _cpDoorSY + _cpDoorSH / 2 - (TRENCH_DOOR_HEIGHT * CELL_SIZE) / 2;
     const doorY2 = doorY1 + TRENCH_DOOR_HEIGHT * CELL_SIZE;
     const rightWallX = sec.x + TW - CELL_SIZE;
     const triggerX = rightWallX - PLAYER_RADIUS - 6;
@@ -23184,10 +23184,11 @@ function render() {
     const cpT=performance.now();
     ctx.globalAlpha=0.85;
     ctx.fillStyle='#030a12';
-    ctx.fillRect(cpSec.x,0,cpTW,_curSecHpx());
+    const _cpRY=cpSec.y||0;
+    ctx.fillRect(cpSec.x,_cpRY,cpTW,_curSecHpx());
     ctx.globalAlpha=0.10+Math.sin(cpT*0.003)*0.04;
     ctx.fillStyle='#0f0';
-    ctx.fillRect(cpSec.x,0,cpTW,_curSecHpx());
+    ctx.fillRect(cpSec.x,_cpRY,cpTW,_curSecHpx());
     ctx.globalAlpha=1;
   }
 
@@ -25223,7 +25224,7 @@ function render() {
     const cpSec=trenchSections[trenchSection];
     const cpTW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
     const cpMidX=cpSec.x+cpTW*0.5;
-    const cpMidY=(_curSecH()/2)*CELL_SIZE;
+    const cpMidY=(cpSec.y||0)+(_curSecH()/2)*CELL_SIZE;
     const cpT=performance.now();
     // CRT boost during checkpoint — periodic glitch for atmosphere
     if (gameTime % 90 < 3) window._crtGlitch = Math.max(window._crtGlitch || 0, 0.10);
