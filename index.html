@@ -4673,14 +4673,13 @@ function generateTrenchMap(seed) {
     _sectionEntryDirs.push(_entry);
     _sectionXPositions.push(_curX);
     _sectionYPositions.push(_curY);
-    // Pick exit direction — can't be same wall as entry
-    const _exitOpts = ['E','N','S'].filter(d => d !== _entry);
-    // Bias toward E (forward) 60%, N/S 20% each
+    // Pick exit direction — only right (E) or top (N), never left/bottom
+    const _exitOpts = ['E','N'].filter(d => d !== _entry);
+    // Bias toward E (forward) 70%, N 30%
     let _exit;
-    const _r = Math.random();
-    if (_exitOpts.includes('E') && _r < 0.6) _exit = 'E';
-    else if (_exitOpts.length > 1) _exit = _exitOpts[_r < 0.8 ? 1 : Math.min(2, _exitOpts.length-1)];
-    else _exit = _exitOpts[0];
+    if (_exitOpts.length === 0) _exit = 'E'; // fallback
+    else if (_exitOpts.length === 1) _exit = _exitOpts[0];
+    else _exit = Math.random() < 0.7 ? 'E' : 'N';
     // Boss sections always exit east (simpler)
     const _isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
     if (_isBoss) _exit = _exitOpts.includes('E') ? 'E' : _exitOpts[0];
@@ -5319,7 +5318,8 @@ function spawnTrenchSection(idx) {
   const _numBarrels = 1 + Math.floor(Math.random() * 2);
   for (let bi = 0; bi < _numBarrels; bi++) {
     const bx = sec.x + (0.35 + Math.random() * 0.45) * TW;
-    const by = (3 + Math.random() * (_secH(trenchSection) - 6)) * CELL_SIZE;
+    const _secYOff = sec.y || 0;
+    const by = _secYOff + (3 + Math.random() * (_secH(trenchSection) - 6)) * CELL_SIZE;
     // Check the spawn position is walkable (not inside an obstacle)
     const _bgx = Math.floor(bx / CELL_SIZE), _bgy = Math.floor(by / CELL_SIZE);
     if (dungeonGrid[_bgy] && dungeonGrid[_bgy][_bgx]) {
@@ -5982,10 +5982,12 @@ function _pickVignettesForDomain(domainIdx) {
 
 // Find a wall-adjacent walkable cell in the section
 function _findWallAdjacentCell(sec, secW, usedCells) {
+  const _secCellY = Math.floor((sec.y || 0) / CELL_SIZE);
+  const _secCellH = sec.height ? Math.floor(sec.height / CELL_SIZE) : TRENCH_HEIGHT;
   for (let tries = 0; tries < 25; tries++) {
     const secCellX = Math.floor(sec.x / CELL_SIZE);
     const gx = secCellX + 6 + Math.floor(Math.random() * Math.max(1, secW - 10));
-    const gy = 2 + Math.floor(Math.random() * (TRENCH_HEIGHT - 4));
+    const gy = _secCellY + 2 + Math.floor(Math.random() * (_secCellH - 4));
     if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
     if (usedCells.has(gx + ',' + gy)) continue;
     // Must have at least one non-walkable neighbor (wall)
@@ -6005,10 +6007,12 @@ function _findWallAdjacentCell(sec, secW, usedCells) {
 
 // Find a walkable floor cell (not necessarily wall-adjacent)
 function _findFloorCell(sec, secW, usedCells) {
+  const _fcCellY = Math.floor((sec.y || 0) / CELL_SIZE);
+  const _fcCellH = sec.height ? Math.floor(sec.height / CELL_SIZE) : TRENCH_HEIGHT;
   for (let tries = 0; tries < 15; tries++) {
     const secCellX = Math.floor(sec.x / CELL_SIZE);
     const gx = secCellX + 6 + Math.floor(Math.random() * Math.max(1, secW - 10));
-    const gy = 3 + Math.floor(Math.random() * (TRENCH_HEIGHT - 6));
+    const gy = _fcCellY + 3 + Math.floor(Math.random() * (_fcCellH - 6));
     if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
     if (usedCells.has(gx + ',' + gy)) continue;
     const localX = gx - secCellX;
@@ -6055,10 +6059,12 @@ function spawnTrenchSectionFloorDecals(idx) {
   const accent = (domain && domain.accentColor) || '#b06';
   const secW = (_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W;
   const sx = sec.x;
+  const _fdSecY = sec.y || 0;
+  const _fdSecH = sec.height ? Math.floor(sec.height / CELL_SIZE) : _secH(idx);
   const sxMin = sx + CELL_SIZE * 2;
   const sxMax = sx + (secW - 2) * CELL_SIZE;
-  const syMin = 2 * CELL_SIZE;
-  const syMax = (_curSecH() - 2) * CELL_SIZE;
+  const syMin = _fdSecY + 2 * CELL_SIZE;
+  const syMax = _fdSecY + (_fdSecH - 2) * CELL_SIZE;
   // Helper: random floor position inside section, on a walkable tile
   const _floorSpot = () => {
     for (let _t = 0; _t < 10; _t++) {
@@ -6309,9 +6315,12 @@ function _spawnStoryCluster(x, y, domain) {
 }
 
 function _findDecorSpot(sec, type) {
+  const _dsCellY = Math.floor((sec.y || 0) / CELL_SIZE);
+  const _dsCellH = sec.height ? Math.floor(sec.height / CELL_SIZE) : TRENCH_HEIGHT;
+  const _dsCellW = sec.width ? Math.floor(sec.width / CELL_SIZE) : TRENCH_SECTION_W;
   for (let tries = 0; tries < 20; tries++) {
-    const gx = Math.floor(sec.x / CELL_SIZE) + 3 + Math.floor(Math.random() * (TRENCH_SECTION_W - 6));
-    const gy = 2 + Math.floor(Math.random() * (TRENCH_HEIGHT - 4));
+    const gx = Math.floor(sec.x / CELL_SIZE) + 3 + Math.floor(Math.random() * Math.max(1, _dsCellW - 6));
+    const gy = _dsCellY + 2 + Math.floor(Math.random() * Math.max(1, _dsCellH - 4));
     if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
     // Wall-adjacent types need a neighboring non-walkable cell
     if (type === 'terminal' || type === 'crt_monitor' || type === 'poster' || type === 'cable') {
@@ -25179,8 +25188,9 @@ function render() {
     const _bTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
     const _bLeft = _bSec.x;
     const _bRight = _bSec.x + _bTW;
-    const _bTop = 0;
-    const _bBottom = _curSecHpx();
+    const _bSecY = _bSec.y || 0;
+    const _bTop = _bSecY;
+    const _bBottom = _bSecY + _curSecHpx();
     ctx.fillStyle = '#000';
     // Left of section
     ctx.fillRect(_bLeft - 2000, _bTop - 500, 2000, _bBottom + 1000);
