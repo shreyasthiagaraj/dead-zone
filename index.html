@@ -2871,6 +2871,7 @@ function buyShopCard(upgradeId) {
   }
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
+  _checkClassMilestone(upgradeId);
   {
     const lp = getLocalPlayer();
     if (lp) {
@@ -2886,13 +2887,42 @@ function buyShopCard(upgradeId) {
     }
   }
   playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
-  // Celebrate with floating text in the game world
+  // ---- CARD CEREMONY ----
+  // Rarity-driven celebration. Common = small spark burst. Rare = bigger burst
+  // + ring + camera nudge. Epic = full ceremony — beam, screen pulse, hit-stop,
+  // bass drop. The bigger the card, the bigger the moment.
   const clp = getLocalPlayer();
   if (clp) {
+    const _rar = u.rarity || 'common';
+    const _rarTier = _rar === 'epic' ? 2 : _rar === 'rare' ? 1 : 0;
+    const _burstN = 12 + _rarTier * 12;          // 12 / 24 / 36
+    const _ringSize = 60 + _rarTier * 40;         // 60 / 100 / 140
     addFloatingText(clp.x, clp.y - 40, `${u.icon} ${u.name} PURCHASED`, u.color);
-    for (let pi = 0; pi < 12; pi++) {
-      const pa = Math.random() * Math.PI * 2, ps = 2 + Math.random() * 3;
-      particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 18, maxLife: 18, size: 2.5, color: u.color, type: 'spark' });
+    // Spark burst — denser for rarer cards
+    for (let pi = 0; pi < _burstN; pi++) {
+      const pa = Math.random() * Math.PI * 2, ps = 2 + Math.random() * (3 + _rarTier);
+      particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+        life: 18 + _rarTier * 6, maxLife: 28,
+        size: 2.5 + _rarTier * 0.6, color: pi < 4 ? '#fff' : u.color, type: 'spark' });
+    }
+    // Expanding ring (rare+) + bigger ring (epic)
+    if (_rarTier >= 1) {
+      particles.push({ x: clp.x, y: clp.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: _ringSize, color: u.color, type: 'wakering' });
+    }
+    if (_rarTier >= 2) {
+      particles.push({ x: clp.x, y: clp.y, vx: 0, vy: 0, life: 32, maxLife: 32, size: _ringSize * 1.4, color: '#fff', type: 'wakering' });
+      // Cinematic punch on epic
+      triggerHitStop(120);
+      triggerCameraZoom(1.04, 350);
+      screenShake.intensity = Math.max(screenShake.intensity, 8);
+      // Bass drop + chime
+      playSound(120, 0.4, 'sawtooth', 0.18);
+      playSound(900, 0.15, 'sine', 0.14);
+      playSound(1800, 0.1, 'sine', 0.10);
+    } else if (_rarTier === 1) {
+      triggerCameraZoom(1.02, 200);
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      playSound(800, 0.1, 'sine', 0.14);
     }
   }
   _pulseBitsHUD();
@@ -5288,6 +5318,10 @@ function spawnTrenchSection(idx) {
     triggerGlitchSurge(0.6, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
     hapticBossIntro();
+    // Cinematic reveal: pull camera out so the player sees the room + boss in
+    // one frame, hit-stop on the spawn, then snap back over ~1.4s.
+    triggerHitStop(280);
+    triggerCameraZoom(0.78, 1500);
     // Big dramatic particle burst at boss spawn point
     for (let bi = 0; bi < 40; bi++) {
       const ba = (bi / 40) * Math.PI * 2, bs = 3 + Math.random() * 6;
@@ -5349,9 +5383,14 @@ function spawnTrenchSection(idx) {
   const _domain = sec.domain || getTrenchDomain(idx);
   const _prevDomain = idx > 0 ? getTrenchDomain(idx - 1) : null;
   if (_domain && (!_prevDomain || _domain.name !== _prevDomain.name)) {
-    // Domain transition: big glitch + domain name
+    // Domain transition: cinematic moment — pull camera out, hold the world,
+    // then snap back as the title slams in.
     triggerGlitchSurge(0.6, 50);
     showSectionTitleCard(_domain.name, 'new domain', false);
+    triggerHitStop(220);
+    triggerSlowMo(0.4, 700);
+    triggerCameraZoom(0.88, 900);
+    screenShake.intensity = Math.max(screenShake.intensity, 9);
   }
   if (sec.isDark) addFloatingText(cx, cy - 36, 'DARKNESS', '#888');
   if (sec.waves.length > 1) addFloatingText(cx, cy - 12, `${sec.waves.length} WAVES`, '#ff8040');
@@ -5502,6 +5541,8 @@ function updateTrench() {
       return;
     }
     sec.cleared = true;
+    sec._openedAt = gameTime; // drives door-open animation in render
+    triggerClearStamp('SYSTEM CLEANSED', 'proceed through the gate');
     score += 200 * (trenchSection + 1);
     // ---- SECTION CLEAR BANNER ----
     // Juicy "SYSTEM CLEANSED" moment — flash the screen-announce div and pulse
@@ -5771,6 +5812,7 @@ function updateDescent() {
     triggerHitStop(200);
     triggerSlowMo(0.3, 400);
     triggerCameraZoom(1.06, 600);
+    triggerClearStamp('SECTION CLEAR', 'proceed to the next layer');
     // (Data Link removed — door rewards handle all terminals)
   }
   // Check if player passed through the gate to next section
@@ -7791,6 +7833,12 @@ let _slowMoTimer = 0;
 // _lastHitFlash decays each frame; 1.0 right after hit, 0 when faded.
 let _lastHitAngle = 0;
 let _lastHitFlash = 0;
+// Section-clear stamp: canvas-rendered SYSTEM CLEANSED slam. Frame counter
+// drives scale-in (1.5x -> 1.0x) + hold + fade.
+let _clearStamp = { life: 0, maxLife: 80, text: '', sub: '' };
+function triggerClearStamp(text, sub) {
+  _clearStamp = { life: 80, maxLife: 80, text: text || 'SECTION CLEAR', sub: sub || '' };
+}
 function triggerHitStop(ms) {
   if (typeof ms !== 'number' || !(ms > 0)) return;
   hitStopMs = Math.max(hitStopMs, ms);
@@ -8036,6 +8084,101 @@ let runXP = 0;           // current XP toward next level
 let runXPNeeded = 10;    // XP required for next level
 let runLevel = 1;        // current run level
 let runUpgrades = {};    // upgradeId -> count (how many times player picked it this run)
+// ---- CLASS STACK MILESTONES ----
+// Fires once per run per class when its card count reaches 3. Reset whenever
+// runUpgrades is reset (new run / restart).
+let _milestoneFired = { thermal: false, cryo: false, arc: false, pulse: false, corrupt: false };
+const _STACK_MILESTONES = {
+  thermal: { name: 'INFERNO',     subtitle: 'thermal cascade engaged' },
+  cryo:    { name: 'DEEP FREEZE', subtitle: 'cryogenic lattice formed' },
+  arc:     { name: 'OVERLOAD',    subtitle: 'arc resonance achieved' },
+  pulse:   { name: 'RESONANCE',   subtitle: 'pulse harmonics stable' },
+  corrupt: { name: 'GLITCHED',    subtitle: 'process integrity lost' },
+};
+function _checkClassMilestone(upgradeId) {
+  if (!upgradeId || !_milestoneFired) return;
+  const _newCls = (typeof _CARD_CLASS_MAP === 'object') ? _CARD_CLASS_MAP[upgradeId] : null;
+  if (!_newCls || _milestoneFired[_newCls]) return;
+  let _count = 0;
+  for (const id in runUpgrades) {
+    if (_CARD_CLASS_MAP[id] === _newCls) _count += runUpgrades[id];
+  }
+  if (_count >= 3) {
+    _milestoneFired[_newCls] = true;
+    fireStackMilestone(_newCls);
+  }
+}
+function _resetMilestones() {
+  _milestoneFired = { thermal: false, cryo: false, arc: false, pulse: false, corrupt: false };
+}
+function fireStackMilestone(cls) {
+  const ms = _STACK_MILESTONES[cls];
+  const lp = getLocalPlayer();
+  if (!ms || !lp) return;
+  // Big floating callout — uses the existing _bitsLabel flag for slam scale
+  floatingTexts.push({ x: lp.x, y: lp.y - 90, text: ms.name,
+    color: cls === 'thermal' ? '#f80' : cls === 'cryo' ? '#8ef' : cls === 'arc' ? '#4ff' : cls === 'pulse' ? '#cef' : '#a4f',
+    vx: 0, vy: -1.2, life: 110, maxLife: 110, _bitsLabel: true, _pulse: 12 });
+  floatingTexts.push({ x: lp.x, y: lp.y - 60, text: ms.subtitle,
+    color: '#fff', vx: 0, vy: -0.6, life: 100, maxLife: 100 });
+  // Cinematic punch — short hit-stop into slow-mo so the moment lands
+  triggerHitStop(80);
+  triggerSlowMo(0.45, 380);
+  triggerCameraZoom(1.05, 420);
+  screenShake.intensity = Math.max(screenShake.intensity, 12);
+  // Class-specific particle burst radiating from the player
+  if (cls === 'thermal') {
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2, s = 4 + Math.random() * 5;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 1.5,
+        life: 30 + Math.floor(Math.random() * 12), maxLife: 42,
+        size: 4 + Math.random() * 3,
+        color: ['#f80','#fa0','#ff0','#f40'][Math.floor(Math.random() * 4)], type: 'spark' });
+    }
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 35, maxLife: 35, size: 280, color: '#f80', type: 'wakering' });
+    playSound(220, 0.3, 'sawtooth', 0.2); playSound(440, 0.2, 'sine', 0.15);
+  } else if (cls === 'cryo') {
+    for (let i = 0; i < 25; i++) {
+      const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 5;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life: 35 + Math.floor(Math.random() * 12), maxLife: 47,
+        size: 3 + Math.random() * 2,
+        color: Math.random() > 0.4 ? '#cff' : '#8ef', type: 'spark', _pixel: true });
+    }
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 40, maxLife: 40, size: 260, color: '#8ef', type: 'wakering' });
+    playSound(800, 0.18, 'sine', 0.18); playSound(400, 0.3, 'triangle', 0.12);
+  } else if (cls === 'arc') {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.random() * 0.3;
+      const tx = lp.x + Math.cos(a) * 600, ty = lp.y + Math.sin(a) * 600;
+      particles.push({ x: lp.x, y: lp.y, tx, ty, vx: 0, vy: 0,
+        life: 12, maxLife: 12, size: 2, color: i % 2 ? '#4ff' : '#fff', type: 'lightning' });
+    }
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 30, maxLife: 30, size: 300, color: '#4ff', type: 'wakering' });
+    playSound(1200, 0.15, 'sawtooth', 0.18); playSound(2400, 0.08, 'square', 0.12);
+  } else if (cls === 'pulse') {
+    for (let i = 0; i < 4; i++) {
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+        life: 30 + i * 8, maxLife: 30 + i * 8, size: 200 + i * 60, color: '#cef', type: 'wakering' });
+    }
+    playSound(900, 0.2, 'sine', 0.2); playSound(1800, 0.15, 'sine', 0.12);
+  } else if (cls === 'corrupt') {
+    const _glyphs = ['0','1','#','%','~','?','!','/','*','░','▓','▒','╳'];
+    for (let i = 0; i < 22; i++) {
+      const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+      particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+        life: 30, maxLife: 30, size: 18 + Math.random() * 8,
+        color: Math.random() > 0.5 ? '#a4f' : '#f0f',
+        type: 'glitchtext', text: _glyphs[Math.floor(Math.random() * _glyphs.length)] });
+    }
+    if (typeof window !== 'undefined') {
+      window._crtGlitch = Math.max(window._crtGlitch || 0, 0.4);
+      window._crtGlitchTimer = Math.max(window._crtGlitchTimer || 0, 30);
+    }
+    if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.5, 30);
+    playSound(150, 0.3, 'sawtooth', 0.2); playSound(300, 0.15, 'square', 0.15);
+  }
+}
 let runUpgradePower = {}; // upgradeId -> 0/1/2 (power level: base/★★/★★★)
 let pendingLevelUps = 0; // queue: if multiple levels trigger in one frame
 let levelUpChoices = null; // array of 3 upgrade ids, or null when not picking
@@ -11219,6 +11362,7 @@ function confirmUpgradeCard() {
   const upgradeId = _levelupSelectedId;
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
+  _checkClassMilestone(upgradeId);
   // Instant feedback: max-HP bump + speed recompute
   {
     const lp = getLocalPlayer();
@@ -11237,13 +11381,38 @@ function confirmUpgradeCard() {
   pendingLevelUps--;
   _levelupSelectedId = null;
   playSfx('ui_click', 0.28) || playSound(1200, 0.06, 'sine', 0.18);
-  // Celebrate on the player
+  // ---- CARD CEREMONY (level-up path) ----
+  // Mirrors selectShopCard's rarity-driven celebration so the level-up flow
+  // feels equally weighty.
   const clp = getLocalPlayer();
   if (clp) {
-    for (let pi = 0; pi < 20; pi++) {
+    const _u = (typeof UPGRADE_POOL !== 'undefined') ? UPGRADE_POOL.find(c => c.id === upgradeId) : null;
+    const _rar = (_u && _u.rarity) || 'common';
+    const _rarTier = _rar === 'epic' ? 2 : _rar === 'rare' ? 1 : 0;
+    const _color = (_u && _u.color) || '#ff0';
+    const _burstN = 20 + _rarTier * 12;
+    for (let pi = 0; pi < _burstN; pi++) {
       const pa = Math.random() * Math.PI * 2;
-      const ps = 2 + Math.random() * 4;
-      particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps, life: 22, maxLife: 22, size: 2.5, color: '#ff0', type: 'spark' });
+      const ps = 2 + Math.random() * (4 + _rarTier);
+      particles.push({ x: clp.x, y: clp.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+        life: 22 + _rarTier * 6, maxLife: 32,
+        size: 2.5 + _rarTier * 0.6, color: pi < 4 ? '#fff' : _color, type: 'spark' });
+    }
+    if (_rarTier >= 1) {
+      particles.push({ x: clp.x, y: clp.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: 80 + _rarTier * 40, color: _color, type: 'wakering' });
+    }
+    if (_rarTier >= 2) {
+      particles.push({ x: clp.x, y: clp.y, vx: 0, vy: 0, life: 32, maxLife: 32, size: 200, color: '#fff', type: 'wakering' });
+      triggerHitStop(120);
+      triggerCameraZoom(1.04, 350);
+      screenShake.intensity = Math.max(screenShake.intensity, 8);
+      playSound(120, 0.4, 'sawtooth', 0.18);
+      playSound(900, 0.15, 'sine', 0.14);
+      playSound(1800, 0.1, 'sine', 0.10);
+    } else if (_rarTier === 1) {
+      triggerCameraZoom(1.02, 200);
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      playSound(800, 0.1, 'sine', 0.14);
     }
   }
   // If more level-ups are queued, re-draft and stay on screen
@@ -11787,7 +11956,7 @@ function enterShell(fromDeath) {
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _dischargeCharging = false; _dischargeCharge = 0; _dischargeWave = null; _deadshotCharging = false; _deadshotCharge = 0;
   activeOrbital = null;
   // Clear run-specific state so old mods don't persist in the Shell
-  runUpgrades = {}; runUpgradePower = {}; rebuildRunMods();
+  runUpgrades = {}; runUpgradePower = {}; _resetMilestones(); rebuildRunMods();
   // Close mods panel if it was open
   const _mpanel = document.getElementById('mods-panel');
   if (_mpanel) { _mpanel.style.display = 'none'; _mpanel.style.opacity = '0'; }
@@ -12466,7 +12635,7 @@ function startSoloGame() {
   // Reset run-scoped progression (preserve debug mods if any were set in shell)
   const _debugMods = { ...runUpgrades };
   const _debugPower = { ...runUpgradePower };
-  runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; runUpgradePower = {}; pendingLevelUps = 0; levelUpChoices = null;
+  runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; runUpgradePower = {}; _resetMilestones(); pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
   resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0; _pendingBossShop = false;
   resetDataLinkState();
@@ -12561,7 +12730,7 @@ function startMultiplayerGame() {
   initAudio(); loadSfx(); isMultiplayer = true; gameState = 'playing';
   score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; spawnTimer = 0; resetPerks();
   // Reset run-scoped progression (each client tracks their own XP/upgrades)
-  runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; runUpgradePower = {}; pendingLevelUps = 0; levelUpChoices = null;
+  runXP = 0; runLevel = 1; runXPNeeded = 10; runUpgrades = {}; runUpgradePower = {}; _resetMilestones(); pendingLevelUps = 0; levelUpChoices = null;
   xpOrbs = []; _overchargeCounter = 0; runRegenTimer = 0;
   resetShopCadence(); shopCards = null; _shopActiveChest = null; _shopVisitCount = 0; _pendingBossShop = false;
   resetDataLinkState();
@@ -22011,9 +22180,25 @@ function applyHostState(msg) {
       triggerHitStop(200);
       triggerSlowMo(0.3, 400);
       triggerCameraZoom(1.06, 600);
+      triggerClearStamp('SECTION CLEAR', 'proceed to the next layer');
     }
   }
-  if (msg.trenchSection !== undefined) { trenchSection = msg.trenchSection; }
+  if (msg.trenchSection !== undefined) {
+    // Detect domain transition for non-host clients (host fires its own).
+    if (!isHost) {
+      const _prevDom = getTrenchDomain(trenchSection || 0);
+      const _newDom = getTrenchDomain(msg.trenchSection);
+      if (_prevDom && _newDom && _prevDom.name !== _newDom.name) {
+        triggerHitStop(220);
+        triggerSlowMo(0.4, 700);
+        triggerCameraZoom(0.88, 900);
+        screenShake.intensity = Math.max(screenShake.intensity, 9);
+        showSectionTitleCard(_newDom.name, 'new domain', false);
+        if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.6, 50);
+      }
+    }
+    trenchSection = msg.trenchSection;
+  }
   if (msg.cpRoom !== undefined) {
     const _wasCp = _checkpointRoomActive;
     _checkpointRoomActive = msg.cpRoom;
@@ -25496,11 +25681,49 @@ function render() {
     const _DOOR_W = 4 * CELL_SIZE;
     const _DOOR_GAP = 1.5 * CELL_SIZE;
     const pulse = 0.5 + Math.sin(gameTime * 0.06) * 0.5;
+    // Open-animation phase: 0->1 over the first 36 frames (~600ms) after sec.cleared
+    // flips. Drives the bright flash + particle burst at the door so opening feels
+    // like a real event, not a silent state flip.
+    let _openAge = -1, _openPhase = 0;
+    if (open && sec._openedAt !== undefined) {
+      _openAge = gameTime - sec._openedAt;
+      _openPhase = Math.max(0, Math.min(1, _openAge / 36));
+    }
+    // First frame of opening: spawn a one-shot spark burst at the door midpoint
+    if (open && !sec._openVfxFired) {
+      sec._openVfxFired = true;
+      const _exitD = sec.exitDir || 'E';
+      const _secY = sec.y || 0;
+      const _secH2 = sec.height || (_curSecHpx());
+      let _doorMx, _doorMy, _doorAng;
+      if (_exitD === 'N') { _doorMx = sec.x + TW/2; _doorMy = _secY + CELL_SIZE; _doorAng = -Math.PI/2; }
+      else if (_exitD === 'S') { _doorMx = sec.x + TW/2; _doorMy = _secY + _secH2 - CELL_SIZE; _doorAng = Math.PI/2; }
+      else { _doorMx = sec.x + TW - CELL_SIZE; _doorMy = _secY + _secH2/2; _doorAng = 0; }
+      const _doorBurstColor = sec.doorReward ? (_rewardColors[sec.doorReward] || '#0ff') : '#0ff';
+      // 16 sparks fanning AWAY from the door (toward the room) so the player reads them
+      for (let _di = 0; _di < 16; _di++) {
+        const _da = _doorAng + Math.PI + (Math.random() - 0.5) * 1.2;
+        const _ds = 4 + Math.random() * 5;
+        particles.push({ x: _doorMx, y: _doorMy, vx: Math.cos(_da) * _ds, vy: Math.sin(_da) * _ds,
+          life: 22 + Math.floor(Math.random() * 8), maxLife: 30,
+          size: 2 + Math.random() * 2, color: _di < 5 ? '#fff' : _doorBurstColor, type: 'spark' });
+      }
+      // Two expanding rings — one bright, one wide
+      particles.push({ x: _doorMx, y: _doorMy, vx: 0, vy: 0, life: 22, maxLife: 22, size: 80, color: _doorBurstColor, type: 'wakering' });
+      particles.push({ x: _doorMx, y: _doorMy, vx: 0, vy: 0, life: 30, maxLife: 30, size: 130, color: '#fff', type: 'wakering' });
+      // Mechanical hiss — short rumble
+      playSound(140, 0.16, 'sawtooth', 0.14);
+      playSound(380, 0.10, 'square', 0.10);
+    }
+    if (!open && sec._openVfxFired) sec._openVfxFired = false; // (defensive — re-arm if state ever resets)
 
     // --- Door portal: thick bright slit + wide floor glow ---
-    // Works for both right-wall (vertical slit) and top-wall (horizontal slit)
+    // Works for both right-wall (vertical slit) and top-wall (horizontal slit).
+    // _openPhase (0->1 over ~36 frames) injects a brightness spike at the moment
+    // the door first opens so it reads as an event, not a state flip.
     const _drawPortal = (x1, y1, x2, y2, color, isHoriz) => {
-      const b = open ? 1.0 : 0.3;
+      const _openFlash = open ? (1 - _openPhase) * 0.8 : 0;
+      const b = (open ? 1.0 : 0.3) + _openFlash;
       const mx = (x1+x2)/2, my = (y1+y2)/2;
       const len = isHoriz ? (x2-x1) : (y2-y1);
       // Short runway glow on the floor in front of the door
@@ -27671,6 +27894,59 @@ function render() {
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
   }
 
+  // ---- SECTION CLEAR STAMP ----
+  // Canvas-rendered slam: scale-in 1.5x->1.0x in 12 frames, hold 30, fade 38.
+  // Drawn before the trench fade so the stamp survives across the fade.
+  if (_clearStamp.life > 0) {
+    const _csProg = 1 - _clearStamp.life / _clearStamp.maxLife; // 0->1
+    const _csPhase = _csProg < 0.15 ? 'in' : _csProg < 0.55 ? 'hold' : 'out';
+    let _csScale = 1.0, _csAlpha = 1.0;
+    if (_csPhase === 'in') {
+      const _t = _csProg / 0.15;
+      _csScale = 1.5 - 0.5 * _t;
+      _csAlpha = _t;
+    } else if (_csPhase === 'hold') {
+      _csScale = 1.0;
+      _csAlpha = 1.0;
+    } else {
+      const _t = (_csProg - 0.55) / 0.45;
+      _csScale = 1.0 + _t * 0.15;
+      _csAlpha = 1 - _t;
+    }
+    const _csCx = canvas.width / 2, _csCy = canvas.height * 0.42;
+    ctx.save();
+    ctx.translate(_csCx, _csCy);
+    ctx.scale(_csScale, _csScale);
+    // Brief shake on slam-in for impact
+    if (_csPhase === 'in') {
+      const _csShake = (1 - _csProg / 0.15) * 5;
+      ctx.translate((Math.random() - 0.5) * _csShake, (Math.random() - 0.5) * _csShake);
+    }
+    ctx.globalAlpha = _csAlpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Heavy bordered title
+    ctx.font = 'bold 48px monospace';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText(_clearStamp.text, 0, 0);
+    ctx.fillStyle = '#0ff';
+    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 18;
+    ctx.fillText(_clearStamp.text, 0, 0);
+    ctx.shadowBlur = 0;
+    // Subtitle
+    if (_clearStamp.sub) {
+      ctx.font = 'bold 14px monospace';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.strokeText(_clearStamp.sub, 0, 32);
+      ctx.fillStyle = '#aef';
+      ctx.fillText(_clearStamp.sub, 0, 32);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    _clearStamp.life--;
+  }
   // Trench transition fade — drawn last so it covers the entire viewport (HUD included)
   if(gameMode==='trench'&&trenchFadeAlpha>0){
     ctx.fillStyle=`rgba(0,0,0,${Math.min(1,trenchFadeAlpha)})`;
