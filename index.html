@@ -5546,7 +5546,6 @@ function updateTrench() {
     }
     sec.cleared = true;
     sec._openedAt = gameTime; // drives door-open animation in render
-    triggerClearStamp('SYSTEM CLEANSED', 'proceed through the gate');
     score += 200 * (trenchSection + 1);
     // ---- SECTION CLEAR BANNER ----
     // Juicy "SYSTEM CLEANSED" moment — flash the screen-announce div and pulse
@@ -5816,7 +5815,6 @@ function updateDescent() {
     triggerHitStop(200);
     triggerSlowMo(0.3, 400);
     triggerCameraZoom(1.06, 600);
-    triggerClearStamp('SECTION CLEAR', 'proceed to the next layer');
     // (Data Link removed — door rewards handle all terminals)
   }
   // Check if player passed through the gate to next section
@@ -7837,12 +7835,6 @@ let _slowMoTimer = 0;
 // _lastHitFlash decays each frame; 1.0 right after hit, 0 when faded.
 let _lastHitAngle = 0;
 let _lastHitFlash = 0;
-// Section-clear stamp: canvas-rendered SYSTEM CLEANSED slam. Frame counter
-// drives scale-in (1.5x -> 1.0x) + hold + fade.
-let _clearStamp = { life: 0, maxLife: 80, text: '', sub: '' };
-function triggerClearStamp(text, sub) {
-  _clearStamp = { life: 80, maxLife: 80, text: text || 'SECTION CLEAR', sub: sub || '' };
-}
 function triggerHitStop(ms) {
   if (typeof ms !== 'number' || !(ms > 0)) return;
   hitStopMs = Math.max(hitStopMs, ms);
@@ -22307,7 +22299,6 @@ function applyHostState(msg) {
       triggerHitStop(200);
       triggerSlowMo(0.3, 400);
       triggerCameraZoom(1.06, 600);
-      triggerClearStamp('SECTION CLEAR', 'proceed to the next layer');
     }
   }
   if (msg.trenchSection !== undefined) {
@@ -27909,19 +27900,33 @@ function render() {
           _hbg.addColorStop(1, `rgba(180,0,0,${_hbPulse * 1.8})`);
           ctx.fillStyle = _hbg; ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
-        // Audio muffle: low-pass at 800Hz while in heartbeat mode. Set once on
-        // entry to avoid per-frame setTargetAtTime spam.
+        // Audio muffle: TRANSIENT shock on entering critical HP, not a sustained
+        // state. Slam to 500Hz immediately, then exponentially ramp back to
+        // 22kHz over ~3.5s so the player gets the "oh shit" hit but the game
+        // doesn't sound broken if HP stays low. Re-fires only on re-entry.
         if (_masterLowpass && audioCtx && !_lowpassActive) {
-          try { _masterLowpass.frequency.setTargetAtTime(800, audioCtx.currentTime, 0.15); } catch(e) {}
+          try {
+            const _now = audioCtx.currentTime;
+            _masterLowpass.frequency.cancelScheduledValues(_now);
+            _masterLowpass.frequency.setValueAtTime(500, _now);
+            // Brief hold (~250ms), then exponential approach back to clean.
+            // Time constant 1.0 = ~95% recovered after 3 seconds.
+            _masterLowpass.frequency.setTargetAtTime(22000, _now + 0.25, 1.0);
+          } catch(e) {}
           _lowpassActive = true;
         }
       } else if (_masterLowpass && audioCtx && _lowpassActive) {
-        try { _masterLowpass.frequency.setTargetAtTime(22000, audioCtx.currentTime, 0.25); } catch(e) {}
+        // Visual heartbeat dropped (HP between 15% and 20%) but the muffle
+        // was already auto-recovering — let the existing ramp finish.
         _lowpassActive = false;
       }
     } else if (_masterLowpass && audioCtx && _lowpassActive) {
-      // HP recovered above 50% (or player dead) — clear muffle
-      try { _masterLowpass.frequency.setTargetAtTime(22000, audioCtx.currentTime, 0.25); } catch(e) {}
+      // HP recovered above 50% (or player dead) — snap clean immediately
+      try {
+        const _now = audioCtx.currentTime;
+        _masterLowpass.frequency.cancelScheduledValues(_now);
+        _masterLowpass.frequency.setTargetAtTime(22000, _now, 0.15);
+      } catch(e) {}
       _lowpassActive = false;
     }
     // ---- MELEE DANGER VIGNETTE ----
@@ -28132,59 +28137,6 @@ function render() {
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
   }
 
-  // ---- SECTION CLEAR STAMP ----
-  // Canvas-rendered slam: scale-in 1.5x->1.0x in 12 frames, hold 30, fade 38.
-  // Drawn before the trench fade so the stamp survives across the fade.
-  if (_clearStamp.life > 0) {
-    const _csProg = 1 - _clearStamp.life / _clearStamp.maxLife; // 0->1
-    const _csPhase = _csProg < 0.15 ? 'in' : _csProg < 0.55 ? 'hold' : 'out';
-    let _csScale = 1.0, _csAlpha = 1.0;
-    if (_csPhase === 'in') {
-      const _t = _csProg / 0.15;
-      _csScale = 1.5 - 0.5 * _t;
-      _csAlpha = _t;
-    } else if (_csPhase === 'hold') {
-      _csScale = 1.0;
-      _csAlpha = 1.0;
-    } else {
-      const _t = (_csProg - 0.55) / 0.45;
-      _csScale = 1.0 + _t * 0.15;
-      _csAlpha = 1 - _t;
-    }
-    const _csCx = canvas.width / 2, _csCy = canvas.height * 0.42;
-    ctx.save();
-    ctx.translate(_csCx, _csCy);
-    ctx.scale(_csScale, _csScale);
-    // Brief shake on slam-in for impact
-    if (_csPhase === 'in') {
-      const _csShake = (1 - _csProg / 0.15) * 5;
-      ctx.translate((Math.random() - 0.5) * _csShake, (Math.random() - 0.5) * _csShake);
-    }
-    ctx.globalAlpha = _csAlpha;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    // Heavy bordered title
-    ctx.font = 'bold 48px monospace';
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-    ctx.strokeText(_clearStamp.text, 0, 0);
-    ctx.fillStyle = '#0ff';
-    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 18;
-    ctx.fillText(_clearStamp.text, 0, 0);
-    ctx.shadowBlur = 0;
-    // Subtitle
-    if (_clearStamp.sub) {
-      ctx.font = 'bold 14px monospace';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.strokeText(_clearStamp.sub, 0, 32);
-      ctx.fillStyle = '#aef';
-      ctx.fillText(_clearStamp.sub, 0, 32);
-    }
-    ctx.restore();
-    ctx.globalAlpha = 1;
-    _clearStamp.life--;
-  }
   // Trench transition fade — drawn last so it covers the entire viewport (HUD included)
   if(gameMode==='trench'&&trenchFadeAlpha>0){
     ctx.fillStyle=`rgba(0,0,0,${Math.min(1,trenchFadeAlpha)})`;
