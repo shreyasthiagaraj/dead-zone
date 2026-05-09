@@ -916,7 +916,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); gapGrid = null; }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 14;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 11;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -11838,7 +11838,7 @@ function updateShell() {
     if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
     if (gamepad.lx !== 0 || gamepad.ly !== 0) { dx = gamepad.lx; dy = gamepad.ly; }
     const mag = Math.sqrt(dx*dx + dy*dy);
-    let moveSpeed = 4.5;
+    let moveSpeed = 3.5;
     if (mag > 0.01) { dx /= mag; dy /= mag; moveSpeed *= Math.min(1, mag); }
     lp.vx = dx * moveSpeed; lp.vy = dy * moveSpeed;
     lp.x += lp.vx; lp.y += lp.vy;
@@ -16104,7 +16104,7 @@ function dash() {
   // the remote-player system; we set it to a frame-based value and also track _dashFrames
   // for the local player's actual motion.
   lp.dashTimer = 150;   // 150ms of visible dash state (broadcasts to MP)
-  lp._dashFrames = 7;   // 7 actual dash-motion frames
+  lp._dashFrames = 6;   // 6 actual dash-motion frames
   // Invincible for the dash + a small recovery window. 350ms total — the
   // dash motion itself eats ~133ms, leaving ~217ms of post-dash i-frames
   // (roughly 13 frames at 60 Hz). Long enough to clear a grabber that
@@ -27239,6 +27239,42 @@ function render() {
   }
 
   if(leftJoystick.active&&(gameState==='playing'||gameState==='shell'))renderJoysticks();
+  // ---- BOSS HEALTH BAR — wide bar at top of screen ----
+  if (gameMode === 'trench' && gameState === 'playing') {
+    const _bossZ = zombies.find(z => z.boss && z.hp > 0);
+    if (_bossZ) {
+      const _bhW = Math.min(canvas.width * 0.6, 400);
+      const _bhH = 10;
+      const _bhX = (canvas.width - _bhW) / 2;
+      const _bhY = 52;
+      const _bhPct = Math.max(0, Math.min(1, _bossZ.hp / _bossZ.maxHp));
+      // Bar background
+      ctx.fillStyle = '#000'; ctx.fillRect(_bhX - 2, _bhY - 2, _bhW + 4, _bhH + 4);
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1;
+      ctx.strokeRect(_bhX - 1, _bhY - 1, _bhW + 2, _bhH + 2);
+      ctx.fillStyle = '#111'; ctx.fillRect(_bhX, _bhY, _bhW, _bhH);
+      // HP fill — red to orange gradient
+      const _bhFillW = _bhW * _bhPct;
+      const _bhGrad = ctx.createLinearGradient(_bhX, 0, _bhX + _bhFillW, 0);
+      _bhGrad.addColorStop(0, '#f44');
+      _bhGrad.addColorStop(1, _bhPct > 0.5 ? '#f80' : '#f22');
+      ctx.fillStyle = _bhGrad;
+      ctx.fillRect(_bhX, _bhY, _bhFillW, _bhH);
+      // Bright edge on fill
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.fillRect(_bhX, _bhY, _bhFillW, 2);
+      // Boss name label above bar
+      ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#f44';
+      const _bossName = _bossZ.type === 'boss' ? 'THE WARDEN' : _bossZ.type === 'boss_firewall' ? 'THE FIREWALL' : _bossZ.type === 'boss_archivist' ? 'THE ARCHIVIST' : _bossZ.type === 'boss_watchdog' ? 'THE WATCHDOG' : 'BOSS';
+      ctx.fillText(_bossName, canvas.width / 2, _bhY - 4);
+      // HP percentage
+      ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#aaa';
+      ctx.fillText(Math.ceil(_bhPct * 100) + '%', canvas.width / 2, _bhY + _bhH + 3);
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
   renderMinimap();
 
   // ---- COMBO POPUP ----
