@@ -5507,6 +5507,11 @@ function updateTrench() {
     showSectionTitleCard('\u25C6 SYSTEM CLEANSED \u25C6', 'proceed through the gate', false);
     screenShake.intensity = Math.max(screenShake.intensity, 6);
     triggerGlitchSurge(0.3, 20);
+    // Kill-cam ritual: 200ms hit-stop on the killing blow then 400ms slow-mo
+    // with a slight punch-in. Host-only here; non-host triggers via gate sync.
+    triggerHitStop(200);
+    triggerSlowMo(0.3, 400);
+    triggerCameraZoom(1.06, 600);
     if (trenchSection >= TRENCH_NUM_SECTIONS - 1) {
       const lp = getLocalPlayer();
       score += 5000;
@@ -5759,6 +5764,10 @@ function updateDescent() {
     descentGateOpen = true;
     addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
     playExitFoundSound();
+    // Kill-cam ritual on host. Non-host triggers via descentGateOpen 0->1 sync.
+    triggerHitStop(200);
+    triggerSlowMo(0.3, 400);
+    triggerCameraZoom(1.06, 600);
     // (Data Link removed — door rewards handle all terminals)
   }
   // Check if player passed through the gate to next section
@@ -7762,6 +7771,28 @@ let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
 let _bossDeathFreeze = 0;
 let gameTime = 0;
 
+// ---- TIME SCALE / HIT-STOP ----
+// hitStopMs: real-ms freeze on heavy impacts. Skips update() entirely while > 0.
+// gameTimeScale: <1 = slow-mo, eases toward timeScaleTarget. Applied by feeding
+// the fixed-timestep accumulator a scaled delta.
+let hitStopMs = 0;
+let gameTimeScale = 1.0;
+let timeScaleTarget = 1.0;
+let _slowMoTimer = 0;
+// Directional damage vignette: angle from player to damage source (world space).
+// _lastHitFlash decays each frame; 1.0 right after hit, 0 when faded.
+let _lastHitAngle = 0;
+let _lastHitFlash = 0;
+function triggerHitStop(ms) {
+  if (typeof ms !== 'number' || !(ms > 0)) return;
+  hitStopMs = Math.max(hitStopMs, ms);
+}
+function triggerSlowMo(scale, durationMs) {
+  if (!(durationMs > 0)) return;
+  timeScaleTarget = Math.max(0.05, Math.min(1, scale));
+  _slowMoTimer = Math.max(_slowMoTimer, durationMs);
+}
+
 // ---- MULTIPLAYER STATE ----
 let ws = null;
 let myId = null;
@@ -7925,6 +7956,17 @@ function lerpAngle(from, to, t) {
 let camera = { x: 0, y: 0 };
 let cameraOffset = { x: 0, y: 0 }; // smooth aim-look-ahead offset
 let aimLineAlpha = 0; // smooth fade for aim line visibility
+// Camera zoom: world transform scales around screen center. Used for crit
+// punch-in (1.025x), section-clear punch (1.06x), and boss reveal (0.78x out).
+// Eases toward cameraZoomTarget; target auto-resets when cameraZoomReleaseMs
+// elapses so a one-shot punch settles back to 1.0 without a manual reset.
+let cameraZoom = 1.0;
+let cameraZoomTarget = 1.0;
+let cameraZoomReleaseMs = 0;
+function triggerCameraZoom(target, durationMs) {
+  cameraZoomTarget = target;
+  cameraZoomReleaseMs = Math.max(cameraZoomReleaseMs, durationMs);
+}
 
 // ---- PLAYERS (multiplayer array) ----
 let players = []; // array of player objects; index 0 is always local in solo
@@ -8608,6 +8650,8 @@ const ZOMBIE_TYPES = {
 
 // ---- AUDIO ENGINE ----
 let audioCtx = null;
+let _masterLowpass = null; // BiquadFilter between masterGain and destination, modulated for low-HP heartbeat mode
+let _lowpassActive = false; // tracks current lowpass state to avoid setTargetAtTime per-frame
 let masterGain = null;
 let sfxBus = null;
 let musicBus = null;
@@ -8679,7 +8723,15 @@ function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   masterGain = audioCtx.createGain();
   masterGain.gain.value = 1.0;
-  masterGain.connect(audioCtx.destination);
+  // Master low-pass filter — sits between masterGain and destination so we can
+  // muffle everything when the player is at critical HP. Default 22kHz means
+  // it's inaudible until the heartbeat-mode code lowers the cutoff.
+  _masterLowpass = audioCtx.createBiquadFilter();
+  _masterLowpass.type = 'lowpass';
+  _masterLowpass.frequency.value = 22000;
+  _masterLowpass.Q.value = 0.7;
+  masterGain.connect(_masterLowpass);
+  _masterLowpass.connect(audioCtx.destination);
   sfxBus = audioCtx.createGain();
   sfxBus.gain.value = 0.8;
   sfxBus.connect(masterGain);
@@ -17901,6 +17953,13 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const _preVx = z.vx, _preVy = z.vy;
   // Stronger hitFlash on crits so the 1-2 frame white flash actually reads.
   const _critHit = damage >= 50;
+  // Crit zoom + hit-stop: brief punch-in and freeze on heavy hits. Local visuals
+  // only (cameraZoom + hitStopMs are per-client). Skip when already in slow-mo
+  // to avoid stacking with the section-clear kill cam, and skip silent hits.
+  if (!silent && _slowMoTimer === 0 && hitStopMs === 0) {
+    if (_critHit) { triggerCameraZoom(1.025, 100); triggerHitStop(60); }
+    else if (damage >= 30) { triggerCameraZoom(1.015, 70); triggerHitStop(30); }
+  }
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
   z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
@@ -18124,7 +18183,21 @@ function damagePlayerObj(p,damage,attacker) {
   p.hp-=damage;p.damageFlash=15;p.invincible=6; // brief flash only, no real i-frames
   // Player damage label (red, follows player)
   if (damage >= 1) { p.radius = p.radius || PLAYER_RADIUS; addDamageNumber(p, damage, false); if (p._dmgLabel) p._dmgLabel.color = '#f44'; }
-  if(p===getLocalPlayer()){playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);runStats.damageTaken+=damage;}
+  if(p===getLocalPlayer()){
+    playHurtSound();screenShake.intensity=Math.max(screenShake.intensity,5);runStats.damageTaken+=damage;
+    // Hit-stop on heavy player damage — emphasises the "OH SHIT" moment.
+    // Threshold: > 25% of max HP in a single hit. Skip if already in slow-mo.
+    if (damage > p.maxHp * 0.25 && _slowMoTimer === 0 && hitStopMs === 0) triggerHitStop(80);
+    // Directional damage vignette: record world-angle from player to damage source
+    // so the screen-space overlay can point a red wedge in that direction. Falls
+    // back to attacker.angle if no position is known (rare). Decay handled in render.
+    if (attacker && typeof attacker.x === 'number' && typeof attacker.y === 'number') {
+      _lastHitAngle = Math.atan2(attacker.y - p.y, attacker.x - p.x);
+    } else {
+      _lastHitAngle = p.angle + Math.PI; // unknown source: behind player
+    }
+    _lastHitFlash = 1.0;
+  }
   if(p.hp<=0){
     // FAIL SAFE: survive lethal damage once per run with 1 HP + 30 barrier
     if (p === getLocalPlayer() && runMods && runMods.failSafe && !p._failSafeUsed) {
@@ -21825,7 +21898,19 @@ function update() {
 function applyHostState(msg) {
   score = msg.score; kills = msg.kills;
   if (msg.hordeTimer !== undefined) { hordeTimer = msg.hordeTimer; if (msg.hordeCircleTimer !== undefined) hordeCircleTimer = msg.hordeCircleTimer; }
-  if (msg.descentSection !== undefined) { descentSection = msg.descentSection; descentTopWall = msg.descentTopWall || 0; descentGateOpen = msg.descentGateOpen || false; }
+  if (msg.descentSection !== undefined) {
+    // Detect 0->1 gate transition for non-host kill-cam parity (host triggers
+    // its own at the section-clear handler).
+    const _wasGateOpen = descentGateOpen;
+    descentSection = msg.descentSection;
+    descentTopWall = msg.descentTopWall || 0;
+    descentGateOpen = msg.descentGateOpen || false;
+    if (!_wasGateOpen && descentGateOpen && !isHost) {
+      triggerHitStop(200);
+      triggerSlowMo(0.3, 400);
+      triggerCameraZoom(1.06, 600);
+    }
+  }
   if (msg.trenchSection !== undefined) { trenchSection = msg.trenchSection; }
   if (msg.cpRoom !== undefined) {
     const _wasCp = _checkpointRoomActive;
@@ -22501,7 +22586,13 @@ function render() {
   // more, giving the flat arena real depth. Skipped in shell (which has its own
   // cyber-board background) and menus.
   if (gameState === 'playing' && gameMode !== 'shell') _renderParallaxBackground();
-  ctx.save();ctx.translate(ox,oy);
+  // World transform: translate to screen center → scale (zoom) → translate by
+  // -camera. Equivalent to the previous single translate when zoom=1.0; at
+  // other zoom values the world scales around screen center.
+  ctx.save();
+  ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
+  if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+  ctx.translate(-camera.x, -camera.y);
 
   // Floor + walls with room themes
   const vL=camera.x-canvas.width/2-CELL_SIZE,vR=camera.x+canvas.width/2+CELL_SIZE,vT=camera.y-canvas.height/2-CELL_SIZE,vB=camera.y+canvas.height/2+CELL_SIZE;
@@ -27093,6 +27184,23 @@ function render() {
           const gr2=ctx.createRadialGradient(ex2,ey2,0,ex2,ey2,15+Math.random()*25);gr2.addColorStop(0,`rgba(100,0,0,${0.2+Math.random()*0.3})`);gr2.addColorStop(1,'rgba(60,0,0,0)');ctx.fillStyle=gr2;ctx.fillRect(ex2-40,ey2-40,80,80);}
       ctx.restore();}
     }
+    // Directional damage vignette — red bleed from the side the hit came from.
+    // The omni damage flash above tells you "you got hit"; this tells you WHERE.
+    // Origin pushed off-screen in the attacker direction so only the near edge
+    // glows. Decays ~600ms via _lastHitFlash *= 0.92.
+    if (_lastHitFlash > 0.02) {
+      const _hcx = canvas.width / 2, _hcy = canvas.height / 2;
+      const _hox = _hcx + Math.cos(_lastHitAngle) * canvas.width * 0.55;
+      const _hoy = _hcy + Math.sin(_lastHitAngle) * canvas.height * 0.55;
+      const _hg = ctx.createRadialGradient(_hox, _hoy, 40, _hox, _hoy, Math.max(canvas.width, canvas.height) * 0.75);
+      _hg.addColorStop(0, `rgba(255, 40, 20, ${0.55 * _lastHitFlash})`);
+      _hg.addColorStop(1, 'rgba(255, 40, 20, 0)');
+      ctx.fillStyle = _hg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      _lastHitFlash *= 0.92;
+    } else if (_lastHitFlash > 0) {
+      _lastHitFlash = 0;
+    }
     // Synthwave vignette — purple/blue edges with subtle color shift
     {const svg=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
     svg.addColorStop(0,'rgba(0,0,0,0)');svg.addColorStop(0.7,'rgba(10,0,20,0.2)');svg.addColorStop(1,'rgba(20,0,40,0.45)');
@@ -27103,8 +27211,40 @@ function render() {
       const grd=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
       grd.addColorStop(0,'rgba(0,0,0,0)');grd.addColorStop(1,`rgba(30,0,20,${vigAlpha})`);
       ctx.fillStyle=grd;ctx.fillRect(0,0,canvas.width,canvas.height);
-      // Pulse effect at critical HP
-      if(hpRatio<0.2){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+      // Pulse effect at critical HP — gentle sin pulse from <20% down to <15%
+      if(hpRatio<0.2 && hpRatio>=0.15){const pulse=Math.sin(performance.now()*0.006)*0.1+0.1;ctx.fillStyle=`rgba(255,0,0,${pulse})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+      // Heartbeat mode at <15% HP: lub-dub rhythm vignette + edge pulse + audio
+      // muffle. The lub-dub is faked with two narrow spikes per beat period
+      // (~700ms = 86bpm). Each spike is short and bright so it reads as a beat.
+      if (hpRatio < 0.15) {
+        const _hbPeriod = 720;
+        const _hbT = performance.now() % _hbPeriod;
+        let _hbPulse = 0;
+        if (_hbT < 90) _hbPulse = (1 - _hbT / 90) * 0.32;            // lub
+        else if (_hbT > 150 && _hbT < 230) _hbPulse = (1 - (_hbT - 150) / 80) * 0.22; // dub
+        if (_hbPulse > 0) {
+          ctx.fillStyle = `rgba(255,30,30,${_hbPulse})`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          // Edge throb: stronger red vignette synced to the beat
+          const _hbg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.25, canvas.width/2, canvas.height/2, canvas.width*0.75);
+          _hbg.addColorStop(0, 'rgba(0,0,0,0)');
+          _hbg.addColorStop(1, `rgba(180,0,0,${_hbPulse * 1.8})`);
+          ctx.fillStyle = _hbg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        // Audio muffle: low-pass at 800Hz while in heartbeat mode. Set once on
+        // entry to avoid per-frame setTargetAtTime spam.
+        if (_masterLowpass && audioCtx && !_lowpassActive) {
+          try { _masterLowpass.frequency.setTargetAtTime(800, audioCtx.currentTime, 0.15); } catch(e) {}
+          _lowpassActive = true;
+        }
+      } else if (_masterLowpass && audioCtx && _lowpassActive) {
+        try { _masterLowpass.frequency.setTargetAtTime(22000, audioCtx.currentTime, 0.25); } catch(e) {}
+        _lowpassActive = false;
+      }
+    } else if (_masterLowpass && audioCtx && _lowpassActive) {
+      // HP recovered above 50% (or player dead) — clear muffle
+      try { _masterLowpass.frequency.setTargetAtTime(22000, audioCtx.currentTime, 0.25); } catch(e) {}
+      _lowpassActive = false;
     }
     // ---- MELEE DANGER VIGNETTE ----
     // Fires when an enemy is in true melee range (~100px). Warns the player "they're
@@ -27403,7 +27543,29 @@ function gameLoop(now) {
   // Clamp: tab hidden / debugger paused can produce multi-second deltas.
   // Capping at 250 ms prevents a catch-up burst from spamming update().
   if (delta > 250) delta = 250;
-  _loopAccumMs += delta;
+  // ---- HIT-STOP: freeze simulation, keep rendering ----
+  if (hitStopMs > 0) {
+    hitStopMs = Math.max(0, hitStopMs - delta);
+    render();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+  // ---- SLOW-MO: ease timeScale toward target, expire after timer ----
+  if (_slowMoTimer > 0) {
+    _slowMoTimer = Math.max(0, _slowMoTimer - delta);
+    if (_slowMoTimer === 0) timeScaleTarget = 1.0;
+  }
+  gameTimeScale += (timeScaleTarget - gameTimeScale) * 0.18;
+  // ---- CAMERA ZOOM RELEASE: one-shot zooms auto-return to 1.0 after window expires ----
+  if (cameraZoomReleaseMs > 0) {
+    cameraZoomReleaseMs = Math.max(0, cameraZoomReleaseMs - delta);
+    if (cameraZoomReleaseMs === 0) cameraZoomTarget = 1.0;
+  }
+  cameraZoom += (cameraZoomTarget - cameraZoom) * 0.18;
+  // Feed scaled delta to the fixed-timestep accumulator. At scale 0.3, we
+  // produce one logic tick per ~55ms of real time (~18 logical fps), giving
+  // the world a visible slo-mo without breaking the fixed-step contract.
+  _loopAccumMs += delta * gameTimeScale;
   // Hard cap at 4 updates per render so a spike can't cascade into a hang.
   let steps = 0;
   while (_loopAccumMs >= _FIXED_DT_MS && steps < 4) {
