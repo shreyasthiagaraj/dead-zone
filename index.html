@@ -1019,6 +1019,9 @@ const GUN_EFFECTIVE_RANGE = 210;   // base hitscan range in px
 function _getGunRange() { const _lr = (runMods && runMods.longReach) || 0; return GUN_EFFECTIVE_RANGE * (1 + (_lr >= 2 ? 0.70 : _lr >= 1 ? 0.40 : 0)); }
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
+// Tracks the last completed reload segment so we only fire the click/spark VFX
+// on the cross-into-completion frame, not every frame the segment is full.
+let _lastReloadSegment = 0;
 let _gunReloading = false;
 let _gunReloadTimer = 0;
 let _gunIdleTimer = 0;            // frames since last shot
@@ -7009,6 +7012,11 @@ function spawnAmbientParticles() {
   if (gameMode === 'trench' && trenchSections[trenchSection]) {
     const dom = trenchSections[trenchSection].domain || getTrenchDomain(trenchSection);
     ambientType = dom && dom.ambientType;
+  } else if (gameMode === 'descent') {
+    // Descent uses the trench domain progression as a proxy: every 10 sections
+    // bumps the domain. Gives D1->D4 progression in the same vertical descent.
+    const _descDom = getTrenchDomain(Math.min(40, descentSection || 0));
+    ambientType = _descDom && _descDom.ambientType;
   }
   if (!ambientType) return;
   const ax = camera.x + (Math.random() - 0.5) * canvas.width;
@@ -12811,6 +12819,83 @@ function fireWeaponForPlayer(p) {
     particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 5+Math.floor(_shotSeed*3), maxLife: 8, size: 25 + _shotSeed*20, color: _ec, type: 'wakering' });
     // Bright white core flash (varied size)
     particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 2+Math.floor(_shotSeed*2), maxLife: 4, size: 8 + _shotSeed*8, color: '#fff', type: 'spark' });
+
+    // ---- SHELL EJECTION ----
+    // Brass casing flies perpendicular to aim direction. Pure visual flair —
+    // skipped on classes that don't fit the metaphor (corrupt = digital).
+    {
+      const _shCls = (runMods && runMods.dominantClass) || null;
+      if (_shCls !== 'corrupt') {
+        const _ejSide = (Math.random() < 0.5 ? 1 : -1);
+        const _ejAng = _ma + Math.PI / 2 * _ejSide + (Math.random() - 0.5) * 0.4;
+        const _ejSpd = 2.5 + Math.random() * 1.8;
+        particles.push({
+          x: _mx, y: _my,
+          vx: Math.cos(_ejAng) * _ejSpd + _mc * 0.3, // slight forward bias from gun motion
+          vy: Math.sin(_ejAng) * _ejSpd + _ms * 0.3,
+          life: 50 + Math.floor(Math.random() * 14), maxLife: 64,
+          size: 3, color: _shCls === 'fire' ? '#ea4' : _shCls === 'ice' ? '#cef' : _shCls === 'chain' ? '#cff' : _shCls === 'wind' ? '#ddf' : '#c80',
+          type: 'shell',
+          _shRot: Math.random() * Math.PI * 2,
+          _shRotV: (Math.random() - 0.5) * 0.5,
+        });
+      }
+    }
+    // ---- CLASS MUZZLE FLOURISH ----
+    // One unique particle pattern per dominant class, layered on top of the
+    // base muzzle. Keeps the base muzzle consistent while making each class
+    // immediately recognisable from a single shot (CLAUDE.md "Class Identity
+    // Through VFX").
+    {
+      const _domCls = (runMods && runMods.dominantClass) || null;
+      if (_domCls === 'fire') {
+        // Rising flame curls drifting up + forward
+        for (let _fi = 0; _fi < 4; _fi++) {
+          const _fa = _ma + (Math.random() - 0.5) * 0.6;
+          const _fs = 1 + Math.random() * 2;
+          particles.push({ x: _mx + (Math.random()-0.5)*8, y: _my + (Math.random()-0.5)*8,
+            vx: Math.cos(_fa) * _fs, vy: Math.sin(_fa) * _fs - 1.2 - Math.random()*0.8,
+            life: 14 + Math.floor(Math.random()*6), maxLife: 20,
+            size: 3 + Math.random()*2, color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)], type: 'spark' });
+        }
+      } else if (_domCls === 'ice') {
+        // Angular ice shards scattering perpendicular to aim
+        for (let _ii = 0; _ii < 5; _ii++) {
+          const _ia = _ma + Math.PI/2 + (Math.random() - 0.5) * 1.4 + (Math.random() < 0.5 ? Math.PI : 0);
+          const _is = 2 + Math.random() * 3;
+          particles.push({ x: _mx, y: _my, vx: Math.cos(_ia) * _is, vy: Math.sin(_ia) * _is,
+            life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+            size: 2 + Math.random()*1.5, color: Math.random()>0.4 ? '#cff' : '#8ef', type: 'spark', _pixel: true });
+        }
+      } else if (_domCls === 'chain') {
+        // Forking lightning to 2 random offset endpoints
+        for (let _li = 0; _li < 3; _li++) {
+          const _lOff = (Math.random() - 0.5) * 0.8;
+          const _llen = 22 + Math.random() * 16;
+          const _ltx = _mx + Math.cos(_ma + _lOff) * _llen;
+          const _lty = _my + Math.sin(_ma + _lOff) * _llen;
+          particles.push({ x: _mx, y: _my, tx: _ltx, ty: _lty, vx: 0, vy: 0,
+            life: 5, maxLife: 5, size: 1 + Math.random(), color: Math.random()>0.4 ? '#4ff' : '#fff', type: 'lightning' });
+        }
+      } else if (_domCls === 'wind') {
+        // Tight concentric pulse rings — three rings at different sizes/lives
+        particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#cef', type: 'wakering' });
+        particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#eef', type: 'wakering' });
+        particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 30, color: '#cef', type: 'wakering' });
+      } else if (_domCls === 'corrupt') {
+        // Glitch text scatter at muzzle
+        const _crGlyphs = ['0','1','#','%','~','?','!','/','*','░'];
+        for (let _ci = 0; _ci < 4; _ci++) {
+          const _ca = _ma + (Math.random() - 0.5) * 1.6;
+          const _cs = 1.5 + Math.random() * 2.5;
+          particles.push({ x: _mx + (Math.random()-0.5)*6, y: _my + (Math.random()-0.5)*6,
+            vx: Math.cos(_ca) * _cs, vy: Math.sin(_ca) * _cs,
+            life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+            size: 10 + Math.random()*4, color: Math.random()>0.5 ? '#a4f' : '#f0f',
+            type: 'glitchtext', text: _crGlyphs[Math.floor(Math.random()*_crGlyphs.length)] });
+        }
+      }
+    }
 
     // --- RAYCAST: find actual hit point (beam stops at first enemy or wall) ---
     let _hitDist = _range;
@@ -21487,10 +21572,27 @@ function update() {
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<=0){
       score+=dz.score;kills++;if(gameMode==='survival'){survivalZombiesKilled++;}
       // Combo tracking — 2.5s window between kills extends the streak
+      const _prevCombo = _comboCount;
       _comboCount++;
       _comboTimer = 150;
       _comboPulse = 14;
       if (_comboCount > _comboBest) _comboBest = _comboCount;
+      // Milestone slam: when the combo crosses a tier (x10 / x20 / x40), make
+      // the popup a real moment — bigger pulse, camera punch, shake, label,
+      // sound. Tiers match the popup color thresholds (cyan/magenta/orange/gold).
+      const _msList = [10, 20, 40];
+      for (const _ms of _msList) {
+        if (_prevCombo < _ms && _comboCount >= _ms) {
+          _comboPulse = 32;
+          triggerCameraZoom(1.02, 90);
+          screenShake.intensity = Math.max(screenShake.intensity, _ms >= 40 ? 8 : 5);
+          const _msColor = _ms >= 40 ? '#ff0' : _ms >= 20 ? '#f80' : '#f0f';
+          const _msLp = getLocalPlayer();
+          if (_msLp) addFloatingText(_msLp.x, _msLp.y - 70, `x${_ms} COMBO`, _msColor);
+          playSound(720 + _ms * 12, 0.12, 'square', 0.14);
+          break;
+        }
+      }
       // Elite kill flourish — radial burst + wake ring + stronger shake so the
       // big kills hit different from the shamble fodder.
       const _isElite = dz.boss || dz.type === 'boss' || dz.type === 'brute' ||
@@ -21652,7 +21754,7 @@ function update() {
       const p = particles[i];
       p.x += p.vx; p.y += p.vy;
       if (p.gravity) p.vy += p.gravity;
-      const drag = p.type === 'blood' ? 0.985 : 0.95;
+      const drag = p.type === 'blood' ? 0.985 : (p.type === 'shell' ? 0.88 : 0.95);
       p.vx *= drag; p.vy *= drag;
       p.life--;
       if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; }
@@ -22158,6 +22260,29 @@ function updateHUD() {
   const lp=getLocalPlayer();if(!lp)return;
   // When not actively playing (death/pause/menu screens), don't update in-game HUD elements
   if (gameState !== 'playing') return;
+  // ---- DOMAIN PALETTE TINTING ----
+  // Tint HP chip border + xp-chip border + their box-shadows with the current
+  // domain accent. Only re-applies when the domain index changes — cheap.
+  {
+    let _domIdx = -1;
+    if (gameMode === 'trench') _domIdx = TRENCH_DOMAINS.indexOf(getTrenchDomain(trenchSection));
+    else if (gameMode === 'descent') _domIdx = TRENCH_DOMAINS.indexOf(getTrenchDomain(Math.min(40, descentSection || 0)));
+    if (_domIdx >= 0 && _domIdx !== window._lastDomainTintIdx) {
+      window._lastDomainTintIdx = _domIdx;
+      const _pal = _PROP_DOMAIN_COLORS[_domIdx] || _PROP_DOMAIN_COLORS[0];
+      const _accent = _pal.accent || _pal.primary;
+      const _hpChip = document.getElementById('hp-chip');
+      if (_hpChip) {
+        _hpChip.style.borderColor = _accent + '4'; // ~25% alpha via hex shorthand
+        _hpChip.style.boxShadow = `0 0 8px ${_accent}66`;
+      }
+      const _xpChip = document.getElementById('xp-chip');
+      if (_xpChip) {
+        _xpChip.style.borderColor = _accent + '4';
+        _xpChip.style.boxShadow = `0 0 6px ${_accent}55`;
+      }
+    }
+  }
   // Active Effects Bar — icon tiles with timers
   const gun = getScaledGun();
   const ebar = document.getElementById('effects-bar');
@@ -26161,6 +26286,40 @@ function render() {
       ctx.fillRect(_hbx, _hby, bw * hp2, bh); ctx.shadowBlur = 0;
     }}
 
+  // ---- ENEMY RIM LIGHTING ----
+  // Thin colored stroke around each zombie's silhouette inside the local
+  // player's visibility radius. Reads as the player's flashlight catching
+  // the enemy edge — pulls the zombie out of the dark. Skipped when there are
+  // many zombies on screen (perf safety) and during boss-only renders (the
+  // boss already has its own elaborate edge lighting).
+  if (zombies.length < 25) {
+    const _rimLp = getLocalPlayer();
+    if (_rimLp && _rimLp.alive) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineWidth = 1.6;
+      const _rimRange2 = 560 * 560;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        if (z.x < _zvL || z.x > _zvR || z.y < _zvT || z.y > _zvB) continue;
+        if (z.boss || z.type === 'boss') continue; // boss has its own rims
+        const _rdx = z.x - _rimLp.x, _rdy = z.y - _rimLp.y;
+        if (_rdx * _rdx + _rdy * _rdy > _rimRange2) continue;
+        // Pick rim color: status > element > default red
+        let _rimColor = '#f55';
+        if (z._frozen || (z._chill || 0) >= 3) _rimColor = '#cff';
+        else if (z._charged || (z._shocked || 0) > 0) _rimColor = '#4ff';
+        else if (z._compromised || (z._corrupt || 0) > 0) _rimColor = '#f0f';
+        else if (z._burning > 0) _rimColor = '#fa0';
+        ctx.strokeStyle = _rimColor;
+        ctx.beginPath();
+        ctx.arc(z.x, z.y, z.radius + 0.8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   // Players (all)
   for(const p of players){
     if(!p.alive)continue;
@@ -26402,10 +26561,50 @@ function render() {
       const _ammoColor = _gunReloading ? '#f80' : (_ammoPct > 0.5 ? '#0ff' : _ammoPct > 0.2 ? '#ff0' : '#f44');
       ctx.strokeStyle = _ammoColor; ctx.lineWidth = 2; ctx.globalAlpha = 0.6;
       if (_gunReloading) {
-        // Reload: spinning arc
+        // ---- RELOAD AS THEATRE ----
+        // 4 mechanical segments fill in sequence, each with a brief click + spark
+        // burst on completion. Segments share a 6-deg gap so the bar reads as
+        // discrete steps, not a smooth sweep.
         const _rlPct = 1 - _gunReloadTimer / GUN_RELOAD_TIME;
-        ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_RADIUS+4, -Math.PI/2, -Math.PI/2+Math.PI*2*_rlPct); ctx.stroke();
+        const _rlSegs = 4;
+        const _rlGap = 0.105; // ~6 deg, half-gap on each side of a segment
+        const _rlSegSpan = (Math.PI * 2 / _rlSegs);
+        for (let _rs = 0; _rs < _rlSegs; _rs++) {
+          const _segLow = _rs / _rlSegs, _segHigh = (_rs + 1) / _rlSegs;
+          let _fill = 0;
+          if (_rlPct <= _segLow) _fill = 0;
+          else if (_rlPct >= _segHigh) _fill = 1;
+          else _fill = (_rlPct - _segLow) / (_segHigh - _segLow);
+          if (_fill <= 0) continue;
+          const _segStart = -Math.PI/2 + _rs * _rlSegSpan + _rlGap;
+          const _segArc = _rlSegSpan - _rlGap * 2;
+          // Just-completed segments flash white briefly
+          const _justDone = (_fill >= 1 && _rs >= _lastReloadSegment - 0.5);
+          ctx.strokeStyle = (_rs < _lastReloadSegment && _justDone) ? '#fff' : _ammoColor;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, PLAYER_RADIUS+4, _segStart, _segStart + _segArc * _fill);
+          ctx.stroke();
+        }
+        // Detect segment completion crossing — emit click + spark burst
+        const _completedSegs = Math.floor(_rlPct * _rlSegs);
+        if (_completedSegs > _lastReloadSegment) {
+          _lastReloadSegment = _completedSegs;
+          const _isFinalSeg = _completedSegs >= _rlSegs;
+          playSound(_isFinalSeg ? 320 : 480, 0.04, 'square', _isFinalSeg ? 0.12 : 0.08);
+          const _segAngle = -Math.PI/2 + (_completedSegs / _rlSegs) * Math.PI * 2;
+          const _spX = p.x + Math.cos(_segAngle) * (PLAYER_RADIUS + 4);
+          const _spY = p.y + Math.sin(_segAngle) * (PLAYER_RADIUS + 4);
+          const _sparkN = _isFinalSeg ? 8 : 4;
+          for (let _ss = 0; _ss < _sparkN; _ss++) {
+            const _sa = _segAngle + (Math.random() - 0.5) * 1.4;
+            const _spd = 1 + Math.random() * 2.5;
+            particles.push({ x: _spX, y: _spY, vx: Math.cos(_sa) * _spd, vy: Math.sin(_sa) * _spd,
+              life: 10 + Math.floor(Math.random() * 4), maxLife: 14,
+              size: 1.5 + Math.random() * 1.5, color: _isFinalSeg ? '#fff' : '#fc8', type: 'spark' });
+          }
+        }
       } else {
+        if (_lastReloadSegment !== 0) _lastReloadSegment = 0;
         ctx.beginPath(); ctx.arc(p.x, p.y, PLAYER_RADIUS+4, -Math.PI/2, -Math.PI/2+Math.PI*2*_ammoPct); ctx.stroke();
       }
       ctx.globalAlpha = 1;
@@ -26647,6 +26846,24 @@ function render() {
           p.text = _glc[Math.floor(Math.random() * _glc.length)];
         }
         ctx.shadowBlur = 0;
+      } else if(p.type==='shell'){
+        // Ejected casing — small rotating brass/copper rect with tiny highlight.
+        // Tumbles outward, slows, fades. Pure visual — 0 gameplay impact.
+        const _shAlpha = Math.min(1, (p.life / p.maxLife) * 1.4);
+        p._shRot = (p._shRot || 0) + (p._shRotV || 0.25);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p._shRot);
+        ctx.globalAlpha = _shAlpha;
+        ctx.fillStyle = p.color || '#c80';
+        const _shW = (p.size || 3) * 1.6, _shH = (p.size || 3) * 0.7;
+        ctx.fillRect(-_shW * 0.5, -_shH * 0.5, _shW, _shH);
+        // Tiny white highlight band on top
+        ctx.globalAlpha = _shAlpha * 0.6;
+        ctx.fillStyle = '#fea';
+        ctx.fillRect(-_shW * 0.5, -_shH * 0.5, _shW, _shH * 0.3);
+        ctx.restore();
+        ctx.globalAlpha = 1;
       } else if(p.type==='explosion'||p.type==='spark'){
         if (useGlow) { ctx.shadowColor=p.color; ctx.shadowBlur=sz*2; }
         if (p._pixel) {
@@ -27423,7 +27640,9 @@ function render() {
   if (_comboCount >= 2 && gameState === 'playing') {
     const _cbx = canvas.width - 60;
     const _cby = 96;
-    const _cbPulse = 1 + Math.min(0.6, _comboPulse / 14 * 0.6);
+    // Cap at 1.6 so milestone slams (_comboPulse=32) scale up to ~2.6x; normal
+    // kill pulses (_comboPulse=14) stay at ~1.6x.
+    const _cbPulse = 1 + Math.min(1.6, _comboPulse / 14 * 0.7);
     const _cbAlpha = Math.min(1, _comboTimer / 60);
     const _cbColor = _comboCount >= 40 ? '#ff0' : _comboCount >= 20 ? '#f80' : _comboCount >= 10 ? '#f0f' : '#0ff';
     ctx.save();
