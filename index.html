@@ -5722,6 +5722,11 @@ function updateTrenchFade() {
       trenchFadeDir = -1;
       // Keep power-ups, orbitals, and element effects between sections
       // (persist until timer expires).
+      // Arrival ceremony for the local non-host player using the new section's entryDir
+      const _arrSec = trenchSections[trenchSection];
+      const _arrDir = (_arrSec && _arrSec.entryDir) || 'W';
+      const _arrLp = getLocalPlayer();
+      if (_arrLp && _arrLp.alive) triggerArrivalCeremony(_arrLp, _arrDir);
     }
   }
   if (trenchFadeDir === 1) {
@@ -5756,14 +5761,21 @@ function updateTrenchFade() {
           else if (_entryD === 'S') { spawnX = newSec.x + _nsW / 2; spawnY = _nsY + _nsH - 2.5 * CELL_SIZE; }
           else if (_entryD === 'N') { spawnX = newSec.x + _nsW / 2; spawnY = _nsY + 2.5 * CELL_SIZE; }
           else { spawnX = newSec.x + 2.5 * CELL_SIZE; spawnY = _nsY + _nsH / 2; }
+          // Set angle to face away from entry wall — the player should look INTO the room they're entering
+          const _faceAng = _entryD === 'W' ? 0 : _entryD === 'E' ? Math.PI : _entryD === 'N' ? Math.PI/2 : -Math.PI/2;
           for (const p of players) {
-            if (p.alive) { p.x = spawnX; p.y = spawnY; p.vx = 0; p.vy = 0; p.angle = 0; p.moveAngle = 0; }
+            if (p.alive) { p.x = spawnX; p.y = spawnY; p.vx = 0; p.vy = 0; p.angle = _faceAng; p.moveAngle = _faceAng; }
           }
           const lp = getLocalPlayer();
           if (lp) { camera.x = lp.x; camera.y = lp.y; }
           // Clear leftover zombie projectiles from prev section so nothing lingers
           bullets = bullets.filter(b => b.owner !== 'zombie');
           spawnTrenchSection(newIdx);
+          // ---- ARRIVAL CEREMONY ----
+          // Closing portal behind each player + forward sparks + brief camera reveal.
+          for (const p of players) {
+            if (p.alive) triggerArrivalCeremony(p, _entryD);
+          }
           // Store door reward — it spawns AFTER the player clears this section
           if (window._pendingDoorReward) {
             _pendingClearReward = window._pendingDoorReward;
@@ -5837,6 +5849,11 @@ function updateDescent() {
       // Clear recall anchor on section transition (it's in the old section)
       if (activeBeacon && activeBeacon._recall) { _beacons = _beacons.filter(_b => !_b._recall); activeBeacon = _beacons[0] || null; }
       triggerGlitchSurge(0.4, 48);
+      // Arrival ceremony — player descends from north, so the portal closes
+      // behind them at the top wall.
+      for (const p of players) {
+        if (p.alive) triggerArrivalCeremony(p, 'N');
+      }
     }
   }
   // Closing wall + gate blocking — applies to ALL players
@@ -8027,6 +8044,60 @@ let cameraZoomReleaseMs = 0;
 function triggerCameraZoom(target, durationMs) {
   cameraZoomTarget = target;
   cameraZoomReleaseMs = Math.max(cameraZoomReleaseMs, durationMs);
+}
+
+// ---- ARRIVAL CEREMONY ----
+// Stage entrance theatre: when a player enters a new section, fire a closing
+// portal at the wall they came through, expanding rings, forward sparks (the
+// "I just stepped through" cue), and a brief camera zoom-out reveal. Each
+// player gets _arrivalTimer set so the player render can paint an aura.
+function triggerArrivalCeremony(p, entryDir) {
+  if (!p || !p.alive) return;
+  // Direction the player FACES when emerging (away from the wall they came
+  // through). entryDir 'W' = entered from west wall = facing east.
+  const _faceAng = entryDir === 'W' ? 0 : entryDir === 'E' ? Math.PI : entryDir === 'N' ? Math.PI/2 : -Math.PI/2;
+  // Portal sits BEHIND the player at the wall they came through.
+  const _portalDist = 60;
+  const _portalAng = _faceAng + Math.PI;
+  const _px = p.x + Math.cos(_portalAng) * _portalDist;
+  const _py = p.y + Math.sin(_portalAng) * _portalDist;
+  // Two collapsing portal rings (lifetime → ring grows = "still open / closing")
+  particles.push({ x: _px, y: _py, vx: 0, vy: 0, life: 28, maxLife: 28, size: 80, color: '#4ff', type: 'wakering' });
+  particles.push({ x: _px, y: _py, vx: 0, vy: 0, life: 22, maxLife: 22, size: 56, color: '#fff', type: 'wakering' });
+  // Forward sparks scattering away from the portal (the dust kick of stepping out)
+  for (let _ai = 0; _ai < 14; _ai++) {
+    const _sa = _faceAng + (Math.random() - 0.5) * 0.9;
+    const _ss = 2 + Math.random() * 4;
+    particles.push({
+      x: _px, y: _py,
+      vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+      life: 22 + Math.floor(Math.random() * 8), maxLife: 30,
+      size: 2 + Math.random() * 2,
+      color: _ai < 4 ? '#fff' : '#4ff', type: 'spark',
+    });
+  }
+  // Faint side burst at the player position (the moment of arrival)
+  for (let _bi = 0; _bi < 8; _bi++) {
+    const _sa = Math.random() * Math.PI * 2;
+    const _ss = 1 + Math.random() * 2;
+    particles.push({
+      x: p.x, y: p.y,
+      vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+      life: 18, maxLife: 18, size: 2, color: '#aef', type: 'spark',
+    });
+  }
+  // Local-player camera + audio. Brief zoom-out reveal (0.92 -> 1.0 over 600ms)
+  if (p === getLocalPlayer()) {
+    triggerCameraZoom(0.92, 600);
+    screenShake.intensity = Math.max(screenShake.intensity, 3);
+    playSound(140, 0.18, 'sawtooth', 0.12);
+    playSound(380, 0.10, 'square', 0.08);
+    playSound(720, 0.06, 'sine', 0.06);
+  }
+  // Aura window: ~50 frames of glow + invincibility supplement. The fade-in
+  // already gives 90 frames of invincibility; this is purely visual.
+  p._arrivalTimer = 50;
+  p._arrivalAng = _faceAng;
 }
 
 // ---- PLAYERS (multiplayer array) ----
@@ -22314,6 +22385,7 @@ function applyHostState(msg) {
     // Detect 0->1 gate transition for non-host kill-cam parity (host triggers
     // its own at the section-clear handler).
     const _wasGateOpen = descentGateOpen;
+    const _prevDescent = descentSection;
     descentSection = msg.descentSection;
     descentTopWall = msg.descentTopWall || 0;
     descentGateOpen = msg.descentGateOpen || false;
@@ -22321,6 +22393,11 @@ function applyHostState(msg) {
       triggerHitStop(200);
       triggerSlowMo(0.3, 400);
       triggerCameraZoom(1.06, 600);
+    }
+    // Section advanced: arrival ceremony for non-host
+    if (!isHost && descentSection > _prevDescent) {
+      const _arrLp = getLocalPlayer();
+      if (_arrLp && _arrLp.alive) triggerArrivalCeremony(_arrLp, 'N');
     }
   }
   if (msg.trenchSection !== undefined) {
@@ -26731,6 +26808,25 @@ function render() {
         ctx.drawImage(window._auraSprite, p.x - 40, p.y - 40);
         ctx.restore();
       }
+    }
+    // ---- ARRIVAL AURA ----
+    // Cyan glow that pulses for ~50 frames after the player enters a new
+    // section. Applies to ALL players (host + non-host) so co-op feels
+    // synchronised. Decremented inline since this is a render-driven timer.
+    if ((p._arrivalTimer || 0) > 0) {
+      const _arrT = p._arrivalTimer;
+      const _arrAlpha = Math.min(0.6, _arrT / 50 * 0.6);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = _arrAlpha;
+      ctx.shadowColor = '#4ff'; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#4ff';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PLAYER_RADIUS + 4 + (50 - _arrT) * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+      p._arrivalTimer = _arrT - 1;
     }
     // ---- FOOTSTEP PARTICLES ----
     // Track distance traveled; emit a small puff every ~24px. Walking emits
