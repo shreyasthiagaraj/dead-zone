@@ -11075,6 +11075,11 @@ function togglePauseMenu() {
     _resetJoysticks();
     _pausePrevState = gameState;
     gamePaused = true;
+    // Reset the abandon-confirm dialog every time the pause menu opens —
+    // otherwise leaving the menu while the confirm is up leaks that state
+    // into the next pause and the user sees ABANDON RUN? before the menu.
+    const _qc = document.getElementById('pause-quit-confirm');
+    if (_qc) _qc.style.display = 'none';
     pauseEl.style.display = 'block';
     void pauseEl.offsetWidth;
     pauseEl.classList.add('visible');
@@ -13098,8 +13103,11 @@ function fireWeaponForPlayer(p) {
     if (_hitWall && Math.random() < 0.7) {
       const _bhCls = (runMods && runMods.dominantClass) || null;
       const _bhColor = _bhCls === 'fire' ? '#421' : _bhCls === 'ice' ? '#235' : _bhCls === 'chain' ? '#244' : _bhCls === 'wind' ? '#334' : _bhCls === 'corrupt' ? '#312' : '#222';
-      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 2 + Math.random() * 1.5, alpha: 0.7, color: _bhColor });
-      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 1, alpha: 0.9, color: '#000' });
+      // Long fade (~15s) so bullet holes accumulate during a fight but the
+      // walls eventually look clean again. The floor clip in the decal pass
+      // also keeps them from bleeding outside their wall cell.
+      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 2 + Math.random() * 1.5, alpha: 0.7, color: _bhColor, _fade: 0.0008 });
+      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 1, alpha: 0.9, color: '#000', _fade: 0.001 });
     }
     const _cls = (runMods && runMods.dominantClass) || null;
     // Beam colors per class (replaces hardcoded yellow)
@@ -21835,9 +21843,10 @@ function update() {
             life: 30 + Math.floor(Math.random()*15), maxLife: 45,
             size: 6 + Math.random()*5, color: '#321', type: 'smoke', _smokeAlpha: 0.35 });
         }
-        // Scorch decal — orange-ish
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 16 + Math.random() * 12, alpha: 0.45, color: '#421' });
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.55, color: '#f60' });
+        // Scorch decal — orange-ish, fades over ~6s so the floor doesn't stay
+        // permanently scarred. Class effects are theatre, not persistent state.
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 16 + Math.random() * 12, alpha: 0.45, color: '#421', _fade: 0.0012 });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.55, color: '#f60', _fade: 0.0018 });
       } else if (_deathEl === 'ice') {
         // Angular ice shards perpendicular scatter + frost decal
         for (let k = 0; k < 18; k++) {
@@ -21847,8 +21856,8 @@ function update() {
             size: 3 + Math.random() * 2,
             color: Math.random() > 0.5 ? '#cff' : '#8ef', type: 'spark', _pixel: true });
         }
-        // Frost decal
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14 + Math.random() * 10, alpha: 0.4, color: '#aef' });
+        // Frost decal — fades over ~5s
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14 + Math.random() * 10, alpha: 0.4, color: '#aef', _fade: 0.0015 });
         // Brief shatter ring
         particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: dz.radius + 24, color: '#cff', type: 'wakering' });
       } else if (_deathEl === 'arc') {
@@ -21873,7 +21882,7 @@ function update() {
             life: 22, maxLife: 22, size: 2 + Math.random() * 1.5,
             color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark' });
         }
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 10, alpha: 0.35, color: '#4ff' });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 10, alpha: 0.35, color: '#4ff', _fade: 0.002 });
       } else if (_deathEl === 'pulse') {
         // Concussive shockwave outward + small knockback to nearby
         particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: dz.radius + 70, color: '#cef', type: 'wakering' });
@@ -21893,7 +21902,7 @@ function update() {
           particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s,
             life: 18, maxLife: 18, size: 2 + Math.random() * 1.5, color: '#eef', type: 'spark' });
         }
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.3, color: '#aac' });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.3, color: '#aac', _fade: 0.0022 });
       } else if (_deathEl === 'corrupt') {
         // Glitch text scatter + brief CRT surge + purple decal
         const _glyphs = ['0','1','#','%','~','?','!','/','*','░','▓','▒','╳'];
@@ -21908,8 +21917,8 @@ function update() {
           window._crtGlitch = Math.max(window._crtGlitch || 0, 0.2);
           window._crtGlitchTimer = Math.max(window._crtGlitchTimer || 0, 8);
         }
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14, alpha: 0.4, color: '#205' });
-        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 6, alpha: 0.5, color: '#a4f' });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14, alpha: 0.4, color: '#205', _fade: 0.0014 });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 6, alpha: 0.5, color: '#a4f', _fade: 0.002 });
       } else {
         // Default: existing magenta-blood burst (keep)
         for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],type:'blood'});}
@@ -23395,6 +23404,12 @@ function render() {
     const _dvL = camera.x - canvas.width/2 - 40, _dvR = camera.x + canvas.width/2 + 40;
     const _dvT = camera.y - canvas.height/2 - 40, _dvB = camera.y + canvas.height/2 + 40;
     const _dt = performance.now();
+    // Clip the entire decal pass to the visible floor path so blood, scorch,
+    // frost, etc. can never bleed onto walls. _floorPath is the same Path2D
+    // built during the floor render above — we get a single one-time clip
+    // setup here, then every decal draws inside that mask for free.
+    ctx.save();
+    ctx.clip(_floorPath);
     for (const d of decals) {
       if (d.x < _dvL || d.x > _dvR || d.y < _dvT || d.y > _dvB) continue;
       ctx.globalAlpha = d.alpha;
@@ -23529,6 +23544,7 @@ function render() {
         ctx.restore();
       }
     }
+    ctx.restore(); // pop the floor clip
     ctx.globalAlpha = 1;
   }
 
