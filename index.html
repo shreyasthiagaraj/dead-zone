@@ -26138,22 +26138,32 @@ function render() {
     // Trench spawn-in: render a pulsing portal ring at the spawn point + scale + alpha the body
     if(z._spawnAnim>0){
       const t=1-z._spawnAnim/(z._spawnAnimMax||30);
+      // Elite/boss arrivals get a warning-red portal so the player reads "this
+      // one matters" before the body even resolves. Normal enemies keep the
+      // standard magenta/cyan signature.
+      const _isElitePortal = z.boss || z.type === 'boss' || z.type === 'tank' ||
+        z.type === 'brute' || z.type === 'stalker' || z.type === 'anchor' ||
+        z.type === 'shieldbot' || z.type === 'reaper' || z.type === 'crusher' ||
+        z.type === 'bull' || z.type === 'lash';
+      const _portalC1 = _isElitePortal ? '#f44' : '#f0f';
+      const _portalC2 = _isElitePortal ? '#fa0' : '#0ff';
+      const _beamC1 = _isElitePortal ? '255,68,68' : '255,0,255';
       // Pulsing ring that closes inward
       ctx.save();
       ctx.translate(z.x,z.y);
       ctx.globalAlpha=Math.max(0,1-t)*0.9;
-      ctx.shadowColor='#f0f';ctx.shadowBlur=20;
-      ctx.strokeStyle='#f0f';ctx.lineWidth=2.5;
+      ctx.shadowColor=_portalC1;ctx.shadowBlur=20;
+      ctx.strokeStyle=_portalC1;ctx.lineWidth=2.5;
       ctx.beginPath();ctx.arc(0,0,z.radius+18-t*16,0,Math.PI*2);ctx.stroke();
-      ctx.shadowColor='#0ff';
-      ctx.strokeStyle='#0ff';ctx.lineWidth=1.5;
+      ctx.shadowColor=_portalC2;
+      ctx.strokeStyle=_portalC2;ctx.lineWidth=1.5;
       ctx.beginPath();ctx.arc(0,0,z.radius+24-t*20,0,Math.PI*2);ctx.stroke();
       // Vertical light beam
       ctx.globalAlpha=Math.max(0,1-t)*0.5;
       const _bg=ctx.createLinearGradient(0,-50,0,50);
-      _bg.addColorStop(0,'rgba(255,0,255,0)');
-      _bg.addColorStop(0.5,'rgba(255,0,255,0.6)');
-      _bg.addColorStop(1,'rgba(255,0,255,0)');
+      _bg.addColorStop(0,`rgba(${_beamC1},0)`);
+      _bg.addColorStop(0.5,`rgba(${_beamC1},0.6)`);
+      _bg.addColorStop(1,`rgba(${_beamC1},0)`);
       ctx.fillStyle=_bg;
       ctx.fillRect(-3,-50,6,100);
       ctx.shadowBlur=0;
@@ -26673,6 +26683,78 @@ function render() {
   // Players (all)
   for(const p of players){
     if(!p.alive)continue;
+    // ---- BUILD-STRENGTH AURA ----
+    // Pre-rendered white-gold glow sprite, alpha modulated by total cards
+    // picked up. Class-agnostic — signals "your build is getting stronger" as
+    // the run progresses. Cached on window so we never re-create per frame.
+    if (p === getLocalPlayer()) {
+      if (!window._auraSprite) {
+        const _ac = document.createElement('canvas');
+        _ac.width = 80; _ac.height = 80;
+        const _ax = _ac.getContext('2d');
+        const _ag = _ax.createRadialGradient(40, 40, 6, 40, 40, 38);
+        _ag.addColorStop(0, 'rgba(255, 255, 220, 0.6)');
+        _ag.addColorStop(0.5, 'rgba(255, 220, 100, 0.28)');
+        _ag.addColorStop(1, 'rgba(255, 200, 50, 0)');
+        _ax.fillStyle = _ag;
+        _ax.fillRect(0, 0, 80, 80);
+        window._auraSprite = _ac;
+      }
+      let _cardCount = 0;
+      for (const id in runUpgrades) _cardCount += runUpgrades[id];
+      if (_cardCount > 0) {
+        const _auraBase = Math.min(0.42, 0.06 + _cardCount * 0.02);
+        const _auraPulse = _auraBase * (0.7 + Math.sin(performance.now() * 0.003) * 0.3);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = _auraPulse;
+        ctx.drawImage(window._auraSprite, p.x - 40, p.y - 40);
+        ctx.restore();
+      }
+    }
+    // ---- FOOTSTEP PARTICLES ----
+    // Track distance traveled; emit a small puff every ~24px. Walking emits
+    // less often (36px). Color picks up domain ambient when walking on themed
+    // floors. Skip during dash (already has its own trail).
+    {
+      const _vMag = Math.hypot(p.vx || 0, p.vy || 0);
+      if (_vMag > 0.4 && (p.dashTimer || 0) <= 0) {
+        p._footAccum = (p._footAccum || 0) + _vMag;
+        const _stepDist = _vMag > 3 ? 24 : 36;
+        if (p._footAccum >= _stepDist) {
+          p._footAccum = 0;
+          // Domain-themed color: D3 = white frost, D4 = gold sparkle, else dust
+          let _ftColor = 'rgba(180,180,200,0.5)', _ftSize = 1.6, _ftLife = 14;
+          if (gameMode === 'trench' || gameMode === 'descent') {
+            const _dom = (gameMode === 'trench' && trenchSections[trenchSection])
+              ? (trenchSections[trenchSection].domain || getTrenchDomain(trenchSection))
+              : getTrenchDomain(Math.min(40, descentSection || 0));
+            const _at = _dom && _dom.ambientType;
+            if (_at === 'ice') { _ftColor = '#cff'; _ftSize = 1.8; _ftLife = 18; }
+            else if (_at === 'gold') { _ftColor = '#ff8'; _ftSize = 1.8; _ftLife = 18; }
+            else if (_at === 'ember') { _ftColor = '#a40'; _ftSize = 1.6; _ftLife = 14; }
+          }
+          // Spawn 2 perpendicular puffs at the player's feet (offset slightly behind)
+          const _moveAng = Math.atan2(p.vy, p.vx);
+          const _backX = p.x - Math.cos(_moveAng) * (PLAYER_RADIUS * 0.5);
+          const _backY = p.y - Math.sin(_moveAng) * (PLAYER_RADIUS * 0.5) + 4;
+          const _perpFA = _moveAng + Math.PI / 2;
+          for (let _fi = 0; _fi < 2; _fi++) {
+            const _side = _fi === 0 ? 1 : -1;
+            particles.push({
+              x: _backX + Math.cos(_perpFA) * _side * 4,
+              y: _backY + Math.sin(_perpFA) * _side * 4,
+              vx: -Math.cos(_moveAng) * 0.3 + Math.cos(_perpFA) * _side * 0.4,
+              vy: -Math.sin(_moveAng) * 0.3 + Math.sin(_perpFA) * _side * 0.4 - 0.4,
+              life: _ftLife, maxLife: _ftLife,
+              size: _ftSize + Math.random() * 0.6, color: _ftColor, type: 'spark',
+            });
+          }
+        }
+      } else if (_vMag <= 0.4) {
+        p._footAccum = 0;
+      }
+    }
     // ---- AFTERIMAGE TRAIL ----
     // Persistent motion smear so the player's movement is legible from a glance.
     // Sampled ~25Hz regardless of display refresh so the effect feels consistent
@@ -26700,8 +26782,23 @@ function render() {
       ctx.shadowBlur = 0;
       ctx.restore();
     }
+    // ---- IDLE BREATHING + DAMAGE FLINCH OFFSET ----
+    // Subtle vertical bob when stationary so the player body never looks frozen.
+    // On heavy damage (first 3 frames of damageFlash), the local player's body
+    // recoils 2px opposite to the hit angle for a tactile flinch.
+    let _bodyOX = 0, _bodyOY = 0;
+    {
+      const _vMag2 = Math.hypot(p.vx || 0, p.vy || 0);
+      if (_vMag2 < 0.3) {
+        _bodyOY += Math.sin(performance.now() * 0.004) * 1.0;
+      }
+      if (p === getLocalPlayer() && p.damageFlash > 12) {
+        _bodyOX -= Math.cos(_lastHitAngle) * 2;
+        _bodyOY -= Math.sin(_lastHitAngle) * 2;
+      }
+    }
     // Gun rotates with aim angle
-    ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
+    ctx.save();ctx.translate(p.x + _bodyOX, p.y + _bodyOY);ctx.rotate(p.angle);
     if(p.invincible>0&&Math.floor(p.invincible/50)%2===0)ctx.globalAlpha=0.5;
     const w=p.weapons[p.currentWeapon],def=WEAPON_DEFS[w.type];
     ctx.shadowColor=def.color;ctx.shadowBlur=8;ctx.fillStyle=def.color;ctx.fillRect(PLAYER_RADIUS-2,-3,14,6);ctx.shadowBlur=0;
