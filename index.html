@@ -7483,10 +7483,33 @@ function updateBurnoutPuddles() {
     if (p.life <= 0) { burnoutPuddles.splice(i, 1); continue; }
     if (p._corrupt) {
       // ---- BLIGHT ZONE: corruption pool ----
-      // Purple glitch particles
+      // Gassy vapor wisps rising from the pool surface — replaces the old
+      // hard-edged spark dots with soft drifting smoke for a viscous-pool feel.
       if (gameTime % 3 === 0) {
-        const pa = Math.random() * Math.PI * 2, pr = Math.random() * p.radius;
-        particles.push({ x: p.x + Math.cos(pa)*pr, y: p.y + Math.sin(pa)*pr, vx: (Math.random()-0.5)*0.5, vy: -1 - Math.random(), life: 14, maxLife: 14, size: 3 + Math.random()*2, color: Math.random()>0.5?'#a4f':'#f0f', type: 'spark' });
+        // Big rising vapor wisp
+        const pa = Math.random() * Math.PI * 2, pr = Math.random() * p.radius * 0.85;
+        particles.push({
+          x: p.x + Math.cos(pa) * pr, y: p.y + Math.sin(pa) * pr,
+          vx: (Math.random() - 0.5) * 0.4,
+          vy: -0.5 - Math.random() * 0.7,
+          life: 38 + Math.floor(Math.random() * 14), maxLife: 52,
+          size: 8 + Math.random() * 8,
+          color: Math.random() > 0.5 ? '#a4f' : '#603',
+          type: 'smoke', _smokeAlpha: 0.18 + Math.random() * 0.12,
+        });
+      }
+      // Occasional bright bubble pop at the surface — small tracer of life
+      if (gameTime % 8 === 0) {
+        const pa = Math.random() * Math.PI * 2, pr = Math.random() * p.radius * 0.6;
+        particles.push({
+          x: p.x + Math.cos(pa) * pr, y: p.y + Math.sin(pa) * pr,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: -0.6 - Math.random() * 0.4,
+          life: 14 + Math.floor(Math.random() * 6), maxLife: 20,
+          size: 2 + Math.random() * 1.6,
+          color: Math.random() > 0.4 ? '#c6f' : '#f0f',
+          type: 'spark',
+        });
       }
       // Apply corrupt + optional damage every 20 frames
       if (isHost && gameTime % 20 === 0) {
@@ -13594,6 +13617,32 @@ function fireWeaponForPlayer(p) {
         life: 7 + Math.floor(Math.random()*4), maxLife: 11,
         size: 0.8 + Math.random()*0.4, color: _beamCol, type: 'lightning' });
     }
+    // --- BASIC CAST BULLET TRAIL ---
+    // When no class is loaded, the shot needs its own visual signature so it
+    // doesn't blend into the class-empowered casts. Lay down a long thin
+    // tracer line + a string of bright trailing dots along the beam path.
+    if (!_cls) {
+      // One long tracer spine — yellow-white, full beam length, fades fast
+      particles.push({ x: _mx, y: _my, tx: _beamEndX, ty: _beamEndY, vx: 0, vy: 0,
+        life: 5, maxLife: 5, size: 0.7, color: '#ff8', type: 'lightning' });
+      // Bright tracer dots distributed along the path, drifting backward like
+      // a wake left behind a fast-moving round.
+      const _trailCount = 7;
+      for (let _ti = 0; _ti < _trailCount; _ti++) {
+        const _tt = 0.12 + (_ti / (_trailCount - 1)) * 0.76;
+        const _tx = _mx + _mc * _hitDist * _tt;
+        const _ty = _my + _ms * _hitDist * _tt;
+        particles.push({
+          x: _tx + _perpX * (Math.random() - 0.5) * 1.6,
+          y: _ty + _perpY * (Math.random() - 0.5) * 1.6,
+          vx: -_mc * 0.4 + (Math.random() - 0.5) * 0.6,
+          vy: -_ms * 0.4 + (Math.random() - 0.5) * 0.6,
+          life: 8 + Math.floor(Math.random() * 5), maxLife: 13,
+          size: 1.5 + Math.random() * 0.8,
+          color: _ti % 2 === 0 ? '#fff' : '#ff8', type: 'spark',
+        });
+      }
+    }
 
     // --- ENDPOINT BLAST BEAM ---
     const _endStart = Math.max(0, _hitDist - Math.min(_hitDist*0.3, 80));
@@ -19343,28 +19392,62 @@ function update() {
         // ---- COLD FRONT: massive blizzard cone AHEAD of dash endpoint ----
         if (_rm.cryoWake > 0) {
           const cfDir = lp.dashDirX !== undefined ? Math.atan2(lp.dashDirY||0, lp.dashDirX||1) : lp.angle;
-          const cfR = _rm.cryoWake >= 2 ? 180 : 140;
+          // 3x range so the blizzard actually FLOWS out across the room
+          const cfR = _rm.cryoWake >= 2 ? 540 : 420;
           const cfHalfAngle = _rm.cryoWake >= 2 ? Math.PI * 0.55 : Math.PI * 0.45;
-          // VFX: blizzard — ice shards spraying forward and drifting outward
-          for(let i=0;i<24;i++){
-            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*2, s=2+Math.random()*5;
-            const d=Math.random()*cfR*0.4;
-            particles.push({x:lp.x+Math.cos(cfDir)*d,y:lp.y+Math.sin(cfDir)*d,
-              vx:Math.cos(a)*s + Math.cos(cfDir)*2, vy:Math.sin(a)*s + Math.sin(cfDir)*2,
-              life:28+Math.floor(Math.random()*14),maxLife:42,size:2+Math.random()*3,
-              color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});
+          // ---- GASSY BLIZZARD ----
+          // Heavy mist body: dense rolling smoke clouds drifting along the cone
+          // direction, fading outward. The visual reads as a SHEET of cold gas
+          // sweeping across the floor instead of a tight ice burst.
+          for (let i = 0; i < 36; i++) {
+            const _a = cfDir + (Math.random() - 0.5) * cfHalfAngle * 1.6;
+            const _d = 20 + Math.random() * cfR * 0.95;
+            const _spread = (Math.random() - 0.5) * 0.6;
+            particles.push({
+              x: lp.x + Math.cos(_a) * _d, y: lp.y + Math.sin(_a) * _d,
+              vx: Math.cos(cfDir) * (3 + Math.random() * 2) + Math.cos(_a + Math.PI/2) * _spread,
+              vy: Math.sin(cfDir) * (3 + Math.random() * 2) + Math.sin(_a + Math.PI/2) * _spread,
+              life: 60 + Math.floor(Math.random() * 30), maxLife: 90,
+              size: 16 + Math.random() * 14,
+              color: Math.random() > 0.3 ? '#8ef' : '#cff', type: 'smoke',
+              _smokeAlpha: 0.18 + Math.random() * 0.18,
+            });
           }
-          // Light frost mist drifting forward — lower opacity
-          for(let i=0;i<8;i++){
-            const a=cfDir+(Math.random()-0.5)*cfHalfAngle*1.2, d=30+Math.random()*cfR*0.6;
-            particles.push({x:lp.x+Math.cos(a)*d,y:lp.y+Math.sin(a)*d,
-              vx:Math.cos(cfDir)*1.2+(Math.random()-0.5)*0.5, vy:Math.sin(cfDir)*1.2+(Math.random()-0.5)*0.5,
-              life:50,maxLife:50,size:12+Math.random()*10,color:'#8ef',type:'smoke'});
+          // Wispy frost tendrils — finer trailing smoke at the leading edge
+          for (let i = 0; i < 14; i++) {
+            const _a = cfDir + (Math.random() - 0.5) * cfHalfAngle * 1.2;
+            const _d = cfR * (0.55 + Math.random() * 0.4);
+            particles.push({
+              x: lp.x + Math.cos(_a) * _d, y: lp.y + Math.sin(_a) * _d,
+              vx: Math.cos(cfDir) * (1.8 + Math.random() * 1.2) + (Math.random() - 0.5) * 0.6,
+              vy: Math.sin(cfDir) * (1.8 + Math.random() * 1.2) + (Math.random() - 0.5) * 0.6,
+              life: 70, maxLife: 70,
+              size: 22 + Math.random() * 14,
+              color: '#aef', type: 'smoke', _smokeAlpha: 0.12 + Math.random() * 0.1,
+            });
           }
-          // Ice ground decals
-          for(let i=0;i<4;i++){const da=cfDir+(Math.random()-0.5)*cfHalfAngle,dd=30+Math.random()*60;decals.push({x:lp.x+Math.cos(da)*dd,y:lp.y+Math.sin(da)*dd,size:18+Math.random()*12,alpha:0.25,color:'#245'});}
-          playSound(900, 0.1, 'sine', 0.08); playSound(500, 0.08, 'sine', 0.1); playSound(1400, 0.06, 'square', 0.04);
-          // Apply chill/freeze to enemies in the blizzard cone
+          // A few ice shards still spraying through for crunch — but reduced
+          // (used to be 24, now 10) so the gas dominates the read.
+          for (let i = 0; i < 10; i++) {
+            const _a = cfDir + (Math.random() - 0.5) * cfHalfAngle * 1.4, _s = 4 + Math.random() * 6;
+            const _d = Math.random() * cfR * 0.3;
+            particles.push({
+              x: lp.x + Math.cos(cfDir) * _d, y: lp.y + Math.sin(cfDir) * _d,
+              vx: Math.cos(_a) * _s + Math.cos(cfDir) * 3,
+              vy: Math.sin(_a) * _s + Math.sin(cfDir) * 3,
+              life: 30 + Math.floor(Math.random() * 14), maxLife: 44,
+              size: 2 + Math.random() * 2,
+              color: Math.random() > 0.4 ? '#cff' : '#aef', type: 'spark', _pixel: true,
+            });
+          }
+          // Ice ground decals — extended further along the cone to match range
+          for (let i = 0; i < 8; i++) {
+            const da = cfDir + (Math.random() - 0.5) * cfHalfAngle;
+            const dd = 40 + Math.random() * cfR * 0.85;
+            decals.push({ x: lp.x + Math.cos(da) * dd, y: lp.y + Math.sin(da) * dd, size: 18 + Math.random() * 14, alpha: 0.25, color: '#245', _fade: 0.0012 });
+          }
+          playSound(900, 0.18, 'sine', 0.08); playSound(500, 0.16, 'sine', 0.1); playSound(1400, 0.10, 'square', 0.04);
+          // Apply chill/freeze to enemies in the (now much larger) blizzard cone
           if (isHost) { for (const fz of zombies) { if (fz.hp<=0) continue;
             const fdx=fz.x-lp.x, fdy=fz.y-lp.y, fd=Math.sqrt(fdx*fdx+fdy*fdy);
             if (fd>cfR) continue;
@@ -25485,27 +25568,63 @@ function render() {
     const bpFade = bp.life / bp.maxLife;
     const bpPulse = 0.5 + Math.sin(performance.now() * 0.006 + bp.x * 0.1) * 0.2;
     if (bp._corrupt) {
-      // Corruption pool — illuminated purple glow zone
-      // Outer glow halo (fake lightsource)
-      ctx.globalAlpha = bpFade * 0.08 * bpPulse;
+      // ---- LIQUID/GASSY CORRUPTION POOL ----
+      // Replaces stacked perfect circles with sin-noise blob shapes that
+      // breathe + drift. Reads as a viscous infected pool with rising vapor
+      // instead of a clean magenta disc. _seed locks per-puddle wobble so
+      // each pool has its own personality.
+      if (bp._seed === undefined) bp._seed = Math.random() * 1000;
+      const _t = performance.now() * 0.0014;
+      const _seed = bp._seed;
+      // Helper to trace a wobbly closed blob path with N segments
+      const _drawBlob = (cx, cy, baseR, segs, freq1, amp1, freq2, amp2, phaseOff) => {
+        ctx.beginPath();
+        for (let s = 0; s <= segs; s++) {
+          const ang = (s / segs) * Math.PI * 2;
+          const noise = Math.sin(ang * freq1 + _t + _seed + phaseOff) * amp1
+                      + Math.sin(ang * freq2 - _t * 1.3 + _seed * 0.7) * amp2;
+          const r = baseR * (1 + noise);
+          const x = cx + Math.cos(ang) * r;
+          const y = cy + Math.sin(ang) * r;
+          if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+      };
+      // 1) Wide diffuse halo — soft outer fog with no defined edge
+      ctx.globalAlpha = bpFade * 0.10 * bpPulse;
       ctx.fillStyle = '#a4f';
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 1.6, 0, Math.PI * 2); ctx.fill();
-      // Mid glow
-      ctx.globalAlpha = bpFade * 0.15 * bpPulse;
+      _drawBlob(bp.x, bp.y, bp.radius * 1.7, 28, 3, 0.16, 5.2, 0.08, 0);
+      ctx.fill();
+      // 2) Mid layer — main pool body, larger noise so it slumps and wobbles
+      ctx.globalAlpha = bpFade * 0.30 * bpPulse;
       ctx.fillStyle = '#a4f';
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 1.2, 0, Math.PI * 2); ctx.fill();
-      // Core pool fill
-      ctx.globalAlpha = bpFade * 0.35 * bpPulse;
-      ctx.fillStyle = '#a4f';
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius, 0, Math.PI * 2); ctx.fill();
-      // Bright inner core
-      ctx.globalAlpha = bpFade * 0.2 * bpPulse;
+      _drawBlob(bp.x, bp.y, bp.radius, 26, 4, 0.20, 7, 0.10, 1.4);
+      ctx.fill();
+      // 3) Floating inner pockets — 3 smaller blobs drifting inside the main
+      // pool, gives the "liquid being stirred" read.
+      for (let pi = 0; pi < 3; pi++) {
+        const px = bp.x + Math.cos(_t * 0.8 + pi * 2.1 + _seed) * bp.radius * 0.35;
+        const py = bp.y + Math.sin(_t * 0.6 + pi * 2.7 + _seed * 0.4) * bp.radius * 0.35;
+        const pr = bp.radius * (0.22 + Math.sin(_t * 1.4 + pi + _seed * 0.2) * 0.08);
+        ctx.globalAlpha = bpFade * 0.30 * bpPulse;
+        ctx.fillStyle = pi === 1 ? '#c6f' : '#a4f';
+        _drawBlob(px, py, pr, 14, 3, 0.22, 5, 0.12, pi * 1.7);
+        ctx.fill();
+      }
+      // 4) Hot spot — small bright magenta pocket near a slow-drifting point
+      const _hx = bp.x + Math.cos(_t * 0.5 + _seed) * bp.radius * 0.25;
+      const _hy = bp.y + Math.sin(_t * 0.4 + _seed * 1.2) * bp.radius * 0.25;
+      ctx.globalAlpha = bpFade * 0.22 * bpPulse;
       ctx.fillStyle = '#f0f';
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius * 0.5, 0, Math.PI * 2); ctx.fill();
-      // Edge ring
-      ctx.globalAlpha = bpFade * 0.6 * bpPulse;
-      ctx.strokeStyle = '#c6f'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(bp.x, bp.y, bp.radius, 0, Math.PI * 2); ctx.stroke();
+      _drawBlob(_hx, _hy, bp.radius * 0.32, 12, 4, 0.25, 6, 0.12, 0.7);
+      ctx.fill();
+      // 5) Rising vapor wisps — ephemeral DOM-side particles for gassy lift,
+      // spawned per-puddle in updateBurnoutPuddles instead of here, but we add
+      // a soft rim haze to suggest the surface is venting.
+      ctx.globalAlpha = bpFade * 0.22 * bpPulse;
+      ctx.strokeStyle = '#c6f'; ctx.lineWidth = 1.5;
+      _drawBlob(bp.x, bp.y, bp.radius * 1.05, 24, 4, 0.16, 7, 0.08, 2.8);
+      ctx.stroke();
     } else {
       // Fire puddle — orange/red pulsing circle with bright center
       ctx.globalAlpha = bpFade * 0.25 * bpPulse;
