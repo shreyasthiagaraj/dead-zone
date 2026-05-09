@@ -1022,6 +1022,10 @@ let _gunAmmo = GUN_MAG_SIZE;
 // Tracks the last completed reload segment so we only fire the click/spark VFX
 // on the cross-into-completion frame, not every frame the segment is full.
 let _lastReloadSegment = 0;
+// Transient muzzle-flash lights: added on each shot, decay over ~90ms. Picked
+// up by the lighting gather pass each frame and merged into the WebGL light
+// list (cap of 4 concurrent so we don't blow past the shader limit).
+let _transientLights = [];
 let _gunReloading = false;
 let _gunReloadTimer = 0;
 let _gunIdleTimer = 0;            // frames since last shot
@@ -12988,6 +12992,9 @@ function fireWeaponForPlayer(p) {
     particles.push({ x: _mx, y: _my, vx: _mc*4, vy: _ms*4, life: 5+Math.floor(_shotSeed*3), maxLife: 8, size: 25 + _shotSeed*20, color: _ec, type: 'wakering' });
     // Bright white core flash (varied size)
     particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 2+Math.floor(_shotSeed*2), maxLife: 4, size: 8 + _shotSeed*8, color: '#fff', type: 'spark' });
+    // Transient muzzle illumination — adds a ~90ms point light at the muzzle so
+    // the shot briefly lights up the room. Cap maintained in lights gather.
+    _transientLights.push({ x: _mx, y: _my, angle: _ma, radius: 240, expiresAt: performance.now() + 90 });
 
     // ---- SHELL EJECTION ----
     // Brass casing flies perpendicular to aim direction. Pure visual flair —
@@ -13068,6 +13075,7 @@ function fireWeaponForPlayer(p) {
 
     // --- RAYCAST: find actual hit point (beam stops at first enemy or wall) ---
     let _hitDist = _range;
+    let _hitWall = false;
     for (const _rz of zombies) {
       if (_rz.hp <= 0) continue;
       const _rdx = _rz.x - _mx, _rdy = _rz.y - _my;
@@ -13079,10 +13087,19 @@ function fireWeaponForPlayer(p) {
     for (let _wd = 40; _wd < _hitDist; _wd += 40) {
       const _wx = _mx + _mc * _wd, _wy = _my + _ms * _wd;
       const _gx = Math.floor(_wx / CELL_SIZE), _gy = Math.floor(_wy / CELL_SIZE);
-      if (_gx < 0 || _gx >= GRID_W || _gy < 0 || _gy >= GRID_H || !(dungeonGrid[_gy] && dungeonGrid[_gy][_gx])) { _hitDist = _wd; break; }
+      if (_gx < 0 || _gx >= GRID_W || _gy < 0 || _gy >= GRID_H || !(dungeonGrid[_gy] && dungeonGrid[_gy][_gx])) { _hitDist = _wd; _hitWall = true; break; }
     }
 
     const _beamEndX = _mx + _mc * _hitDist, _beamEndY = _my + _ms * _hitDist;
+    // ---- BULLET HOLE: persistent dark mark on wall impacts ----
+    // Cap decal growth: only stamp ~70% of shots so heavy spam doesn't paper
+    // the walls. Tiny 2.5px scuff with a slight per-class tint.
+    if (_hitWall && Math.random() < 0.7) {
+      const _bhCls = (runMods && runMods.dominantClass) || null;
+      const _bhColor = _bhCls === 'fire' ? '#421' : _bhCls === 'ice' ? '#235' : _bhCls === 'chain' ? '#244' : _bhCls === 'wind' ? '#334' : _bhCls === 'corrupt' ? '#312' : '#222';
+      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 2 + Math.random() * 1.5, alpha: 0.7, color: _bhColor });
+      decals.push({ x: _beamEndX - _mc * 4, y: _beamEndY - _ms * 4, size: 1, alpha: 0.9, color: '#000' });
+    }
     const _cls = (runMods && runMods.dominantClass) || null;
     // Beam colors per class (replaces hardcoded yellow)
     const _beamCol = _cls === 'fire' ? '#f80' : _cls === 'ice' ? '#8ef' : _cls === 'chain' ? '#4ff' : _cls === 'wind' ? '#cef' : _cls === 'corrupt' ? '#a4f' : '#ff0';
@@ -21780,9 +21797,119 @@ function update() {
         particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 28, maxLife: 28,
           size: dz.boss ? 160 : 100, color: '#fff', type: 'wakering' });
       }
-      // Death effects
-      for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],type:'blood'});}
-      decals.push({x:dz.x,y:dz.y,size:dz.radius+12+Math.random()*15,alpha:0.5,color:'#304'});
+      // ---- DAMAGE-TYPED DEATH DISSOLVES ----
+      // Pick the dominant element from current statuses. Each element gets its
+      // own particle pattern + decal color so deaths visibly read as "fire kill"
+      // / "ice kill" / etc. Falls back to the default magenta-blood burst when
+      // no element is active.
+      const _hasFire = (dz._overheat || 0) > 0 || (dz._burning || 0) > 0;
+      const _hasIce = dz._frozen || (dz._chill || 0) > 0;
+      const _hasArc = dz._charged || (dz._shocked || 0) > 0;
+      const _hasPulse = dz._exposed || (dz._exposedTimer || 0) > 0;
+      const _hasCorrupt = dz._compromised || (dz._corrupt || 0) > 0;
+      let _deathEl = null;
+      if (_hasCorrupt) _deathEl = 'corrupt';
+      else if (_hasFire) _deathEl = 'fire';
+      else if (_hasIce) _deathEl = 'ice';
+      else if (_hasArc) _deathEl = 'arc';
+      else if (_hasPulse) _deathEl = 'pulse';
+      if (_deathEl === 'fire') {
+        // Ash + rising flame particles + smoldering scorch decal
+        for (let k = 0; k < 22; k++) {
+          const a2 = Math.random() * Math.PI * 2, s = 1 + Math.random() * 4;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s - 1.2,
+            life: 30 + Math.floor(Math.random() * 20), maxLife: 50,
+            size: 3 + Math.random() * 4,
+            color: ['#f80','#fa0','#ff0','#f40','#642'][Math.floor(Math.random()*5)],
+            type: 'spark' });
+        }
+        // Slow rising smoke
+        for (let k = 0; k < 5; k++) {
+          particles.push({ x: dz.x + (Math.random()-0.5)*8, y: dz.y + (Math.random()-0.5)*8,
+            vx: (Math.random()-0.5)*0.6, vy: -1 - Math.random()*0.8,
+            life: 30 + Math.floor(Math.random()*15), maxLife: 45,
+            size: 6 + Math.random()*5, color: '#321', type: 'smoke', _smokeAlpha: 0.35 });
+        }
+        // Scorch decal — orange-ish
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 16 + Math.random() * 12, alpha: 0.45, color: '#421' });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.55, color: '#f60' });
+      } else if (_deathEl === 'ice') {
+        // Angular ice shards perpendicular scatter + frost decal
+        for (let k = 0; k < 18; k++) {
+          const a2 = Math.random() * Math.PI * 2, s = 2 + Math.random() * 5;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s,
+            life: 30 + Math.floor(Math.random() * 16), maxLife: 46,
+            size: 3 + Math.random() * 2,
+            color: Math.random() > 0.5 ? '#cff' : '#8ef', type: 'spark', _pixel: true });
+        }
+        // Frost decal
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14 + Math.random() * 10, alpha: 0.4, color: '#aef' });
+        // Brief shatter ring
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: dz.radius + 24, color: '#cff', type: 'wakering' });
+      } else if (_deathEl === 'arc') {
+        // Arc flash + 3 lightning forks to nearby enemies
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: dz.radius + 30, color: '#fff', type: 'wakering' });
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: dz.radius + 22, color: '#4ff', type: 'wakering' });
+        // Lightning forks to up to 3 nearest alive zombies
+        let _forkCount = 0;
+        for (const oz of zombies) {
+          if (oz === dz || oz.hp <= 0) continue;
+          const _dx = oz.x - dz.x, _dy = oz.y - dz.y;
+          if (_dx*_dx + _dy*_dy < 200*200) {
+            particles.push({ x: dz.x, y: dz.y, tx: oz.x, ty: oz.y, vx: 0, vy: 0,
+              life: 10, maxLife: 10, size: 1.6, color: '#4ff', type: 'lightning' });
+            if (++_forkCount >= 3) break;
+          }
+        }
+        // Spark scatter
+        for (let k = 0; k < 14; k++) {
+          const a2 = Math.random() * Math.PI * 2, s = 2 + Math.random() * 5;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s,
+            life: 22, maxLife: 22, size: 2 + Math.random() * 1.5,
+            color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark' });
+        }
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 10, alpha: 0.35, color: '#4ff' });
+      } else if (_deathEl === 'pulse') {
+        // Concussive shockwave outward + small knockback to nearby
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: dz.radius + 70, color: '#cef', type: 'wakering' });
+        particles.push({ x: dz.x, y: dz.y, vx: 0, vy: 0, life: 30, maxLife: 30, size: dz.radius + 110, color: '#fff', type: 'wakering' });
+        for (const oz of zombies) {
+          if (oz === dz || oz.hp <= 0) continue;
+          const _dx = oz.x - dz.x, _dy = oz.y - dz.y;
+          const _d2 = _dx*_dx + _dy*_dy;
+          if (_d2 < 150*150 && _d2 > 1) {
+            const _d = Math.sqrt(_d2);
+            oz.vx = (oz.vx || 0) + (_dx / _d) * 2.0;
+            oz.vy = (oz.vy || 0) + (_dy / _d) * 2.0;
+          }
+        }
+        for (let k = 0; k < 10; k++) {
+          const a2 = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s,
+            life: 18, maxLife: 18, size: 2 + Math.random() * 1.5, color: '#eef', type: 'spark' });
+        }
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 8, alpha: 0.3, color: '#aac' });
+      } else if (_deathEl === 'corrupt') {
+        // Glitch text scatter + brief CRT surge + purple decal
+        const _glyphs = ['0','1','#','%','~','?','!','/','*','░','▓','▒','╳'];
+        for (let k = 0; k < 14; k++) {
+          const a2 = Math.random() * Math.PI * 2, s = 2 + Math.random() * 4;
+          particles.push({ x: dz.x, y: dz.y, vx: Math.cos(a2)*s, vy: Math.sin(a2)*s,
+            life: 26, maxLife: 26, size: 12 + Math.random() * 6,
+            color: Math.random() > 0.5 ? '#a4f' : '#f0f',
+            type: 'glitchtext', text: _glyphs[Math.floor(Math.random() * _glyphs.length)] });
+        }
+        if (typeof window !== 'undefined') {
+          window._crtGlitch = Math.max(window._crtGlitch || 0, 0.2);
+          window._crtGlitchTimer = Math.max(window._crtGlitchTimer || 0, 8);
+        }
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 14, alpha: 0.4, color: '#205' });
+        decals.push({ x: dz.x, y: dz.y, size: dz.radius + 6, alpha: 0.5, color: '#a4f' });
+      } else {
+        // Default: existing magenta-blood burst (keep)
+        for(let k=0;k<25;k++){const a2=Math.random()*Math.PI*2,s=1+Math.random()*6;particles.push({x:dz.x,y:dz.y,vx:Math.cos(a2)*s,vy:Math.sin(a2)*s,life:30+Math.random()*20,maxLife:50,size:3+Math.random()*5,color:['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],type:'blood'});}
+        decals.push({x:dz.x,y:dz.y,size:dz.radius+12+Math.random()*15,alpha:0.5,color:'#304'});
+      }
       dropZombieLoot(dz);
       playDeathSound();screenShake.intensity=Math.max(screenShake.intensity,3);
       // ---- PASSIVE MOD DEATH TRIGGERS ----
@@ -27243,6 +27370,20 @@ function render() {
       if (!_fb || lights.length >= 6) continue;
       const _fbR = BEACON_RANGE * ((runMods || {}).beaconRangeMult || 1) * 0.7;
       lights.push({ x: _fb.x, y: _fb.y, angle: _fb.angle || 0, radius: _fbR });
+    }
+    // Transient muzzle lights — prune expired, then push up to 4 newest.
+    {
+      const _nowL = performance.now();
+      _transientLights = _transientLights.filter(l => l.expiresAt > _nowL);
+      // Keep only the 4 most recent (cap shader/gather work)
+      if (_transientLights.length > 4) _transientLights.splice(0, _transientLights.length - 4);
+      for (const _tl of _transientLights) {
+        if (lights.length >= 6) break;
+        // Fade radius as the light expires so the dropoff feels like a flash, not a hard cut
+        const _tlAge = 1 - (_tl.expiresAt - _nowL) / 90;
+        const _tlRadius = _tl.radius * (1 - _tlAge * 0.4);
+        lights.push({ x: _tl.x, y: _tl.y, angle: _tl.angle, radius: _tlRadius });
+      }
     }
     if (glReady && lights.length > 0) {
       renderLighting(lights, camera.x - screenShake.x, camera.y - screenShake.y);
