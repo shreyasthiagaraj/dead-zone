@@ -695,6 +695,14 @@ body.mobile #mobile-buttons { display: block; }
   <button id="btn-signallab-clear" style="margin-top:14px;padding:8px 24px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,255,0.04);border:1px solid #5568;border-radius:8px;color:#889;cursor:pointer">CLEAR FOCUS</button>
 </div>
 
+<!-- ---- CARD INFO MODAL — pop-up triggered by ? badge on shop/level-up cards ---- -->
+<div id="card-info-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:200;background:rgba(2,4,10,0.88);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:'Courier New',monospace;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;opacity:0;transition:opacity 0.18s ease-out">
+  <div id="card-info-panel" style="position:relative;background:rgba(6,8,16,0.98);border:2px solid #0ff;border-radius:14px;padding:20px 22px 22px;max-width:380px;width:100%;max-height:84vh;overflow-y:auto;box-shadow:0 0 24px rgba(0,255,255,0.35),inset 0 0 24px rgba(0,0,0,0.6);transform:scale(0.94);transition:transform 0.18s ease-out;color:#fff">
+    <button id="btn-card-info-close" aria-label="Close info" style="position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:50%;background:rgba(255,68,68,0.08);color:#f44;border:1.5px solid #f44;font-size:20px;font-weight:bold;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;text-shadow:0 0 6px rgba(255,68,68,0.5);box-shadow:0 0 8px rgba(255,68,68,0.2)">×</button>
+    <div id="card-info-content"></div>
+  </div>
+</div>
+
 <!-- ---- PAUSE MENU (Command Console) ---- -->
 <div id="pause-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:45;font-family:'Courier New',monospace">
   <div id="pause-layout" style="display:flex;flex-direction:row;width:100%;height:100%">
@@ -2700,6 +2708,83 @@ function _renderFocusRow() {
   }
 }
 
+// Open the card-info modal with details about a specific upgrade card.
+// Replaces the old "tap-to-flip" interaction. Builds content fresh each open.
+function openCardInfoModal(card, owned) {
+  if (!card) return;
+  const _modal = document.getElementById('card-info-modal');
+  const _panel = document.getElementById('card-info-panel');
+  const _content = document.getElementById('card-info-content');
+  if (!_modal || !_panel || !_content) return;
+  // Tint the panel border + close button with the card's color so the modal
+  // feels like an extension of the tapped card.
+  _panel.style.borderColor = card.color || '#0ff';
+  _panel.style.boxShadow = `0 0 24px ${card.color || '#0ff'}66, inset 0 0 24px rgba(0,0,0,0.6)`;
+  const _terms = (typeof _getCardGlossaryTerms === 'function') ? _getCardGlossaryTerms(card, owned || (runUpgrades[card.id] || 0)) : [];
+  const _rarLabel = card.id && card.id.startsWith('syn_') ? 'SYNERGY' : (card.rarity || 'common').toUpperCase();
+  const _rarColor = card.id && card.id.startsWith('syn_') ? '#fc0' : card.rarity === 'legendary' ? '#ff0' : card.rarity === 'epic' ? '#a8f' : card.rarity === 'rare' ? '#0cf' : '#8aa';
+  const _curLevel = owned || (runUpgrades[card.id] || 0);
+  const _desc = (typeof _formatCardDesc === 'function' && typeof _cardDescForLevel === 'function')
+    ? _formatCardDesc(_cardDescForLevel(card, _curLevel))
+    : (card.descs && card.descs[_curLevel]) || '';
+  const _termsHtml = _terms.length > 0
+    ? `<div style="margin-top:14px;padding-top:12px;border-top:1px solid ${card.color || '#0ff'}33">
+         <div style="font-size:10px;font-weight:bold;letter-spacing:3px;color:${card.color || '#0ff'};text-transform:uppercase;margin-bottom:8px">Glossary</div>
+         ${_terms.map(t => `<div style="margin-bottom:10px"><span style="color:${t.color};font-weight:bold;font-size:13px;letter-spacing:1px">${t.term}</span><div style="color:#9ab;font-size:11px;line-height:1.45;margin-top:3px">${t.desc}</div></div>`).join('')}
+       </div>`
+    : '';
+  _content.innerHTML = `
+    <div style="text-align:center;padding-right:34px">
+      <div style="font-size:11px;letter-spacing:2px;color:${_rarColor};font-weight:bold;text-transform:uppercase">${_rarLabel}</div>
+      <div style="font-size:38px;line-height:1;color:${card.color || '#fff'};text-shadow:0 0 14px ${card.color || '#fff'};margin:6px 0 4px">${card.icon || '◆'}</div>
+      <div style="font-size:15px;font-weight:bold;letter-spacing:2.5px;color:${card.color || '#fff'};text-shadow:0 0 8px ${card.color || '#fff'}">${card.name || ''}</div>
+      ${_curLevel > 0 ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;margin-top:4px">LV ${_curLevel} → ${_curLevel < (card.max || 1) ? _curLevel + 1 : 'MAX'}</div>` : ''}
+    </div>
+    <div style="margin-top:14px;padding:10px 12px;background:rgba(0,0,0,0.3);border-radius:8px;font-size:13px;line-height:1.5;color:#eef">${_desc}</div>
+    ${card.flavor ? `<div style="margin-top:10px;font-size:10px;line-height:1.4;color:#778;font-style:italic;text-align:center">${card.flavor}</div>` : ''}
+    ${_termsHtml}
+  `;
+  _modal.style.display = 'flex';
+  // Force reflow then animate in
+  void _modal.offsetWidth;
+  _modal.style.opacity = '1';
+  _panel.style.transform = 'scale(1)';
+  // Hover/lift sound for tactile feedback
+  if (typeof playSfx === 'function') { playSfx('ui_hover', 0.18) || (typeof playSound === 'function' && playSound(720, 0.04, 'sine', 0.08)); }
+}
+function closeCardInfoModal() {
+  const _modal = document.getElementById('card-info-modal');
+  const _panel = document.getElementById('card-info-panel');
+  if (!_modal) return;
+  _modal.style.opacity = '0';
+  if (_panel) _panel.style.transform = 'scale(0.94)';
+  setTimeout(() => { _modal.style.display = 'none'; }, 180);
+}
+// Wire close interactions once on first reference.
+(function _wireCardInfoModalOnce() {
+  if (window._cardInfoWired) return;
+  window._cardInfoWired = true;
+  const _modal = document.getElementById('card-info-modal');
+  const _btn = document.getElementById('btn-card-info-close');
+  if (_btn) {
+    const _h = (e) => { e.preventDefault(); e.stopPropagation(); closeCardInfoModal(); };
+    _btn.addEventListener('click', _h);
+    _btn.addEventListener('touchend', _h, { passive: false });
+  }
+  if (_modal) {
+    // Click on the dim overlay (but not on the panel) closes
+    _modal.addEventListener('click', (e) => { if (e.target === _modal) closeCardInfoModal(); });
+    _modal.addEventListener('touchend', (e) => { if (e.target === _modal) { e.preventDefault(); closeCardInfoModal(); } }, { passive: false });
+  }
+  // Escape key closes
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const m = document.getElementById('card-info-modal');
+      if (m && m.style.display === 'flex') closeCardInfoModal();
+    }
+  });
+})();
+
 function _renderShopCards() {
   const list = document.getElementById('shop-cards');
   if (!list || !shopCards) return;
@@ -2754,66 +2839,45 @@ function _renderShopCards() {
         break;
       }
     }
-    // Build glossary terms for the back of this card
+    // Glossary terms are still computed for the modal — surface a ? badge on
+    // the card if any exist so the player can tap for the details.
     const _glossaryTerms = _getCardGlossaryTerms(u, owned);
-    let _backHtml = '';
-    if (_glossaryTerms.length > 0) {
-      _backHtml = _glossaryTerms.map(t =>
-        `<div style="margin-bottom:8px"><span style="color:${t.color};font-weight:bold;font-size:12px;letter-spacing:1px">${t.term}</span><div style="color:#9ab;font-size:11px;line-height:1.35;margin-top:2px">${t.desc}</div></div>`
-      ).join('');
-    } else {
-      _backHtml = '<div style="color:#556;font-size:11px;text-align:center;padding:20px 0">No special terms</div>';
-    }
-    // Front face
-    const _frontId = 'card-front-' + ci;
-    const _backId = 'card-back-' + ci;
+    const _hasInfo = _glossaryTerms.length > 0 || (u.flavor && u.flavor.length > 0);
     card.innerHTML = `
-      <div id="${_frontId}" style="display:flex;flex-direction:column;gap:4px">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:2px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${_rarityLabel}</span>
-          <span style="font-size:9px;letter-spacing:1px;color:#889">MOD ${String(ci+1).padStart(2,'0')}</span>
-        </div>
-        <div style="text-align:center;margin:4px 0">
-          <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
-        </div>
-        <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
-        <div style="font-size:12px;color:#eef;line-height:1.4;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
-        ${owned ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
-        ${_replacesHtml}
-        <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
-          <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
-        </div>
-        ${_glossaryTerms.length > 0 ? '<div style="font-size:8px;letter-spacing:2px;color:#4aa;text-align:center;margin-top:4px">TAP FOR INFO</div>' : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:11px;font-weight:bold;letter-spacing:1.5px;color:${rarityColor};text-transform:uppercase;padding:2px 6px;border-radius:3px;background:${_rarityBg};border:1px solid ${rarityColor}44">${_rarityLabel}</span>
+        <span style="font-size:9px;letter-spacing:1px;color:#889">MOD ${String(ci+1).padStart(2,'0')}</span>
       </div>
-      <div id="${_backId}" style="display:none;flex-direction:column;gap:2px">
-        <div style="font-size:10px;font-weight:bold;letter-spacing:2px;color:#4aa;margin-bottom:6px;text-align:center">GLOSSARY</div>
-        <div style="overflow-y:auto;flex:1">${_backHtml}</div>
-        <div style="font-size:8px;letter-spacing:2px;color:#4aa;text-align:center;margin-top:6px;padding-top:5px;border-top:1px solid rgba(0,255,255,0.15)">TAP TO FLIP BACK</div>
+      <div style="text-align:center;margin:4px 0">
+        <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
       </div>
+      <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
+      <div style="font-size:12px;color:#eef;line-height:1.4;text-align:center;flex:1">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
+      ${owned ? `<div style="font-size:10px;letter-spacing:1px;color:#0cf;text-align:center">LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}</div>` : ''}
+      ${_replacesHtml}
+      <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
+        <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
+      </div>
+      ${_hasInfo ? `<button class="card-info-badge" data-card-id="${u.id}" aria-label="More info" style="position:absolute;top:8px;right:8px;width:32px;height:32px;border-radius:50%;background:#fc0;color:#000;border:2px solid #000;font-size:18px;font-weight:bold;line-height:1;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;box-shadow:0 0 10px rgba(255,200,0,0.6),inset 0 1px 2px rgba(255,255,255,0.4);z-index:3;padding:0">?</button>` : ''}
     `;
-    // Flip behavior: first tap = flip to glossary, second tap = flip back + select
-    let _isFlipped = false;
-    const _flipHandler = (ev) => {
+    // Card body click selects (no flip). The ? badge stops propagation and opens the modal.
+    const _selectHandler = (ev) => {
       ev.preventDefault(); ev.stopPropagation();
-      const front = card.querySelector('#' + _frontId);
-      const back = card.querySelector('#' + _backId);
-      if (!_isFlipped && _glossaryTerms.length > 0) {
-        // Flip to back
-        _isFlipped = true;
-        if (front) front.style.display = 'none';
-        if (back) back.style.display = 'flex';
-        card.style.borderColor = '#4aa';
-      } else {
-        // Flip to front + select if affordable
-        _isFlipped = false;
-        if (front) front.style.display = 'flex';
-        if (back) back.style.display = 'none';
-        card.style.borderColor = _synBorder;
-        if (canAfford) selectShopCard(u.id);
-      }
+      if (canAfford) selectShopCard(u.id);
     };
-    card.addEventListener('click', _flipHandler);
-    card.addEventListener('touchend', _flipHandler, { passive: false });
+    card.addEventListener('click', _selectHandler);
+    card.addEventListener('touchend', _selectHandler, { passive: false });
+    if (_hasInfo) {
+      const _badge = card.querySelector('.card-info-badge');
+      if (_badge) {
+        const _badgeHandler = (ev) => {
+          ev.preventDefault(); ev.stopPropagation(); // don't trigger card select
+          openCardInfoModal(u, owned);
+        };
+        _badge.addEventListener('click', _badgeHandler);
+        _badge.addEventListener('touchend', _badgeHandler, { passive: false });
+      }
+    }
     wrap.appendChild(card);
     list.appendChild(wrap);
   }
