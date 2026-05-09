@@ -4648,6 +4648,7 @@ let trenchSection = 0;
 let trenchSections = []; // { x (px), width, enemyCount, types, spawned, cleared, isBoss, isDark }
 let trenchFadeAlpha = 0;
 let trenchFadeDir = 0;     // 1=fading out, -1=fading in, 0=none
+let _arrivalPendingDir = null; // entryDir captured at teleport, fired when fade-in is past peak
 let _trenchPrevSection = 0;
 let _trenchPendingNext = -1;
 let _checkpointRoomActive = false; // true while player is in the checkpoint safe room (after boss)
@@ -5722,11 +5723,9 @@ function updateTrenchFade() {
       trenchFadeDir = -1;
       // Keep power-ups, orbitals, and element effects between sections
       // (persist until timer expires).
-      // Arrival ceremony for the local non-host player using the new section's entryDir
+      // Defer the arrival ceremony until fade-in is past peak (handled below).
       const _arrSec = trenchSections[trenchSection];
-      const _arrDir = (_arrSec && _arrSec.entryDir) || 'W';
-      const _arrLp = getLocalPlayer();
-      if (_arrLp && _arrLp.alive) triggerArrivalCeremony(_arrLp, _arrDir);
+      _arrivalPendingDir = (_arrSec && _arrSec.entryDir) || 'W';
     }
   }
   if (trenchFadeDir === 1) {
@@ -5772,10 +5771,10 @@ function updateTrenchFade() {
           bullets = bullets.filter(b => b.owner !== 'zombie');
           spawnTrenchSection(newIdx);
           // ---- ARRIVAL CEREMONY ----
-          // Closing portal behind each player + forward sparks + brief camera reveal.
-          for (const p of players) {
-            if (p.alive) triggerArrivalCeremony(p, _entryD);
-          }
+          // Defer the ceremony until the fade-in is mostly complete so the
+          // particles are fresh when the player can actually see them. Firing
+          // at teleport (under fade alpha=1) wastes the first 12 frames.
+          _arrivalPendingDir = _entryD;
           // Store door reward — it spawns AFTER the player clears this section
           if (window._pendingDoorReward) {
             _pendingClearReward = window._pendingDoorReward;
@@ -5794,6 +5793,15 @@ function updateTrenchFade() {
     }
   } else if (trenchFadeDir === -1) {
     trenchFadeAlpha -= 1/12;
+    // Fire the deferred arrival ceremony when the screen is mostly visible
+    // (alpha < 0.5). Particles spawn fresh and play out as the fade completes.
+    if (_arrivalPendingDir !== null && trenchFadeAlpha < 0.5) {
+      const _dir = _arrivalPendingDir;
+      _arrivalPendingDir = null;
+      for (const p of players) {
+        if (p.alive) triggerArrivalCeremony(p, _dir);
+      }
+    }
     if (trenchFadeAlpha <= 0) {
       trenchFadeAlpha = 0;
       trenchFadeDir = 0;
