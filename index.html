@@ -8050,7 +8050,14 @@ let cameraZoom = 1.0;
 let cameraZoomTarget = 1.0;
 let cameraZoomReleaseMs = 0;
 function triggerCameraZoom(target, durationMs) {
-  cameraZoomTarget = target;
+  // Keep the more intense zoom if multiple triggers fire close together —
+  // intensity is distance from 1.0. Without this, a mild zoom (e.g. arrival
+  // ceremony 0.92) would clobber a strong concurrent one (boss reveal 0.78).
+  const _curIntensity = Math.abs(cameraZoomTarget - 1.0);
+  const _newIntensity = Math.abs(target - 1.0);
+  if (_newIntensity >= _curIntensity || cameraZoomReleaseMs <= 0) {
+    cameraZoomTarget = target;
+  }
   cameraZoomReleaseMs = Math.max(cameraZoomReleaseMs, durationMs);
 }
 
@@ -8094,9 +8101,10 @@ function triggerArrivalCeremony(p, entryDir) {
       life: 18, maxLife: 18, size: 2, color: '#aef', type: 'spark',
     });
   }
-  // Local-player camera + audio. Brief zoom-out reveal (0.92 -> 1.0 over 600ms)
+  // Local-player camera + audio. Wide zoom-out reveal (0.86 for ~1.1s back to
+  // 1.0). 8% wasn't readable through the fade-in — 14% lands clearly.
   if (p === getLocalPlayer()) {
-    triggerCameraZoom(0.92, 600);
+    triggerCameraZoom(0.86, 1100);
     screenShake.intensity = Math.max(screenShake.intensity, 3);
     playSound(140, 0.18, 'sawtooth', 0.12);
     playSound(380, 0.10, 'square', 0.08);
