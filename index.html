@@ -20461,7 +20461,10 @@ function update() {
                       const _rdx = z.x - _sp.x, _rdy = z.y - _sp.y;
                       if (_rdx*_rdx + _rdy*_rdy < _rodR2) {
                         const _rodDmg = Math.floor(_dmg * 0.35);
-                        damageZombie(z, _rodDmg, 0, 0);
+                        // silent=true: the rod-to-enemy lightning bolt + sparks
+                        // below already cover the visual; per-hit hitflash here
+                        // would double-count and contribute to the deadshot freeze.
+                        damageZombie(z, _rodDmg, 0, 0, true);
                         applyCharged(z);
                         // Lightning bolt from rod to enemy
                         particles.push({ x:_sp.x, y:_sp.y, vx:0, vy:0, life:14, maxLife:14,
@@ -20497,7 +20500,11 @@ function update() {
                       if (!bZ) break;
                       _chainedAny = true;
                       const chainDmg = Math.floor(_dmg * 0.4);
-                      damageZombie(bZ, chainDmg, 0, 0);
+                      // silent=true: the chain bolt VFX (lightning particle +
+                      // bright core + 6 escape sparks below) is the visual.
+                      // Without this, deadshot hitting CHARGED clusters spawned
+                      // ~25 hitflash particles per chain jump.
+                      damageZombie(bZ, chainDmg, 0, 0, true);
                       if (arcLv >= 2) applyCharged(bZ);
                       // Electric bolt ESCAPING from the charged body toward target
                       const _escA = Math.atan2(bZ.y-lastZ.y, bZ.x-lastZ.x);
@@ -28403,16 +28410,31 @@ function render() {
         const _hbPeriod = 720;
         const _hbT = performance.now() % _hbPeriod;
         let _hbPulse = 0;
-        if (_hbT < 90) _hbPulse = (1 - _hbT / 90) * 0.32;            // lub
-        else if (_hbT > 150 && _hbT < 230) _hbPulse = (1 - (_hbT - 150) / 80) * 0.22; // dub
+        let _hbBeat = 0; // 0=between, 1=lub, 2=dub
+        if (_hbT < 90) { _hbPulse = (1 - _hbT / 90) * 0.42; _hbBeat = 1; }            // lub (intensified)
+        else if (_hbT > 150 && _hbT < 230) { _hbPulse = (1 - (_hbT - 150) / 80) * 0.30; _hbBeat = 2; } // dub
         if (_hbPulse > 0) {
           ctx.fillStyle = `rgba(255,30,30,${_hbPulse})`;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           // Edge throb: stronger red vignette synced to the beat
           const _hbg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width*0.25, canvas.width/2, canvas.height/2, canvas.width*0.75);
           _hbg.addColorStop(0, 'rgba(0,0,0,0)');
-          _hbg.addColorStop(1, `rgba(180,0,0,${_hbPulse * 1.8})`);
+          _hbg.addColorStop(1, `rgba(180,0,0,${_hbPulse * 2.0})`);
           ctx.fillStyle = _hbg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        // Audible heartbeat thump — fires once per lub and once per dub. The
+        // visual was strong on its own but felt silent; a body-thump pair sells
+        // the "you are dying" beat. Volumes are loud (0.45 / 0.30) so the
+        // heartbeat reads even with other gunfire happening.
+        if (_hbBeat !== window._hbLastBeat) {
+          window._hbLastBeat = _hbBeat;
+          if (_hbBeat === 1 && typeof playSound === 'function') {
+            playSound(60, 0.22, 'sine', 0.45);      // chest thump (lub)
+            playSound(120, 0.10, 'triangle', 0.22);  // overtone
+          } else if (_hbBeat === 2 && typeof playSound === 'function') {
+            playSound(55, 0.16, 'sine', 0.32);      // softer thump (dub)
+            playSound(110, 0.07, 'triangle', 0.14);
+          }
         }
         // Audio muffle: TRANSIENT shock on entering critical HP, not a sustained
         // state. Slam to 500Hz immediately, then exponentially ramp back to
