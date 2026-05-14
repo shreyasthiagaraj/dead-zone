@@ -19550,67 +19550,34 @@ function update() {
           // Detonate overheated enemies
           if (isHost) { for (const fz of zombies) { if (fz.hp<=0||fz._overheat<=0) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<fpR) { damageZombie(fz, 30+fz._overheat*12, 0, 0); fz._overheat=0; fz._overheatTimer=0; for(let fi=0;fi<12;fi++){const fa=Math.random()*Math.PI*2,fs=3+Math.random()*4;particles.push({x:fz.x,y:fz.y,vx:Math.cos(fa)*fs,vy:Math.sin(fa)*fs,life:16,maxLife:16,size:3+Math.random()*3,color:'#f80',type:'explosion'});} } } }
         }
-        // ---- COLD FRONT: massive blizzard cone AHEAD of dash endpoint ----
+        // ---- COLD FRONT: drifting gas cloud ahead of dash endpoint ----
+        // Modeled on MIASMA: a moving emitter that continuously spawns small
+        // white cloud puffs + sparkles each frame as it drifts. Short range.
         if (_rm.cryoWake > 0) {
           const cfDir = lp.dashDirX !== undefined ? Math.atan2(lp.dashDirY||0, lp.dashDirX||1) : lp.angle;
-          // 3x range so the blizzard actually FLOWS out across the room
-          const cfR = _rm.cryoWake >= 2 ? 540 : 420;
-          const cfHalfAngle = _rm.cryoWake >= 2 ? Math.PI * 0.55 : Math.PI * 0.45;
-          // ---- SNOW STORM ----
-          // Small focused snow flurry traveling along the cone. Many small
-          // white cloud puffs + twinkling sparkles instead of huge ellipses.
-          // Cone of small drifting cloud puffs
-          for (let i = 0; i < 28; i++) {
-            const _a = cfDir + (Math.random() - 0.5) * cfHalfAngle;
-            const _d = 24 + Math.random() * cfR * 0.9;
-            const _spread = (Math.random() - 0.5) * 1.2;
-            particles.push({
-              x: lp.x + Math.cos(_a) * _d, y: lp.y + Math.sin(_a) * _d,
-              vx: Math.cos(cfDir) * (2.2 + Math.random() * 1.6) + Math.cos(cfDir + Math.PI/2) * _spread,
-              vy: Math.sin(cfDir) * (2.2 + Math.random() * 1.6) + Math.sin(cfDir + Math.PI/2) * _spread,
-              life: 32 + Math.floor(Math.random() * 18), maxLife: 50,
-              size: 4 + Math.random() * 4,
-              color: Math.random() > 0.4 ? '#fff' : '#cff', type: 'smoke',
-              _smokeAlpha: 0.35 + Math.random() * 0.25,
-            });
+          const _cfDx = Math.cos(cfDir), _cfDy = Math.sin(cfDir);
+          const cfR = _rm.cryoWake >= 2 ? 65 : 50;
+          const cfMaxTravel = _rm.cryoWake >= 2 ? 130 : 95;
+          const cfLifetime = _rm.cryoWake >= 2 ? 95 : 75;
+          window._coldFronts = window._coldFronts || [];
+          window._coldFronts.push({
+            x: lp.x + _cfDx * 15, y: lp.y + _cfDy * 15,
+            vx: _cfDx * 1.3, vy: _cfDy * 1.3,
+            dirX: _cfDx, dirY: _cfDy,
+            travel: 0, maxTravel: cfMaxTravel,
+            timer: cfLifetime, maxTimer: cfLifetime,
+            r: cfR, lv: _rm.cryoWake,
+            _hitTick: 0,
+          });
+          // Origin puff — small launch burst so the cloud has presence at spawn
+          for (let i = 0; i < 6; i++) {
+            const sa = cfDir + (Math.random()-0.5)*0.8;
+            particles.push({ x: lp.x, y: lp.y,
+              vx: Math.cos(sa)*(0.8+Math.random()*1.2), vy: Math.sin(sa)*(0.8+Math.random()*1.2),
+              life: 24+Math.random()*10, maxLife: 34, size: 4+Math.random()*3,
+              color: '#fff', type: 'smoke', _smokeAlpha: 0.4+Math.random()*0.15 });
           }
-          // Snowflake sparkles — bright twinkling pixels swirling through the gas
-          for (let i = 0; i < 22; i++) {
-            const _a = cfDir + (Math.random() - 0.5) * cfHalfAngle;
-            const _d = 20 + Math.random() * cfR * 0.95;
-            const _swirl = (Math.random() - 0.5) * 2.5;
-            particles.push({
-              x: lp.x + Math.cos(_a) * _d, y: lp.y + Math.sin(_a) * _d,
-              vx: Math.cos(cfDir) * (3 + Math.random() * 2) + Math.cos(cfDir + Math.PI/2) * _swirl,
-              vy: Math.sin(cfDir) * (3 + Math.random() * 2) + Math.sin(cfDir + Math.PI/2) * _swirl,
-              life: 24 + Math.floor(Math.random() * 12), maxLife: 36,
-              size: 1.5 + Math.random() * 1.5,
-              color: Math.random() > 0.5 ? '#fff' : '#cff', type: 'spark', _pixel: true,
-            });
-          }
-          // Light frost trail on the ground — small subtle decals
-          for (let i = 0; i < 5; i++) {
-            const da = cfDir + (Math.random() - 0.5) * cfHalfAngle * 0.8;
-            const dd = 40 + Math.random() * cfR * 0.7;
-            decals.push({ x: lp.x + Math.cos(da) * dd, y: lp.y + Math.sin(da) * dd, size: 8 + Math.random() * 6, alpha: 0.18, color: '#9cf', _fade: 0.002 });
-          }
-          playSound(900, 0.18, 'sine', 0.08); playSound(500, 0.16, 'sine', 0.1); playSound(1400, 0.10, 'square', 0.04);
-          // Apply chill/freeze to enemies in the (now much larger) blizzard cone
-          if (isHost) { for (const fz of zombies) { if (fz.hp<=0) continue;
-            const fdx=fz.x-lp.x, fdy=fz.y-lp.y, fd=Math.sqrt(fdx*fdx+fdy*fdy);
-            if (fd>cfR) continue;
-            let da = Math.atan2(fdy,fdx) - cfDir; while(da>Math.PI)da-=Math.PI*2; while(da<-Math.PI)da+=Math.PI*2;
-            if (Math.abs(da) > cfHalfAngle) continue;
-            const closeness = 1 - fd/cfR;
-            if (_rm.cryoWake >= 2 && closeness > 0.5) {
-              // Lv2: center enemies instantly FROZEN
-              applyChill(fz, 5); fz._frozen = true; fz._frozenTimer = Math.max(fz._frozenTimer||0, 150);
-            } else {
-              const stacks = closeness > 0.5 ? 3 : (closeness > 0.2 ? 2 : 1);
-              applyChill(fz, stacks);
-            }
-            damageZombie(fz, Math.floor(20 + closeness * 15), 0, 0, true);
-          } }
+          playSound(900, 0.15, 'sine', 0.07); playSound(500, 0.12, 'sine', 0.08);
         }
         // ---- BLIGHT ZONE: corruption pool at dash ENDPOINT ----
         if (_rm.glitchWake > 0) {
@@ -20117,6 +20084,76 @@ function update() {
           }
           window._decoys.splice(_di, 1);
         }
+      }
+    }
+    // COLD FRONT: drifting gas clouds — emit smoke + sparkles each frame, apply chill
+    if (window._coldFronts) {
+      for (let _ci = window._coldFronts.length - 1; _ci >= 0; _ci--) {
+        const cf = window._coldFronts[_ci];
+        cf.timer--;
+        // Drift forward while still travelling
+        if (cf.travel < cf.maxTravel) {
+          const _step = Math.hypot(cf.vx, cf.vy);
+          if (!obstacleCollision(cf.x + cf.vx, cf.y + cf.vy, 8, true)) {
+            cf.x += cf.vx; cf.y += cf.vy;
+            cf.travel += _step;
+          } else {
+            cf.travel = cf.maxTravel; // stop on wall
+          }
+        }
+        const _alive = cf.timer > 0;
+        const _fadeT = Math.max(0, cf.timer / cf.maxTimer);
+        // Gas body — small white smoke puffs filling the cloud volume
+        if (_alive) {
+          const _puffs = 3;
+          for (let i = 0; i < _puffs; i++) {
+            const fa = Math.random()*Math.PI*2, fr = Math.random()*cf.r;
+            particles.push({
+              x: cf.x + Math.cos(fa)*fr, y: cf.y + Math.sin(fa)*fr,
+              vx: cf.vx*0.25 + (Math.random()-0.5)*0.6,
+              vy: cf.vy*0.25 + (Math.random()-0.5)*0.5 - 0.2,
+              life: 26+Math.random()*14, maxLife: 40,
+              size: 4 + Math.random()*4,
+              color: '#fff', type: 'smoke',
+              _smokeAlpha: (0.32 + Math.random()*0.18) * _fadeT,
+            });
+          }
+          // Snowflake sparkles — bright twinkling pixels
+          if (gameTime % 2 === 0) {
+            const sa = Math.random()*Math.PI*2, sr = Math.random()*cf.r*0.9;
+            particles.push({
+              x: cf.x + Math.cos(sa)*sr, y: cf.y + Math.sin(sa)*sr,
+              vx: (Math.random()-0.5)*1.2,
+              vy: -0.3 - Math.random()*0.6,
+              life: 16+Math.random()*8, maxLife: 24,
+              size: 1.2 + Math.random()*1.0,
+              color: Math.random()>0.4 ? '#fff' : '#cff', type: 'spark', _pixel: true,
+            });
+          }
+          // Faint ground frost decal trail
+          if (gameTime % 8 === 0) {
+            decals.push({ x: cf.x+(Math.random()-0.5)*cf.r*0.5, y: cf.y+(Math.random()-0.5)*cf.r*0.5,
+              size: 6+Math.random()*5, alpha: 0.14*_fadeT, color: '#bdf', _fade: 0.002 });
+          }
+        }
+        // Apply chill inside the cloud — host authoritative, every 6 frames
+        if (isHost && cf._hitTick % 6 === 0) {
+          for (const fz of zombies) {
+            if (fz.hp <= 0) continue;
+            const dx = fz.x - cf.x, dy = fz.y - cf.y;
+            if (dx*dx + dy*dy > cf.r*cf.r) continue;
+            if (cf.lv >= 2) {
+              applyChill(fz, 3);
+              // Lv2: center → freeze if lingering long enough
+              if (cf.timer < cf.maxTimer * 0.6) { fz._frozen = true; fz._frozenTimer = Math.max(fz._frozenTimer||0, 120); }
+            } else {
+              applyChill(fz, 2);
+            }
+            damageZombie(fz, 6, 0, 0, true);
+          }
+        }
+        cf._hitTick++;
+        if (cf.timer <= 0) window._coldFronts.splice(_ci, 1);
       }
     }
     // ---- DOMAIN AMBIENT PARTICLES ----
