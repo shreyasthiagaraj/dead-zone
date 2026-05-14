@@ -16838,33 +16838,25 @@ function _runComboStep(p, def, step, idx) {
     // cone of effect widening behind it). The hitbox is a narrow forward
     // cone — only enemies in the spike or a bit to either side get hit.
     const _tx = p.x + c * range, _ty = p.y + s * range;
-    // The arrowhead's origin is at the player; size = forward range. Its
-    // tip lands at (_tx, _ty), base is near the player.
+    // Spike starts IN FRONT of the player (not at the player center).
+    const _startOff = PLAYER_RADIUS + 14;
+    const _arrowLen = range - _startOff;
     particles.push({
-      x: p.x + c * 4, y: p.y + s * 4,
-      vx: c * 1.2, vy: s * 1.2, // slight forward drift while it fades
-      life: 14, maxLife: 14, size: range - 8,
-      color: mainCol, type: 'arrowhead', _angle: a
-    });
-    // Echo arrowhead (slightly behind, fading faster) for motion-blur depth
-    particles.push({
-      x: p.x + c * 4, y: p.y + s * 4,
-      vx: c * 0.8, vy: s * 0.8,
-      life: 9, maxLife: 9, size: range * 0.88,
+      x: p.x + c * _startOff, y: p.y + s * _startOff,
+      vx: c * 0.6, vy: s * 0.6, // slight forward drift while it fades
+      life: 14, maxLife: 14, size: _arrowLen,
       color: '#fff', type: 'arrowhead', _angle: a
     });
-    // Single bright forward spear streak running through the center of the
-    // arrowhead so the sharp-tip read is unmistakable
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9, maxLife: 9, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-    // Smoke trail behind the cone (kick-off plume, NOT a long beam)
-    for (let i = 0; i < 8; i++) {
-      const _ka = a + Math.PI + (Math.random()-0.5)*1.4;
-      const _ks = 1 + Math.random()*2.4;
+    // Heavier smoke plume behind the player — visible kick-off cloud
+    for (let i = 0; i < 14; i++) {
+      const _ka = a + Math.PI + (Math.random()-0.5)*1.6;
+      const _ks = 1.4 + Math.random()*2.8;
       particles.push({
-        x: p.x + Math.cos(_ka)*6, y: p.y + Math.sin(_ka)*6,
+        x: p.x + Math.cos(_ka)*(6 + Math.random()*8),
+        y: p.y + Math.sin(_ka)*(6 + Math.random()*8),
         vx: Math.cos(_ka)*_ks, vy: Math.sin(_ka)*_ks,
-        life: 12 + Math.floor(Math.random()*6), maxLife: 18,
-        size: 4 + Math.random()*3, color: '#444', type: 'smoke', _smokeAlpha: 0.35
+        life: 18 + Math.floor(Math.random()*8), maxLife: 26,
+        size: 6 + Math.random()*4, color: '#888', type: 'smoke', _smokeAlpha: 0.55
       });
     }
     // Tight forward-flying sparks concentrated near the TIP
@@ -28681,48 +28673,32 @@ function render() {
         _strokeArc(1.5, 1,  '#fff');   // bright core
         ctx.globalAlpha = 1;
       } else if(p.type==='arrowhead'){
-        // RIPPER finisher cone shape — filled forward triangle with sharp tip.
-        // Rendered in world space, rotated by p._angle. p.size = total length.
+        // RIPPER finisher: slim forward spike, white core only, gradient
+        // alpha (transparent near the player, opaque at the tip). Particle
+        // is spawned IN FRONT of the player so the spike starts there.
         const _alpha = p.life / p.maxLife;
         const _len = p.size;
-        const _baseW = _len * 0.55; // half-width of the back base
+        const _baseW = 7; // narrow base (no wider cone)
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p._angle || 0);
-        // Outer glow layer (wide + dim)
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = _alpha * 0.35;
+        // Linear gradient along the spike — 0 alpha at root, opaque at tip
+        const _grad = ctx.createLinearGradient(0, 0, _len, 0);
+        _grad.addColorStop(0,    'rgba(255,255,255,0)');
+        _grad.addColorStop(0.45, 'rgba(255,255,255,' + (_alpha * 0.35).toFixed(3) + ')');
+        _grad.addColorStop(0.85, 'rgba(255,255,255,' + (_alpha * 0.85).toFixed(3) + ')');
+        _grad.addColorStop(1,    'rgba(255,255,255,' + _alpha.toFixed(3) + ')');
+        ctx.fillStyle = _grad;
         ctx.beginPath();
-        ctx.moveTo(_len * 1.05, 0);                 // sharp tip (out a hair past nominal length)
-        ctx.lineTo(-2, -_baseW * 1.15);             // back-left (overshoot for soft edges)
-        ctx.lineTo(-_len * 0.18, 0);                // tail concave inward (more arrowhead-like)
-        ctx.lineTo(-2, _baseW * 1.15);              // back-right
+        ctx.moveTo(_len, 0);     // sharp forward tip
+        ctx.lineTo(0, -_baseW);  // narrow back-left
+        ctx.lineTo(0, _baseW);   // narrow back-right
         ctx.closePath();
         ctx.fill();
-        // Mid color layer
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = _alpha * 0.65;
-        ctx.beginPath();
-        ctx.moveTo(_len, 0);
-        ctx.lineTo(0, -_baseW);
-        ctx.lineTo(-_len * 0.12, 0);
-        ctx.lineTo(0, _baseW);
-        ctx.closePath();
-        ctx.fill();
-        // Inner white core — narrow forward spike
+        // Bright tip pinpoint
         ctx.fillStyle = '#fff';
         ctx.globalAlpha = _alpha;
-        ctx.beginPath();
-        ctx.moveTo(_len * 0.96, 0);
-        ctx.lineTo(_len * 0.15, -_baseW * 0.32);
-        ctx.lineTo(0, 0);
-        ctx.lineTo(_len * 0.15, _baseW * 0.32);
-        ctx.closePath();
-        ctx.fill();
-        // Sharp tip dot — extra bright pinpoint
-        ctx.fillStyle = '#fff';
-        ctx.globalAlpha = _alpha;
-        ctx.beginPath(); ctx.arc(_len, 0, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(_len, 0, 2.5, 0, Math.PI*2); ctx.fill();
         ctx.restore();
         ctx.globalAlpha = 1;
       } else if(p.type==='afterimage'){
