@@ -1072,6 +1072,16 @@ const SPECIAL_DEFS = {
 let selectedSpecial = localStorage.getItem('necrowave_special') || 'beacon';
 if (!SPECIAL_DEFS[selectedSpecial]) selectedSpecial = 'beacon';
 
+// ---- PRIMARY WEAPON SYSTEM ----
+// Player picks a primary weapon in the Armory before starting. Default is the
+// hitscan SIDEARM (pistol). RIPPER is the close-quarters cone-slash melee.
+const PRIMARY_WEAPON_OPTIONS = {
+  pistol: { id:'pistol', name:'SIDEARM', icon:'⌖', color:'#ff0', desc:'Hitscan pistol — reliable mid-range force blast' },
+  ripper: { id:'ripper', name:'RIPPER',  icon:'⚔', color:'#4ff', desc:'Close-quarters cone slash + forward lunge — cleaves multiple targets' },
+};
+let selectedPrimary = localStorage.getItem('necrowave_primary') || 'pistol';
+if (!PRIMARY_WEAPON_OPTIONS[selectedPrimary]) selectedPrimary = 'pistol';
+
 let _shellNearTerminal = null;
 let _shellTransitioning = false;
 let _shellFadeAlpha = 0;
@@ -8493,7 +8503,7 @@ function createPlayerObj(id, name, color, x, y) {
   return {
     id, name, color, x, y, vx: 0, vy: 0, angle: 0,
     hp: baseHp, maxHp: baseHp, speed: baseSpeed,
-    weapons: [createWeapon('pistol'), createWeapon('ripper')], currentWeapon: 0,
+    weapons: [createWeapon(selectedPrimary || 'pistol')], currentWeapon: 0,
     dashCooldown: 0, dashTimer: 0, dashAngle: 0, _dashCharges: 1, _dashChargesMax: 1, _beaconCooldown: 0,
     _spikeCharges: 2, _spikeChargesMax: 2, _spikeRecharge: 0,
     invincible: 0, damageFlash: 0, alive: true,
@@ -11102,6 +11112,50 @@ function openArmory() {
     grid.appendChild(card);
   }
   el.appendChild(grid);
+  // ---- PRIMARY WEAPON SECTION ----
+  const pHdr = document.createElement('div');
+  pHdr.style.cssText = 'width:100%;max-width:640px;margin:14px auto 0;text-align:center';
+  pHdr.innerHTML = '<div style="color:#666;font-size:10px;letter-spacing:2px;margin-bottom:10px;border-top:1px solid #333;padding-top:14px">PRIMARY WEAPON</div>';
+  el.appendChild(pHdr);
+  const pGrid = document.createElement('div');
+  pGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;width:100%;max-width:640px;padding:0 0 40px 0';
+  for (const pk in PRIMARY_WEAPON_OPTIONS) {
+    const pw = PRIMARY_WEAPON_OPTIONS[pk];
+    const isP = selectedPrimary === pk;
+    const pCard = document.createElement('button');
+    pCard.style.cssText = `
+      padding:14px 10px;border:2px solid ${isP ? pw.color : '#333'};border-radius:10px;
+      background:${isP ? 'rgba(60,60,80,0.2)' : 'rgba(3,3,12,0.7)'};
+      box-shadow:${isP ? '0 0 20px '+pw.color+'55' : 'none'};
+      color:#fff;font-family:'Courier New',monospace;cursor:pointer;text-align:center;
+      display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.2s;
+    `;
+    pCard.innerHTML = `
+      <div style="font-size:28px;text-shadow:0 0 12px ${pw.color}">${pw.icon}</div>
+      <div style="font-size:13px;font-weight:bold;color:${pw.color};letter-spacing:2px">${pw.name}</div>
+      <div style="font-size:9px;color:#888;line-height:1.3">${pw.desc}</div>
+      ${isP ? '<div style="font-size:9px;color:#0f0;letter-spacing:2px;margin-top:4px">EQUIPPED</div>' : ''}
+    `;
+    const _selectPrim = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      selectedPrimary = pk;
+      try { localStorage.setItem('necrowave_primary', pk); } catch(e){}
+      // Swap the current player's first weapon immediately so the choice takes effect
+      // without requiring a restart — sized to existing inventory.
+      const lp = getLocalPlayer();
+      if (lp && lp.weapons && lp.weapons.length > 0) {
+        lp.weapons[0] = createWeapon(pk);
+        if (lp.currentWeapon >= lp.weapons.length) lp.currentWeapon = 0;
+      }
+      playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1);
+      closeArmory();
+      if (lp) addFloatingText(lp.x, lp.y - 40, `${pw.icon} ${pw.name} EQUIPPED`, pw.color);
+    };
+    pCard.addEventListener('click', _selectPrim);
+    pCard.addEventListener('touchend', _selectPrim, { passive: false });
+    pGrid.appendChild(pCard);
+  }
+  el.appendChild(pGrid);
 }
 let _armoryCooldown = 0; // prevents re-open while still standing on terminal
 function closeArmory() {
