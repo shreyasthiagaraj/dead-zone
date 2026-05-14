@@ -16802,16 +16802,14 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // 1. FORWARD LUNGE — fast opener, light forward step + narrow thrust
-  { kind:'forwardlunge', range: 145, cone: Math.PI * 35/180, damage: 10, knockback: 32, stagger: 24, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 22 },
-  // 2. ARC SWIPE — 180 deg coverage, the widest sweep of the combo
-  { kind:'arcswipe',     range: 130, cone: Math.PI,          damage: 14, knockback: 44, stagger: 32, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC' },
-  // 3. UPPER CUT — narrow rising slash, launches enemies
-  { kind:'uppercut',     range: 120, cone: Math.PI * 75/180, damage: 18, knockback: 60, stagger: 42, cooldown: 130, color:'#0ff', tone:1080, dir: -1, label:'UPPERCUT' },
-  // 4. DOWNWARD SMASH — overhead slam with ground impact + heavy stagger
-  { kind:'smash',        range: 125, cone: Math.PI * 95/180, damage: 24, knockback: 55, stagger: 60, cooldown: 180, color:'#0ff', tone: 380, dir:  1, label:'SMASH' },
-  // 5. FINISHER LUNGE — sharp-tip forward cone, massive knockback
-  { kind:'lungestrike',  range: 240, cone: Math.PI * 50/180, damage: 34, knockback:260, stagger:110, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'FINISHER!', finisher: true, lungeDistance: 32 },
+  // 1. FORWARD LUNGE — strong piercing thrust, big forward commit
+  { kind:'forwardlunge', range: 210, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 150, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',       lungeDistance: 90 },
+  // 2. ARC SWIPE — 180 deg L->R sweep
+  { kind:'arcswipe',     range: 135, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 150, color:'#4ff', tone: 760, dir:  1, label:'ARC' },
+  // 3. REVERSE ARC SWIPE — 180 deg R->L sweep (mirror)
+  { kind:'arcswipe',     range: 140, cone: Math.PI,          damage: 22, knockback: 58, stagger: 48, cooldown: 160, color:'#0ff', tone: 700, dir: -1, label:'REVERSE ARC' },
+  // 4. FINISHER LUNGE — sharp-tip forward cone, massive knockback
+  { kind:'lungestrike',  range: 240, cone: Math.PI * 50/180, damage: 38, knockback:280, stagger:120, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'FINISHER!',   finisher: true, lungeDistance: 36 },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16852,6 +16850,18 @@ function _swingMelee(p, def) {
   p._rSwingFinisher = !!step.finisher;
   p._rSwingFirstBig = !!step.firstBig;
   p._rSwingRange = step.range;
+  // Capture explicit start/end angles for the swing animation. The renderer
+  // interpolates between these with no lerp catch-up — clean, decisive
+  // motion that lingers at the END angle when the swing finishes.
+  p._rSwingStartAngle = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.62;
+  if (step.kind === 'forwardlunge' || step.kind === 'jab' || step.kind === 'lungestrike') {
+    // Thrust strikes — blade points straight forward
+    p._rSwingEndAngle = 0;
+  } else {
+    // Sweep strikes — end at the cone edge in the swing direction
+    const _amp = 1.5; // ~86 deg from forward — wide and clean
+    p._rSwingEndAngle = _amp * (step.dir >= 0 ? 1 : -1);
+  }
   // Run the swing
   _runComboStep(p, def, step, idx);
   // After the FINISHER fires, lock the combo until the player releases.
@@ -16940,85 +16950,16 @@ function _runComboStep(p, def, step, idx) {
   // step.dir: +1 sweep L->R, -1 sweep R->L, 0 thrust/no-direction.
   // ============================================================
   if (step.kind === 'slash' || step.kind === 'heavy' || step.kind === 'arcswipe' || step.kind === 'uppercut' || step.kind === 'smash') {
-    // ---- SWEEP STRIKES: spawn 3-layer slash_arc curves upfront. The lines
-    // read as solid, clean curves at the cone edge and linger past the swing.
-    // Per-step VFX accents below differentiate arcswipe / uppercut / smash.
-    const dir = step.dir >= 0 ? 1 : -1;
+    // ---- SWEEP STRIKES: slash_arc segments are emitted PER FRAME by the
+    // renderer at the blade's current angle (thickest at the sword, thinning
+    // out along the arc behind it as older segments fade). No upfront arc
+    // spawn — the trail follows the blade, not the other way around.
     const _heavy = step.kind === 'heavy' || step.kind === 'smash';
     const _arcwide = step.kind === 'arcswipe';
-    const _firstBig = !!step.firstBig;
-    const _arcLife = _arcwide ? 19 : (_firstBig ? 18 : (_heavy ? 16 : 13));
-    particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
-      life: _arcLife, maxLife: _arcLife, size: range,
-      color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
-    particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
-      life: _arcLife - 3, maxLife: _arcLife - 3, size: range * 0.9,
-      color: mainCol, type: 'slash_arc', _angle: a - 0.16 * dir, _cone: cone * 0.92 });
-    particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
-      life: _arcLife - 6, maxLife: _arcLife - 6, size: range * 0.78,
-      color: '#fff', type: 'slash_arc', _angle: a - 0.28 * dir, _cone: cone * 0.85 });
-    // ---- UPPERCUT: rising "launch" accent at the strike's tip — a vertical
-    //      slash_mark perpendicular to aim + sparks that fly perpendicular
-    //      (the "kicked up" feel). Pure white cyan blend so it reads as a
-    //      launch hit.
-    if (step.kind === 'uppercut') {
-      const _tipX = p.x + c * range * 0.85, _tipY = p.y + s * range * 0.85;
-      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
-        life: 14, maxLife: 14, size: 28,
-        color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2,
-        _priority: true });
-      // 10 sparks flying perpendicular ("upward" relative to the strike line)
-      const _perpA = a + Math.PI/2 * (dir > 0 ? 1 : -1);
-      for (let _ui = 0; _ui < 10; _ui++) {
-        const _ua = _perpA + (Math.random()-0.5)*0.7;
-        const _us = 4 + Math.random()*5;
-        particles.push({
-          x: _tipX + Math.cos(_ua)*4, y: _tipY + Math.sin(_ua)*4,
-          vx: Math.cos(_ua)*_us, vy: Math.sin(_ua)*_us,
-          life: 12 + Math.floor(Math.random()*5), maxLife: 17,
-          size: 2 + Math.random()*1.5,
-          color: Math.random() > 0.5 ? '#fff' : '#cef', type: 'spark'
-        });
-      }
-    }
-    // ---- SMASH: overhead-slam ground impact at the strike's tip. Big
-    //      wakering, radial spark burst, scorch decal, smoke poof, heavier
-    //      shake.
-    if (step.kind === 'smash') {
-      const _tipX = p.x + c * range * 0.78, _tipY = p.y + s * range * 0.78;
-      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
-        life: 12, maxLife: 12, size: 62, color: mainCol, type: 'wakering' });
-      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
-        life: 8, maxLife: 8, size: 38, color: '#fff', type: 'wakering' });
-      // Radial impact sparks — burst outward from the impact point
-      for (let _smi = 0; _smi < 18; _smi++) {
-        const _sma = Math.random()*Math.PI*2, _sms = 3 + Math.random()*5;
-        particles.push({
-          x: _tipX, y: _tipY,
-          vx: Math.cos(_sma)*_sms, vy: Math.sin(_sma)*_sms,
-          life: 11 + Math.floor(Math.random()*5), maxLife: 16,
-          size: 2 + Math.random()*2,
-          color: Math.random() > 0.5 ? '#fff' : mainCol, type: 'spark'
-        });
-      }
-      // Smoke poof at impact (slam kicks up dust)
-      for (let _smi = 0; _smi < 6; _smi++) {
-        const _sma = Math.random()*Math.PI*2, _sms = 0.8 + Math.random()*1.8;
-        particles.push({
-          x: _tipX + (Math.random()-0.5)*10, y: _tipY + (Math.random()-0.5)*10,
-          vx: Math.cos(_sma)*_sms, vy: Math.sin(_sma)*_sms,
-          life: 16 + Math.floor(Math.random()*6), maxLife: 22,
-          size: 5 + Math.random()*3, color: '#777', type: 'smoke', _smokeAlpha: 0.45
-        });
-      }
-      // Scorch decal — small mark where the slam landed
-      decals.push({ x: _tipX, y: _tipY, size: 22, alpha: 0.4, color: '#222' });
-    }
     if (isLocal) {
       let _shake = 3;
       if (_arcwide) _shake = 5;
-      if (_heavy || _firstBig) _shake = 6;
-      if (step.kind === 'smash') _shake = 8;
+      if (_heavy) _shake = 6;
       screenShake.intensity = Math.max(screenShake.intensity, _shake);
     }
   } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
@@ -28279,37 +28220,27 @@ function render() {
       const _isJab = !!p._rSwingJab;
       const _isHeavy = !!p._rSwingHeavy;
       const _isLunge = !!p._rSwingLunge;
-      // Sword has TWO states: actively swinging or held still. Between
-      // strikes the blade holds its end-of-swing position (no return-to-side)
-      // so each strike of a combo smoothly leads into the next. When the
-      // player isn't attacking at all, _rBladeOnVis fades the whole blade out.
-      const _IDLE_ANGLE = -Math.PI * 0.62; // initial summon pose, not a "return" target
-      // Eased sweep curve
+      // Sword animation: each swing has explicit START and END angles set
+      // in _swingMelee. The renderer interpolates from start to end across
+      // the swing's cooldown window using an ease-out curve. When the swing
+      // ends, the blade LINGERS at the end angle (no return motion, no
+      // unnecessary movement). Direct assign — no lerp catch-up, no
+      // "left motion at the end of a right swipe."
+      const _IDLE_ANGLE = -Math.PI * 0.62; // initial summon pose only
       const _ease = 1 - (1 - _swP) * (1 - _swP);
       let _swing;
       const _active = _swP < 1;
+      const _startA = (p._rSwingStartAngle !== undefined) ? p._rSwingStartAngle : _IDLE_ANGLE;
+      const _endA   = (p._rSwingEndAngle   !== undefined) ? p._rSwingEndAngle   : _IDLE_ANGLE;
       if (_active) {
-        if (_isJab || _isLunge) {
-          // Thrust: small forward bob; lunge motion handled by lunge tick
-          _swing = Math.sin(_swP * Math.PI) * (_isLunge ? 0.06 : 0.12);
-        } else {
-          // Slash / heavy: wide directional sweep. The FIRST slash of a combo
-          // gets the biggest arc — the opening commits, follow-ups are quicker
-          // and tighter.
-          const _isFirst = !!p._rSwingFirstBig;
-          const _amp = _isFirst ? 2.20 : (_isHeavy ? 1.95 : 1.50);
-          _swing = (_ease - 0.5) * 2 * _amp * _stpDir;
-        }
+        _swing = _startA + (_endA - _startA) * _ease;
       } else {
-        // Not swinging — hold current position. No idle bob, no snap back.
-        _swing = (p._rBladeAngle !== undefined) ? p._rBladeAngle : _IDLE_ANGLE;
+        // Linger at end angle (or current blade angle if no swing has happened)
+        _swing = (p._rSwingEndAngle !== undefined) ? p._rSwingEndAngle
+               : (p._rBladeAngle !== undefined ? p._rBladeAngle : _IDLE_ANGLE);
       }
-      // First summon: start the blade at the side pose so the materialize
-      // burst spawns in a sensible location.
-      if (p._rBladeAngle === undefined) p._rBladeAngle = _IDLE_ANGLE;
-      // Smooth lerp toward target — only moves during active swings now.
-      p._rBladeAngle += (_swing - p._rBladeAngle) * 0.32;
-      const _renderSwing = p._rBladeAngle;
+      p._rBladeAngle = _swing;
+      const _renderSwing = _swing;
       // Cooldown remaining (0=ready, 1=just swung)
       const _cdR = Math.max(0, 1 - _sinceSwing / _cdMs);
       const _ready = _cdR <= 0;
@@ -28362,16 +28293,38 @@ function render() {
       const _topRoot = -5.5, _topMid = -3.8;
       const _botRoot = 5.5,  _botMid = 2.6;
 
-      // ---- BLADE-BODY SPARKS: each frame during an active sweep, emit
-      // sparks along the blade's body (root through tip). Damage reads as
-      // coming from the whole blade, not just the tip. The slash_arc lines
-      // themselves are spawned upfront in _swingMelee so they read as solid.
+      // ---- BLADE TRAIL: each frame during an active sweep, emit two arcs
+      // at the blade's CURRENT world angle:
+      //   1. A WIDE bright sweep at the blade-tip radius — thickest at the
+      //      sword (newest segment, full alpha) and thinning along the arc
+      //      behind it (older segments fade naturally with life).
+      //   2. A THIN cutting-edge trail at the very tip distance — the
+      //      "point of the sword" carving its path, lingers and fades after
+      //      the swing.
+      // Also a few body sparks along the blade so the whole edge reads as
+      // damaging, not just the tip.
       const _isActive = _swP > 0 && _swP < 1;
       if (_isActive && !_isJab && !_isLunge) {
         const _wAng = (p.angle || 0) + _renderSwing;
         const _cosA = Math.cos(_wAng), _sinA = Math.sin(_wAng);
         const _bodyRoot = PLAYER_RADIUS + _floatGap + 11;
         const _bodyTip  = _bodyRoot + _bL;
+        // 1) Wide sweep segment at mid-blade radius
+        particles.push({
+          x: p.x, y: p.y, vx: 0, vy: 0,
+          life: 15, maxLife: 15, size: _bodyTip * 0.92,
+          color: def.color, type: 'slash_arc',
+          _angle: _wAng, _cone: 0.48
+        });
+        // 2) Thin cutting-edge arc at the very tip — the sword's tip-path
+        //    record, lingers and fades after the swing.
+        particles.push({
+          x: p.x, y: p.y, vx: 0, vy: 0,
+          life: 22, maxLife: 22, size: _bodyTip + 4,
+          color: '#fff', type: 'slash_arc',
+          _angle: _wAng, _cone: 0.22
+        });
+        // 3) Body sparks at 4 sample points along the blade
         for (let _bi = 0; _bi < 4; _bi++) {
           const _t = _bi / 3;
           const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
@@ -28380,15 +28333,9 @@ function render() {
           particles.push({
             x: _bx + (Math.random()-0.5)*2, y: _by + (Math.random()-0.5)*2,
             vx: 0, vy: 0,
-            life: 9 + Math.floor(Math.random()*4), maxLife: 13,
-            size: 2 + Math.random()*1.5,
-            color: '#fff', type: 'spark'
-          });
-          particles.push({
-            x: _bx, y: _by, vx: 0, vy: 0,
-            life: 11, maxLife: 11,
-            size: 3 + Math.random()*1.5,
-            color: def.color, type: 'spark'
+            life: 8 + Math.floor(Math.random()*3), maxLife: 11,
+            size: 1.8 + Math.random()*1.2,
+            color: Math.random() > 0.4 ? '#fff' : def.color, type: 'spark'
           });
         }
       }
