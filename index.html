@@ -16650,11 +16650,11 @@ function updatePayload() {
 // ============================================================
 const RIPPER_COMBO = [
   // Step 0: WIDE SLASH — fast opener, wide arc, modest reach.
-  { name: 'SLASH',     range: 120, cone: Math.PI * 140/180, damage: 60,  knockback: 8,  cooldown: 220, lunge: 0,  color: '#4ff', tone: 720 },
-  // Step 1: FORWARD RIP — short-cone but long reach, commits the player forward.
-  { name: 'RIP',       range: 165, cone: Math.PI * 70/180,  damage: 85,  knockback: 14, cooldown: 260, lunge: 50, color: '#0ff', tone: 880 },
+  { name: 'SLASH',     range: 120, cone: Math.PI * 140/180, damage: 60,  knockback: 11, stagger: 22, cooldown: 220, lunge: 0,  color: '#4ff', tone: 720 },
+  // Step 1: FORWARD RIP — narrow long thrust, commits the player forward.
+  { name: 'RIP',       range: 175, cone: Math.PI * 50/180,  damage: 85,  knockback: 16, stagger: 32, cooldown: 280, lunge: 55, color: '#0ff', tone: 880 },
   // Step 2: FINISHER — explosive forward AoE, massive knockback shockwave.
-  { name: 'FINISHER!', range: 150, cone: Math.PI * 200/180, damage: 150, knockback: 32, cooldown: 460, lunge: 0,  color: '#f80', tone: 220, finisher: true },
+  { name: 'FINISHER!', range: 155, cone: Math.PI * 200/180, damage: 150, knockback: 32, stagger: 50, cooldown: 480, lunge: 0,  color: '#f80', tone: 220, finisher: true },
 ];
 const RIPPER_COMBO_WINDOW = 800; // ms grace to chain next hit before combo resets
 
@@ -16737,91 +16737,154 @@ function _runComboStep(p, def, step, idx) {
     });
   }
 
-  // ---- THE TRAIL: multiple staggered arcs for motion-blur sweep feel ----
-  // Main arc (full alpha, long life)
-  particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
-    life: 11, maxLife: 11, size: range,
-    color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
-  // Echo arcs — slight angle offset + shorter life = sweep trail
-  const _echoSign = idx === 1 ? 0 : 1; // step 1 (forward stab) symmetric, others sweep
-  particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
-    life: 8, maxLife: 8, size: range * 0.92,
-    color: mainCol, type: 'slash_arc', _angle: a - 0.18 * _echoSign, _cone: cone * 0.9 });
-  particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
-    life: 6, maxLife: 6, size: range * 0.82,
-    color: '#fff', type: 'slash_arc', _angle: a - 0.32 * _echoSign, _cone: cone * 0.8 });
-
-  // ---- EDGE SPARKS — heavier, double previous count ----
-  const _sparkCount = step.finisher ? 36 : 26;
-  for (let i = 0; i < _sparkCount; i++) {
-    const t = -0.48 + Math.random()*0.96;
-    const _ea = a + t * cone;
-    const _tan = _ea + (t >= 0 ? Math.PI*0.5 : -Math.PI*0.5);
-    const _r = range * (0.7 + Math.random()*0.32);
-    const _sp = 3.5 + Math.random()*5;
-    particles.push({
-      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-      vx: Math.cos(_tan)*_sp + c*1.2, vy: Math.sin(_tan)*_sp + s*1.2,
-      life: 8 + Math.floor(Math.random()*5), maxLife: 13,
-      size: 2 + Math.random()*2.4,
-      color: Math.random() > 0.45 ? '#fff' : mainCol, type: 'spark'
-    });
-  }
-
-  // ---- SMOKE WISPS along the swept path ----
-  for (let i = 0; i < 8; i++) {
-    const t = -0.4 + Math.random()*0.8;
-    const _ea = a + t * cone;
-    const _r = range * (0.55 + Math.random()*0.32);
-    particles.push({
-      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-      vx: Math.cos(_ea)*1.3, vy: Math.sin(_ea)*1.3,
-      life: 12 + Math.floor(Math.random()*8), maxLife: 20,
-      size: 5 + Math.random()*4, color: idx === 2 ? '#412' : '#222', type: 'smoke', _smokeAlpha: 0.32
-    });
-  }
-
-  // ---- RIBBON TRAIL: short tangent dashes that linger along the arc ----
-  for (let i = 0; i < 8; i++) {
-    const t = -0.42 + (i / 7) * 0.84;
-    const _ea = a + t * cone;
-    const _r = range * 0.85;
-    const _tan = _ea + Math.PI*0.5;
-    particles.push({
-      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-      vx: Math.cos(_tan)*0.6 + c*0.5, vy: Math.sin(_tan)*0.6 + s*0.5,
-      life: 9 + Math.floor(Math.random()*4), maxLife: 13,
-      size: 1.4 + Math.random(), color: '#fff', type: 'spark'
-    });
-  }
-
-  // ---- STEP 1 FORWARD STREAK: long lightning bolt down the spear of the rip ----
-  if (idx === 1) {
-    const _tx = p.x + c * range, _ty = p.y + s * range;
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-    // Forward-flying sparks along the path
-    for (let i = 0; i < 12; i++) {
-      const _f = Math.random();
+  // ============================================================
+  // STEP-SPECIFIC VFX — each combo move reads as a distinct action.
+  // ============================================================
+  if (idx === 0) {
+    // ---- SLASH: wide sweeping arc trail ----
+    // 3 stacked slash_arcs at staggered alpha/size for motion blur
+    particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
+      life: 11, maxLife: 11, size: range,
+      color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
+    particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
+      life: 8, maxLife: 8, size: range * 0.92,
+      color: mainCol, type: 'slash_arc', _angle: a - 0.18, _cone: cone * 0.9 });
+    particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
+      life: 6, maxLife: 6, size: range * 0.82,
+      color: '#fff', type: 'slash_arc', _angle: a - 0.32, _cone: cone * 0.8 });
+    // Tangent edge sparks flying out along the arc
+    for (let i = 0; i < 26; i++) {
+      const t = -0.48 + Math.random()*0.96;
+      const _ea = a + t * cone;
+      const _tan = _ea + (t >= 0 ? Math.PI*0.5 : -Math.PI*0.5);
+      const _r = range * (0.7 + Math.random()*0.32);
+      const _sp = 3.5 + Math.random()*5;
       particles.push({
-        x: p.x + c * (_f * range), y: p.y + s * (_f * range),
-        vx: c*(2 + Math.random()*4), vy: s*(2 + Math.random()*4),
-        life: 6 + Math.floor(Math.random()*4), maxLife: 10,
+        x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
+        vx: Math.cos(_tan)*_sp + c*1.2, vy: Math.sin(_tan)*_sp + s*1.2,
+        life: 8 + Math.floor(Math.random()*5), maxLife: 13,
+        size: 2 + Math.random()*2.4,
+        color: Math.random() > 0.45 ? '#fff' : mainCol, type: 'spark'
+      });
+    }
+    // Smoke wisps along the swept path
+    for (let i = 0; i < 8; i++) {
+      const t = -0.4 + Math.random()*0.8;
+      const _ea = a + t * cone;
+      const _r = range * (0.55 + Math.random()*0.32);
+      particles.push({
+        x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
+        vx: Math.cos(_ea)*1.3, vy: Math.sin(_ea)*1.3,
+        life: 12 + Math.floor(Math.random()*8), maxLife: 20,
+        size: 5 + Math.random()*4, color: '#222', type: 'smoke', _smokeAlpha: 0.32
+      });
+    }
+    // Ribbon trail dashes lingering at the arc edge
+    for (let i = 0; i < 8; i++) {
+      const t = -0.42 + (i / 7) * 0.84;
+      const _ea = a + t * cone;
+      const _r = range * 0.85;
+      const _tan = _ea + Math.PI*0.5;
+      particles.push({
+        x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
+        vx: Math.cos(_tan)*0.6 + c*0.5, vy: Math.sin(_tan)*0.6 + s*0.5,
+        life: 9 + Math.floor(Math.random()*4), maxLife: 13,
+        size: 1.4 + Math.random(), color: '#fff', type: 'spark'
+      });
+    }
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, 4);
+  } else if (idx === 1) {
+    // ---- RIP: forward thrust beam (NO wide arc — distinctly different from SLASH) ----
+    const _tx = p.x + c * range, _ty = p.y + s * range;
+    // Triple-stacked forward beam: outer wide, mid color, inner white core
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9, maxLife: 9, size: 6, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 1.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+    // Two narrow side-blades hinting at the spear shape
+    const _sideAng = Math.PI/2;
+    const _sideOff = 4;
+    particles.push({ x: p.x + Math.cos(a+_sideAng)*_sideOff, y: p.y + Math.sin(a+_sideAng)*_sideOff,
+      vx:0, vy:0, life:6, maxLife:6, size:1.5, color: mainCol, type:'lightning',
+      tx: _tx + Math.cos(a+_sideAng)*_sideOff*0.4, ty: _ty + Math.sin(a+_sideAng)*_sideOff*0.4 });
+    particles.push({ x: p.x + Math.cos(a-_sideAng)*_sideOff, y: p.y + Math.sin(a-_sideAng)*_sideOff,
+      vx:0, vy:0, life:6, maxLife:6, size:1.5, color: mainCol, type:'lightning',
+      tx: _tx + Math.cos(a-_sideAng)*_sideOff*0.4, ty: _ty + Math.sin(a-_sideAng)*_sideOff*0.4 });
+    // Spearhead "wake" arcs — 3 narrow arcs at progressive distance along the thrust
+    // (small cones that read as a forward-traveling shockcone, not a sweep)
+    for (let _wi = 0; _wi < 3; _wi++) {
+      const _wD = range * (0.45 + _wi * 0.22);
+      const _wx = p.x + c * _wD, _wy = p.y + s * _wD;
+      particles.push({
+        x: _wx, y: _wy, vx: c*1.2, vy: s*1.2,
+        life: 7 - _wi, maxLife: 7 - _wi, size: 18 + _wi * 8,
+        color: _wi === 0 ? '#fff' : mainCol,
+        type: 'slash_arc', _angle: a, _cone: Math.PI * (25 + _wi*10) / 180
+      });
+    }
+    // FORWARD-flying sparks all along the spear (not tangent — they fly with the thrust)
+    for (let i = 0; i < 22; i++) {
+      const _f = Math.random();
+      const _spread = (Math.random()-0.5) * 0.4;
+      const _sa = a + _spread;
+      const _sp = 4 + Math.random()*5;
+      particles.push({
+        x: p.x + c*(_f*range) + Math.cos(a+Math.PI/2)*(Math.random()-0.5)*8,
+        y: p.y + s*(_f*range) + Math.sin(a+Math.PI/2)*(Math.random()-0.5)*8,
+        vx: Math.cos(_sa)*_sp, vy: Math.sin(_sa)*_sp,
+        life: 7 + Math.floor(Math.random()*4), maxLife: 11,
         size: 2 + Math.random()*2, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
       });
     }
-  }
-
-  // ---- STEP 2 FINISHER: massive explosion + shockwave + knockback ----
-  if (idx === 2) {
-    // Origin of explosion: just in front of the player so the boom reads as a "smash"
+    // Side speed lines from player's hips (showing thrust force)
+    for (let i = 0; i < 8; i++) {
+      const _side = i < 4 ? 1 : -1;
+      const _sa = a + _side * (Math.PI/2 + (Math.random()-0.5)*0.3);
+      const _sp = 1.5 + Math.random()*1.5;
+      particles.push({
+        x: p.x + Math.cos(_sa)*4, y: p.y + Math.sin(_sa)*4,
+        vx: Math.cos(_sa)*_sp - c*0.5, vy: Math.sin(_sa)*_sp - s*0.5,
+        life: 8, maxLife: 8, size: 1.8 + Math.random()*1, color: mainCol, type: 'spark'
+      });
+    }
+    // Bright impact pop at the tip of the spear
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 5, maxLife: 5, size: 22, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: mainCol, type: 'wakering' });
+    for (let i = 0; i < 10; i++) {
+      const _ta = Math.random()*Math.PI*2, _ts = 2 + Math.random()*4;
+      particles.push({
+        x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
+        life: 8, maxLife: 8, size: 2 + Math.random()*2,
+        color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
+      });
+    }
+    if (isLocal) {
+      screenShake.intensity = Math.max(screenShake.intensity, 6);
+      triggerCameraZoom(1.02, 100);
+    }
+  } else {
+    // ---- FINISHER: explosion + shockwave + radial spike lines (NO arc) ----
     const ex = p.x + c * (range * 0.55), ey = p.y + s * (range * 0.55);
     // Big concentric shockwaves
     particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 12, maxLife: 12, size: range * 1.2, color: mainCol, type: 'wakering' });
     particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 10, maxLife: 10, size: range * 0.85, color: '#fff', type: 'wakering' });
     particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: range * 1.45, color: '#fa0', type: 'wakering' });
     // Bright core flash
-    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 4, maxLife: 4, size: 30, color: '#fff', type: 'spark' });
+    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 5, maxLife: 5, size: 36, color: '#fff', type: 'spark' });
+    // Radial lightning SPIKES — 10 bolts outward from epicenter for "BLAST" reading
+    for (let i = 0; i < 10; i++) {
+      const _spA = (i/10) * Math.PI*2 + Math.random()*0.3;
+      const _spL = range * (0.85 + Math.random()*0.25);
+      particles.push({
+        x: ex, y: ey, vx: 0, vy: 0,
+        life: 9, maxLife: 9, size: 3, color: '#fff', type: 'lightning',
+        tx: ex + Math.cos(_spA)*_spL, ty: ey + Math.sin(_spA)*_spL
+      });
+      particles.push({
+        x: ex, y: ey, vx: 0, vy: 0,
+        life: 7, maxLife: 7, size: 1.5, color: mainCol, type: 'lightning',
+        tx: ex + Math.cos(_spA)*_spL*0.85, ty: ey + Math.sin(_spA)*_spL*0.85
+      });
+    }
     // Radial explosion sparks
     for (let i = 0; i < 40; i++) {
       const _a2 = Math.random()*Math.PI*2, _sp = 3 + Math.random()*9;
@@ -16842,7 +16905,7 @@ function _runComboStep(p, def, step, idx) {
         size: 7 + Math.random()*6, color: '#333', type: 'smoke', _smokeAlpha: 0.35
       });
     }
-    // Debris chunks flying forward
+    // Forward debris with gravity
     for (let i = 0; i < 10; i++) {
       const _a2 = a + (Math.random()-0.5)*1.3, _sp = 6 + Math.random()*8;
       particles.push({
@@ -16852,17 +16915,12 @@ function _runComboStep(p, def, step, idx) {
         type: 'spark', _pixel: true, gravity: 0.06
       });
     }
-    // Glitch surge so it really lands
+    // Scorch decal so the floor remembers the blast
+    decals.push({ x: ex, y: ey, size: range * 0.55, alpha: 0.45, color: '#222' });
     if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.25, 12);
     if (isLocal) {
       screenShake.intensity = Math.max(screenShake.intensity, 12);
       triggerCameraZoom(1.04, 180);
-    }
-  } else {
-    // Steps 0 + 1 shake
-    if (isLocal) {
-      screenShake.intensity = Math.max(screenShake.intensity, idx === 1 ? 6 : 4);
-      if (step.lunge > 0) triggerCameraZoom(1.02, 100);
     }
   }
 
@@ -16886,12 +16944,10 @@ function _runComboStep(p, def, step, idx) {
     if (step.finisher) _kb = step.knockback * (1.0 - 0.5 * (d / range));
     if (isHost) {
       damageZombie(z, dmg, dx/_nd * _kb, dy/_nd * _kb, false);
+      // Stagger every hit — even SLASH should momentarily pause the enemy.
+      z.staggerTimer = Math.max(z.staggerTimer || 0, step.stagger || 22);
     }
     _meleeHitVFX(z, isCrit, mainCol);
-    // Finisher: extra stagger so the launched enemies stay readable
-    if (step.finisher && isHost) {
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
-    }
   }
 
   // ---- COMBO LABEL + SOUND ----
@@ -20218,14 +20274,12 @@ function update() {
     {
       const _curDef = WEAPON_DEFS[w.type];
       if (_curDef && _curDef._melee) {
-        // Tap-mode: only swing on rising edge so each tap advances the combo,
-        // and holding the button doesn't auto-cycle through all three hits.
-        if (shouldFire && !lp._meleePrevFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
-        lp._meleePrevFire = !!shouldFire;
-        // Always stop the gun loop sound — melee has its own per-hit sounds.
+        // Hold-to-fire: each tick attempts a swing; per-step cooldown inside
+        // _swingMelee paces the combo at SLASH -> RIP -> FINISHER timing.
+        if (shouldFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
+        // Stop the gun loop sound — melee uses per-hit sounds, not the loop.
         if (!shouldFire) stopWeaponLoop();
       } else {
-        lp._meleePrevFire = false;
         if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
         else if(!shouldFire) stopWeaponLoop();
         if(w.ammo<=0 && !shouldFire) stopWeaponLoop();
