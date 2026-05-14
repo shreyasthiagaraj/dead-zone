@@ -27688,19 +27688,30 @@ function render() {
       const _isJab = !!p._rSwingJab;
       const _isHeavy = !!p._rSwingHeavy;
       const _isLunge = !!p._rSwingLunge;
-      // Eased sweep curve: starts fast, settles smooth (easeOutQuad)
+      // Idle rest pose: sword hangs to the player's forward-left ("guard"
+      // stance) with a subtle hover so it never reads as stiff. The blade
+      // always lerps back to this pose between strikes.
+      const _IDLE_ANGLE = -Math.PI / 3; // ~ -60 deg from aim
+      const _idleBobAng = Math.sin(performance.now() * 0.0028) * 0.05;
+      const _idleBobLen = Math.sin(performance.now() * 0.0028 + 1.2) * 1.5;
+      const _idleBobX   = Math.sin(performance.now() * 0.0021 + 0.6) * 1.2;
+      // Eased sweep curve
       const _ease = 1 - (1 - _swP) * (1 - _swP);
-      let _swing = 0;
-      if (_isJab || _isLunge) {
-        // Thrust: tiny sin-bob; the forward motion is handled by the lunge tick
+      let _swing;
+      const _active = _swP < 1;
+      if (!_active) {
+        // Resting pose — always come back here when not swinging
+        _swing = _IDLE_ANGLE + _idleBobAng;
+      } else if (_isJab || _isLunge) {
+        // Thrust: small forward bob; lunge motion handled by lunge tick
         _swing = Math.sin(_swP * Math.PI) * (_isLunge ? 0.06 : 0.12);
       } else {
         // Slash / heavy: directional sweep across full arc
         const _amp = _isHeavy ? 1.3 : 1.0;
         _swing = (_ease - 0.5) * 2 * _amp * _stpDir;
       }
-      // Smooth lerp the rendered angle toward target — kills jerky resets
-      // when one strike's animation gives way to the next.
+      // Smooth lerp toward target — kills jerky transitions both into and
+      // out of swings, and slowly hovers via the idle bob.
       if (p._rBladeAngle === undefined) p._rBladeAngle = _swing;
       p._rBladeAngle += (_swing - p._rBladeAngle) * 0.32;
       const _renderSwing = p._rBladeAngle;
@@ -27711,13 +27722,16 @@ function render() {
       const _idle = 0.85 + Math.sin(performance.now() * 0.012) * 0.15;
       // Blade alpha + length scale based on ready state. Longer at base so
       // the sword has presence; the FLOAT gap makes it look detached/hovering.
+      // When idle (not in an active swing), add subtle length + radial bob
+      // so the blade looks alive instead of frozen mid-air.
       const _bA = _ready ? _idle : (0.32 + (1 - _cdR) * 0.6);
-      const _bL = _ready ? 46 : (28 + (1 - _cdR) * 18);
+      let _bL = _ready ? 46 : (28 + (1 - _cdR) * 18);
+      if (!_active) _bL += _idleBobLen;
       // Geometry: hilt -> cross-guard -> tapered blade -> tip.
       // FLOAT GAP: hilt starts a bit AWAY from the player so the sword reads
-      // as hovering in front, not gripped in a hand. Visually links the
-      // sword closer to where the slash arc actually appears.
-      const _floatGap = 8;
+      // as hovering in front, not gripped in a hand. Idle bob in/out so it
+      // breathes when at rest.
+      const _floatGap = 8 + (!_active ? _idleBobX : 0);
       const _hStart = PLAYER_RADIUS + _floatGap;     // grip starts in front of player
       const _hEnd   = PLAYER_RADIUS + _floatGap + 7; // grip end
       const _gX     = PLAYER_RADIUS + _floatGap + 8; // cross-guard x
