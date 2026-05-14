@@ -19911,10 +19911,12 @@ function update() {
           const cfR = _rm.cryoWake >= 2 ? 65 : 50;
           const cfMaxTravel = _rm.cryoWake >= 2 ? 130 : 95;
           const cfLifetime = _rm.cryoWake >= 2 ? 95 : 75;
+          // Strong launch — gas bursts forward fast, decays over distance.
+          const _cfV0 = _rm.cryoWake >= 2 ? 6.5 : 4.8;
           window._coldFronts = window._coldFronts || [];
           window._coldFronts.push({
             x: lp.x + _cfDx * 15, y: lp.y + _cfDy * 15,
-            vx: _cfDx * 1.3, vy: _cfDy * 1.3,
+            vx: _cfDx * _cfV0, vy: _cfDy * _cfV0,
             dirX: _cfDx, dirY: _cfDy,
             travel: 0, maxTravel: cfMaxTravel,
             timer: cfLifetime, maxTimer: cfLifetime,
@@ -20465,7 +20467,8 @@ function update() {
       for (let _ci = window._coldFronts.length - 1; _ci >= 0; _ci--) {
         const cf = window._coldFronts[_ci];
         cf.timer--;
-        // Drift forward while still travelling
+        // Drift forward — velocity decays each frame so the gust starts strong
+        // and slows down as it travels (force-burst feel, not constant push).
         if (cf.travel < cf.maxTravel) {
           const _step = Math.hypot(cf.vx, cf.vy);
           if (!obstacleCollision(cf.x + cf.vx, cf.y + cf.vy, 8, true)) {
@@ -20475,6 +20478,7 @@ function update() {
             cf.travel = cf.maxTravel; // stop on wall
           }
         }
+        cf.vx *= 0.95; cf.vy *= 0.95;
         const _alive = cf.timer > 0;
         const _fadeT = Math.max(0, cf.timer / cf.maxTimer);
         // Gas body — small white smoke puffs filling the cloud volume
@@ -20510,20 +20514,19 @@ function update() {
               size: 6+Math.random()*5, alpha: 0.14*_fadeT, color: '#bdf', _fade: 0.002 });
           }
         }
-        // Apply chill inside the cloud — host authoritative, every 6 frames
-        if (isHost && cf._hitTick % 6 === 0) {
+        // Apply chill inside the cloud — host authoritative.
+        // Only 1 stack per application; per-zombie cooldown prevents the same
+        // enemy from getting hit multiple ticks in a single pass.
+        if (isHost && cf._hitTick % 10 === 0) {
+          cf._hits = cf._hits || {};
           for (const fz of zombies) {
             if (fz.hp <= 0) continue;
             const dx = fz.x - cf.x, dy = fz.y - cf.y;
             if (dx*dx + dy*dy > cf.r*cf.r) continue;
-            if (cf.lv >= 2) {
-              applyChill(fz, 3);
-              // Lv2: center → freeze if lingering long enough
-              if (cf.timer < cf.maxTimer * 0.6) { fz._frozen = true; fz._frozenTimer = Math.max(fz._frozenTimer||0, 120); }
-            } else {
-              applyChill(fz, 2);
-            }
-            damageZombie(fz, 6, 0, 0, true);
+            if (cf._hits[fz.zid]) continue; // already chilled by this cloud
+            cf._hits[fz.zid] = 1;
+            applyChill(fz, 1);
+            damageZombie(fz, 4, 0, 0, true);
           }
         }
         cf._hitTick++;
