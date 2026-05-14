@@ -16740,21 +16740,18 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // Damage stays low (combo total ~80 so it can't kill in one combo) but
-  // KNOCKBACK is heavily cranked so crowd control is the weapon's identity.
-  // Lunge strike at the end practically launches enemies off-screen.
-  // Strike 1: light L->R slash
-  { kind:'slash',       range: 100, cone: Math.PI * 70/180, damage:  8, knockback: 38, stagger: 28, cooldown: 140, color:'#4ff', tone: 760, dir:  1 },
-  // Strike 2: light R->L mirror slash
-  { kind:'slash',       range: 115, cone: Math.PI * 70/180, damage: 10, knockback: 44, stagger: 30, cooldown: 140, color:'#4ff', tone: 800, dir: -1 },
+  // Cooldowns tightened so the combo chain flows faster. First strike is
+  // the BIGGEST visible swing — opening commits, follow-ups are quicker.
+  // Strike 1: BIG opening L->R slash
+  { kind:'slash',       range: 115, cone: Math.PI * 85/180, damage:  8, knockback: 38, stagger: 28, cooldown: 100, color:'#4ff', tone: 760, dir:  1, firstBig: true },
+  // Strike 2: faster R->L mirror slash
+  { kind:'slash',       range: 110, cone: Math.PI * 70/180, damage: 10, knockback: 44, stagger: 30, cooldown: 100, color:'#4ff', tone: 800, dir: -1 },
   // Strike 3: forward JAB
-  { kind:'jab',         range: 155, cone: Math.PI * 30/180, damage: 14, knockback: 52, stagger: 34, cooldown: 160, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
+  { kind:'jab',         range: 155, cone: Math.PI * 30/180, damage: 14, knockback: 52, stagger: 34, cooldown: 120, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
   // Strike 4: HEAVY wide sweep
-  { kind:'heavy',       range: 135, cone: Math.PI * 100/180,damage: 20, knockback: 65, stagger: 44, cooldown: 200, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
-  // Strike 5: FORWARD CONE — Meta-Knight-style sharp-tip thrust. Narrow cone
-  // pointing forward, sharp point at the front, "cone of effect" widens
-  // slightly behind it. Small lunge (player commits less), big reach + kb.
-  { kind:'lungestrike', range: 240, cone: Math.PI * 50/180, damage: 34, knockback: 260, stagger: 110, cooldown: 380, color:'#f80', tone: 240, dir:  0, label:'LUNGE!', finisher: true, lungeDistance: 32 },
+  { kind:'heavy',       range: 135, cone: Math.PI * 100/180,damage: 20, knockback: 65, stagger: 44, cooldown: 150, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
+  // Strike 5: FORWARD CONE finisher (Meta-Knight-style sharp-tip thrust)
+  { kind:'lungestrike', range: 240, cone: Math.PI * 50/180, damage: 34, knockback: 260, stagger: 110, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'LUNGE!', finisher: true, lungeDistance: 32 },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16784,6 +16781,7 @@ function _swingMelee(p, def) {
   p._rSwingHeavy = step.kind === 'heavy';
   p._rSwingLunge = step.kind === 'lungestrike';
   p._rSwingFinisher = !!step.finisher;
+  p._rSwingFirstBig = !!step.firstBig; // first strike of a combo gets a bigger swing arc
   p._rSwingRange = step.range; // renderer extends the blade to this during sweeps
   // Run the swing
   _runComboStep(p, def, step, idx);
@@ -16844,13 +16842,28 @@ function _runComboStep(p, def, step, idx) {
   // step.dir: +1 sweep L->R, -1 sweep R->L, 0 thrust/no-direction.
   // ============================================================
   if (step.kind === 'slash' || step.kind === 'heavy') {
-    // ---- SLASH / HEAVY: the SWORD does the slashing. The trail is emitted
-    // by the renderer at the blade tip each frame during the active swing
-    // (see player render: _emitBladeTipTrail). So no upfront slash_arc here.
-    // We just kick off the swing with screen shake — everything else is
-    // either drawn from the blade or comes from the per-hit VFX.
+    // ---- SLASH / HEAVY: spawn the slash_arc curves upfront so the lines
+    // read as solid, clean curves at the cone edge. They linger past the
+    // swing's animation so the slashed area stays visible briefly. The
+    // blade's body sparks (emitted per-frame in render) supplement these
+    // with motion accents.
+    const dir = step.dir >= 0 ? 1 : -1;
     const _heavy = step.kind === 'heavy';
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _heavy ? 6 : 3);
+    const _firstBig = !!step.firstBig;
+    // Multi-streak layered slash_arc: outer cyan glow + mid cyan + inner white
+    // — at slightly different radii / angles so they read as multiple streaks
+    // instead of one stacked line.
+    const _arcLife = _firstBig ? 18 : (_heavy ? 16 : 13);
+    particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
+      life: _arcLife, maxLife: _arcLife, size: range,
+      color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
+    particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
+      life: _arcLife - 3, maxLife: _arcLife - 3, size: range * 0.9,
+      color: mainCol, type: 'slash_arc', _angle: a - 0.16 * dir, _cone: cone * 0.92 });
+    particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
+      life: _arcLife - 6, maxLife: _arcLife - 6, size: range * 0.78,
+      color: '#fff', type: 'slash_arc', _angle: a - 0.28 * dir, _cone: cone * 0.85 });
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _heavy || _firstBig ? 6 : 3);
   } else if (step.kind === 'jab') {
     // ---- JAB: narrow forward thrust. Most of the visual now comes from
     // the blade's thrust pulse + tip trail emitted by the renderer. We only
@@ -28077,9 +28090,11 @@ function render() {
           // Thrust: small forward bob; lunge motion handled by lunge tick
           _swing = Math.sin(_swP * Math.PI) * (_isLunge ? 0.06 : 0.12);
         } else {
-          // Slash / heavy: WIDE directional sweep — much bigger arc so the
-          // motion reads as a real sword swing, not a wrist flick.
-          const _amp = _isHeavy ? 1.95 : 1.55;
+          // Slash / heavy: wide directional sweep. The FIRST slash of a combo
+          // gets the biggest arc — the opening commits, follow-ups are quicker
+          // and tighter.
+          const _isFirst = !!p._rSwingFirstBig;
+          const _amp = _isFirst ? 2.20 : (_isHeavy ? 1.95 : 1.50);
           _swing = (_ease - 0.5) * 2 * _amp * _stpDir;
         }
       } else {
@@ -28142,38 +28157,21 @@ function render() {
       const _topRoot = -5.5, _topMid = -3.8;
       const _botRoot = 5.5,  _botMid = 2.6;
 
-      // ---- SLASH TRAIL: emitted each frame during an active sweep so the
-      // trail builds up AS the sword moves, not before it. Damage reads as
-      // coming from the whole blade body — multiple emit points along the
-      // length, plus perpendicular streaks for a comic-book swipe feel,
-      // plus a per-frame slash_arc segment at the cone edge that lingers
-      // briefly after the swing completes.
+      // ---- BLADE-BODY SPARKS: each frame during an active sweep, emit
+      // sparks along the blade's body (root through tip). Damage reads as
+      // coming from the whole blade, not just the tip. The slash_arc lines
+      // themselves are spawned upfront in _swingMelee so they read as solid.
       const _isActive = _swP > 0 && _swP < 1;
-      if (_isActive && !_isJab && !_isLunge && p._rSwingRange) {
+      if (_isActive && !_isJab && !_isLunge) {
         const _wAng = (p.angle || 0) + _renderSwing;
         const _cosA = Math.cos(_wAng), _sinA = Math.sin(_wAng);
         const _bodyRoot = PLAYER_RADIUS + _floatGap + 11;
         const _bodyTip  = _bodyRoot + _bL;
-        const _perpAng  = _wAng + Math.PI * 0.5 * (_stpDir || 1);
-        const _perpCos  = Math.cos(_perpAng), _perpSin = Math.sin(_perpAng);
-
-        // 1) Short arc-edge segment at the cone radius — the "line" that
-        // shows what was cut. Stacks across frames to form the full arc.
-        particles.push({
-          x: p.x, y: p.y, vx: 0, vy: 0,
-          life: 16, maxLife: 16, size: p._rSwingRange,
-          color: def.color, type: 'slash_arc',
-          _angle: _wAng, _cone: 0.32
-        });
-
-        // 2) Body sparks at 4 sample points along the blade (root, two mids,
-        // tip). The whole blade is the damage source.
         for (let _bi = 0; _bi < 4; _bi++) {
-          const _t = _bi / 3; // 0, 0.33, 0.66, 1.0
+          const _t = _bi / 3;
           const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
           const _bx = p.x + _cosA * _bd;
           const _by = p.y + _sinA * _bd;
-          // Bright white core
           particles.push({
             x: _bx + (Math.random()-0.5)*2, y: _by + (Math.random()-0.5)*2,
             vx: 0, vy: 0,
@@ -28181,30 +28179,11 @@ function render() {
             size: 2 + Math.random()*1.5,
             color: '#fff', type: 'spark'
           });
-          // Cyan glow halo
           particles.push({
             x: _bx, y: _by, vx: 0, vy: 0,
             life: 11, maxLife: 11,
             size: 3 + Math.random()*1.5,
             color: def.color, type: 'spark'
-          });
-        }
-
-        // 3) Comic-book speed-streak: a perpendicular line bursting outward
-        // from a random body point in the sweep direction. Two short streaks
-        // per frame, drawn as 'lightning' for the rough, hand-drawn feel.
-        for (let _si = 0; _si < 2; _si++) {
-          const _t = 0.45 + Math.random() * 0.55;
-          const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
-          const _bx = p.x + _cosA * _bd;
-          const _by = p.y + _sinA * _bd;
-          const _streakLen = 14 + Math.random() * 10;
-          particles.push({
-            x: _bx, y: _by, vx: 0, vy: 0,
-            life: 7, maxLife: 7, size: 1.6,
-            color: '#fff', type: 'lightning',
-            tx: _bx + _perpCos * _streakLen,
-            ty: _by + _perpSin * _streakLen
           });
         }
       }
@@ -28794,9 +28773,9 @@ function render() {
           }
           ctx.stroke();
         };
-        _strokeArc(9, 0.28, p.color);  // outer glow
-        _strokeArc(4, 0.6,  p.color);  // mid
-        _strokeArc(1.5, 1,  '#fff');   // bright core
+        _strokeArc(5.5, 0.28, p.color); // outer glow (thinner)
+        _strokeArc(2.5, 0.6,  p.color); // mid
+        _strokeArc(1.1, 1,    '#fff');  // bright core (thin sharp line)
         ctx.globalAlpha = 1;
       } else if(p.type==='arrowhead'){
         // RIPPER finisher: slim forward spike with cyan side highlights and a
