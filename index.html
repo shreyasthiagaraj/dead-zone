@@ -28051,8 +28051,9 @@ function render() {
           // Thrust: small forward bob; lunge motion handled by lunge tick
           _swing = Math.sin(_swP * Math.PI) * (_isLunge ? 0.06 : 0.12);
         } else {
-          // Slash / heavy: directional sweep across full arc
-          const _amp = _isHeavy ? 1.3 : 1.0;
+          // Slash / heavy: WIDE directional sweep — much bigger arc so the
+          // motion reads as a real sword swing, not a wrist flick.
+          const _amp = _isHeavy ? 1.95 : 1.55;
           _swing = (_ease - 0.5) * 2 * _amp * _stpDir;
         }
       } else {
@@ -28115,63 +28116,70 @@ function render() {
       const _topRoot = -5.5, _topMid = -3.8;
       const _botRoot = 5.5,  _botMid = 2.6;
 
-      // ---- BLADE-TIP TRAIL: each frame during an active swing, emit a few
-      // particles at the blade's CURRENT tip position. The trail builds up
-      // behind the sword as it sweeps, so the lines indicate what the sword
-      // has done — the blade itself is the source of damage.
+      // ---- SLASH TRAIL: emitted each frame during an active sweep so the
+      // trail builds up AS the sword moves, not before it. Damage reads as
+      // coming from the whole blade body — multiple emit points along the
+      // length, plus perpendicular streaks for a comic-book swipe feel,
+      // plus a per-frame slash_arc segment at the cone edge that lingers
+      // briefly after the swing completes.
       const _isActive = _swP > 0 && _swP < 1;
-      if (_isActive && (!_isJab && !_isLunge)) {
-        const _tipDist = PLAYER_RADIUS + _floatGap + 11 + _bL;
+      if (_isActive && !_isJab && !_isLunge && p._rSwingRange) {
         const _wAng = (p.angle || 0) + _renderSwing;
-        const _tipX = p.x + Math.cos(_wAng) * _tipDist;
-        const _tipY = p.y + Math.sin(_wAng) * _tipDist;
-        // Wide cyan glow particle (lingers)
-        particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
-          life: 13, maxLife: 13, size: 5 + Math.random()*1.5,
-          color: def.color, type: 'spark' });
-        // Bright white core particle
-        particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
-          life: 10, maxLife: 10, size: 3 + Math.random(),
-          color: '#fff', type: 'spark' });
-        // Extra cyan dot a bit behind the tip (along the cutting edge)
-        const _behindAng = _wAng - 0.05 * (_stpDir || 1);
-        particles.push({ x: p.x + Math.cos(_behindAng) * (_tipDist - 8),
-                         y: p.y + Math.sin(_behindAng) * (_tipDist - 8),
-                         vx: 0, vy: 0, life: 10, maxLife: 10,
-                         size: 2 + Math.random()*0.8,
-                         color: def.color, type: 'spark' });
-      }
-      // ---- GHOST TRAIL: during active sweeps, stamp 5 fading copies of the
-      // blade at progressively trailing angles so the sword visually sweeps
-      // THROUGH the slash arc, not pasted on top of it.
-      if (_isActive && !_isJab && !_isLunge) {
-        for (let _gi = 1; _gi <= 5; _gi++) {
-          const _gAlpha = _bA * (0.55 - _gi * 0.085);
-          if (_gAlpha <= 0) continue;
-          const _gOff = _gi * 0.13 * (_stpDir || 1);
-          ctx.save();
-          ctx.rotate(_renderSwing - _gOff);
-          // Outer cyan glow ghost (wider, dimmer)
-          ctx.fillStyle = def.color; ctx.globalAlpha = _gAlpha * 0.55;
-          ctx.beginPath();
-          ctx.moveTo(_bStart, _topRoot - 1.4);
-          ctx.lineTo(_bMid,   _topMid - 1.0);
-          ctx.lineTo(_bEnd,   0);
-          ctx.lineTo(_bMid,   _botMid + 1.0);
-          ctx.lineTo(_bStart, _botRoot + 1.4);
-          ctx.closePath();
-          ctx.fill();
-          // Inner ghost blade body
-          ctx.fillStyle = def.color; ctx.globalAlpha = _gAlpha;
-          ctx.beginPath();
-          ctx.moveTo(_bStart, _topRoot - 0.3);
-          ctx.lineTo(_bMid,   _topMid - 0.2);
-          ctx.lineTo(_bEnd,   0);
-          ctx.lineTo(_bMid,   _botMid + 0.2);
-          ctx.lineTo(_bStart, _botRoot + 0.3);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
+        const _cosA = Math.cos(_wAng), _sinA = Math.sin(_wAng);
+        const _bodyRoot = PLAYER_RADIUS + _floatGap + 11;
+        const _bodyTip  = _bodyRoot + _bL;
+        const _perpAng  = _wAng + Math.PI * 0.5 * (_stpDir || 1);
+        const _perpCos  = Math.cos(_perpAng), _perpSin = Math.sin(_perpAng);
+
+        // 1) Short arc-edge segment at the cone radius — the "line" that
+        // shows what was cut. Stacks across frames to form the full arc.
+        particles.push({
+          x: p.x, y: p.y, vx: 0, vy: 0,
+          life: 16, maxLife: 16, size: p._rSwingRange,
+          color: def.color, type: 'slash_arc',
+          _angle: _wAng, _cone: 0.32
+        });
+
+        // 2) Body sparks at 4 sample points along the blade (root, two mids,
+        // tip). The whole blade is the damage source.
+        for (let _bi = 0; _bi < 4; _bi++) {
+          const _t = _bi / 3; // 0, 0.33, 0.66, 1.0
+          const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
+          const _bx = p.x + _cosA * _bd;
+          const _by = p.y + _sinA * _bd;
+          // Bright white core
+          particles.push({
+            x: _bx + (Math.random()-0.5)*2, y: _by + (Math.random()-0.5)*2,
+            vx: 0, vy: 0,
+            life: 9 + Math.floor(Math.random()*4), maxLife: 13,
+            size: 2 + Math.random()*1.5,
+            color: '#fff', type: 'spark'
+          });
+          // Cyan glow halo
+          particles.push({
+            x: _bx, y: _by, vx: 0, vy: 0,
+            life: 11, maxLife: 11,
+            size: 3 + Math.random()*1.5,
+            color: def.color, type: 'spark'
+          });
+        }
+
+        // 3) Comic-book speed-streak: a perpendicular line bursting outward
+        // from a random body point in the sweep direction. Two short streaks
+        // per frame, drawn as 'lightning' for the rough, hand-drawn feel.
+        for (let _si = 0; _si < 2; _si++) {
+          const _t = 0.45 + Math.random() * 0.55;
+          const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
+          const _bx = p.x + _cosA * _bd;
+          const _by = p.y + _sinA * _bd;
+          const _streakLen = 14 + Math.random() * 10;
+          particles.push({
+            x: _bx, y: _by, vx: 0, vy: 0,
+            life: 7, maxLife: 7, size: 1.6,
+            color: '#fff', type: 'lightning',
+            tx: _bx + _perpCos * _streakLen,
+            ty: _by + _perpSin * _streakLen
+          });
         }
       }
 
