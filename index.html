@@ -8560,7 +8560,11 @@ function _installParticleThrottle(arr) {
     if (this.length > crowdT) {
       let _w = 0;
       for (let i = 0; i < items.length; i++) {
-        if (Math.random() < 0.5) items[_w++] = items[i];
+        // Priority particles bypass the crowd-time drop so signature VFX
+        // like the lunge arrowhead always land.
+        if ((items[i] && items[i]._priority) || Math.random() < 0.5) {
+          items[_w++] = items[i];
+        }
       }
       items.length = _w;
       if (_w === 0) return this.length;
@@ -16762,6 +16766,14 @@ function _swingMelee(p, def) {
   // cleared by the local fire-input block on release.
   if (p._rComboLocked) return;
   const now = performance.now();
+  // ---- DASH-STRIKE: a swing within ~280 ms of dashing fires as a
+  // beefier lunging attack instead of the next combo step. Consumed once
+  // per dash; the regular combo continues afterward.
+  if (p === getLocalPlayer() && p._dashStrikeWindow && now < p._dashStrikeWindow) {
+    p._dashStrikeWindow = 0;
+    _runDashStrike(p, def, now);
+    return;
+  }
   // Combo state
   if (p._rComboIdx === undefined) p._rComboIdx = 0;
   if (now > (p._rComboWindow || 0)) p._rComboIdx = 0;
@@ -16790,6 +16802,35 @@ function _swingMelee(p, def) {
   // Advance combo
   p._rComboIdx = (idx + 1) % RIPPER_COMBO.length;
   p._rComboWindow = now + RIPPER_COMBO_WINDOW;
+}
+
+// Standalone dash-strike: a forward-thrust lunge that fires when the player
+// attacks within the dash-strike window. Built as a one-off step config
+// reusing the lungestrike VFX branch — same arrowhead silhouette, smaller
+// scale + white tint so it reads as a distinct dash follow-up rather than
+// a full finisher.
+const _DASH_STRIKE_STEP = {
+  kind: 'lungestrike',
+  range: 180, cone: Math.PI * 55/180,
+  damage: 22, knockback: 90, stagger: 55, cooldown: 240,
+  color: '#fff', tone: 1100, dir: 0,
+  label: 'DASH-STRIKE!', lungeDistance: 60,
+};
+function _runDashStrike(p, def, now) {
+  if (!p._rSwordOn && p === getLocalPlayer()) _emitSwordMaterialize(p);
+  p._rSwordOn = true;
+  p._rLastSwing = now;
+  p._rSwingAngle = p.angle;
+  p._rSwingStep = -1;
+  p._rSwingCooldown = _DASH_STRIKE_STEP.cooldown;
+  p._rSwingDir = 0;
+  p._rSwingJab = false;
+  p._rSwingHeavy = false;
+  p._rSwingLunge = true;
+  p._rSwingFinisher = false;
+  p._rSwingFirstBig = false;
+  p._rSwingRange = _DASH_STRIKE_STEP.range;
+  _runComboStep(p, def, _DASH_STRIKE_STEP, -1);
 }
 
 function _runComboStep(p, def, step, idx) {
@@ -16893,7 +16934,8 @@ function _runComboStep(p, def, step, idx) {
       x: p.x + c * _startOff, y: p.y + s * _startOff,
       vx: c * 0.45, vy: s * 0.45, // slight forward drift while it fades
       life: 22, maxLife: 22, size: _arrowLen,
-      color: '#fff', type: 'arrowhead', _angle: a
+      color: '#fff', type: 'arrowhead', _angle: a,
+      _priority: true // never get dropped during crowded particle frames
     });
     // Heavier smoke plume behind the player — visible kick-off cloud
     for (let i = 0; i < 14; i++) {
@@ -16930,12 +16972,14 @@ function _runComboStep(p, def, step, idx) {
     particles.push({
       x: _tx, y: _ty, vx: 0, vy: 0,
       life: 18, maxLife: 18, size: 38,
-      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2
+      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2,
+      _priority: true
     });
     particles.push({
       x: _tx, y: _ty, vx: 0, vy: 0,
       life: 14, maxLife: 14, size: 26,
-      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2
+      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2,
+      _priority: true
     });
     // Tip smoke burst — heavy plume right at the impact point
     for (let i = 0; i < 10; i++) {
@@ -17503,6 +17547,9 @@ function dash() {
   // for the local player's actual motion.
   lp.dashTimer = 150;   // 150ms of visible dash state (broadcasts to MP)
   lp._dashFrames = 6;   // 6 actual dash-motion frames
+  // Dash-strike window: melee swings within ~280 ms of dashing fire as a
+  // beefier lunging attack instead of the next combo step.
+  lp._dashStrikeWindow = performance.now() + 280;
   // Invincible for the dash + a small recovery window. 350ms total — the
   // dash motion itself eats ~133ms, leaving ~217ms of post-dash i-frames
   // (roughly 13 frames at 60 Hz). Long enough to clear a grabber that
@@ -28133,11 +28180,13 @@ function render() {
         // 0.62 * range puts the blade tip near the inner edge of the slash arc
         _bL = Math.max(_bL, p._rSwingRange * 0.62);
       }
-      // JAB: blade visibly THRUSTS forward over the swing window (peaks at
-      // mid-animation, retracts toward the end) so the strike feels driven
-      // by the blade rather than by an upfront beam effect.
-      if (_active && _isJab && p._rSwingRange) {
-        _bL = _bL + Math.sin(_swP * Math.PI) * (p._rSwingRange * 0.55);
+      // JAB / LUNGE: blade visibly THRUSTS forward over the swing window
+      // (peaks at mid-animation, retracts toward the end) so the strike is
+      // driven by the blade. Bigger pulse on the finisher so the animation
+      // reads even when the screen is crowded with hit VFX.
+      if (_active && (_isJab || _isLunge) && p._rSwingRange) {
+        const _pulseMult = _isLunge ? 0.72 : 0.55;
+        _bL = _bL + Math.sin(_swP * Math.PI) * (p._rSwingRange * _pulseMult);
       }
       // Skip drawing entirely when essentially invisible (outer ctx.save()
       // is still active — we just don't draw the blade at all)
