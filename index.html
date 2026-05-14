@@ -16697,6 +16697,7 @@ function _swingMelee(p, def) {
   p._rSwingHeavy = step.kind === 'heavy';
   p._rSwingLunge = step.kind === 'lungestrike';
   p._rSwingFinisher = !!step.finisher;
+  p._rSwingRange = step.range; // renderer extends the blade to this during sweeps
   // Run the swing
   _runComboStep(p, def, step, idx);
   // After the FINISHER fires, lock the combo until the player releases.
@@ -16843,8 +16844,8 @@ function _runComboStep(p, def, step, idx) {
     const _arrowLen = range - _startOff;
     particles.push({
       x: p.x + c * _startOff, y: p.y + s * _startOff,
-      vx: c * 0.6, vy: s * 0.6, // slight forward drift while it fades
-      life: 14, maxLife: 14, size: _arrowLen,
+      vx: c * 0.45, vy: s * 0.45, // slight forward drift while it fades
+      life: 22, maxLife: 22, size: _arrowLen,
       color: '#fff', type: 'arrowhead', _angle: a
     });
     // Heavier smoke plume behind the player — visible kick-off cloud
@@ -16874,26 +16875,38 @@ function _runComboStep(p, def, step, idx) {
       });
     }
     // BIG tip impact at the strike endpoint
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 12, maxLife: 12, size: 80, color: mainCol, type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 50, color: '#fff', type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 4,  maxLife: 4,  size: 26, color: '#fff', type: 'spark' });
-    // Radial impact spikes pointing OUT from the tip
-    for (let _spi = 0; _spi < 8; _spi++) {
-      const _spA = (_spi/8)*Math.PI*2 + Math.random()*0.25;
-      const _spL = 52 + Math.random()*22;
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 16, maxLife: 16, size: 90, color: mainCol, type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 12, maxLife: 12, size: 58, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 5,  maxLife: 5,  size: 32, color: '#fff', type: 'spark' });
+    // PERPENDICULAR CLEAVE MARK — straight slash line at the tip, perpendicular
+    // to the strike direction. Replaces the arc-class lightning-spike halo.
+    particles.push({
+      x: _tx, y: _ty, vx: 0, vy: 0,
+      life: 18, maxLife: 18, size: 38,
+      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2
+    });
+    particles.push({
+      x: _tx, y: _ty, vx: 0, vy: 0,
+      life: 14, maxLife: 14, size: 26,
+      color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2
+    });
+    // Tip smoke burst — heavy plume right at the impact point
+    for (let i = 0; i < 10; i++) {
+      const _ta = Math.random()*Math.PI*2, _ts = 1 + Math.random()*2.4;
       particles.push({
-        x: _tx, y: _ty, vx: 0, vy: 0, life: 8, maxLife: 8, size: 2.5,
-        color: '#fff', type: 'lightning',
-        tx: _tx + Math.cos(_spA)*_spL, ty: _ty + Math.sin(_spA)*_spL
+        x: _tx + (Math.random()-0.5)*10, y: _ty + (Math.random()-0.5)*10,
+        vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
+        life: 18 + Math.floor(Math.random()*8), maxLife: 26,
+        size: 5 + Math.random()*4, color: '#888', type: 'smoke', _smokeAlpha: 0.55
       });
     }
-    // Tip burst sparks
+    // Tip burst sparks — bright white only (no electric color)
     for (let i = 0; i < 28; i++) {
       const _ta = Math.random()*Math.PI*2, _ts = 3 + Math.random()*7;
       particles.push({
         x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
-        life: 11 + Math.floor(Math.random()*6), maxLife: 17,
-        size: 2.5 + Math.random()*2.5, color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
+        life: 12 + Math.floor(Math.random()*7), maxLife: 19,
+        size: 2.5 + Math.random()*2.5, color: '#fff', type: 'spark'
       });
     }
     // Trigger the lunge motion (smooth-decay velocity in the per-frame tick)
@@ -28049,7 +28062,16 @@ function render() {
       // so the blade looks alive instead of frozen mid-air.
       const _baBase = _ready ? _idle : (0.32 + (1 - _cdR) * 0.6);
       const _bA = _baBase * p._rBladeOnVis;
-      const _bL = _ready ? 46 : (28 + (1 - _cdR) * 18);
+      // Base blade is heftier (longer + wider below) so it reads as a SWORD,
+      // not a fencing foil. During ACTIVE sweep strikes (slash/heavy) the
+      // blade extends out to the step's range so the actual sword visibly
+      // sweeps through the slash arc area instead of staying near the player.
+      let _bL = _ready ? 58 : (34 + (1 - _cdR) * 24);
+      const _isSweep = _active && !_isJab && !_isLunge;
+      if (_isSweep && p._rSwingRange) {
+        // 0.62 * range puts the blade tip near the inner edge of the slash arc
+        _bL = Math.max(_bL, p._rSwingRange * 0.62);
+      }
       // Skip drawing entirely when essentially invisible (outer ctx.save()
       // is still active — we just don't draw the blade at all)
       if (p._rBladeOnVis >= 0.04) {
@@ -28063,28 +28085,40 @@ function render() {
       const _bStart = PLAYER_RADIUS + _floatGap + 11;// blade root
       const _bEnd   = _bStart + _bL;
       const _bMid   = _bStart + _bL * 0.7;
-      // Blade widths (asymmetric — single-edge katana shape)
-      const _topRoot = -3.5, _topMid = -2.6;
-      const _botRoot = 3.5,  _botMid = 1.8;
+      // Blade widths (asymmetric — single-edge katana shape). Beefier than
+      // before so the sword has visible mass during a slash.
+      const _topRoot = -5.5, _topMid = -3.8;
+      const _botRoot = 5.5,  _botMid = 2.6;
 
-      // ---- GHOST TRAIL: during active swing, stamp 3 fading copies of the
-      // blade at trailing angles so the sword visually sweeps THROUGH the
-      // slash arc instead of looking pasted-on. Drawn BEFORE the main blade.
+      // ---- GHOST TRAIL: during active sweeps, stamp 5 fading copies of the
+      // blade at progressively trailing angles so the sword visually sweeps
+      // THROUGH the slash arc, not pasted on top of it.
       const _isActive = _swP > 0 && _swP < 1;
       if (_isActive && !_isJab && !_isLunge) {
-        for (let _gi = 1; _gi <= 3; _gi++) {
-          const _gAlpha = _bA * (0.38 - _gi * 0.09);
+        for (let _gi = 1; _gi <= 5; _gi++) {
+          const _gAlpha = _bA * (0.55 - _gi * 0.085);
           if (_gAlpha <= 0) continue;
-          const _gOff = _gi * 0.15 * (_stpDir || 1);
+          const _gOff = _gi * 0.13 * (_stpDir || 1);
           ctx.save();
           ctx.rotate(_renderSwing - _gOff);
+          // Outer cyan glow ghost (wider, dimmer)
+          ctx.fillStyle = def.color; ctx.globalAlpha = _gAlpha * 0.55;
+          ctx.beginPath();
+          ctx.moveTo(_bStart, _topRoot - 1.4);
+          ctx.lineTo(_bMid,   _topMid - 1.0);
+          ctx.lineTo(_bEnd,   0);
+          ctx.lineTo(_bMid,   _botMid + 1.0);
+          ctx.lineTo(_bStart, _botRoot + 1.4);
+          ctx.closePath();
+          ctx.fill();
+          // Inner ghost blade body
           ctx.fillStyle = def.color; ctx.globalAlpha = _gAlpha;
           ctx.beginPath();
-          ctx.moveTo(_bStart, _topRoot - 0.5);
-          ctx.lineTo(_bMid,   _topMid - 0.3);
+          ctx.moveTo(_bStart, _topRoot - 0.3);
+          ctx.lineTo(_bMid,   _topMid - 0.2);
           ctx.lineTo(_bEnd,   0);
-          ctx.lineTo(_bMid,   _botMid + 0.3);
-          ctx.lineTo(_bStart, _botRoot + 0.5);
+          ctx.lineTo(_bMid,   _botMid + 0.2);
+          ctx.lineTo(_bStart, _botRoot + 0.3);
           ctx.closePath();
           ctx.fill();
           ctx.restore();
@@ -28681,32 +28715,75 @@ function render() {
         _strokeArc(1.5, 1,  '#fff');   // bright core
         ctx.globalAlpha = 1;
       } else if(p.type==='arrowhead'){
-        // RIPPER finisher: slim forward spike, white core only, gradient
-        // alpha (transparent near the player, opaque at the tip). Particle
-        // is spawned IN FRONT of the player so the spike starts there.
+        // RIPPER finisher: slim forward spike with cyan side highlights and a
+        // bright white core. Gradient fades toward the player but never fully
+        // invisible at the root.
         const _alpha = p.life / p.maxLife;
         const _len = p.size;
-        const _baseW = 7; // narrow base (no wider cone)
+        const _baseW = 7;
         ctx.save();
         ctx.translate(p.x, p.y);
         ctx.rotate(p._angle || 0);
-        // Linear gradient along the spike — 0 alpha at root, opaque at tip
+        // Cyan side-glow layer (wider, framing the white core like blade aura)
+        const _cyanGrad = ctx.createLinearGradient(0, 0, _len, 0);
+        _cyanGrad.addColorStop(0,    'rgba(77,238,255,' + (_alpha * 0.18).toFixed(3) + ')');
+        _cyanGrad.addColorStop(0.5,  'rgba(77,238,255,' + (_alpha * 0.45).toFixed(3) + ')');
+        _cyanGrad.addColorStop(1,    'rgba(77,238,255,' + (_alpha * 0.7).toFixed(3) + ')');
+        ctx.fillStyle = _cyanGrad;
+        ctx.beginPath();
+        ctx.moveTo(_len + 4, 0);
+        ctx.lineTo(0, -_baseW * 1.9);
+        ctx.lineTo(0, _baseW * 1.9);
+        ctx.closePath();
+        ctx.fill();
+        // White core — opaque at tip, ~30% at the root (not fully transparent)
         const _grad = ctx.createLinearGradient(0, 0, _len, 0);
-        _grad.addColorStop(0,    'rgba(255,255,255,0)');
-        _grad.addColorStop(0.45, 'rgba(255,255,255,' + (_alpha * 0.35).toFixed(3) + ')');
-        _grad.addColorStop(0.85, 'rgba(255,255,255,' + (_alpha * 0.85).toFixed(3) + ')');
+        _grad.addColorStop(0,    'rgba(255,255,255,' + (_alpha * 0.30).toFixed(3) + ')');
+        _grad.addColorStop(0.45, 'rgba(255,255,255,' + (_alpha * 0.55).toFixed(3) + ')');
+        _grad.addColorStop(0.85, 'rgba(255,255,255,' + (_alpha * 0.9).toFixed(3) + ')');
         _grad.addColorStop(1,    'rgba(255,255,255,' + _alpha.toFixed(3) + ')');
         ctx.fillStyle = _grad;
         ctx.beginPath();
-        ctx.moveTo(_len, 0);     // sharp forward tip
-        ctx.lineTo(0, -_baseW);  // narrow back-left
-        ctx.lineTo(0, _baseW);   // narrow back-right
+        ctx.moveTo(_len, 0);
+        ctx.lineTo(0, -_baseW);
+        ctx.lineTo(0, _baseW);
         ctx.closePath();
         ctx.fill();
+        // Cyan outline strokes along the spike edges
+        ctx.strokeStyle = '#4ff';
+        ctx.lineWidth = 1.4;
+        ctx.globalAlpha = _alpha * 0.9;
+        ctx.beginPath();
+        ctx.moveTo(0, -_baseW * 0.9);
+        ctx.lineTo(_len, 0);
+        ctx.lineTo(0, _baseW * 0.9);
+        ctx.stroke();
         // Bright tip pinpoint
         ctx.fillStyle = '#fff';
         ctx.globalAlpha = _alpha;
         ctx.beginPath(); ctx.arc(_len, 0, 2.5, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      } else if(p.type==='slash_mark'){
+        // Straight perpendicular cleave line — finisher tip "cut" mark.
+        // Fake-glow via stacked strokes (no shadowBlur per project rule).
+        const _alpha = p.life / p.maxLife;
+        const _len = p.size;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p._angle || 0);
+        ctx.strokeStyle = p.color || '#4ff';
+        ctx.lineWidth = 5;
+        ctx.globalAlpha = _alpha * 0.35;
+        ctx.beginPath();
+        ctx.moveTo(-_len, 0); ctx.lineTo(_len, 0);
+        ctx.stroke();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.8;
+        ctx.globalAlpha = _alpha;
+        ctx.beginPath();
+        ctx.moveTo(-_len, 0); ctx.lineTo(_len, 0);
+        ctx.stroke();
         ctx.restore();
         ctx.globalAlpha = 1;
       } else if(p.type==='afterimage'){
