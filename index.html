@@ -16135,66 +16135,91 @@ function updateDischarge() {
     return;
   }
 
-  // ---- EXPANSION PHASE ----
-  // Faster expansion — explosive burst feel
-  const _expandPct = w.radius / w.maxRadius;
-  const _speed = 42 * (1 - _expandPct * 0.8); // 42→8 px/frame
-  w.radius += Math.max(5, _speed);
-
-  // Dust trail particles — linger and drift outward slightly (no damage)
-  if (gameTime % 2 === 0) {
-    const _dCount = 2 + Math.floor((w.chargePct || 0.5) * 3);
-    for (let _di = 0; _di < _dCount; _di++) {
-      const _da = w.angle + (Math.random() - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
-      const _dr = w.radius * (0.5 + Math.random() * 0.4);
-      particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
-        vx: Math.cos(_da) * 1.2 + (Math.random() - 0.5) * 1.5, vy: Math.sin(_da) * 1.2 + (Math.random() - 0.5) * 1.5,
-        life: 20 + Math.floor(Math.random() * 15), maxLife: 35, size: 4 + Math.random() * 4, color: '#333', type: 'smoke' });
-    }
-  }
-
-  if (w.radius >= w.maxRadius) {
-    const _halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
-    // SINGULARITY: full-charge → collapse phase
-    if (w._singularity) {
-      w._collapsePhase = true;
-      w._collapseTimer = 30;
-      w._collapseHitSet = new Set();
-      // Pause VFX — flash at max extent
-      for (let _di = 0; _di < 12; _di++) {
-        const _da = w.angle + (_di / 12 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
-        const _dr = w.maxRadius;
+  // ---- LINGER PHASE ----
+  // Wave reached max extent: hold radius, keep damaging, pulse the visual,
+  // then dissolve. This gives the shockwave a "settled at the boundary"
+  // beat instead of popping out of existence the instant it stops growing.
+  if (w._lingering) {
+    w._lingerFrames--;
+    if (w._lingerFrames <= 0) {
+      const _halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
+      // Dissolve: scatter sparks around the perimeter as the wave dissipates.
+      const _dissCount = 16;
+      for (let _di = 0; _di < _dissCount; _di++) {
+        const _da = w.angle + (_di / _dissCount - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+        const _dr = w.maxRadius * (0.85 + Math.random() * 0.15);
         particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
-          vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: '#fff', type: 'spark' });
+          vx: Math.cos(_da) * 1.5 + (Math.random() - 0.5) * 2, vy: Math.sin(_da) * 1.5 + (Math.random() - 0.5) * 2,
+          life: 18 + Math.random() * 10, maxLife: 28, size: 3 + Math.random() * 3, color: w.color, type: 'spark' });
       }
-      playSound(600, 0.08, 'sine', 0.06);
-      screenShake.intensity = Math.max(screenShake.intensity, 6);
+      // RESIDUAL FIELD
+      if (_m.residualField > 0) {
+        const _rfDur = _m.residualField >= 2 ? 180 : 120;
+        const _rfApplyElem = _m.residualField >= 2;
+        window._residualFields = window._residualFields || [];
+        window._residualFields.push({
+          x: w.x, y: w.y, angle: w.angle,
+          halfAngle: _halfA, radius: w.maxRadius,
+          timer: _rfDur, maxTimer: _rfDur,
+          color: w.color, classId: w.classId,
+          dmg: 40, applyElem: _rfApplyElem, hitCd: {},
+        });
+      }
+      _dischargeActive = false;
+      _dischargeWave = null;
       return;
     }
-    // Normal dissolve
-    for (let _di = 0; _di < 10; _di++) {
-      const _da = w.angle + (_di / 10 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
-      const _dr = w.maxRadius * (0.85 + Math.random() * 0.15);
-      particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
-        vx: Math.cos(_da) * 1.5 + (Math.random() - 0.5) * 2, vy: Math.sin(_da) * 1.5 + (Math.random() - 0.5) * 2,
-        life: 14 + Math.random() * 8, maxLife: 22, size: 3 + Math.random() * 3, color: w.color, type: 'spark' });
+    // Fall through to damage / absorb / front-particle logic with frozen radius.
+  } else {
+    // ---- EXPANSION PHASE ----
+    // Ease-out: starts ~52 px/frame, decays sharply via (1-pct)^1.6 so the
+    // shockwave reads as losing energy as it spreads. Total ~22-26 frames.
+    const _expandPct = w.radius / w.maxRadius;
+    const _speed = 50 * Math.pow(1 - _expandPct, 1.6) + 2.5;
+    w.radius = Math.min(w.maxRadius, w.radius + _speed);
+
+    // Dust trail particles — emit every frame so the trail stays continuous
+    // even as the wave decelerates near the boundary.
+    {
+      const _dCount = 2 + Math.floor((w.chargePct || 0.5) * 3);
+      for (let _di = 0; _di < _dCount; _di++) {
+        const _da = w.angle + (Math.random() - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+        const _dr = w.radius * (0.5 + Math.random() * 0.4);
+        particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
+          vx: Math.cos(_da) * 1.2 + (Math.random() - 0.5) * 1.5, vy: Math.sin(_da) * 1.2 + (Math.random() - 0.5) * 1.5,
+          life: 20 + Math.floor(Math.random() * 15), maxLife: 35, size: 4 + Math.random() * 4, color: '#333', type: 'smoke' });
+      }
     }
-    // RESIDUAL FIELD
-    if (_m.residualField > 0) {
-      const _rfDur = _m.residualField >= 2 ? 180 : 120;
-      const _rfApplyElem = _m.residualField >= 2;
-      window._residualFields = window._residualFields || [];
-      window._residualFields.push({
-        x: w.x, y: w.y, angle: w.angle,
-        halfAngle: _halfA, radius: w.maxRadius,
-        timer: _rfDur, maxTimer: _rfDur,
-        color: w.color, classId: w.classId,
-        dmg: 40, applyElem: _rfApplyElem, hitCd: {},
-      });
+
+    if (w.radius >= w.maxRadius) {
+      // SINGULARITY: full-charge → collapse phase (unchanged path)
+      if (w._singularity) {
+        w._collapsePhase = true;
+        w._collapseTimer = 30;
+        w._collapseHitSet = new Set();
+        for (let _di = 0; _di < 12; _di++) {
+          const _da = w.angle + (_di / 12 - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+          const _dr = w.maxRadius;
+          particles.push({ x: w.x + Math.cos(_da) * _dr, y: w.y + Math.sin(_da) * _dr,
+            vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: '#fff', type: 'spark' });
+        }
+        playSound(600, 0.08, 'sine', 0.06);
+        screenShake.intensity = Math.max(screenShake.intensity, 6);
+        return;
+      }
+      // Enter LINGER phase — held at boundary for ~14 frames before dissolving.
+      w._lingering = true;
+      w._lingerFrames = 14;
+      // Peak flash at max extent — sells "the shockwave reaches its edge"
+      const _flashCount = 18;
+      for (let _di = 0; _di < _flashCount; _di++) {
+        const _da = w.angle + (_di / _flashCount - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+        particles.push({ x: w.x + Math.cos(_da) * w.maxRadius, y: w.y + Math.sin(_da) * w.maxRadius,
+          vx: 0, vy: 0, life: 10, maxLife: 10, size: 4, color: '#fff', type: 'spark' });
+      }
+      playSound(700, 0.05, 'sine', 0.04);
+      // fall through — damage logic below still runs at the boundary
     }
-    _dischargeActive = false;
-    _dischargeWave = null;
-    return;
   }
   const halfAngle = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
   const waveFront = w.radius;
@@ -16263,14 +16288,17 @@ function updateDischarge() {
     // Single sound for all absorptions this frame (no mass repetition)
     if (_absorbCount > 0) playSound(1200, 0.06, 'sine', 0.04);
   }
-  // VFX: arc wave particles along the wave front
-  const numParts = 6;
-  for (let i = 0; i < numParts; i++) {
-    const pa = w.angle + (i / (numParts-1) - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
-    const pr = waveFront - Math.random() * 15;
-    particles.push({ x: w.x + Math.cos(pa)*pr, y: w.y + Math.sin(pa)*pr,
-      vx: Math.cos(pa)*2 + (Math.random()-0.5), vy: Math.sin(pa)*2 + (Math.random()-0.5),
-      life: 8, maxLife: 8, size: 3 + Math.random()*2, color: w.color, type: 'spark' });
+  // VFX: arc wave particles along the wave front. Throttle during linger so
+  // we don't pile sparks on the same spot for ~14 frames.
+  if (!w._lingering || gameTime % 2 === 0) {
+    const numParts = 6;
+    for (let i = 0; i < numParts; i++) {
+      const pa = w.angle + (i / (numParts-1) - 0.5) * (w.waveAngle || DISCHARGE_ANGLE);
+      const pr = waveFront - Math.random() * 15;
+      particles.push({ x: w.x + Math.cos(pa)*pr, y: w.y + Math.sin(pa)*pr,
+        vx: Math.cos(pa)*2 + (Math.random()-0.5), vy: Math.sin(pa)*2 + (Math.random()-0.5),
+        life: 8, maxLife: 8, size: 3 + Math.random()*2, color: w.color, type: 'spark' });
+    }
   }
 }
 
