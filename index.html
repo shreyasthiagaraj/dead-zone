@@ -15309,24 +15309,47 @@ function _baseSpikExplode(sp) {
       damageZombie(z, Math.floor(SPIKE_BASE_DAMAGE * (1 - d/_r) + 5), dx/d*3, dy/d*3);
     }
   }
-  // Explosion VFX — fiery red burst
-  for (let i = 0; i < 16; i++) {
-    const ba = Math.random()*Math.PI*2, bs = 2+Math.random()*5;
-    particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-      life: 12+Math.random()*8, maxLife: 20, size: 2.5+Math.random()*3,
-      color: ['#f44','#fa4','#f80','#fff'][Math.floor(Math.random()*4)], type: 'explosion' });
+  // ---- IMPACT VFX (three-point rule: origin flash → rings → debris) ----
+  // Origin: white-hot core flash — single big bright pop the eye locks onto.
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 26, color: '#fff', type: 'explosion' });
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 18, color: '#fa4', type: 'explosion' });
+  // Path: 6 radial impact streaks (star burst), short and bright.
+  for (let _si = 0; _si < 6; _si++) {
+    const _sa = (_si / 6) * Math.PI * 2 + Math.random() * 0.4;
+    const _sl = _r + 12 + Math.random() * 18;
+    const _sv = 6 + Math.random() * 3;
+    particles.push({ x: sp.x, y: sp.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
+      life: 10, maxLife: 10, size: 4, color: '#fff', type: 'spark' });
+    particles.push({ x: sp.x + Math.cos(_sa) * 4, y: sp.y + Math.sin(_sa) * 4,
+      vx: Math.cos(_sa)*_sv*0.6, vy: Math.sin(_sa)*_sv*0.6,
+      life: 14, maxLife: 14, size: 3, color: '#fa4', type: 'spark' });
   }
-  // Shockwave ring
-  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _r, color: '#f44', type: 'wakering' });
-  // Smoke puff
-  for (let i = 0; i < 3; i++) {
+  // Impact: dense fiery debris — was 16 particles, now 28 with tiered colors.
+  for (let i = 0; i < 28; i++) {
+    const ba = Math.random()*Math.PI*2, bs = 2+Math.random()*6;
+    particles.push({ x: sp.x, y: sp.y, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
+      life: 14+Math.random()*10, maxLife: 24, size: 2.5+Math.random()*3.5,
+      color: ['#f44','#fa4','#f80','#ff0','#fff'][Math.floor(Math.random()*5)], type: 'explosion' });
+  }
+  // Three concentric expanding rings — different colors + speeds for depth.
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: _r * 0.55, color: '#fff', type: 'wakering' });
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: _r, color: '#fa4', type: 'wakering' });
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: _r * 1.4, color: '#f44', type: 'wakering' });
+  // Smoke puff — bigger and denser
+  for (let i = 0; i < 6; i++) {
     const sa = Math.random()*Math.PI*2;
     particles.push({ x: sp.x+Math.cos(sa)*4, y: sp.y+Math.sin(sa)*4,
-      vx: Math.cos(sa)*0.5, vy: -1-Math.random(), life: 20, maxLife: 20,
-      size: 4+Math.random()*3, color: '#432', type: 'smoke', _smokeAlpha: 0.2 });
+      vx: Math.cos(sa)*0.7, vy: -1-Math.random()*1.5, life: 26+Math.random()*8, maxLife: 34,
+      size: 5+Math.random()*4, color: ['#432','#544','#322'][Math.floor(Math.random()*3)],
+      type: 'smoke', _smokeAlpha: 0.25 });
   }
-  screenShake.intensity = Math.max(screenShake.intensity, 4);
-  playSound(300, 0.06, 'sawtooth', 0.05);
+  // Lingering scorch decal
+  decals.push({ x: sp.x, y: sp.y, size: 22, alpha: 0.55, color: '#310' });
+  screenShake.intensity = Math.max(screenShake.intensity, 6);
+  // Layered audio: sharp white-hot crack on top of the existing thump
+  playSound(900, 0.04, 'square', 0.10);
+  playSound(300, 0.08, 'sawtooth', 0.06);
+  playSound(80, 0.12, 'sine', 0.10);
   sp.lifetime = 0;
 }
 function _updateBaseSpike(sp) {
@@ -15348,12 +15371,22 @@ function _updateBaseSpike(sp) {
     }
     sp.x += sp.vx; sp.y += sp.vy;
     sp.travel = (sp.travel || 0) + Math.hypot(sp.vx, sp.vy);
-    // Red trail
-    if (sp._pulseTimer % 2 === 0) {
-      particles.push({ x: sp.x+(Math.random()-0.5)*4, y: sp.y+(Math.random()-0.5)*4,
-        vx: -sp.vx*0.12+(Math.random()-0.5)*1, vy: -sp.vy*0.12+(Math.random()-0.5)*1,
-        life: 10+Math.random()*4, maxLife: 14, size: 2+Math.random()*1.5,
-        color: Math.random()>0.4?'#f44':'#fa4', type: 'spark' });
+    // Red trail — long, dense streak. Spawn every frame: a fat body spark, a
+    // bright white core ember, plus an occasional drifting smoke puff for body.
+    particles.push({ x: sp.x+(Math.random()-0.5)*4, y: sp.y+(Math.random()-0.5)*4,
+      vx: -sp.vx*0.10+(Math.random()-0.5)*0.8, vy: -sp.vy*0.10+(Math.random()-0.5)*0.8,
+      life: 26+Math.random()*8, maxLife: 34, size: 3+Math.random()*2.5,
+      color: Math.random()>0.35?'#f44':'#fa4', type: 'spark' });
+    particles.push({ x: sp.x+(Math.random()-0.5)*2, y: sp.y+(Math.random()-0.5)*2,
+      vx: -sp.vx*0.06+(Math.random()-0.5)*0.5, vy: -sp.vy*0.06+(Math.random()-0.5)*0.5,
+      life: 14+Math.random()*4, maxLife: 18, size: 1.6+Math.random()*1.2,
+      color: Math.random()>0.5?'#fff':'#fc8', type: 'spark' });
+    if (sp._pulseTimer % 3 === 0) {
+      const _ta = Math.atan2(sp.vy, sp.vx) + Math.PI;
+      particles.push({ x: sp.x+(Math.random()-0.5)*3, y: sp.y+(Math.random()-0.5)*3,
+        vx: Math.cos(_ta)*1.4+(Math.random()-0.5)*0.6, vy: Math.sin(_ta)*1.4+(Math.random()-0.5)*0.6,
+        life: 28+Math.random()*8, maxLife: 36, size: 5+Math.random()*3,
+        color: '#532', type: 'smoke', _smokeAlpha: 0.22 });
     }
     if (obstacleCollision(sp.x, sp.y, 4, true)) {
       sp.x -= sp.vx; sp.y -= sp.vy;
@@ -15929,7 +15962,8 @@ const DISCHARGE_COOLDOWN = 120;  // 2 seconds
 const DISCHARGE_RANGE_MIN = 80;  // minimum wave reach (tap)
 const DISCHARGE_RANGE_MAX = 250; // maximum wave reach (full charge)
 const DISCHARGE_CHARGE_TIME = 90; // frames to full charge (~1.5s)
-const DISCHARGE_ANGLE = Math.PI * 0.5; // 90° arc
+const DISCHARGE_ANGLE = Math.PI * 2; // 360° — full circle nova
+const DISCHARGE_TAP_FLOOR = 2 / 3; // tap fires as if held ~1s — base release is meaningful
 let _dischargeActive = false;
 let _dischargeWave = null;
 let _dischargeCharging = false;
@@ -15987,7 +16021,8 @@ function updateDischargeCharge() {
 }
 
 function _fireDischarge(lp) {
-  const chargePct = Math.min(1, _dischargeCharge / DISCHARGE_CHARGE_TIME);
+  // Base tap is treated as ~1s charge — a tap is meaningful, not a feeble click.
+  const chargePct = Math.max(DISCHARGE_TAP_FLOOR, Math.min(1, _dischargeCharge / DISCHARGE_CHARGE_TIME));
   _dischargeCharge = 0;
   _dischargeActive = true;
   hapticSpecial();
@@ -26749,19 +26784,28 @@ function render() {
         ctx.translate(sp.x, sp.y);
         const _bladeAng = Math.atan2(sp.vy, sp.vx);
         ctx.rotate(_bladeAng);
+        // Wide ambient halo — sells presence at a glance
+        ctx.fillStyle = '#f44'; ctx.globalAlpha = 0.18;
+        ctx.beginPath(); ctx.ellipse(0, 0, 32, 14, 0, 0, Math.PI*2); ctx.fill();
         // Outer red glow
-        ctx.fillStyle = '#f44'; ctx.globalAlpha = 0.25;
-        ctx.beginPath(); ctx.ellipse(0, 0, 16, 7, 0, 0, Math.PI*2); ctx.fill();
-        // Projectile body — pointed oval
-        ctx.fillStyle = '#f44'; ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.ellipse(0, 0, 22, 10, 0, 0, Math.PI*2); ctx.fill();
+        // Projectile body — pointed oval, ~50% larger than before
+        ctx.fillStyle = '#f44'; ctx.globalAlpha = 0.95;
         ctx.beginPath();
-        ctx.moveTo(11, 0); ctx.lineTo(2, -4); ctx.lineTo(-8, -2);
-        ctx.lineTo(-8, 2); ctx.lineTo(2, 4); ctx.closePath();
+        ctx.moveTo(17, 0); ctx.lineTo(3, -6); ctx.lineTo(-12, -3);
+        ctx.lineTo(-12, 3); ctx.lineTo(3, 6); ctx.closePath();
+        ctx.fill();
+        // Hot orange-yellow midlayer
+        ctx.fillStyle = '#fa4'; ctx.globalAlpha = 0.95;
+        ctx.beginPath();
+        ctx.moveTo(13, 0); ctx.lineTo(2, -4); ctx.lineTo(-7, -2);
+        ctx.lineTo(-7, 2); ctx.lineTo(2, 4); ctx.closePath();
         ctx.fill();
         // Hot white core
         ctx.fillStyle = '#fff'; ctx.globalAlpha = 1;
         ctx.beginPath();
-        ctx.moveTo(8, 0); ctx.lineTo(1, -2); ctx.lineTo(-4, 0); ctx.lineTo(1, 2); ctx.closePath();
+        ctx.moveTo(11, 0); ctx.lineTo(1, -2.5); ctx.lineTo(-5, 0); ctx.lineTo(1, 2.5); ctx.closePath();
         ctx.fill();
         ctx.globalAlpha = 1;
         ctx.restore();
