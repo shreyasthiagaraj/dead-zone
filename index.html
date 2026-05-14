@@ -16792,71 +16792,18 @@ function _runComboStep(p, def, step, idx) {
   // step.dir: +1 sweep L->R, -1 sweep R->L, 0 thrust/no-direction.
   // ============================================================
   if (step.kind === 'slash' || step.kind === 'heavy') {
-    // ---- SLASH / HEAVY: sweeping arc trail. Echoes lag BEHIND the leading
-    //     edge so the sweep direction reads — controlled by step.dir.
-    const dir = step.dir >= 0 ? 1 : -1;
+    // ---- SLASH / HEAVY: the SWORD does the slashing. The trail is emitted
+    // by the renderer at the blade tip each frame during the active swing
+    // (see player render: _emitBladeTipTrail). So no upfront slash_arc here.
+    // We just kick off the swing with screen shake — everything else is
+    // either drawn from the blade or comes from the per-hit VFX.
     const _heavy = step.kind === 'heavy';
-    const _echoOff = _heavy ? 0.26 : 0.18;
-    particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
-      life: _heavy ? 12 : 9, maxLife: _heavy ? 12 : 9, size: range,
-      color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
-    particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
-      life: _heavy ? 9 : 7, maxLife: _heavy ? 9 : 7, size: range * 0.92,
-      color: mainCol, type: 'slash_arc', _angle: a - _echoOff * dir, _cone: cone * 0.9 });
-    particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
-      life: _heavy ? 7 : 5, maxLife: _heavy ? 7 : 5, size: range * 0.82,
-      color: '#fff', type: 'slash_arc', _angle: a - _echoOff*1.7 * dir, _cone: cone * 0.8 });
-    // Tangent edge sparks
-    const _sparkN = _heavy ? 22 : 14;
-    for (let i = 0; i < _sparkN; i++) {
-      const t = -0.48 + Math.random()*0.96;
-      const _ea = a + t * cone;
-      const _tan = _ea + (t >= 0 ? Math.PI*0.5 : -Math.PI*0.5);
-      const _r = range * (0.7 + Math.random()*0.32);
-      const _sp = 3 + Math.random()*4;
-      particles.push({
-        x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-        vx: Math.cos(_tan)*_sp + c*1.0, vy: Math.sin(_tan)*_sp + s*1.0,
-        life: 7 + Math.floor(Math.random()*4), maxLife: 11,
-        size: 2 + Math.random()*2,
-        color: Math.random() > 0.45 ? '#fff' : mainCol, type: 'spark'
-      });
-    }
-    // Smoke wisps (lighter on the fast strikes)
-    const _smokeN = _heavy ? 6 : 3;
-    for (let i = 0; i < _smokeN; i++) {
-      const t = -0.4 + Math.random()*0.8;
-      const _ea = a + t * cone;
-      const _r = range * (0.55 + Math.random()*0.32);
-      particles.push({
-        x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-        vx: Math.cos(_ea)*1.2, vy: Math.sin(_ea)*1.2,
-        life: 10 + Math.floor(Math.random()*6), maxLife: 16,
-        size: 4 + Math.random()*3, color: '#222', type: 'smoke', _smokeAlpha: 0.28
-      });
-    }
     if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _heavy ? 6 : 3);
   } else if (step.kind === 'jab') {
-    // ---- JAB: narrow forward thrust beam ----
+    // ---- JAB: narrow forward thrust. Most of the visual now comes from
+    // the blade's thrust pulse + tip trail emitted by the renderer. We only
+    // spawn the impact pop here so the strike has a clean endpoint.
     const _tx = p.x + c * range, _ty = p.y + s * range;
-    // Triple-stacked forward beam: outer color, mid bright, inner white core
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-    // Forward-flying sparks along the spear path
-    for (let i = 0; i < 14; i++) {
-      const _f = Math.random();
-      const _spread = (Math.random()-0.5) * 0.35;
-      const _sa = a + _spread;
-      const _sp = 3.5 + Math.random()*4;
-      particles.push({
-        x: p.x + c*(_f*range) + Math.cos(a+Math.PI/2)*(Math.random()-0.5)*6,
-        y: p.y + s*(_f*range) + Math.sin(a+Math.PI/2)*(Math.random()-0.5)*6,
-        vx: Math.cos(_sa)*_sp, vy: Math.sin(_sa)*_sp,
-        life: 6 + Math.floor(Math.random()*4), maxLife: 10,
-        size: 2 + Math.random()*1.8, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
-      });
-    }
-    // Impact pop at the tip
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 5, maxLife: 5, size: 18, color: '#fff', type: 'wakering' });
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 12, color: mainCol, type: 'wakering' });
     for (let i = 0; i < 8; i++) {
@@ -28116,6 +28063,12 @@ function render() {
         // 0.62 * range puts the blade tip near the inner edge of the slash arc
         _bL = Math.max(_bL, p._rSwingRange * 0.62);
       }
+      // JAB: blade visibly THRUSTS forward over the swing window (peaks at
+      // mid-animation, retracts toward the end) so the strike feels driven
+      // by the blade rather than by an upfront beam effect.
+      if (_active && _isJab && p._rSwingRange) {
+        _bL = _bL + Math.sin(_swP * Math.PI) * (p._rSwingRange * 0.55);
+      }
       // Skip drawing entirely when essentially invisible (outer ctx.save()
       // is still active — we just don't draw the blade at all)
       if (p._rBladeOnVis >= 0.04) {
@@ -28134,10 +28087,35 @@ function render() {
       const _topRoot = -5.5, _topMid = -3.8;
       const _botRoot = 5.5,  _botMid = 2.6;
 
+      // ---- BLADE-TIP TRAIL: each frame during an active swing, emit a few
+      // particles at the blade's CURRENT tip position. The trail builds up
+      // behind the sword as it sweeps, so the lines indicate what the sword
+      // has done — the blade itself is the source of damage.
+      const _isActive = _swP > 0 && _swP < 1;
+      if (_isActive && (!_isJab && !_isLunge)) {
+        const _tipDist = PLAYER_RADIUS + _floatGap + 11 + _bL;
+        const _wAng = (p.angle || 0) + _renderSwing;
+        const _tipX = p.x + Math.cos(_wAng) * _tipDist;
+        const _tipY = p.y + Math.sin(_wAng) * _tipDist;
+        // Wide cyan glow particle (lingers)
+        particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
+          life: 13, maxLife: 13, size: 5 + Math.random()*1.5,
+          color: def.color, type: 'spark' });
+        // Bright white core particle
+        particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
+          life: 10, maxLife: 10, size: 3 + Math.random(),
+          color: '#fff', type: 'spark' });
+        // Extra cyan dot a bit behind the tip (along the cutting edge)
+        const _behindAng = _wAng - 0.05 * (_stpDir || 1);
+        particles.push({ x: p.x + Math.cos(_behindAng) * (_tipDist - 8),
+                         y: p.y + Math.sin(_behindAng) * (_tipDist - 8),
+                         vx: 0, vy: 0, life: 10, maxLife: 10,
+                         size: 2 + Math.random()*0.8,
+                         color: def.color, type: 'spark' });
+      }
       // ---- GHOST TRAIL: during active sweeps, stamp 5 fading copies of the
       // blade at progressively trailing angles so the sword visually sweeps
       // THROUGH the slash arc, not pasted on top of it.
-      const _isActive = _swP > 0 && _swP < 1;
       if (_isActive && !_isJab && !_isLunge) {
         for (let _gi = 1; _gi <= 5; _gi++) {
           const _gAlpha = _bA * (0.55 - _gi * 0.085);
