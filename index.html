@@ -16664,8 +16664,9 @@ const RIPPER_COMBO = [
   { kind:'jab',         range: 155, cone: Math.PI * 30/180, damage: 14, knockback: 52, stagger: 34, cooldown: 160, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
   // Strike 4: HEAVY wide sweep
   { kind:'heavy',       range: 135, cone: Math.PI * 100/180,damage: 20, knockback: 65, stagger: 44, cooldown: 200, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
-  // Strike 5: LUNGE STRIKE — forward thrust with enormous knockback + stagger
-  { kind:'lungestrike', range: 145, cone: Math.PI * 55/180, damage: 28, knockback: 120, stagger: 90, cooldown: 360, color:'#f80', tone: 280, dir:  0, label:'LUNGE!', finisher: true, lungeDistance: 55 },
+  // Strike 5: LUNGE STRIKE — wide forward thrust, big AoE, enormous knockback
+  // Wider cone (95 deg) covers flanks so the lunge doesn't expose the player.
+  { kind:'lungestrike', range: 200, cone: Math.PI * 95/180, damage: 34, knockback: 180, stagger: 110, cooldown: 380, color:'#f80', tone: 240, dir:  0, label:'LUNGE!', finisher: true, lungeDistance: 78 },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16683,6 +16684,9 @@ function _swingMelee(p, def) {
   const step = RIPPER_COMBO[idx];
   // Per-step cooldown gate
   if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown) return;
+  // Materialize the sword if it isn't already summoned
+  if (!p._rSwordOn && p === getLocalPlayer()) _emitSwordMaterialize(p);
+  p._rSwordOn = true;
   p._rLastSwing = now;
   p._rSwingAngle = p.angle;
   p._rSwingStep = idx;
@@ -16828,59 +16832,84 @@ function _runComboStep(p, def, step, idx) {
     }
     if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, 5);
   } else if (step.kind === 'lungestrike') {
-    // ---- LUNGE STRIKE: forward thrust with huge knockback ----
+    // ---- LUNGE STRIKE: wide forward thrust, big AoE cone + huge knockback ----
     const _tx = p.x + c * range, _ty = p.y + s * range;
-    // Quadruple-stacked beam (thicker + brighter than JAB)
-    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 9, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+    // Wide AoE cone visual — slash_arc at the strike endpoint width
+    particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
+      life: 11, maxLife: 11, size: range,
+      color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
+    particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
+      life: 8, maxLife: 8, size: range * 0.85,
+      color: '#fff', type: 'slash_arc', _angle: a, _cone: cone * 0.8 });
+    // Quadruple-stacked forward beam
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: 10, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
     particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 6, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
     particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: 3, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
     particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 6,  maxLife: 6,  size: 1.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-    // Smoke trail down the lunge line
-    for (let i = 0; i < 7; i++) {
-      const _f = (i + 0.5) / 8;
+    // Two side beams along the cone edges so the AoE width reads
+    {
+      const _ea1 = a + cone * 0.35, _ea2 = a - cone * 0.35;
+      const _sR = range * 0.92;
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 4, color: mainCol, type: 'lightning', tx: p.x + Math.cos(_ea1)*_sR, ty: p.y + Math.sin(_ea1)*_sR });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 4, color: mainCol, type: 'lightning', tx: p.x + Math.cos(_ea2)*_sR, ty: p.y + Math.sin(_ea2)*_sR });
+    }
+    // Smoke trail down the main lunge line
+    for (let i = 0; i < 10; i++) {
+      const _f = (i + 0.5) / 11;
       particles.push({
-        x: p.x + c*(_f*range) + (Math.random()-0.5)*4,
-        y: p.y + s*(_f*range) + (Math.random()-0.5)*4,
+        x: p.x + c*(_f*range) + (Math.random()-0.5)*5,
+        y: p.y + s*(_f*range) + (Math.random()-0.5)*5,
         vx: -c*0.4 + (Math.random()-0.5)*0.8, vy: -s*0.4 + (Math.random()-0.5)*0.8,
-        life: 14 + Math.floor(Math.random()*6), maxLife: 20,
-        size: 4 + Math.random()*3, color: '#333', type: 'smoke', _smokeAlpha: 0.3
+        life: 14 + Math.floor(Math.random()*8), maxLife: 22,
+        size: 5 + Math.random()*4, color: '#333', type: 'smoke', _smokeAlpha: 0.32
       });
     }
-    // Forward-flying sparks along the strike line
-    for (let i = 0; i < 24; i++) {
-      const _f = Math.random();
-      const _spread = (Math.random()-0.5) * 0.32;
+    // Forward-flying sparks SPREAD ACROSS THE WIDE CONE
+    for (let i = 0; i < 36; i++) {
+      const _f = 0.3 + Math.random()*0.7;
+      const _spread = (Math.random()-0.5) * cone; // full cone spread
       const _sa = a + _spread;
-      const _sp = 5 + Math.random()*6;
+      const _sp = 5 + Math.random()*7;
       particles.push({
-        x: p.x + c*(_f*range) + Math.cos(a+Math.PI/2)*(Math.random()-0.5)*6,
-        y: p.y + s*(_f*range) + Math.sin(a+Math.PI/2)*(Math.random()-0.5)*6,
+        x: p.x + Math.cos(_sa)*(_f*range) + (Math.random()-0.5)*8,
+        y: p.y + Math.sin(_sa)*(_f*range) + (Math.random()-0.5)*8,
         vx: Math.cos(_sa)*_sp, vy: Math.sin(_sa)*_sp,
-        life: 8 + Math.floor(Math.random()*4), maxLife: 12,
-        size: 2 + Math.random()*2, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
+        life: 9 + Math.floor(Math.random()*5), maxLife: 14,
+        size: 2 + Math.random()*2.5, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
       });
     }
     // Player-side burst as the lunge launches (kick-off effect)
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       const _ka = a + Math.PI + (Math.random()-0.5)*1.6;
-      const _ks = 1 + Math.random()*2.5;
+      const _ks = 1.2 + Math.random()*2.8;
       particles.push({
         x: p.x + Math.cos(_ka)*4, y: p.y + Math.sin(_ka)*4,
         vx: Math.cos(_ka)*_ks, vy: Math.sin(_ka)*_ks,
-        life: 9, maxLife: 9, size: 2.5 + Math.random()*1.5, color: '#666', type: 'smoke', _smokeAlpha: 0.3
+        life: 10, maxLife: 10, size: 3 + Math.random()*2, color: '#555', type: 'smoke', _smokeAlpha: 0.32
       });
     }
-    // BIG tip impact at the strike endpoint
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 10, maxLife: 10, size: 50, color: mainCol, type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: 32, color: '#fff', type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 4,  maxLife: 4,  size: 18, color: '#fff', type: 'spark' });
+    // BIG tip impact at the strike endpoint (scaled with new range)
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 12, maxLife: 12, size: 72, color: mainCol, type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 46, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6,  maxLife: 6,  size: 28, color: '#fa0', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 4,  maxLife: 4,  size: 24, color: '#fff', type: 'spark' });
+    // Radial spike bolts from the impact endpoint
+    for (let _spi = 0; _spi < 8; _spi++) {
+      const _spA = (_spi/8)*Math.PI*2 + Math.random()*0.25;
+      const _spL = 50 + Math.random()*22;
+      particles.push({
+        x: _tx, y: _ty, vx: 0, vy: 0, life: 8, maxLife: 8, size: 2.5,
+        color: '#fff', type: 'lightning',
+        tx: _tx + Math.cos(_spA)*_spL, ty: _ty + Math.sin(_spA)*_spL
+      });
+    }
     // Tip explosion sparks (radiate from tip)
-    for (let i = 0; i < 20; i++) {
-      const _ta = Math.random()*Math.PI*2, _ts = 3 + Math.random()*5;
+    for (let i = 0; i < 28; i++) {
+      const _ta = Math.random()*Math.PI*2, _ts = 3 + Math.random()*7;
       particles.push({
         x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
-        life: 10 + Math.floor(Math.random()*5), maxLife: 15,
-        size: 2.5 + Math.random()*2, color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
+        life: 11 + Math.floor(Math.random()*6), maxLife: 17,
+        size: 2.5 + Math.random()*2.5, color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
       });
     }
     // Trigger the lunge motion (smooth-decay velocity in the per-frame tick)
@@ -16935,6 +16964,56 @@ function _runComboStep(p, def, step, idx) {
     }
     if (typeof hapticShot === 'function') hapticShot();
   }
+}
+
+// ---- Sword materialize / disperse: the blade is invisible at rest and only
+// appears when the player attacks. Visually emphasized via converging /
+// scattering particles so the sword reads as "summoned" rather than "always
+// held." Eliminates the constant idle-pose motion of the previous design.
+function _emitSwordMaterialize(p) {
+  // Spawn at the sword's resting position (idle angle ~ -PI*0.62 from aim)
+  const _restA = (p.angle || 0) - Math.PI * 0.62;
+  const _cx = p.x + Math.cos(_restA) * 32;
+  const _cy = p.y + Math.sin(_restA) * 32;
+  // Particles converge INTO the blade origin
+  for (let i = 0; i < 14; i++) {
+    const _pa = Math.random() * Math.PI * 2;
+    const _pr = 32 + Math.random() * 24;
+    const _px = _cx + Math.cos(_pa) * _pr;
+    const _py = _cy + Math.sin(_pa) * _pr;
+    particles.push({
+      x: _px, y: _py,
+      vx: (_cx - _px) * 0.18, vy: (_cy - _py) * 0.18,
+      life: 10 + Math.floor(Math.random()*4), maxLife: 14,
+      size: 1.5 + Math.random()*1.5,
+      color: Math.random() > 0.45 ? '#4ff' : '#fff',
+      type: 'spark'
+    });
+  }
+  // Bright center flash where the blade snaps into existence
+  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 6, maxLife: 6, size: 26, color: '#fff', type: 'wakering' });
+  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 5, maxLife: 5, size: 14, color: '#4ff', type: 'wakering' });
+}
+
+function _emitSwordDispersal(p) {
+  // Spawn at the LAST rendered blade position (current rotation, not idle)
+  const _angle = (p.angle || 0) + (p._rBladeAngle || -Math.PI * 0.62);
+  const _cx = p.x + Math.cos(_angle) * 30;
+  const _cy = p.y + Math.sin(_angle) * 30;
+  for (let i = 0; i < 14; i++) {
+    const _pa = Math.random() * Math.PI * 2;
+    const _ps = 1.2 + Math.random() * 2.4;
+    particles.push({
+      x: _cx + Math.cos(_pa)*6, y: _cy + Math.sin(_pa)*6,
+      vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps,
+      life: 14 + Math.floor(Math.random()*8), maxLife: 22,
+      size: 1.5 + Math.random()*1.5,
+      color: Math.random() > 0.45 ? '#4ff' : '#fff',
+      type: 'spark'
+    });
+  }
+  // Soft outgoing pulse
+  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#4ff', type: 'wakering' });
 }
 
 // ---- Ripper mod plumbing: scales damage like getScaledGun() and runs the
@@ -17096,30 +17175,74 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
 }
 
 function _meleeHitVFX(z, isCrit, mainCol) {
-  const ringSize = isCrit ? 46 : 30;
-  // Bright white flash
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: ringSize, color: '#fff', type: 'wakering' });
-  // Cross-pattern flash lines forming a "+"
-  for (let _ci = 0; _ci < 4; _ci++) {
-    const _ca = (_ci/4)*Math.PI*2;
+  // ==== HEAVY IMPACT: layered rings + starburst + sparks + blood + shake + sfx ====
+  // Triple-stacked wakerings (outer color, mid white, inner bright)
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: isCrit ? 58 : 40, color: isCrit ? '#f0f' : mainCol, type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: isCrit ? 42 : 28, color: '#fff', type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: isCrit ? 22 : 14, color: '#fff', type: 'spark' });
+  // 8-point starburst lines (was 4) — bigger reach so the impact reads across
+  // the enemy body
+  const _starN = isCrit ? 10 : 8;
+  for (let _ci = 0; _ci < _starN; _ci++) {
+    const _ca = (_ci/_starN)*Math.PI*2;
+    const _cl = isCrit ? 28 : 22;
     particles.push({
-      x: z.x, y: z.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: 1.5,
+      x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 2,
       color: isCrit ? '#f0f' : '#fff', type: 'lightning',
-      tx: z.x + Math.cos(_ca)*16, ty: z.y + Math.sin(_ca)*16
+      tx: z.x + Math.cos(_ca)*_cl, ty: z.y + Math.sin(_ca)*_cl
     });
   }
-  // Spark burst
-  const _scount = isCrit ? 28 : 16;
+  // Spark burst — way more (was 16/28)
+  const _scount = isCrit ? 48 : 32;
   for (let _si = 0; _si < _scount; _si++) {
-    const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random()*5;
+    const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random()*6;
     particles.push({
       x: z.x, y: z.y, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
-      life: 8 + Math.floor(Math.random()*5), maxLife: 13,
-      size: 2 + Math.random()*2,
+      life: 9 + Math.floor(Math.random()*6), maxLife: 15,
+      size: 2 + Math.random()*2.5,
       color: Math.random()>0.4 ? '#fff' : (isCrit ? '#f0f' : mainCol),
       type: 'spark'
     });
   }
+  // Blood splatter — pink/magenta-tinted to match game's gore palette
+  const _bloodN = isCrit ? 12 : 8;
+  for (let _bi = 0; _bi < _bloodN; _bi++) {
+    const _ba = Math.random() * Math.PI * 2, _bs = 2 + Math.random()*4;
+    particles.push({
+      x: z.x + (Math.random()-0.5)*(z.radius||14)*0.6,
+      y: z.y + (Math.random()-0.5)*(z.radius||14)*0.6,
+      vx: Math.cos(_ba)*_bs, vy: Math.sin(_ba)*_bs,
+      life: 18 + Math.floor(Math.random()*10), maxLife: 28,
+      size: 2.5 + Math.random()*2.5,
+      color: ['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],
+      type: 'blood'
+    });
+  }
+  // Pixel-chunk bursts on crit (extra "broke off" feel)
+  if (isCrit) {
+    for (let _pf = 0; _pf < 8; _pf++) {
+      const _pa = Math.random()*Math.PI*2, _ps = 3 + Math.random()*4;
+      particles.push({
+        x: z.x + (Math.random()-0.5)*(z.radius||14),
+        y: z.y + (Math.random()-0.5)*(z.radius||14),
+        vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
+        life: 16 + Math.floor(Math.random()*6), maxLife: 22,
+        size: 2 + Math.random()*2, color: Math.random()<0.5 ? '#fff' : '#f0f',
+        type: 'spark', _pixel: true
+      });
+    }
+  }
+  // Per-hit screen shake — adds up via Math.max when cleaving
+  screenShake.intensity = Math.max(screenShake.intensity, isCrit ? 7 : 5);
+  // Force the hit-flash on the enemy body harder (visible white tint)
+  z.hitFlash = Math.max(z.hitFlash || 0, isCrit ? 14 : 10);
+  // Bigger damage flash glow
+  if (typeof z._compressFrames !== 'undefined') z._compressFrames = 4;
+  // Sound effect: distinct ringing impact thud on the actual hit
+  if (typeof playHitSound === 'function') playHitSound();
+  // Higher-freq ring tone so the impact has metallic bite (matches blade theme)
+  playSound(2400 + Math.random()*400, 0.045, 'square', 0.06);
+  playSound(180, 0.06, 'sawtooth', 0.08);
   // Crit floating text
   if (isCrit) {
     floatingTexts.push({ x: z.x, y: z.y - (z.radius||14) - 12, text: 'CRITICAL!', color: '#f0f', vx: 0, vy: -1.2, life: 28, maxLife: 28 });
@@ -20107,6 +20230,15 @@ function update() {
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
+    // ---- Ripper sword dispersal tick: once the player hasn't swung for
+    // a while, scatter the blade into particles so it isn't always hovering.
+    if (lp._rSwordOn) {
+      const _sinceSwing = lp._rLastSwing ? (performance.now() - lp._rLastSwing) : Infinity;
+      if (_sinceSwing > 480) {
+        _emitSwordDispersal(lp);
+        lp._rSwordOn = false;
+      }
+    }
     // ---- Ripper auto-lunge tick: smooth velocity decay so the player glides
     // into reach instead of teleporting. Set by _swingMelee on first-strike
     // when a target is just out of cone reach.
@@ -27892,13 +28024,22 @@ function render() {
       const _ready = _cdR <= 0;
       // Idle pulse alpha
       const _idle = 0.85 + Math.sin(performance.now() * 0.012) * 0.15;
+      // Summon fade: when _rSwordOn flips, smoothly fade the blade in/out.
+      // Multiplied into _bA so every blade part fades together.
+      if (p._rBladeOnVis === undefined) p._rBladeOnVis = 0;
+      const _onTarget = p._rSwordOn ? 1 : 0;
+      p._rBladeOnVis += (_onTarget - p._rBladeOnVis) * 0.22;
       // Blade alpha + length scale based on ready state. Longer at base so
       // the sword has presence; the FLOAT gap makes it look detached/hovering.
       // When idle (not in an active swing), add subtle length + radial bob
       // so the blade looks alive instead of frozen mid-air.
-      const _bA = _ready ? _idle : (0.32 + (1 - _cdR) * 0.6);
+      const _baBase = _ready ? _idle : (0.32 + (1 - _cdR) * 0.6);
+      const _bA = _baBase * p._rBladeOnVis;
       let _bL = _ready ? 46 : (28 + (1 - _cdR) * 18);
       if (!_active) _bL += _idleBobLen;
+      // Skip drawing entirely when essentially invisible (outer ctx.save()
+      // is still active — we just don't draw the blade at all)
+      if (p._rBladeOnVis >= 0.04) {
       // Geometry: hilt -> cross-guard -> tapered blade -> tip.
       // FLOAT GAP: hilt starts a bit AWAY from the player so the sword reads
       // as hovering in front, not gripped in a hand. Idle bob in/out so it
@@ -28016,6 +28157,7 @@ function render() {
           life: 10, maxLife: 10, size: 1.5, color: def.color, type: 'spark' });
         p._rTipDrip = null;
       }
+      } // end blade-visible block
     } else {
     ctx.shadowColor=def.color;ctx.shadowBlur=8;ctx.fillStyle=def.color;ctx.fillRect(PLAYER_RADIUS-2,-3,14,6);ctx.shadowBlur=0;
     }
