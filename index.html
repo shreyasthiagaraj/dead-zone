@@ -19902,12 +19902,16 @@ function update() {
           const _cfDx = Math.cos(cfDir), _cfDy = Math.sin(cfDir);
           const cfR = _rm.cryoWake >= 2 ? 90 : 70;
           const cfMaxTravel = _rm.cryoWake >= 2 ? 210 : 160;
-          const cfLifetime = _rm.cryoWake >= 2 ? 120 : 100;
+          const cfLifetime = _rm.cryoWake >= 2 ? 75 : 60;
           // Strong launch — gas bursts forward fast, decays over distance.
           const _cfV0 = _rm.cryoWake >= 2 ? 10.5 : 8;
+          // Spawn cloud CENTER ahead of player by ~radius so the back edge
+          // sits just past the player — the gust is thrown forward, not on top.
+          const _cfOff = cfR + 8;
+          const _cfSx = lp.x + _cfDx * _cfOff, _cfSy = lp.y + _cfDy * _cfOff;
           window._coldFronts = window._coldFronts || [];
           window._coldFronts.push({
-            x: lp.x + _cfDx * 15, y: lp.y + _cfDy * 15,
+            x: _cfSx, y: _cfSy,
             vx: _cfDx * _cfV0, vy: _cfDy * _cfV0,
             dirX: _cfDx, dirY: _cfDy,
             travel: 0, maxTravel: cfMaxTravel,
@@ -19915,13 +19919,13 @@ function update() {
             r: cfR, lv: _rm.cryoWake,
             _hitTick: 0,
           });
-          // Origin puff — chunky launch burst so the gust reads thick at spawn
-          for (let i = 0; i < 12; i++) {
-            const sa = cfDir + (Math.random()-0.5)*1.0;
-            particles.push({ x: lp.x, y: lp.y,
-              vx: Math.cos(sa)*(1.5+Math.random()*2.5), vy: Math.sin(sa)*(1.5+Math.random()*2.5),
-              life: 28+Math.random()*12, maxLife: 40, size: 7+Math.random()*5,
-              color: '#fff', type: 'smoke', _smokeAlpha: 0.5+Math.random()*0.2 });
+          // Origin puff — fine launch burst at the cloud's spawn point
+          for (let i = 0; i < 10; i++) {
+            const sa = cfDir + (Math.random()-0.5)*0.9;
+            particles.push({ x: _cfSx, y: _cfSy,
+              vx: Math.cos(sa)*(1.4+Math.random()*2.2), vy: Math.sin(sa)*(1.4+Math.random()*2.2),
+              life: 20+Math.random()*10, maxLife: 30, size: 3+Math.random()*3,
+              color: '#fff', type: 'smoke', _smokeAlpha: 0.45+Math.random()*0.2 });
           }
           playSound(900, 0.15, 'sine', 0.07); playSound(500, 0.12, 'sine', 0.08);
         }
@@ -20473,32 +20477,45 @@ function update() {
         cf.vx *= 0.95; cf.vy *= 0.95;
         const _alive = cf.timer > 0;
         const _fadeT = Math.max(0, cf.timer / cf.maxTimer);
-        // Gas body — dense white smoke puffs filling the cloud volume.
-        // Thick: 7 puffs/frame at larger sizes so the gust reads as a solid mass.
+        // Gas body — fine white mist particles. Many small puffs read as
+        // a flowing gas instead of a few chunky blobs.
         if (_alive) {
-          const _puffs = 7;
+          const _puffs = 12;
           for (let i = 0; i < _puffs; i++) {
             const fa = Math.random()*Math.PI*2, fr = Math.random()*cf.r;
             particles.push({
               x: cf.x + Math.cos(fa)*fr, y: cf.y + Math.sin(fa)*fr,
               vx: cf.vx*0.25 + (Math.random()-0.5)*0.7,
               vy: cf.vy*0.25 + (Math.random()-0.5)*0.6 - 0.2,
-              life: 30+Math.random()*16, maxLife: 46,
-              size: 7 + Math.random()*6,
+              life: 22+Math.random()*12, maxLife: 34,
+              size: 3 + Math.random()*3,
               color: '#fff', type: 'smoke',
-              _smokeAlpha: (0.42 + Math.random()*0.22) * _fadeT,
+              _smokeAlpha: (0.36 + Math.random()*0.22) * _fadeT,
             });
           }
-          // Snowflake sparkles — bright twinkling pixels every frame
-          for (let i = 0; i < 2; i++) {
+          // Snowflake sparkles — twinkling drift pixels
+          for (let i = 0; i < 3; i++) {
             const sa = Math.random()*Math.PI*2, sr = Math.random()*cf.r*0.95;
             particles.push({
               x: cf.x + Math.cos(sa)*sr, y: cf.y + Math.sin(sa)*sr,
               vx: (Math.random()-0.5)*1.4,
               vy: -0.3 - Math.random()*0.7,
-              life: 18+Math.random()*10, maxLife: 28,
-              size: 1.4 + Math.random()*1.2,
+              life: 14+Math.random()*8, maxLife: 22,
+              size: 1.0 + Math.random()*0.8,
               color: Math.random()>0.4 ? '#fff' : '#cff', type: 'spark', _pixel: true,
+            });
+          }
+          // Illuminated ice crystal micro-particles — bright tiny pixels
+          // with brief lifetime so they twinkle like catching light.
+          for (let i = 0; i < 5; i++) {
+            const ca = Math.random()*Math.PI*2, cr = Math.random()*cf.r;
+            particles.push({
+              x: cf.x + Math.cos(ca)*cr, y: cf.y + Math.sin(ca)*cr,
+              vx: cf.vx*0.1 + (Math.random()-0.5)*0.4,
+              vy: cf.vy*0.1 + (Math.random()-0.5)*0.4 - 0.15,
+              life: 6+Math.floor(Math.random()*8), maxLife: 14,
+              size: 0.8 + Math.random()*0.7,
+              color: Math.random()>0.6 ? '#aef' : '#fff', type: 'spark', _pixel: true,
             });
           }
           // Faint ground frost decal trail
