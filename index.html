@@ -16653,16 +16653,19 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
+  // Progressive range: each strike reaches a bit further to track knocked-
+  // back enemies. Damage reduced across the board so combat lasts longer
+  // and positioning matters more.
   // Strike 1: light L->R slash
-  { kind:'slash',   range: 95,  cone: Math.PI * 70/180,  damage: 28, knockback: 8,  stagger: 16, cooldown: 140, color:'#4ff', tone: 760, dir:  1 },
+  { kind:'slash',    range: 100, cone: Math.PI * 70/180,  damage: 18, knockback: 10, stagger: 20, cooldown: 140, color:'#4ff', tone: 760, dir:  1 },
   // Strike 2: light R->L mirror slash
-  { kind:'slash',   range: 95,  cone: Math.PI * 70/180,  damage: 30, knockback: 8,  stagger: 16, cooldown: 140, color:'#4ff', tone: 800, dir: -1 },
+  { kind:'slash',    range: 112, cone: Math.PI * 70/180,  damage: 20, knockback: 10, stagger: 22, cooldown: 140, color:'#4ff', tone: 800, dir: -1 },
   // Strike 3: forward JAB — narrow long thrust
-  { kind:'jab',     range: 135, cone: Math.PI * 30/180,  damage: 42, knockback: 12, stagger: 22, cooldown: 160, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
-  // Strike 4: HEAVY wide sweep — still narrower than finisher
-  { kind:'heavy',   range: 110, cone: Math.PI * 100/180, damage: 58, knockback: 14, stagger: 28, cooldown: 200, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
-  // Strike 5: FINISHER — small focused AoE pop (NOT the giant explosion before)
-  { kind:'finisher', range: 95, cone: Math.PI * 170/180, damage: 85, knockback: 22, stagger: 42, cooldown: 320, color:'#f80', tone: 220, dir:  0, label:'FINISHER!', finisher: true },
+  { kind:'jab',      range: 150, cone: Math.PI * 30/180,  damage: 28, knockback: 14, stagger: 26, cooldown: 160, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
+  // Strike 4: HEAVY wide sweep
+  { kind:'heavy',    range: 130, cone: Math.PI * 100/180, damage: 40, knockback: 18, stagger: 32, cooldown: 200, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
+  // Strike 5: FINISHER — small focused AoE pop with HUGE knockback + stagger
+  { kind:'finisher', range: 120, cone: Math.PI * 170/180, damage: 55, knockback: 32, stagger: 60, cooldown: 320, color:'#f80', tone: 220, dir:  0, label:'FINISHER!', finisher: true },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16698,7 +16701,40 @@ function _runComboStep(p, def, step, idx) {
   const cone = step.cone;
   const isLocal = (p === getLocalPlayer());
 
-  // (No lunge — combo is stationary. Player choice on positioning matters.)
+  // ---- AUTO-LUNGE on first strike of a fresh combo ----
+  // If the nearest forward enemy is just outside reach (<= 1.55x range), apply
+  // a smoothly-decaying velocity so the player glides into striking distance
+  // instead of whiffing. Runs only on idx === 0 for the local player.
+  if (idx === 0 && isLocal) {
+    const _checkR = range * 1.55;
+    const _halfC = cone / 2;
+    let _bestZ = null, _bestD = Infinity;
+    for (const z of zombies) {
+      if (!z || z.hp <= 0) continue;
+      const dx = z.x - p.x, dy = z.y - p.y;
+      const d = Math.hypot(dx, dy);
+      const _zr = z.radius || 14;
+      if (d <= range + _zr) continue;       // already in range, no lunge needed
+      if (d > _checkR + _zr) continue;      // too far — don't lunge
+      const za = Math.atan2(dy, dx);
+      let da = za - a; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
+      if (Math.abs(da) > _halfC) continue;  // outside cone
+      if (d < _bestD) { _bestD = d; _bestZ = z; }
+    }
+    if (_bestZ) {
+      const dx = _bestZ.x - p.x, dy = _bestZ.y - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const _zr = _bestZ.radius || 14;
+      // Distance we need to close: gap to "just in range"
+      const _gap = (d - (range * 0.92 + _zr)); // a bit past edge so the hit lands
+      if (_gap > 0) {
+        // Velocity tuned so 0.72 decay settles after ~6 frames
+        const _initialV = _gap * 0.42;
+        p._rLungeVx = (dx / d) * _initialV;
+        p._rLungeVy = (dy / d) * _initialV;
+      }
+    }
+  }
 
   // ---- ORIGIN flash (small — strikes are faster + lighter now) ----
   particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: 18, color: '#fff', type: 'wakering' });
@@ -19878,6 +19914,19 @@ function update() {
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
     if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
+    // ---- Ripper auto-lunge tick: smooth velocity decay so the player glides
+    // into reach instead of teleporting. Set by _swingMelee on first-strike
+    // when a target is just out of cone reach.
+    if (lp._rLungeVx || lp._rLungeVy) {
+      const _nx = lp.x + lp._rLungeVx, _ny = lp.y + lp._rLungeVy;
+      if (typeof obstacleCollision !== 'function' || !obstacleCollision(_nx, _ny, PLAYER_RADIUS, true)) {
+        lp.x = _nx; lp.y = _ny;
+      } else {
+        lp._rLungeVx = 0; lp._rLungeVy = 0;
+      }
+      lp._rLungeVx *= 0.72; lp._rLungeVy *= 0.72;
+      if (Math.abs(lp._rLungeVx) + Math.abs(lp._rLungeVy) < 0.12) { lp._rLungeVx = 0; lp._rLungeVy = 0; }
+    }
     // Beacon cooldown + update
     if(lp._beaconCooldown>0)lp._beaconCooldown--;
     // Spike charge recharge — max scales with the SPIKE LOOP card.
@@ -27645,39 +27694,91 @@ function render() {
       const _bL = _ready ? 30 : (18 + (1 - _cdR) * 12);
       ctx.save();
       ctx.rotate(_renderSwing);
-      // Outer glow (fake-glow: wider + dim)
-      ctx.strokeStyle = def.color;
-      ctx.lineWidth = 4;
-      ctx.globalAlpha = _bA * 0.4;
+      // Geometry: hilt -> cross-guard -> tapered blade -> tip.
+      // Hilt sits AT the player edge; cross-guard separates grip from blade;
+      // the blade is a tapered leaf (wider near guard, narrowing to a point).
+      const _hStart = PLAYER_RADIUS - 4;    // grip starts just inside player
+      const _hEnd   = PLAYER_RADIUS + 3;    // grip ends, cross-guard begins
+      const _gX     = PLAYER_RADIUS + 4;    // cross-guard x
+      const _bStart = PLAYER_RADIUS + 6;    // blade root
+      const _bEnd   = PLAYER_RADIUS + 6 + _bL;
+      const _bMid   = PLAYER_RADIUS + 6 + _bL * 0.7;
+      // Blade widths (asymmetric — single-edge katana shape):
+      // top edge (cutting edge): straight + bright
+      // bottom edge: slight bulge near root, taper to point
+      const _topRoot = -3.5, _topMid = -2.6;
+      const _botRoot = 3.5,  _botMid = 1.8;
+
+      // ---- 1) GRIP (dark) with two color bands for wrap ----
+      ctx.fillStyle = '#181818'; ctx.globalAlpha = _bA;
+      ctx.fillRect(_hStart, -3.2, _hEnd - _hStart, 6.4);
+      // Wrap bands in class color
+      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.75;
+      ctx.fillRect(_hStart + 1, -3.2, 1.6, 6.4);
+      ctx.fillRect(_hStart + 4.6, -3.2, 1.4, 6.4);
+
+      // ---- 2) CROSS-GUARD (perpendicular bar, dark with class trim) ----
+      ctx.fillStyle = '#222'; ctx.globalAlpha = _bA;
+      ctx.fillRect(_gX, -7.5, 2.5, 15);
+      // Bright leading edge
+      ctx.fillStyle = def.color; ctx.globalAlpha = _bA;
+      ctx.fillRect(_gX + 2.5, -7.5, 0.8, 15);
+
+      // ---- 3) BLADE — outer glow polygon (wider, dim, class-colored) ----
+      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.32;
       ctx.beginPath();
-      ctx.moveTo(PLAYER_RADIUS, 0);
-      ctx.lineTo(PLAYER_RADIUS + _bL, 0);
-      ctx.stroke();
-      // Inner bright core
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = _bA;
+      ctx.moveTo(_bStart, _topRoot - 1.5);
+      ctx.lineTo(_bMid,   _topMid - 1.2);
+      ctx.lineTo(_bEnd,   0);
+      ctx.lineTo(_bMid,   _botMid + 1.2);
+      ctx.lineTo(_bStart, _botRoot + 1.5);
+      ctx.closePath();
+      ctx.fill();
+
+      // ---- 4) BLADE — main body (slightly tinted from class color) ----
+      ctx.fillStyle = '#cdf'; ctx.globalAlpha = _bA * 0.92;
       ctx.beginPath();
-      ctx.moveTo(PLAYER_RADIUS, 0);
-      ctx.lineTo(PLAYER_RADIUS + _bL, 0);
+      ctx.moveTo(_bStart, _topRoot);
+      ctx.lineTo(_bMid,   _topMid);
+      ctx.lineTo(_bEnd,   0);
+      ctx.lineTo(_bMid,   _botMid);
+      ctx.lineTo(_bStart, _botRoot);
+      ctx.closePath();
+      ctx.fill();
+
+      // ---- 5) BLADE — bright top cutting edge (single sharp stroke) ----
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.globalAlpha = _bA;
+      ctx.beginPath();
+      ctx.moveTo(_bStart, _topRoot + 0.2);
+      ctx.lineTo(_bMid,   _topMid + 0.2);
+      ctx.lineTo(_bEnd,   0);
       ctx.stroke();
-      // Tip dot — brighter on ready
-      const _tipR = _ready ? 3 : 1.8;
+
+      // ---- 6) BLADE — energy core stripe down the middle ----
+      ctx.strokeStyle = def.color; ctx.lineWidth = 0.9; ctx.globalAlpha = _bA * 0.85;
+      ctx.beginPath();
+      ctx.moveTo(_bStart + 1, (_topRoot + _botRoot) * 0.5);
+      ctx.lineTo(_bMid,       (_topMid + _botMid) * 0.5);
+      ctx.lineTo(_bEnd - 1,   0);
+      ctx.stroke();
+
+      // ---- 7) Tip glow halo + bright tip dot ----
+      const _tipR = _ready ? 2.6 : 1.6;
+      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.55;
+      ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR + 2.5, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.globalAlpha = _bA;
-      ctx.beginPath(); ctx.arc(PLAYER_RADIUS + _bL, 0, _tipR, 0, Math.PI*2); ctx.fill();
-      // Tip glow halo
-      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.45;
-      ctx.beginPath(); ctx.arc(PLAYER_RADIUS + _bL, 0, _tipR + 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR, 0, Math.PI*2); ctx.fill();
+
       // Ready-state tip drip: occasional spark
       if (_ready && Math.random() < 0.06) {
-        // emit in world-space — push to particles after restoring transform below
-        p._rTipDrip = { x: PLAYER_RADIUS + _bL, y: 0 };
+        p._rTipDrip = { x: _bEnd, y: 0 };
       }
       ctx.restore();
       ctx.globalAlpha = 1;
-      // Tip-drip spark in world space
+      // Tip-drip spark in world space (use stored local x from the save block)
       if (p._rTipDrip) {
-        const _tdx = Math.cos(p.angle) * (PLAYER_RADIUS + _bL), _tdy = Math.sin(p.angle) * (PLAYER_RADIUS + _bL);
+        const _tipLocal = p._rTipDrip.x;
+        const _tdx = Math.cos(p.angle) * _tipLocal, _tdy = Math.sin(p.angle) * _tipLocal;
         particles.push({ x: p.x + _tdx, y: p.y + _tdy,
           vx: (Math.random()-0.5)*0.8, vy: 0.4 + Math.random()*0.5,
           life: 10, maxLife: 10, size: 1.5, color: def.color, type: 'spark' });
