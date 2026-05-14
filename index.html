@@ -16775,18 +16775,16 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // Cooldowns tightened so the combo chain flows faster. First strike is
-  // the BIGGEST visible swing — opening commits, follow-ups are quicker.
-  // Strike 1: BIG opening L->R slash
-  { kind:'slash',       range: 115, cone: Math.PI * 85/180, damage:  8, knockback: 38, stagger: 28, cooldown: 100, color:'#4ff', tone: 760, dir:  1, firstBig: true },
-  // Strike 2: faster R->L mirror slash
-  { kind:'slash',       range: 110, cone: Math.PI * 70/180, damage: 10, knockback: 44, stagger: 30, cooldown: 100, color:'#4ff', tone: 800, dir: -1 },
-  // Strike 3: forward JAB
-  { kind:'jab',         range: 155, cone: Math.PI * 30/180, damage: 14, knockback: 52, stagger: 34, cooldown: 120, color:'#0ff', tone: 920, dir:  0, label:'JAB' },
-  // Strike 4: HEAVY wide sweep
-  { kind:'heavy',       range: 135, cone: Math.PI * 100/180,damage: 20, knockback: 65, stagger: 44, cooldown: 150, color:'#0ff', tone: 660, dir:  1, label:'HEAVY' },
-  // Strike 5: FORWARD CONE finisher (Meta-Knight-style sharp-tip thrust)
-  { kind:'lungestrike', range: 240, cone: Math.PI * 50/180, damage: 34, knockback: 260, stagger: 110, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'LUNGE!', finisher: true, lungeDistance: 32 },
+  // 1. FORWARD LUNGE — fast opener, light forward step + narrow thrust
+  { kind:'forwardlunge', range: 145, cone: Math.PI * 35/180, damage: 10, knockback: 32, stagger: 24, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 22 },
+  // 2. ARC SWIPE — 180 deg coverage, the widest sweep of the combo
+  { kind:'arcswipe',     range: 130, cone: Math.PI,          damage: 14, knockback: 44, stagger: 32, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC' },
+  // 3. UPPER CUT — narrow rising slash, launches enemies
+  { kind:'uppercut',     range: 120, cone: Math.PI * 75/180, damage: 18, knockback: 60, stagger: 42, cooldown: 130, color:'#0ff', tone:1080, dir: -1, label:'UPPERCUT' },
+  // 4. DOWNWARD SMASH — overhead slam with ground impact + heavy stagger
+  { kind:'smash',        range: 125, cone: Math.PI * 95/180, damage: 24, knockback: 55, stagger: 60, cooldown: 180, color:'#0ff', tone: 380, dir:  1, label:'SMASH' },
+  // 5. FINISHER LUNGE — sharp-tip forward cone, massive knockback
+  { kind:'lungestrike',  range: 240, cone: Math.PI * 50/180, damage: 34, knockback:260, stagger:110, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'FINISHER!', finisher: true, lungeDistance: 32 },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16820,12 +16818,13 @@ function _swingMelee(p, def) {
   p._rSwingStep = idx;
   p._rSwingCooldown = step.cooldown;
   p._rSwingDir = step.dir;
-  p._rSwingJab = step.kind === 'jab';
-  p._rSwingHeavy = step.kind === 'heavy';
+  p._rSwingKind = step.kind;
+  p._rSwingJab = step.kind === 'jab' || step.kind === 'forwardlunge';
+  p._rSwingHeavy = step.kind === 'heavy' || step.kind === 'smash';
   p._rSwingLunge = step.kind === 'lungestrike';
   p._rSwingFinisher = !!step.finisher;
-  p._rSwingFirstBig = !!step.firstBig; // first strike of a combo gets a bigger swing arc
-  p._rSwingRange = step.range; // renderer extends the blade to this during sweeps
+  p._rSwingFirstBig = !!step.firstBig;
+  p._rSwingRange = step.range;
   // Run the swing
   _runComboStep(p, def, step, idx);
   // After the FINISHER fires, lock the combo until the player releases.
@@ -16913,19 +16912,15 @@ function _runComboStep(p, def, step, idx) {
   // STEP-SPECIFIC VFX — dispatched by step.kind.
   // step.dir: +1 sweep L->R, -1 sweep R->L, 0 thrust/no-direction.
   // ============================================================
-  if (step.kind === 'slash' || step.kind === 'heavy') {
-    // ---- SLASH / HEAVY: spawn the slash_arc curves upfront so the lines
-    // read as solid, clean curves at the cone edge. They linger past the
-    // swing's animation so the slashed area stays visible briefly. The
-    // blade's body sparks (emitted per-frame in render) supplement these
-    // with motion accents.
+  if (step.kind === 'slash' || step.kind === 'heavy' || step.kind === 'arcswipe' || step.kind === 'uppercut' || step.kind === 'smash') {
+    // ---- SWEEP STRIKES: spawn 3-layer slash_arc curves upfront. The lines
+    // read as solid, clean curves at the cone edge and linger past the swing.
+    // Per-step VFX accents below differentiate arcswipe / uppercut / smash.
     const dir = step.dir >= 0 ? 1 : -1;
-    const _heavy = step.kind === 'heavy';
+    const _heavy = step.kind === 'heavy' || step.kind === 'smash';
+    const _arcwide = step.kind === 'arcswipe';
     const _firstBig = !!step.firstBig;
-    // Multi-streak layered slash_arc: outer cyan glow + mid cyan + inner white
-    // — at slightly different radii / angles so they read as multiple streaks
-    // instead of one stacked line.
-    const _arcLife = _firstBig ? 18 : (_heavy ? 16 : 13);
+    const _arcLife = _arcwide ? 19 : (_firstBig ? 18 : (_heavy ? 16 : 13));
     particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
       life: _arcLife, maxLife: _arcLife, size: range,
       color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
@@ -16935,14 +16930,76 @@ function _runComboStep(p, def, step, idx) {
     particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
       life: _arcLife - 6, maxLife: _arcLife - 6, size: range * 0.78,
       color: '#fff', type: 'slash_arc', _angle: a - 0.28 * dir, _cone: cone * 0.85 });
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _heavy || _firstBig ? 6 : 3);
-  } else if (step.kind === 'jab') {
-    // ---- JAB: narrow forward thrust. Most of the visual now comes from
-    // the blade's thrust pulse + tip trail emitted by the renderer. We only
-    // spawn the impact pop here so the strike has a clean endpoint.
+    // ---- UPPERCUT: rising "launch" accent at the strike's tip — a vertical
+    //      slash_mark perpendicular to aim + sparks that fly perpendicular
+    //      (the "kicked up" feel). Pure white cyan blend so it reads as a
+    //      launch hit.
+    if (step.kind === 'uppercut') {
+      const _tipX = p.x + c * range * 0.85, _tipY = p.y + s * range * 0.85;
+      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
+        life: 14, maxLife: 14, size: 28,
+        color: '#4ff', type: 'slash_mark', _angle: a + Math.PI/2,
+        _priority: true });
+      // 10 sparks flying perpendicular ("upward" relative to the strike line)
+      const _perpA = a + Math.PI/2 * (dir > 0 ? 1 : -1);
+      for (let _ui = 0; _ui < 10; _ui++) {
+        const _ua = _perpA + (Math.random()-0.5)*0.7;
+        const _us = 4 + Math.random()*5;
+        particles.push({
+          x: _tipX + Math.cos(_ua)*4, y: _tipY + Math.sin(_ua)*4,
+          vx: Math.cos(_ua)*_us, vy: Math.sin(_ua)*_us,
+          life: 12 + Math.floor(Math.random()*5), maxLife: 17,
+          size: 2 + Math.random()*1.5,
+          color: Math.random() > 0.5 ? '#fff' : '#cef', type: 'spark'
+        });
+      }
+    }
+    // ---- SMASH: overhead-slam ground impact at the strike's tip. Big
+    //      wakering, radial spark burst, scorch decal, smoke poof, heavier
+    //      shake.
+    if (step.kind === 'smash') {
+      const _tipX = p.x + c * range * 0.78, _tipY = p.y + s * range * 0.78;
+      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
+        life: 12, maxLife: 12, size: 62, color: mainCol, type: 'wakering' });
+      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0,
+        life: 8, maxLife: 8, size: 38, color: '#fff', type: 'wakering' });
+      // Radial impact sparks — burst outward from the impact point
+      for (let _smi = 0; _smi < 18; _smi++) {
+        const _sma = Math.random()*Math.PI*2, _sms = 3 + Math.random()*5;
+        particles.push({
+          x: _tipX, y: _tipY,
+          vx: Math.cos(_sma)*_sms, vy: Math.sin(_sma)*_sms,
+          life: 11 + Math.floor(Math.random()*5), maxLife: 16,
+          size: 2 + Math.random()*2,
+          color: Math.random() > 0.5 ? '#fff' : mainCol, type: 'spark'
+        });
+      }
+      // Smoke poof at impact (slam kicks up dust)
+      for (let _smi = 0; _smi < 6; _smi++) {
+        const _sma = Math.random()*Math.PI*2, _sms = 0.8 + Math.random()*1.8;
+        particles.push({
+          x: _tipX + (Math.random()-0.5)*10, y: _tipY + (Math.random()-0.5)*10,
+          vx: Math.cos(_sma)*_sms, vy: Math.sin(_sma)*_sms,
+          life: 16 + Math.floor(Math.random()*6), maxLife: 22,
+          size: 5 + Math.random()*3, color: '#777', type: 'smoke', _smokeAlpha: 0.45
+        });
+      }
+      // Scorch decal — small mark where the slam landed
+      decals.push({ x: _tipX, y: _tipY, size: 22, alpha: 0.4, color: '#222' });
+    }
+    if (isLocal) {
+      let _shake = 3;
+      if (_arcwide) _shake = 5;
+      if (_heavy || _firstBig) _shake = 6;
+      if (step.kind === 'smash') _shake = 8;
+      screenShake.intensity = Math.max(screenShake.intensity, _shake);
+    }
+  } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
+    // ---- FORWARD THRUST: narrow tip-impact pop. Most of the visual comes
+    // from the blade's thrust pulse emitted by the renderer.
     const _tx = p.x + c * range, _ty = p.y + s * range;
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 5, maxLife: 5, size: 18, color: '#fff', type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 12, color: mainCol, type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 20, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 7, maxLife: 7, size: 14, color: mainCol, type: 'wakering' });
     for (let i = 0; i < 8; i++) {
       const _ta = Math.random()*Math.PI*2, _ts = 2 + Math.random()*3;
       particles.push({
@@ -16950,6 +17007,12 @@ function _runComboStep(p, def, step, idx) {
         life: 7, maxLife: 7, size: 2 + Math.random()*1.5,
         color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
       });
+    }
+    // FORWARD LUNGE: small forward glide via the lunge tick (same mechanism
+    // the finisher uses). Only applies if step defines a lungeDistance.
+    if (isLocal && step.lungeDistance) {
+      p._rLungeVx = c * (step.lungeDistance * 0.42);
+      p._rLungeVy = s * (step.lungeDistance * 0.42);
     }
     if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, 5);
   } else if (step.kind === 'lungestrike') {
