@@ -16644,126 +16644,230 @@ function updatePayload() {
 }
 
 // ============================================================
-// RIPPER — close-quarters cone slash + forward lunge
+// RIPPER — three-hit combo (tap, tap, tap → finisher). Host-authoritative
+// damage, every-client local hit VFX. Rising-edge detection at the call site
+// gates advancement: holding fire is a single swing, not a combo.
 // ============================================================
-// Cone hit detection, decisive forward lunge, big readable arc VFX. Damage is
-// host-authoritative (multiplayer rule). Local non-host hits still spawn local
-// hit VFX for instant tactile feedback; the host's authoritative state catches
-// up via the next game_state sync.
+const RIPPER_COMBO = [
+  // Step 0: WIDE SLASH — fast opener, wide arc, modest reach.
+  { name: 'SLASH',     range: 120, cone: Math.PI * 140/180, damage: 60,  knockback: 8,  cooldown: 220, lunge: 0,  color: '#4ff', tone: 720 },
+  // Step 1: FORWARD RIP — short-cone but long reach, commits the player forward.
+  { name: 'RIP',       range: 165, cone: Math.PI * 70/180,  damage: 85,  knockback: 14, cooldown: 260, lunge: 50, color: '#0ff', tone: 880 },
+  // Step 2: FINISHER — explosive forward AoE, massive knockback shockwave.
+  { name: 'FINISHER!', range: 150, cone: Math.PI * 200/180, damage: 150, knockback: 32, cooldown: 460, lunge: 0,  color: '#f80', tone: 220, finisher: true },
+];
+const RIPPER_COMBO_WINDOW = 800; // ms grace to chain next hit before combo resets
+
 function _swingMelee(p, def) {
   if (!p || !p.alive) return;
   const now = performance.now();
-  const cd = def.fireRate || 320;
-  if (p._rLastSwing && (now - p._rLastSwing) < cd) return;
+  // Combo state
+  if (p._rComboIdx === undefined) p._rComboIdx = 0;
+  if (now > (p._rComboWindow || 0)) p._rComboIdx = 0;
+  const idx = p._rComboIdx;
+  const step = RIPPER_COMBO[idx];
+  // Per-step cooldown gate
+  if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown) return;
   p._rLastSwing = now;
-  p._rSwingAngle = p.angle; // direction frozen for the swing animation
+  p._rSwingAngle = p.angle;
+  p._rSwingStep = idx;
+  p._rSwingCooldown = step.cooldown;
+  // Run the swing
+  _runComboStep(p, def, step, idx);
+  // Advance combo
+  p._rComboIdx = (idx + 1) % RIPPER_COMBO.length;
+  p._rComboWindow = now + RIPPER_COMBO_WINDOW;
+}
 
+function _runComboStep(p, def, step, idx) {
   const a = p.angle, c = Math.cos(a), s = Math.sin(a);
-  const range = def._coneRange || 80;
-  const cone = def._coneAngle || (Math.PI * 110 / 180);
-  const lunge = def._lungeDistance || 25;
-  const mainCol = def.color || '#4ff';
+  const mainCol = step.color;
+  const range = step.range;
+  const cone = step.cone;
+  const isLocal = (p === getLocalPlayer());
 
-  // ---- LUNGE: only the local player commits to a position change ----
-  // (Non-host position is overridden by host. Host position for remote players
-  //  is overridden by their input next tick. So both branches keep the lunge
-  //  visible without state divergence.)
-  if (p === getLocalPlayer()) {
-    const steps = 5, stepLen = lunge / steps;
+  // ---- LUNGE (only step 1 currently) ----
+  if (step.lunge > 0 && isLocal) {
+    const steps = 6, stepLen = step.lunge / steps;
     for (let _li = 0; _li < steps; _li++) {
       const nx = p.x + c * stepLen, ny = p.y + s * stepLen;
       if (typeof obstacleCollision === 'function' && obstacleCollision(nx, ny, PLAYER_RADIUS, true)) break;
       p.x = nx; p.y = ny;
     }
-    // Speed lines trailing the lunge
-    for (let i = 0; i < 7; i++) {
-      const _back = 6 + Math.random()*16;
-      const _perp = (Math.random()-0.5)*14;
+    // Speedlines trailing
+    for (let i = 0; i < 10; i++) {
+      const _back = 6 + Math.random()*18, _perp = (Math.random()-0.5)*16;
       particles.push({
-        x: p.x - c*_back + (-s)*_perp,
-        y: p.y - s*_back + ( c)*_perp,
-        vx: -c * (0.6 + Math.random()*0.6), vy: -s * (0.6 + Math.random()*0.6),
-        life: 6 + Math.floor(Math.random()*4), maxLife: 10,
-        size: 1.5 + Math.random()*1.2, color: '#fff', type: 'spark'
+        x: p.x - c*_back + (-s)*_perp, y: p.y - s*_back + (c)*_perp,
+        vx: -c*(0.6 + Math.random()*0.8), vy: -s*(0.6 + Math.random()*0.8),
+        life: 6 + Math.floor(Math.random()*5), maxLife: 11,
+        size: 1.5 + Math.random()*1.4, color: '#fff', type: 'spark'
       });
     }
-    // Afterimage silhouettes — translucent player-radius circles fading out
-    for (let i = 0; i < 3; i++) {
-      const _t = (i + 1) / 4;
+    // Afterimages
+    for (let i = 0; i < 4; i++) {
+      const _t = (i + 1) / 5;
       particles.push({
-        x: p.x - c * (lunge * _t), y: p.y - s * (lunge * _t),
-        vx: 0, vy: 0, life: 9 - i*2, maxLife: 9 - i*2,
+        x: p.x - c*(step.lunge*_t), y: p.y - s*(step.lunge*_t),
+        vx: 0, vy: 0, life: 10 - i*2, maxLife: 10 - i*2,
         size: PLAYER_RADIUS, color: mainCol, type: 'afterimage'
       });
     }
-    // Dust kicks at takeoff
-    for (let i = 0; i < 8; i++) {
+    // Dust kicks
+    for (let i = 0; i < 10; i++) {
       const _da = a + Math.PI + (Math.random()-0.5)*1.4;
-      const _ds = 0.4 + Math.random()*1.4;
+      const _ds = 0.4 + Math.random()*1.6;
       particles.push({
-        x: p.x - c*6 + (Math.random()-0.5)*8, y: p.y - s*6 + (Math.random()-0.5)*8,
+        x: p.x - c*6 + (Math.random()-0.5)*10, y: p.y - s*6 + (Math.random()-0.5)*10,
         vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
         life: 8 + Math.floor(Math.random()*6), maxLife: 14,
-        size: 2.5 + Math.random()*2, color: '#444', type: 'smoke', _smokeAlpha: 0.35
+        size: 2.5 + Math.random()*2, color: '#555', type: 'smoke', _smokeAlpha: 0.4
       });
     }
-    triggerCameraZoom(1.02, 100);
-    screenShake.intensity = Math.max(screenShake.intensity, 4);
-    if (typeof hapticShot === 'function') hapticShot();
   }
 
-  // ---- ORIGIN: white wakering flash at player ----
-  particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: 22, color: '#fff', type: 'wakering' });
-  // 4 converging sparks into the blade tip
-  for (let _ci = 0; _ci < 4; _ci++) {
-    const _ca = a + (_ci/4)*Math.PI*2;
-    const _cr = 14;
+  // ---- ORIGIN flash ----
+  particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: 24, color: '#fff', type: 'wakering' });
+  for (let _ci = 0; _ci < 6; _ci++) {
+    const _ca = a + (_ci/6)*Math.PI*2;
     particles.push({
-      x: p.x + Math.cos(_ca)*_cr, y: p.y + Math.sin(_ca)*_cr,
-      vx: c * 2.5, vy: s * 2.5,
-      life: 4, maxLife: 4, size: 2, color: '#fff', type: 'spark'
+      x: p.x + Math.cos(_ca)*14, y: p.y + Math.sin(_ca)*14,
+      vx: c*2.5 + Math.cos(_ca)*0.5, vy: s*2.5 + Math.sin(_ca)*0.5,
+      life: 5, maxLife: 5, size: 2, color: '#fff', type: 'spark'
     });
   }
 
-  // ---- THE ARC (single layered particle covers the swept path) ----
-  particles.push({
-    x: p.x, y: p.y, vx: c*0.3, vy: s*0.3,
-    life: 9, maxLife: 9, size: range,
-    color: mainCol, type: 'slash_arc',
-    _angle: a, _cone: cone,
-  });
+  // ---- THE TRAIL: multiple staggered arcs for motion-blur sweep feel ----
+  // Main arc (full alpha, long life)
+  particles.push({ x: p.x, y: p.y, vx: c*0.4, vy: s*0.4,
+    life: 11, maxLife: 11, size: range,
+    color: mainCol, type: 'slash_arc', _angle: a, _cone: cone });
+  // Echo arcs — slight angle offset + shorter life = sweep trail
+  const _echoSign = idx === 1 ? 0 : 1; // step 1 (forward stab) symmetric, others sweep
+  particles.push({ x: p.x, y: p.y, vx: c*0.5, vy: s*0.5,
+    life: 8, maxLife: 8, size: range * 0.92,
+    color: mainCol, type: 'slash_arc', _angle: a - 0.18 * _echoSign, _cone: cone * 0.9 });
+  particles.push({ x: p.x, y: p.y, vx: c*0.6, vy: s*0.6,
+    life: 6, maxLife: 6, size: range * 0.82,
+    color: '#fff', type: 'slash_arc', _angle: a - 0.32 * _echoSign, _cone: cone * 0.8 });
 
-  // ---- ARC EDGE SPARKS: fling outward along the cone arc, tangent-direction ----
-  for (let i = 0; i < 14; i++) {
-    const t = -0.45 + Math.random()*0.9;
+  // ---- EDGE SPARKS — heavier, double previous count ----
+  const _sparkCount = step.finisher ? 36 : 26;
+  for (let i = 0; i < _sparkCount; i++) {
+    const t = -0.48 + Math.random()*0.96;
     const _ea = a + t * cone;
     const _tan = _ea + (t >= 0 ? Math.PI*0.5 : -Math.PI*0.5);
-    const _r = range * (0.7 + Math.random()*0.3);
-    const _sp = 3.5 + Math.random()*4;
+    const _r = range * (0.7 + Math.random()*0.32);
+    const _sp = 3.5 + Math.random()*5;
     particles.push({
       x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-      vx: Math.cos(_tan)*_sp, vy: Math.sin(_tan)*_sp,
-      life: 7 + Math.floor(Math.random()*4), maxLife: 11,
-      size: 2 + Math.random()*2, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
-    });
-  }
-  // Smoke wisps trailing the arc
-  for (let i = 0; i < 5; i++) {
-    const t = -0.35 + Math.random()*0.7;
-    const _ea = a + t * cone;
-    const _r = range * (0.55 + Math.random()*0.3);
-    particles.push({
-      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
-      vx: Math.cos(_ea)*1.2, vy: Math.sin(_ea)*1.2,
-      life: 12 + Math.floor(Math.random()*6), maxLife: 18,
-      size: 4 + Math.random()*3, color: '#222', type: 'smoke', _smokeAlpha: 0.3
+      vx: Math.cos(_tan)*_sp + c*1.2, vy: Math.sin(_tan)*_sp + s*1.2,
+      life: 8 + Math.floor(Math.random()*5), maxLife: 13,
+      size: 2 + Math.random()*2.4,
+      color: Math.random() > 0.45 ? '#fff' : mainCol, type: 'spark'
     });
   }
 
-  // ---- HIT DETECTION ----
+  // ---- SMOKE WISPS along the swept path ----
+  for (let i = 0; i < 8; i++) {
+    const t = -0.4 + Math.random()*0.8;
+    const _ea = a + t * cone;
+    const _r = range * (0.55 + Math.random()*0.32);
+    particles.push({
+      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
+      vx: Math.cos(_ea)*1.3, vy: Math.sin(_ea)*1.3,
+      life: 12 + Math.floor(Math.random()*8), maxLife: 20,
+      size: 5 + Math.random()*4, color: idx === 2 ? '#412' : '#222', type: 'smoke', _smokeAlpha: 0.32
+    });
+  }
+
+  // ---- RIBBON TRAIL: short tangent dashes that linger along the arc ----
+  for (let i = 0; i < 8; i++) {
+    const t = -0.42 + (i / 7) * 0.84;
+    const _ea = a + t * cone;
+    const _r = range * 0.85;
+    const _tan = _ea + Math.PI*0.5;
+    particles.push({
+      x: p.x + Math.cos(_ea)*_r, y: p.y + Math.sin(_ea)*_r,
+      vx: Math.cos(_tan)*0.6 + c*0.5, vy: Math.sin(_tan)*0.6 + s*0.5,
+      life: 9 + Math.floor(Math.random()*4), maxLife: 13,
+      size: 1.4 + Math.random(), color: '#fff', type: 'spark'
+    });
+  }
+
+  // ---- STEP 1 FORWARD STREAK: long lightning bolt down the spear of the rip ----
+  if (idx === 1) {
+    const _tx = p.x + c * range, _ty = p.y + s * range;
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+    // Forward-flying sparks along the path
+    for (let i = 0; i < 12; i++) {
+      const _f = Math.random();
+      particles.push({
+        x: p.x + c * (_f * range), y: p.y + s * (_f * range),
+        vx: c*(2 + Math.random()*4), vy: s*(2 + Math.random()*4),
+        life: 6 + Math.floor(Math.random()*4), maxLife: 10,
+        size: 2 + Math.random()*2, color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
+      });
+    }
+  }
+
+  // ---- STEP 2 FINISHER: massive explosion + shockwave + knockback ----
+  if (idx === 2) {
+    // Origin of explosion: just in front of the player so the boom reads as a "smash"
+    const ex = p.x + c * (range * 0.55), ey = p.y + s * (range * 0.55);
+    // Big concentric shockwaves
+    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 12, maxLife: 12, size: range * 1.2, color: mainCol, type: 'wakering' });
+    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 10, maxLife: 10, size: range * 0.85, color: '#fff', type: 'wakering' });
+    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: range * 1.45, color: '#fa0', type: 'wakering' });
+    // Bright core flash
+    particles.push({ x: ex, y: ey, vx: 0, vy: 0, life: 4, maxLife: 4, size: 30, color: '#fff', type: 'spark' });
+    // Radial explosion sparks
+    for (let i = 0; i < 40; i++) {
+      const _a2 = Math.random()*Math.PI*2, _sp = 3 + Math.random()*9;
+      particles.push({
+        x: ex, y: ey, vx: Math.cos(_a2)*_sp, vy: Math.sin(_a2)*_sp,
+        life: 14 + Math.floor(Math.random()*10), maxLife: 24,
+        size: 3 + Math.random()*3, color: i < 8 ? '#fff' : (Math.random()>0.5 ? mainCol : '#fa0'),
+        type: 'explosion'
+      });
+    }
+    // Smoke billows
+    for (let i = 0; i < 10; i++) {
+      const _a2 = Math.random()*Math.PI*2, _sp = 1 + Math.random()*3;
+      particles.push({
+        x: ex + (Math.random()-0.5)*20, y: ey + (Math.random()-0.5)*20,
+        vx: Math.cos(_a2)*_sp, vy: Math.sin(_a2)*_sp,
+        life: 22 + Math.floor(Math.random()*14), maxLife: 36,
+        size: 7 + Math.random()*6, color: '#333', type: 'smoke', _smokeAlpha: 0.35
+      });
+    }
+    // Debris chunks flying forward
+    for (let i = 0; i < 10; i++) {
+      const _a2 = a + (Math.random()-0.5)*1.3, _sp = 6 + Math.random()*8;
+      particles.push({
+        x: ex, y: ey, vx: Math.cos(_a2)*_sp, vy: Math.sin(_a2)*_sp,
+        life: 22 + Math.floor(Math.random()*10), maxLife: 32,
+        size: 2.5 + Math.random()*2.5, color: Math.random()>0.5 ? '#fa0' : '#888',
+        type: 'spark', _pixel: true, gravity: 0.06
+      });
+    }
+    // Glitch surge so it really lands
+    if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.25, 12);
+    if (isLocal) {
+      screenShake.intensity = Math.max(screenShake.intensity, 12);
+      triggerCameraZoom(1.04, 180);
+    }
+  } else {
+    // Steps 0 + 1 shake
+    if (isLocal) {
+      screenShake.intensity = Math.max(screenShake.intensity, idx === 1 ? 6 : 4);
+      if (step.lunge > 0) triggerCameraZoom(1.02, 100);
+    }
+  }
+
+  // ---- HIT DETECTION + DAMAGE ----
   const halfCone = cone / 2;
-  const baseDmg = def.damage || 80;
-  // Crit chance: slightly higher than gun base — melee earned through proximity.
   const _critChance = 0.18;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
@@ -16773,22 +16877,35 @@ function _swingMelee(p, def) {
     const za = Math.atan2(dy, dx);
     let da = za - a; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
     if (Math.abs(da) > halfCone) continue;
-    // Crit roll is deterministic per-z-per-swing so host/client agree visually
     const isCrit = Math.random() < _critChance;
+    const baseDmg = step.damage;
     const dmg = isCrit ? Math.floor(baseDmg * 2) : baseDmg;
     const _nd = d || 1;
-    const _kb = def.knockback || 12;
+    // Finisher: knockback scales with proximity (1.0 at center → 0.5 at edge)
+    let _kb = step.knockback;
+    if (step.finisher) _kb = step.knockback * (1.0 - 0.5 * (d / range));
     if (isHost) {
       damageZombie(z, dmg, dx/_nd * _kb, dy/_nd * _kb, false);
     }
     _meleeHitVFX(z, isCrit, mainCol);
+    // Finisher: extra stagger so the launched enemies stay readable
+    if (step.finisher && isHost) {
+      z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
+    }
   }
 
-  // ---- SOUND (local only) ----
-  if (p === getLocalPlayer()) {
-    const _sd = def.sound || {};
-    playSound(_sd.freq || 700, _sd.duration || 0.06, _sd.type || 'sawtooth', 0.08);
-    playSound(380, 0.04, 'square', 0.04);
+  // ---- COMBO LABEL + SOUND ----
+  if (isLocal) {
+    if (idx > 0) {
+      floatingTexts.push({ x: p.x, y: p.y - PLAYER_RADIUS - 18, text: step.name, color: mainCol, vx: 0, vy: -1.2, life: 26, maxLife: 26 });
+    }
+    playSound(step.tone, 0.06 + idx * 0.02, idx === 2 ? 'sawtooth' : 'square', 0.08);
+    if (idx === 2) {
+      // Bass thump on finisher
+      playSound(60, 0.18, 'sawtooth', 0.14);
+      playSound(120, 0.12, 'square', 0.08);
+    }
+    if (typeof hapticShot === 'function') hapticShot();
   }
 }
 
@@ -20098,10 +20215,22 @@ function update() {
         }
       }
     }
-    if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
-    else if(!shouldFire) stopWeaponLoop();
-    // Stop loop if reloading or out of ammo
-    if(w.ammo<=0 && !shouldFire) stopWeaponLoop();
+    {
+      const _curDef = WEAPON_DEFS[w.type];
+      if (_curDef && _curDef._melee) {
+        // Tap-mode: only swing on rising edge so each tap advances the combo,
+        // and holding the button doesn't auto-cycle through all three hits.
+        if (shouldFire && !lp._meleePrevFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
+        lp._meleePrevFire = !!shouldFire;
+        // Always stop the gun loop sound — melee has its own per-hit sounds.
+        if (!shouldFire) stopWeaponLoop();
+      } else {
+        lp._meleePrevFire = false;
+        if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
+        else if(!shouldFire) stopWeaponLoop();
+        if(w.ammo<=0 && !shouldFire) stopWeaponLoop();
+      }
+    }
   }
 
   // ---- Send input to host (non-host multiplayer) ----
@@ -27487,10 +27616,18 @@ function render() {
       // Swing animation runs for first 200ms after _rLastSwing.
       const _sinceSwing = p._rLastSwing ? (performance.now() - p._rLastSwing) : 99999;
       const _swA = Math.max(0, 1 - _sinceSwing / 200); // 1→0 across 200ms
-      // Blade sweeps from -0.7 rad → +0.7 rad through the swing window
-      const _swing = _swA > 0 ? (0.5 - _swA) * 1.4 : 0;
+      // Per-step swing motion: wide-arc sweep on step 0, forward thrust on step 1,
+      // overhead chop on step 2.
+      const _stp = p._rSwingStep || 0;
+      let _swing = 0;
+      if (_swA > 0) {
+        if (_stp === 0)      _swing = (0.5 - _swA) * 2.0;    // wide sweep ±1.0 rad
+        else if (_stp === 1) _swing = Math.sin(_swA * Math.PI) * 0.25; // small wiggle, blade thrusts straight
+        else                 _swing = (1 - _swA) * 1.4 - 0.7; // overhead-style downward chop
+      }
       // Cooldown remaining (0=ready, 1=just swung) — drives blade dim/length
-      const _cdR = Math.max(0, 1 - _sinceSwing / (def.fireRate || 320));
+      const _cdMs = p._rSwingCooldown || (def.fireRate || 320);
+      const _cdR = Math.max(0, 1 - _sinceSwing / _cdMs);
       const _ready = _cdR <= 0;
       // Idle pulse alpha
       const _idle = 0.85 + Math.sin(performance.now() * 0.012) * 0.15;
@@ -27589,7 +27726,7 @@ function render() {
     ctx.restore();
     // Cooldown ring around feet (melee only) — readable "when can I swing"
     if (def && def._melee && p._rLastSwing) {
-      const _cdR = Math.max(0, 1 - (performance.now() - p._rLastSwing) / (def.fireRate || 320));
+      const _cdR = Math.max(0, 1 - (performance.now() - p._rLastSwing) / (p._rSwingCooldown || def.fireRate || 320));
       if (_cdR > 0) {
         ctx.save();
         ctx.translate(p.x + _bodyOX, p.y + _bodyOY);
