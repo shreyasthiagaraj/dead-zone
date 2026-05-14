@@ -1834,8 +1834,7 @@ const UPGRADE_POOL = [
     descs:['Special weapon applies EXPOSED. Adds pulse element to all special attacks. +20% weapon damage.'],
     flavor:'kinetic resonance amplified.' },
   // ---- DISCHARGE MODS (special weapon cards) ----
-  { id:'wide_arc', name:'WIDE ARC', rarity:'common', max:1, icon:'◠', color:'#f80',
-    descs:['Your SPECIAL has +30° wave width.'], flavor:'broadband signal override' },
+  // wide_arc removed — Discharge is now a 360 deg attack, the card is moot.
   { id:'surge_range', name:'SURGE RANGE', rarity:'common', max:1, icon:'↔', color:'#f80',
     descs:['Your SPECIAL has +30% wave distance.'], flavor:'signal amplification beyond spec' },
   { id:'aftershock', name:'AFTERSHOCK', rarity:'rare', max:1, icon:'◎', color:'#f80',
@@ -2337,7 +2336,7 @@ function draftUpgradeCards() {
     // Pool of upgrades the player hasn't maxed out — also gate on prereqs so
     // synergy cards only appear once the player owns one mod from each of
     // the two classes they pair (matches mod-terminal behavior).
-    const pool = UPGRADE_POOL.filter(u => !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial));
+    const pool = UPGRADE_POOL.filter(u => !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) && _passesWeaponGate(u));
     if (pool.length === 0) break;
     // Roll rarity
     const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -2411,13 +2410,38 @@ const _SPECIAL_CARD_MAP = {
   trap_mine: 'beacon', gravity_well: 'beacon', hazard_zone: 'beacon', extended_uptime: 'beacon',
   recall_anchor: 'beacon', rapid_turret: 'beacon', multi_beacon: 'beacon', beacon_range: 'beacon',
   // beacon_thermal/cryo/arc/corrupt are now universal (PROTOCOL cards) — not weapon-locked
-  // Discharge-specific
-  wide_arc: 'discharge', surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', singularity: 'discharge', residual_field: 'discharge',
+  // Discharge-specific (wide_arc removed — Discharge is now 360 deg, the card is moot)
+  surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', singularity: 'discharge', residual_field: 'discharge',
   // Payload-specific
   cluster_bomb: 'payload', sticky_charge: 'payload', napalm_zone: 'payload', concussive_blast: 'payload', rapid_payload: 'payload',
   // Deadshot-specific
   quick_draw: 'deadshot', armor_pierce: 'deadshot', tracer_round: 'deadshot', railgun: 'deadshot', chain_kill: 'deadshot', triple_tap: 'deadshot',
 };
+
+// Cards that only apply to a HITSCAN (gun) primary weapon. When the player is
+// currently holding a melee weapon (e.g. RIPPER), these get filtered out of
+// the upgrade draft so they aren't offered as dead picks.
+const _GUN_ONLY_CARDS = new Set([
+  'rapid_cycle',     // +30% fire rate — fire rate is irrelevant to melee
+  'piercing_shot',   // bullets pierce +1
+  'predator_round',  // "first 3 shots after dash"
+  'predator_pierce', // "post-dash shots also pierce"
+  'long_reach',      // +40% gun range
+  'pyromaniac',      // boosts fire rate on overheated kills
+  'wide_spread',     // IMPACT BLAST is bullet-side currently
+]);
+function _isMeleeEquipped() {
+  const lp = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
+  if (!lp || !lp.weapons) return false;
+  const w = lp.weapons[lp.currentWeapon];
+  if (!w) return false;
+  const def = WEAPON_DEFS[w.type];
+  return !!(def && def._melee);
+}
+function _passesWeaponGate(u) {
+  if (_isMeleeEquipped() && _GUN_ONLY_CARDS.has(u.id)) return false;
+  return true;
+}
 
 // Draft N cards from rare+ pool only (for boss/domain/trial rewards)
 function _draftBossCards(n) {
@@ -2425,7 +2449,8 @@ function _draftBossCards(n) {
     (u.rarity === 'rare' || u.rarity === 'epic' || u.rarity === 'legendary') &&
     (runUpgrades[u.id] || 0) < u.max &&
     (!u.prereqs || u.prereqs.every(g => g.split('|').some(id => (runUpgrades[id] || 0) > 0))) &&
-    (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+    (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+    _passesWeaponGate(u)
   );
   if (pool.length === 0) return draftShopCards(n); // fallback to normal draft
   const picks = [];
@@ -2459,6 +2484,7 @@ function draftShopCards(n, classFilter) {
         if (!_rarityAllowed(u.rarity, cap)) return false;
         if (!_meetsPrereqs(u)) return false;
         if (_SPECIAL_CARD_MAP[u.id] && _SPECIAL_CARD_MAP[u.id] !== selectedSpecial) return false;
+        if (!_passesWeaponGate(u)) return false;
         if (_isCore) return !_CARD_CLASS_MAP[u.id]; // generic/weapon cards only
         return _CARD_CLASS_MAP[u.id] === classFilter; // class-specific cards only
       });
@@ -2483,7 +2509,8 @@ function draftShopCards(n, classFilter) {
       (u.rarity === 'rare' || u.rarity === 'epic') &&
       (runUpgrades[u.id] || 0) < u.max &&
       _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
-      (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+      (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+      _passesWeaponGate(u)
     );
     if (rarePool.length > 0) {
       const r = rarePool[Math.floor(Math.random() * rarePool.length)];
@@ -2502,7 +2529,8 @@ function draftShopCards(n, classFilter) {
       const classPool = UPGRADE_POOL.filter(u =>
         _CARD_CLASS_MAP[u.id] === _researchFocus && !attempted.has(u.id) &&
         (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
-        (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+        (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+        _passesWeaponGate(u)
       );
       if (classPool.length > 0) {
         const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -2519,7 +2547,8 @@ function draftShopCards(n, classFilter) {
         const classPool = UPGRADE_POOL.filter(u =>
           _CARD_CLASS_MAP[u.id] === bestClass && !attempted.has(u.id) &&
           (runUpgrades[u.id] || 0) < u.max && _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
-          (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+          (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+          _passesWeaponGate(u)
         );
         if (classPool.length > 0) {
           const totalW = classPool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -2534,7 +2563,8 @@ function draftShopCards(n, classFilter) {
     const pool = UPGRADE_POOL.filter(u =>
       !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max &&
       _rarityAllowed(u.rarity, cap) && _meetsPrereqs(u) &&
-      (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+      (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+      _passesWeaponGate(u)
     );
     if (pool.length === 0) break;
     const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -4017,7 +4047,8 @@ function showBossReward() {
     (u.rarity === 'rare' || u.rarity === 'epic' || u.rarity === 'legendary') &&
     (runUpgrades[u.id] || 0) < u.max &&
     (!u.prereqs || u.prereqs.every(g => g.split('|').some(id => (runUpgrades[id] || 0) > 0))) &&
-    (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial)
+    (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) &&
+    _passesWeaponGate(u)
   );
   if (pool.length === 0) return; // no eligible cards — skip
   const picks = [];
@@ -13182,7 +13213,7 @@ function startSoloGame() {
   {
     const arsenalLevels = getMetaLevel('arsenal');
     for (let i = 0; i < arsenalLevels; i++) {
-      const pool = UPGRADE_POOL.filter(u => u.rarity !== 'legendary' && (runUpgrades[u.id] || 0) < u.max && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial));
+      const pool = UPGRADE_POOL.filter(u => u.rarity !== 'legendary' && (runUpgrades[u.id] || 0) < u.max && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) && _passesWeaponGate(u));
       if (pool.length === 0) break;
       const pick = pool[Math.floor(Math.random() * pool.length)];
       runUpgrades[pick.id] = (runUpgrades[pick.id] || 0) + 1;
