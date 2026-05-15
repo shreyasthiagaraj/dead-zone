@@ -16803,12 +16803,12 @@ function updatePayload() {
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
   // 1. FORWARD LUNGE — short forward step + flashy piercing strike
-  { kind:'forwardlunge', range: 200, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 45 },
-  // 2. 180 deg ARC SWIPE — sweeps a full half-circle in front of the player
-  { kind:'arcswipe',     range: 135, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC',
+  { kind:'forwardlunge', range: 165, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 42 },
+  // 2. 180 deg ARC SWIPE — sweeps a half-circle in front of the player
+  { kind:'arcswipe',     range: 115, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC',
     swingDelta: Math.PI, finisher: false },
   // 3. 360 deg REVERSE ARC — full revolution in the opposite direction
-  { kind:'arcswipe',     range: 150, cone: Math.PI * 2,      damage: 30, knockback: 90, stagger: 75, cooldown: 280, color:'#f80', tone: 480, dir: -1, label:'360 SPIN!',
+  { kind:'arcswipe',     range: 125, cone: Math.PI * 2,      damage: 30, knockback: 90, stagger: 75, cooldown: 280, color:'#f80', tone: 480, dir: -1, label:'360 SPIN!',
     swingDelta: Math.PI * 2, finisher: true },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
@@ -28307,11 +28307,11 @@ function render() {
       // so the blade looks alive instead of frozen mid-air.
       const _baBase = _ready ? _idle : (0.32 + (1 - _cdR) * 0.6);
       const _bA = _baBase * p._rBladeOnVis;
-      // Base blade is heftier (longer + wider below) so it reads as a SWORD,
-      // not a fencing foil. During ACTIVE sweep strikes (slash/heavy) the
-      // blade extends out to the step's range so the actual sword visibly
-      // sweeps through the slash arc area instead of staying near the player.
-      let _bL = _ready ? 58 : (34 + (1 - _cdR) * 24);
+      // Base blade — slimmer + slightly shorter so the sword reads as a
+      // quick blade rather than a slab. During ACTIVE sweep strikes the
+      // blade still extends so the body visibly carves through the swept
+      // area.
+      let _bL = _ready ? 44 : (28 + (1 - _cdR) * 16);
       const _isSweep = _active && !_isJab && !_isLunge;
       if (_isSweep && p._rSwingRange) {
         // 0.62 * range puts the blade tip near the inner edge of the slash arc
@@ -28338,16 +28338,14 @@ function render() {
       const _bStart = PLAYER_RADIUS + _floatGap + 11;// blade root
       const _bEnd   = _bStart + _bL;
       const _bMid   = _bStart + _bL * 0.7;
-      // Blade widths (asymmetric — single-edge katana shape). Beefier than
-      // before so the sword has visible mass during a slash.
-      const _topRoot = -5.5, _topMid = -3.8;
-      const _botRoot = 5.5,  _botMid = 2.6;
+      // Blade widths — slimmer than before so the sword reads as a quick blade.
+      const _topRoot = -3.6, _topMid = -2.4;
+      const _botRoot = 3.6,  _botMid = 1.6;
 
       // ---- BLADE TRAIL: each frame during an active sweep, emit a smooth
-      // wedge spanning EXACTLY from the previous frame's blade angle to the
-      // current one. Adjacent frames' wedges meet edge-to-edge — no gaps,
-      // no dashes, no hard leading edges. The wedge fades to transparent at
-      // the root and is brightest at the tip; older segments fade with life.
+      // wedge AND a thin tip line spanning EXACTLY from the previous frame's
+      // angle to the current one. Adjacent frames meet edge-to-edge so both
+      // the wide trail and the thin tip path read as continuous solid lines.
       const _isActive = _swP > 0 && _swP < 1;
       if (_isActive && !_isJab && !_isLunge) {
         const _wAng = (p.angle || 0) + _renderSwing;
@@ -28355,32 +28353,29 @@ function render() {
         const _bodyTip  = PLAYER_RADIUS + _floatGap + 11 + _bL;
         const _prev = p._rPrevBladeWorldAng;
         if (_prev !== undefined) {
-          // Compute the (signed) shortest delta between prev and current
           let _d = _wAng - _prev;
-          // (Wedge spans up to ~PI per frame on a 360 spin; no wrap needed
-          //  because consecutive frames never cross PI in one step here.)
           const _absD = Math.abs(_d);
           if (_absD > 0.005) {
             const _midAng = _prev + _d * 0.5;
-            // 1.10 slight overlap with neighboring wedges to seal any gap
+            const _spanCone = _absD * 1.10; // slight overlap, no gaps
+            // Wide trail (filled wedge with quadratic-fade life)
             particles.push({
               x: p.x, y: p.y, vx: 0, vy: 0,
-              life: 16, maxLife: 16, size: _bodyTip,
+              life: 13, maxLife: 13, size: _bodyTip,
               color: def.color, type: 'blade_sweep',
-              _innerR: _bodyRoot, _angle: _midAng, _cone: _absD * 1.10
+              _innerR: _bodyRoot, _angle: _midAng, _cone: _spanCone
+            });
+            // Thin solid tip-path line — same prev-angle span, longer life
+            particles.push({
+              x: p.x, y: p.y, vx: 0, vy: 0,
+              life: 22, maxLife: 22, size: _bodyTip + 4,
+              color: '#fff', type: 'tip_line',
+              _angle: _midAng, _cone: _spanCone
             });
           }
         }
-        // Thin lingering tip-path arc at the very tip (lasts longest)
-        particles.push({
-          x: p.x, y: p.y, vx: 0, vy: 0,
-          life: 22, maxLife: 22, size: _bodyTip + 4,
-          color: '#fff', type: 'slash_arc',
-          _angle: _wAng, _cone: 0.20
-        });
         p._rPrevBladeWorldAng = _wAng;
       } else if (!_isActive) {
-        // Reset tracker between swings so the next swing starts clean
         p._rPrevBladeWorldAng = undefined;
       }
 
@@ -29024,18 +29019,17 @@ function render() {
         ctx.restore();
         ctx.globalAlpha = 1;
       } else if(p.type==='blade_sweep'){
-        // Smooth flowing blade trail — runs from the blade root (innerR) to
-        // the tip (size = outerR). No hard leading edge: the wedge fades
-        // softly along its radius (transparent at root, opaque near tip)
-        // and softens at the angular edges via a tangential gradient. Per-
-        // frame emission with prev-angle-aware _cone ensures no gaps.
-        const _alpha = p.life / p.maxLife;
+        // Smooth flowing blade trail — wedges spawned per-frame stack into a
+        // continuous swept band along the sword's path. Alpha fades QUADRATIC
+        // so the trail is bright at the sword (newest) and quickly fades
+        // toward the swing's origin (oldest). No hard edges.
+        const _ageRev = p.life / p.maxLife;
+        const _alpha = _ageRev * _ageRev; // quadratic fade — translucent at tail
         const _innerR = p._innerR || 20;
         const _outerR = p.size;
         const _ang = p._angle || 0;
         const _halfC = (p._cone || 0.5) * 0.5;
         ctx.save();
-        // Radial gradient: transparent at root, brightest near tip, soft at outer edge
         const _grad = ctx.createRadialGradient(p.x, p.y, _innerR, p.x, p.y, _outerR);
         _grad.addColorStop(0,    'rgba(77,238,255,0)');
         _grad.addColorStop(0.55, 'rgba(77,238,255,' + (_alpha * 0.35).toFixed(3) + ')');
@@ -29047,6 +29041,32 @@ function render() {
         ctx.arc(p.x, p.y, _innerR, _ang + _halfC, _ang - _halfC, true);
         ctx.closePath();
         ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      } else if(p.type==='tip_line'){
+        // Thin SOLID arc segment along the sword tip's path. Per-frame
+        // segments span exactly from prev to current blade angle, so they
+        // meet edge-to-edge into a continuous clean line. No dashes.
+        const _ageRev = p.life / p.maxLife;
+        const _alpha = _ageRev * _ageRev;
+        const _r = p.size;
+        const _ang = p._angle || 0;
+        const _halfC = (p._cone || 0.2) * 0.5;
+        const _segs = 8;
+        ctx.save();
+        ctx.strokeStyle = p.color || '#fff';
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = _alpha;
+        ctx.beginPath();
+        for (let i = 0; i <= _segs; i++) {
+          const _a = (_ang - _halfC) + (i / _segs) * (_halfC * 2);
+          const _x = p.x + Math.cos(_a) * _r;
+          const _y = p.y + Math.sin(_a) * _r;
+          if (i === 0) ctx.moveTo(_x, _y);
+          else ctx.lineTo(_x, _y);
+        }
+        ctx.stroke();
         ctx.restore();
         ctx.globalAlpha = 1;
       } else if(p.type==='slash_mark'){
