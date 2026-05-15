@@ -1067,7 +1067,6 @@ const SPECIAL_DEFS = {
   beacon:    { id:'beacon',    name:'BEACON',       icon:'\u25CE', color:'#0ff', desc:'Deploy a turret that auto-fires at enemies' },
   discharge: { id:'discharge', name:'DISCHARGE',    icon:'\u2301', color:'#f80', desc:'Expanding energy wave — pushes enemies and absorbs projectiles' },
   payload:   { id:'payload',   name:'PAYLOAD',      icon:'\u25C6', color:'#fa0', desc:'Hold to aim, release to lob a grenade — tap again to detonate' },
-  deadshot:  { id:'deadshot',  name:'DEADSHOT',     icon:'\u25C8', color:'#f44', desc:'Hold to charge a piercing long-range shot — release to fire' },
 };
 let selectedSpecial = localStorage.getItem('necrowave_special') || 'beacon';
 if (!SPECIAL_DEFS[selectedSpecial]) selectedSpecial = 'beacon';
@@ -1078,6 +1077,7 @@ if (!SPECIAL_DEFS[selectedSpecial]) selectedSpecial = 'beacon';
 const PRIMARY_WEAPON_OPTIONS = {
   pistol: { id:'pistol', name:'SIDEARM', icon:'⌖', color:'#ff0', desc:'Hitscan pistol — reliable mid-range force blast' },
   ripper: { id:'ripper', name:'RIPPER',  icon:'⚔', color:'#4ff', desc:'Close-quarters cone slash + forward lunge — cleaves multiple targets' },
+  deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#f44', desc:'Hold to charge, release to fire — high damage, heavy knockback, single target' },
 };
 let selectedPrimary = localStorage.getItem('necrowave_primary') || 'pistol';
 if (!PRIMARY_WEAPON_OPTIONS[selectedPrimary]) selectedPrimary = 'pistol';
@@ -1858,22 +1858,25 @@ const UPGRADE_POOL = [
     descs:['Your SPECIAL has +40% blast radius.'], flavor:'shockwave amplification matrix' },
   { id:'rapid_payload', name:'RAPID PAYLOAD', rarity:'common', max:1, icon:'»', color:'#fa0',
     descs:['Your SPECIAL has -30% cooldown.'], flavor:'accelerated reload cycle' },
-  // ---- DEADSHOT MODS (special weapon cards) ----
+  // ---- DEADSHOT MODS (primary weapon cards — only when DEADSHOT is equipped) ----
   { id:'quick_draw', name:'QUICK DRAW', rarity:'common', max:1, icon:'⚡', color:'#f44',
-    descs:['Your SPECIAL charges 30% faster.'], flavor:'overclocked capacitor bank' },
+    descs:['DEADSHOT charges 30% faster.'], flavor:'overclocked capacitor bank' },
+  { id:'deadshot_pierce', name:'OVERPENETRATE', rarity:'rare', max:2, icon:'⫸', color:'#f44',
+    descs:['DEADSHOT bullets pierce +1 enemy.', 'DEADSHOT bullets pierce +2 enemies.'],
+    flavor:'the round does not stop until it has to' },
   { id:'armor_pierce', name:'ARMOR PIERCE', rarity:'rare', max:1, icon:'⊘', color:'#f44',
-    descs:['Your SPECIAL ignores armor, shields, and damage reduction.'],
+    descs:['DEADSHOT ignores armor, shields, and damage reduction.'],
     flavor:'hardened penetrator round' },
   { id:'tracer_round', name:'TRACER ROUND', rarity:'rare', max:1, icon:'◎', color:'#f44',
-    descs:['Your SPECIAL marks the first enemy hit for 4s — your ATTACK bullets home toward the mark.'],
+    descs:['DEADSHOT marks the first enemy hit for 4s — your ATTACK bullets home toward the mark.'],
     flavor:'target acquisition lock' },
   { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#f44',
-    descs:['Your SPECIAL becomes a wide piercing beam at full charge (3x width) — damages everything in line.'],
+    descs:['DEADSHOT becomes a wide piercing beam at full charge (3x width) — damages everything in line.'],
     flavor:'electromagnetic acceleration — maximum yield' },
   { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:1, icon:'⚯', color:'#f44',
-    descs:['Your SPECIAL kills fire a bolt at the nearest enemy (60% dmg).'], flavor:'execution protocol — one kill leads to another' },
+    descs:['DEADSHOT kills fire a bolt at the nearest enemy (60% dmg).'], flavor:'execution protocol — one kill leads to another' },
   { id:'triple_tap', name:'TRIPLE TAP', rarity:'epic', max:1, icon:'⫶', color:'#f44',
-    descs:['Your SPECIAL fires 3 rapid shots at full charge (70% dmg each). Overwhelming burst.'],
+    descs:['DEADSHOT fires 3 rapid shots at full charge (70% dmg each). Overwhelming burst.'],
     flavor:'three-round burst — no survivors' },
   // ---- UTILITY (common) ----
   { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:1, icon:'»', color:'#0ff',
@@ -2089,7 +2092,7 @@ function rebuildRunMods() {
     // Payload mods
     clusterBomb: 0, stickyCharge: 0, napalmZone: 0, concussiveBlast: 0, rapidPayload: 0,
     // Deadshot mods
-    quickDraw: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
+    quickDraw: 0, deadshotPierce: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -2226,6 +2229,7 @@ function rebuildRunMods() {
       case 'rapid_payload':   m.rapidPayload += n; break;
       // Deadshot mods
       case 'quick_draw':      m.quickDraw += n; break;
+      case 'deadshot_pierce': m.deadshotPierce = (m.deadshotPierce || 0) + n; break;
       case 'armor_pierce':    m.armorPierce = true; break;
       case 'tracer_round':    m.tracerRound = true; break;
       case 'railgun':         m.railgun = true; break;
@@ -2414,9 +2418,14 @@ const _SPECIAL_CARD_MAP = {
   surge_range: 'discharge', aftershock: 'discharge', cascade: 'discharge', singularity: 'discharge', residual_field: 'discharge',
   // Payload-specific
   cluster_bomb: 'payload', sticky_charge: 'payload', napalm_zone: 'payload', concussive_blast: 'payload', rapid_payload: 'payload',
-  // Deadshot-specific
-  quick_draw: 'deadshot', armor_pierce: 'deadshot', tracer_round: 'deadshot', railgun: 'deadshot', chain_kill: 'deadshot', triple_tap: 'deadshot',
+  // Deadshot is now a primary weapon; its cards gate via _DEADSHOT_CARDS below.
 };
+
+// Cards that only apply when the player has DEADSHOT as their primary weapon.
+const _DEADSHOT_CARDS = new Set([
+  'quick_draw', 'armor_pierce', 'tracer_round', 'railgun', 'chain_kill', 'triple_tap',
+  'deadshot_pierce',
+]);
 
 // Cards that only apply to a HITSCAN (gun) primary weapon. When the player is
 // currently holding a melee weapon (e.g. RIPPER), these get filtered out of
@@ -2440,6 +2449,8 @@ function _isMeleeEquipped() {
 }
 function _passesWeaponGate(u) {
   if (_isMeleeEquipped() && _GUN_ONLY_CARDS.has(u.id)) return false;
+  // Deadshot cards only show when the player picked DEADSHOT as their primary.
+  if (_DEADSHOT_CARDS.has(u.id) && selectedPrimary !== 'deadshot') return false;
   return true;
 }
 
@@ -8572,6 +8583,10 @@ const WEAPON_DEFS = {
   // Damage flat-ish so power scales with positioning, not stats. Risk premium of
   // closing the distance compensated by cleave + knockback.
   ripper: { name: 'Ripper', color: '#4ff', bulletColor: '#4ff', damage: 80, fireRate: 320, bulletSpeed: 0, spread: 0, magSize: 999, bulletSize: 0, knockback: 12, pierce: 0, infinite: true, shakeIntensity: 4, aimLine: 'none', _melee: true, _coneAngle: Math.PI * 110 / 180, _coneRange: 80, _lungeDistance: 25, sound: { freq: 700, duration: 0.06, type: 'sawtooth' } },
+  // Deadshot: charge weapon. Hold the trigger to charge, release to fire one
+  // heavy shot. Damage and knockback scale with charge. Single-target unless
+  // the OVERPENETRATE mod card is owned. _charge flag routes input handling.
+  deadshot: { name: 'Deadshot', color: '#f44', bulletColor: '#f44', damage: 100, fireRate: 0, bulletSpeed: 22, spread: 0, magSize: 999, bulletSize: 4, knockback: 18, pierce: 0, infinite: true, shakeIntensity: 8, aimLine: 'sniper', _charge: true, sound: { freq: 100, duration: 0.12, type: 'square' } },
 };
 function createWeapon(type) { const d = WEAPON_DEFS[type]; if(!d) return createWeapon('pistol'); return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
 
@@ -12126,6 +12141,8 @@ const WEAPON_DESCS = {
   laser: 'Instant-hit pierce beam. Cuts through 99 enemies in a straight line.',
   lightning: 'Tesla coil. Chain lightning jumps between 3 nearby enemies.',
   rpg: 'Massive explosion. Instakill radius. Be careful not to blow yourself up.',
+  ripper: 'Close-range cone slash with a forward lunge. Cleaves multiple targets.',
+  deadshot: 'Hold to charge, release to fire. Heavy single-shot with massive knockback. Single target unless you grab OVERPENETRATE.',
 };
 const ELEMENT_DESCS = {
   fire: 'Ignites enemies for burn damage over time. Does not spread.',
@@ -13477,7 +13494,7 @@ if (isMobile) {
 // ============================================================
 // GAME ACTIONS
 // ============================================================
-function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){stopWeaponLoop();lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
+function switchWeapon(idx) { const lp=getLocalPlayer(); if(lp&&lp.alive&&idx>=0&&idx<lp.weapons.length&&idx!==lp.currentWeapon){stopWeaponLoop();if(_deadshotCharging){_deadshotCharging=false;_deadshotCharge=0;}lp.currentWeapon=idx;lp.weapons[idx].reloading=false;playWeaponSwitchSound();} }
 function reloadWeapon() { const lp=getLocalPlayer(); if(!lp||!lp.alive) return; const w=lp.weapons[lp.currentWeapon],d=WEAPON_DEFS[w.type]; if(w.reloading||w.ammo===d.magSize||w.reserveAmmo===0) return; stopWeaponLoop();w.reloading=true;w.reloadTimer=d.reloadTime;playReloadSound(); }
 // Returns the effective reload time multiplier — Adrenaline at <30% HP halves
 // reload duration. Centralized so every reload path picks it up.
@@ -16124,7 +16141,7 @@ function updateDischarge() {
         // Damage on return wave band
         if (!w._collapseHitSet.has(z.zid) && Math.abs(d - w.radius) < 35) {
           w._collapseHitSet.add(z.zid);
-          damageZombie(z, Math.floor(60 * (w.chargePct || 1)), 0, 0);
+          damageZombie(z, Math.floor(60 * (w.chargePct || 1)), 0, 0, true);
           z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
         }
       }
@@ -16327,7 +16344,10 @@ function updateDischarge() {
       const pushX = pushDir ? (dx/d)*28 : Math.cos(w.angle)*28;
       const pushY = pushDir ? (dy/d)*28 : Math.sin(w.angle)*28;
       const baseDmg = Math.floor(80 * _dmgMult);
-      damageZombie(z, baseDmg, pushX*0.5, pushY*0.5);
+      // Silent — wave has its own per-hit ring + sparks below, and big wave
+      // VFX is already loud. Skipping the 50-particle impact storm prevents
+      // FPS drops when the wave sweeps a cluster.
+      damageZombie(z, baseDmg, pushX*0.5, pushY*0.5, true);
       z.vx += pushX * 1.5; z.vy += pushY * 1.5;
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
@@ -17586,8 +17606,8 @@ function _meleeHitVFX(z, isCrit, mainCol) {
 // ============================================================
 // DEADSHOT — charge a piercing long-range shot
 // ============================================================
-const DEADSHOT_COOLDOWN = 240;  // 4 seconds
-const DEADSHOT_MAX_CHARGE = 120; // 2s to full charge
+const DEADSHOT_COOLDOWN = 0;    // primary weapon — charge time IS the rate-limiter
+const DEADSHOT_MAX_CHARGE = 60; // 1s to full charge (reduced from 2s)
 
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
@@ -17655,24 +17675,28 @@ function _fireDeadshot(lp) {
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
   _deadshotCharge = 0;
-  lp._beaconCooldown = DEADSHOT_COOLDOWN;
+  // No special-button cooldown — charge time IS the rate limiter for primary use.
+  if (DEADSHOT_COOLDOWN > 0) lp._beaconCooldown = DEADSHOT_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || null; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
-  const baseDmg = 20 + Math.floor(chargePct * 80); // 20-100 damage
-  const pierce = chargePct > 0.8 ? 99 : Math.floor(chargePct * 3); // full charge = infinite pierce
+  const baseDmg = 35 + Math.floor(chargePct * 80); // 35-115 damage (tap is meaningful)
+  // Single-target by default. OVERPENETRATE mod card adds pierce.
+  // RAILGUN at full charge still grants infinite pierce as the build's payoff.
+  const isRailgun = _m.railgun && chargePct >= 1.0;
+  const pierce = isRailgun ? 99 : (_m.deadshotPierce || 0);
   const a = lp.angle;
   const speed = 22;
-  // RAILGUN: full charge = sleek beam with extended life
-  const isRailgun = _m.railgun && chargePct >= 1.0;
   const bulletSize = isRailgun ? (3 + chargePct*3) * 1.3 : (3 + chargePct*3);
   const bulletLife = isRailgun ? 120 : 60;
+  // Heavy knockback always — even tap should send enemies flying.
+  const knockback = 12 + chargePct * 18; // 12-30 (was 4-10)
   // Fire the shot — arrow-shaped projectile with trail
   const _mkDeadshotBullet = (ox, oy, dmgMult) => {
     bullets.push({
       x: ox + Math.cos(a)*24, y: oy + Math.sin(a)*24,
       vx: Math.cos(a)*speed, vy: Math.sin(a)*speed,
-      damage: Math.floor(baseDmg * dmgMult), color: bColor, size: bulletSize, knockback: 4 + chargePct*6,
+      damage: Math.floor(baseDmg * dmgMult), color: bColor, size: bulletSize, knockback: knockback,
       pierce: pierce, pierced: 0, life: bulletLife, maxLife: bulletLife,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0, laserGlow: false, grenade: false,
@@ -20026,7 +20050,7 @@ function update() {
       // Cannot move while firing. Must release to reposition. Applies to desktop
       // (A key) and mobile (on-screen shoot button) alike — same _shootHeld source.
       if (_shootHeld) moveSpeed = 0;
-      if (_deadshotCharging || _payloadAiming) moveSpeed = 0; // freeze while aiming specials — joystick aims only
+      if (_payloadAiming) moveSpeed = 0; // freeze while aiming a grenade — joystick aims only
       const usingAnalog = isMobile || (!isMobile && leftJoystick.active) || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -20038,8 +20062,10 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;
-      // Deadshot / Payload: joystick aims instead of moves
-      if ((_deadshotCharging || _payloadAiming) && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
+      // Payload: left joystick aims instead of moves while aiming a grenade.
+      // Deadshot (now a primary weapon) uses the right joystick for aim + fire,
+      // so the left stick stays as movement (auto-frozen by _shootHeld above).
+      if (_payloadAiming && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
     }
     // ---- DASH OVERRIDE ----
     // When the dash is active, slam velocity to the dash direction × dash speed and spawn
@@ -20986,6 +21012,22 @@ function update() {
         if (shouldFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
         // Stop the gun loop sound — melee uses per-hit sounds, not the loop.
         if (!shouldFire) stopWeaponLoop();
+      } else if (_curDef && _curDef._charge) {
+        // CHARGE WEAPON (Deadshot): hold to charge, release to fire. The actual
+        // tick / fire / release VFX live in updateDeadshot() / _fireDeadshot().
+        const _wasFiring = lp._wasFiringCharge || false;
+        if (shouldFire && !(lp._empDisabled > 0)) {
+          if (!_deadshotCharging) {
+            _deadshotCharging = true;
+            _deadshotCharge = 0;
+            playSound(400, 0.06, 'sine', 0.08);
+          }
+        } else if (!shouldFire && _wasFiring && _deadshotCharging) {
+          // Released — fire whatever charge accumulated (tap = meaningful base shot)
+          releaseDeadshot();
+        }
+        lp._wasFiringCharge = shouldFire;
+        if (!shouldFire) stopWeaponLoop();
       } else {
         if(shouldFire && !(lp._empDisabled > 0) && !_gunReloading)fireWeaponForPlayer(lp);
         else if(!shouldFire) stopWeaponLoop();
@@ -21082,10 +21124,18 @@ function update() {
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
     // Hitscan bullets: no per-frame trail (they're instant). Trail VFX created at fire time.
     // Elemental bullet particle trails
-    // Deadshot arrow trail
-    if(b._deadshotRound&&gameTime%2===0){const _dc=b._deadshotColor||b.color;particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:_dc,type:'spark'});
+    // Deadshot arrow trail — long, dense streak. Spawned every frame so the
+    // trail fills behind the round; multiple particles for depth (body spark +
+    // bright white core ember + an occasional smoke puff for body).
+    if(b._deadshotRound){const _dc=b._deadshotColor||b.color;
+      // Body spark — main trail color, longer life so the streak persists
+      particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:24+Math.random()*8,maxLife:32,size:3+Math.random()*2.5,color:_dc,type:'spark'});
+      // Bright white core ember — sells the heat of the projectile
+      particles.push({x:b.x-(b.vx*0.15)+(Math.random()-0.5)*2,y:b.y-(b.vy*0.15)+(Math.random()-0.5)*2,vx:-b.vx*0.05+(Math.random()-0.5)*0.5,vy:-b.vy*0.05+(Math.random()-0.5)*0.5,life:14+Math.random()*4,maxLife:18,size:1.6+Math.random()*1.2,color:Math.random()>0.5?'#fff':'#ffe',type:'spark'});
+      // Trailing smoke puff every 3 frames — wispy wake
+      if(gameTime%3===0){const _sa=Math.atan2(b.vy,b.vx)+Math.PI;particles.push({x:b.x+(Math.random()-0.5)*3,y:b.y+(Math.random()-0.5)*3,vx:Math.cos(_sa)*1.4+(Math.random()-0.5)*0.6,vy:Math.sin(_sa)*1.4+(Math.random()-0.5)*0.6,life:30+Math.random()*10,maxLife:40,size:5+Math.random()*3,color:'#532',type:'smoke',_smokeAlpha:0.18});}
       // Railgun: denser trailing streaks + parallel energy wisps
-      if(b._railgun){const _ra=Math.atan2(b.vy,b.vx),_rPerp=_ra+Math.PI/2;for(let _ri=0;_ri<2;_ri++){const _ro=(Math.random()-0.5)*8;particles.push({x:b.x-b.vx*0.5+Math.cos(_rPerp)*_ro,y:b.y-b.vy*0.5+Math.sin(_rPerp)*_ro,vx:-b.vx*0.04+(Math.random()-0.5)*0.5,vy:-b.vy*0.04+(Math.random()-0.5)*0.5,life:14,maxLife:14,size:1.5+Math.random()*1.5,color:_dc,type:'spark'});}}
+      if(b._railgun){const _ra=Math.atan2(b.vy,b.vx),_rPerp=_ra+Math.PI/2;for(let _ri=0;_ri<2;_ri++){const _ro=(Math.random()-0.5)*8;particles.push({x:b.x-b.vx*0.5+Math.cos(_rPerp)*_ro,y:b.y-b.vy*0.5+Math.sin(_rPerp)*_ro,vx:-b.vx*0.04+(Math.random()-0.5)*0.5,vy:-b.vy*0.04+(Math.random()-0.5)*0.5,life:18+Math.random()*4,maxLife:22,size:1.5+Math.random()*1.5,color:_dc,type:'spark'});}}
     }
     if(b._element==='fire'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1.5,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
@@ -21285,22 +21335,52 @@ function update() {
                     if (_savedArmor !== undefined) z._armor = _savedArmor;
                     if (_savedShield !== undefined) z._shielded_aura = _savedShield;
                   }
-                  // DEADSHOT IMPACT: cross-shaped flash + punch-through sparks
+                  // DEADSHOT IMPACT: white-core flash → ring → cross + radial
+                  // streaks → punch-through sparks → smoke → scorch decal.
+                  // Three-point rule: origin (flash), path (streaks), impact (decal).
                   if (b._deadshotRound) {
                     const _impA = Math.atan2(b.vy, b.vx), _impC = b._deadshotColor || b.color;
-                    // 4-directional cross lightning lines
+                    // Origin: white-hot core flash + colored secondary
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 24, color: '#fff', type: 'explosion' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 16, color: _impC, type: 'explosion' });
+                    // Expanding rings — white inner + colored outer
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#fff', type: 'wakering' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 38, color: _impC, type: 'wakering' });
+                    // 4-directional cross lightning lines (kept, longer reach)
                     for (let ci = 0; ci < 4; ci++) {
-                      const ca = _impA + ci * Math.PI/2, cLen = 18 + Math.random()*10;
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 1, color: '#fff', type: 'lightning',
+                      const ca = _impA + ci * Math.PI/2, cLen = 28 + Math.random()*14;
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 1, color: '#fff', type: 'lightning',
                         tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
                     }
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 6, color: '#fff', type: 'spark' });
-                    // Punch-through sparks continuing past enemy
-                    for (let pi = 0; pi < 5; pi++) {
-                      const pa = _impA + (Math.random()-0.5)*0.5, ps = 4+Math.random()*5;
-                      particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
-                        life: 10, maxLife: 10, size: 2+Math.random()*2, color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
+                    // 8 radial impact streaks for star-burst feel
+                    for (let _si = 0; _si < 8; _si++) {
+                      const _sa = (_si / 8) * Math.PI * 2 + Math.random() * 0.3;
+                      const _sv = 6 + Math.random() * 3;
+                      particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
+                        life: 12, maxLife: 12, size: 2.5 + Math.random() * 1.5,
+                        color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                     }
+                    // Punch-through sparks continuing past enemy (denser)
+                    for (let pi = 0; pi < 10; pi++) {
+                      const pa = _impA + (Math.random()-0.5)*0.6, ps = 4+Math.random()*6;
+                      particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+                        life: 14+Math.random()*6, maxLife: 20, size: 2+Math.random()*2.5,
+                        color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
+                    }
+                    // Smoke puff for body
+                    for (let _smi = 0; _smi < 4; _smi++) {
+                      const _sma = Math.random() * Math.PI * 2;
+                      particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
+                        vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
+                        life: 22 + Math.random() * 8, maxLife: 30,
+                        size: 5 + Math.random() * 3, color: '#433',
+                        type: 'smoke', _smokeAlpha: 0.22 });
+                    }
+                    // Scorch decal at impact
+                    decals.push({ x: z.x, y: z.y, size: 18, alpha: 0.5, color: '#310' });
+                    screenShake.intensity = Math.max(screenShake.intensity, 5);
+                    // Sharp impact crack on top of the existing thump
+                    playSound(900, 0.04, 'square', 0.08);
                   }
                   // IMPACT BLAST: each hit creates a mini explosion
                   if (_m.wideSpread > 0 && !b._impactBlasted) {
