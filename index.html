@@ -22369,54 +22369,81 @@ function update() {
             z._sniperState='cooldown';z._sniperCharge=0;z._sniperCooldown=120;}
           else if(z._sniperState==='cooldown'){z._sniperCooldown--;if(z._sniperCooldown<=0)z._sniperState='aim';}
         }
-        // ---- BOSS: CORRUPTED ADMIN PROCESS (simple cycle) ----
-        // Cycles: CHANNEL (summon minions, stationary) → DRAINED (vulnerable, easy to hit)
-        // → ACTIVE (mobile, fires shots) → back to CHANNEL
-        // Lower HP = faster cycle, more minions, faster shots
+        // ---- BOSS: CORRUPTED ADMIN PROCESS (THE WARDEN) ----
+        // Cycle: CHANNEL (4s, summons up to 2 helpers max) -> DRAINED
+        // (5s pure rest + vulnerable, the player's pummel window) ->
+        // ACTIVE (3s, fires slower fan shots) -> back to CHANNEL.
+        // Total ~12s cycle, ~7-8s low-pressure, ~3s heavy attack.
         else if(zt?.summoner){
           const hpPct = z.hp / z.maxHp;
           const _enraged = hpPct < 0.35;
           z._summonTimer=(z._summonTimer||0)+1;
           z._shotTimer=(z._shotTimer||0)+1;
-          if (!z._bossState) { z._bossState = 'channel'; z._bossTimer = 200; }
+          if (!z._bossState) { z._bossState = 'channel'; z._bossTimer = 240; }
           if (z._bossState === 'channel') {
-            // Stationary — channeling summons
+            // Stationary — channeling. Summons capped at 2 helpers alive.
             z.vx *= 0.5; z.vy *= 0.5;
-            // Summon minions periodically
-            if(z._summonTimer>=z.fireRate&&zombies.length<8){z._summonTimer=0;
-              const _sumCount = _enraged ? 3 : 2;
-              for(let si=0;si<_sumCount;si++){const sa=Math.random()*Math.PI*2,sd=35+Math.random()*20;
-                const _sx=z.x+Math.cos(sa)*sd, _sy=z.y+Math.sin(sa)*sd;
-                const st=ZOMBIE_TYPES.normal;
-                zombies.push({zid:_nextZombieId++,x:_sx,y:_sy,vx:0,vy:0,hp:st.hp*0.5,maxHp:st.hp*0.5,speed:st.speed,radius:st.radius,color:st.color,damage:st.damage,score:50,type:'normal',attackCooldown:0,hitFlash:0,ranged:false,fireRate:0,lastFired:0,explodeOnDeath:false,explosionRadius:0,angle:0,staggerTimer:0,aware:true,wanderAngle:sa,wanderTimer:0,stuckTimer:0,lastX:0,lastY:0,_spawnAnim:25,_spawnAnimMax:25});
+            if (z._summonTimer >= z.fireRate) {
+              z._summonTimer = 0;
+              // Count currently-alive boss-summoned minions
+              let _aliveMinions = 0;
+              for (const oz of zombies) {
+                if (oz === z) continue;
+                if (oz._bossSummoned && oz.hp > 0) _aliveMinions++;
+              }
+              const _toSummon = Math.max(0, 2 - _aliveMinions);
+              for (let si = 0; si < _toSummon; si++) {
+                const sa = Math.random()*Math.PI*2, sd = 35+Math.random()*20;
+                const _sx = z.x+Math.cos(sa)*sd, _sy = z.y+Math.sin(sa)*sd;
+                const st = ZOMBIE_TYPES.normal;
+                zombies.push({
+                  zid:_nextZombieId++, x:_sx, y:_sy, vx:0, vy:0,
+                  hp:st.hp*0.5, maxHp:st.hp*0.5,
+                  speed:st.speed, radius:st.radius, color:st.color,
+                  damage:st.damage, score:50, type:'normal',
+                  attackCooldown:0, hitFlash:0, ranged:false,
+                  fireRate:0, lastFired:0, explodeOnDeath:false, explosionRadius:0,
+                  angle:0, staggerTimer:0, aware:true, wanderAngle:sa,
+                  wanderTimer:0, stuckTimer:0, lastX:0, lastY:0,
+                  _spawnAnim:25, _spawnAnimMax:25,
+                  _bossSummoned: true
+                });
                 particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#f0f',type:'lightning',tx:_sx,ty:_sy});
                 for(let _pi=0;_pi<6;_pi++){const _pa=Math.random()*Math.PI*2,_ps=2+Math.random()*3;
-                  particles.push({x:_sx,y:_sy,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:14,maxLife:14,size:3,color:Math.random()<0.5?'#f0f':'#f44',type:'spark'});}}
-              playZombieAttackSound();screenShake.intensity=Math.max(screenShake.intensity,3);
+                  particles.push({x:_sx,y:_sy,vx:Math.cos(_pa)*_ps,vy:Math.sin(_pa)*_ps,life:14,maxLife:14,size:3,color:Math.random()<0.5?'#f0f':'#f44',type:'spark'});}
+              }
+              if (_toSummon > 0) {
+                playZombieAttackSound();
+                screenShake.intensity = Math.max(screenShake.intensity, 3);
+              }
             }
             // Channel VFX
             if(gameTime%4===0){const _ca=Math.random()*Math.PI*2,_cr=z.radius+10;
               particles.push({x:z.x+Math.cos(_ca)*_cr,y:z.y+Math.sin(_ca)*_cr,vx:-Math.cos(_ca)*0.8,vy:-Math.sin(_ca)*0.8,life:14,maxLife:14,size:2+Math.random()*2,color:'#f0f',type:'spark'});}
             z._bossTimer--;
             if(z._bossTimer<=0){
-              z._bossState='drained'; z._bossTimer = _enraged ? 240 : 300; // 4-5s vulnerable
+              z._bossState='drained'; z._bossTimer = 300; // FIXED 5s pummel window
               _startBossVuln(z, z._bossTimer, 'drained');
             }
           } else if (z._bossState === 'drained') {
-            // DRAINED — easy to hit, barely moves
+            // DRAINED — boss barely moves, doesn't shoot. 5 seconds of free hits.
             z.vx *= 0.3; z.vy *= 0.3;
             z._bossTimer--;
             if(z._bossTimer<=0){
-              z._bossState='active'; z._bossTimer = _enraged ? 180 : 240; // 3-4s active
+              z._bossState='active'; z._bossTimer = _enraged ? 140 : 180; // ~2.3-3s active
             }
           } else if (z._bossState === 'active') {
-            // ACTIVE — mobile, fires fan shots
-            const _spd = _enraged ? 1.8 : 1.2;
-            z.vx=_chaseDx*z.speed*_spd;z.vy=_chaseDy*z.speed*_spd;
-            if(z._shotTimer>=(_enraged?60:90)){z._shotTimer=0;
-              const fanCount=_enraged?7:5;
-              for(let fi=0;fi<fanCount;fi++){
-                const fa=z.angle+(fi-Math.floor(fanCount/2))*0.18;
+            // ACTIVE — mobile, fires slower fan shots so the player isn't
+            // forced to dodge nonstop. Down from 5-7 / every 1-1.5s to
+            // 4-5 / every 2-2.2s.
+            const _spd = _enraged ? 1.5 : 1.1;
+            z.vx=_chaseDx*z.speed*_spd; z.vy=_chaseDy*z.speed*_spd;
+            const _fireInt = _enraged ? 95 : 130;
+            if(z._shotTimer >= _fireInt){
+              z._shotTimer = 0;
+              const fanCount = _enraged ? 5 : 4;
+              for(let fi=0; fi<fanCount; fi++){
+                const fa = z.angle + (fi - Math.floor(fanCount/2)) * 0.20;
                 bullets.push({x:z.x,y:z.y,vx:Math.cos(fa)*5,vy:Math.sin(fa)*5,damage:z.damage*0.4,color:'#f0f',size:5,knockback:2,pierce:0,pierced:0,life:70,owner:'zombie',trail:[]});
               }
               for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*4,vy:Math.sin(pa)*4,life:10,maxLife:10,size:3,color:'#f0f',type:'spark'});}
@@ -22424,7 +22451,7 @@ function update() {
             }
             z._bossTimer--;
             if(z._bossTimer<=0){
-              z._bossState='channel'; z._bossTimer = _enraged ? 150 : 200; // back to channeling
+              z._bossState='channel'; z._bossTimer = _enraged ? 180 : 240; // back to channeling (4s)
             }
           }
           // Enrage aura when low HP
