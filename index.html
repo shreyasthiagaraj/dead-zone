@@ -17170,12 +17170,20 @@ function _runComboStep(p, def, step, idx) {
 // appears when the player attacks. Visually emphasized via converging /
 // scattering particles so the sword reads as "summoned" rather than "always
 // held." Eliminates the constant idle-pose motion of the previous design.
+// Class-themed color helpers — when the player has a dominant element
+// active, the blade visuals shift to match (mirrors getScaledGun's bullet
+// tinting + the per-class muzzle flourishes used by the pistol).
+function _meleeMainColor() {
+  const m = runMods || {};
+  if (m.dominantClass && _ELEM_COLOR[m.dominantClass]) return _ELEM_COLOR[m.dominantClass];
+  return '#4ff';
+}
+
 function _emitSwordMaterialize(p) {
-  // Spawn at the sword's resting position (idle angle ~ -PI*0.62 from aim)
   const _restA = (p.angle || 0) - Math.PI * 0.62;
   const _cx = p.x + Math.cos(_restA) * 32;
   const _cy = p.y + Math.sin(_restA) * 32;
-  // Particles converge INTO the blade origin
+  const _col = _meleeMainColor();
   for (let i = 0; i < 14; i++) {
     const _pa = Math.random() * Math.PI * 2;
     const _pr = 32 + Math.random() * 24;
@@ -17186,20 +17194,19 @@ function _emitSwordMaterialize(p) {
       vx: (_cx - _px) * 0.18, vy: (_cy - _py) * 0.18,
       life: 10 + Math.floor(Math.random()*4), maxLife: 14,
       size: 1.5 + Math.random()*1.5,
-      color: Math.random() > 0.45 ? '#4ff' : '#fff',
+      color: Math.random() > 0.45 ? _col : '#fff',
       type: 'spark'
     });
   }
-  // Bright center flash where the blade snaps into existence
   particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 6, maxLife: 6, size: 26, color: '#fff', type: 'wakering' });
-  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 5, maxLife: 5, size: 14, color: '#4ff', type: 'wakering' });
+  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 5, maxLife: 5, size: 14, color: _col, type: 'wakering' });
 }
 
 function _emitSwordDispersal(p) {
-  // Spawn at the LAST rendered blade position (current rotation, not idle)
   const _angle = (p.angle || 0) + (p._rBladeAngle || -Math.PI * 0.62);
   const _cx = p.x + Math.cos(_angle) * 30;
   const _cy = p.y + Math.sin(_angle) * 30;
+  const _col = _meleeMainColor();
   for (let i = 0; i < 14; i++) {
     const _pa = Math.random() * Math.PI * 2;
     const _ps = 1.2 + Math.random() * 2.4;
@@ -17208,12 +17215,95 @@ function _emitSwordDispersal(p) {
       vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps,
       life: 14 + Math.floor(Math.random()*8), maxLife: 22,
       size: 1.5 + Math.random()*1.5,
-      color: Math.random() > 0.45 ? '#4ff' : '#fff',
+      color: Math.random() > 0.45 ? _col : '#fff',
       type: 'spark'
     });
   }
-  // Soft outgoing pulse
-  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#4ff', type: 'wakering' });
+  particles.push({ x: _cx, y: _cy, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: _col, type: 'wakering' });
+}
+
+// Per-frame class flourish particles emitted along the blade body during an
+// active sweep. Mirrors the pistol's per-class muzzle flourishes.
+function _emitMeleeClassFlourish(p, wAng, bodyRoot, bodyTip) {
+  const _domCls = (runMods && runMods.dominantClass) || null;
+  if (!_domCls) return;
+  if (_domCls === 'fire') {
+    if (Math.random() < 0.65) {
+      const _t = Math.random();
+      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
+      const _bx = p.x + Math.cos(wAng) * _bd;
+      const _by = p.y + Math.sin(wAng) * _bd;
+      particles.push({
+        x: _bx, y: _by,
+        vx: (Math.random()-0.5)*1.5, vy: -1.3 - Math.random()*0.8,
+        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+        size: 3 + Math.random()*1.8,
+        color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],
+        type: 'spark'
+      });
+    }
+  } else if (_domCls === 'ice') {
+    if (Math.random() < 0.65) {
+      const _t = 0.4 + Math.random()*0.6;
+      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
+      const _bx = p.x + Math.cos(wAng) * _bd;
+      const _by = p.y + Math.sin(wAng) * _bd;
+      const _perp = wAng + Math.PI * 0.5 * (Math.random() < 0.5 ? 1 : -1);
+      const _ps = 2 + Math.random()*2;
+      particles.push({
+        x: _bx, y: _by,
+        vx: Math.cos(_perp)*_ps, vy: Math.sin(_perp)*_ps,
+        life: 12 + Math.floor(Math.random()*5), maxLife: 17,
+        size: 2 + Math.random()*1.5,
+        color: Math.random() > 0.4 ? '#cff' : '#8ef',
+        type: 'spark', _pixel: true
+      });
+    }
+  } else if (_domCls === 'chain') {
+    if (Math.random() < 0.5) {
+      const _tipX = p.x + Math.cos(wAng) * bodyTip;
+      const _tipY = p.y + Math.sin(wAng) * bodyTip;
+      const _ang2 = wAng + (Math.random()-0.5)*1.4;
+      const _len = 12 + Math.random()*16;
+      particles.push({
+        x: _tipX, y: _tipY, vx: 0, vy: 0,
+        life: 5, maxLife: 5, size: 1.5,
+        color: Math.random() > 0.4 ? '#4ff' : '#fff',
+        type: 'lightning',
+        tx: _tipX + Math.cos(_ang2)*_len, ty: _tipY + Math.sin(_ang2)*_len
+      });
+    }
+  } else if (_domCls === 'wind') {
+    if (Math.random() < 0.4) {
+      const _t = 0.5 + Math.random()*0.5;
+      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
+      const _bx = p.x + Math.cos(wAng) * _bd;
+      const _by = p.y + Math.sin(wAng) * _bd;
+      particles.push({
+        x: _bx, y: _by, vx: 0, vy: 0,
+        life: 8, maxLife: 8, size: 8 + Math.random()*4,
+        color: '#cef', type: 'wakering'
+      });
+    }
+  } else if (_domCls === 'corrupt') {
+    if (Math.random() < 0.45) {
+      const _t = Math.random();
+      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
+      const _bx = p.x + Math.cos(wAng) * _bd;
+      const _by = p.y + Math.sin(wAng) * _bd;
+      const _glyphs = ['0','1','#','%','~','?','!','/','*','░'];
+      const _ang2 = wAng + (Math.random()-0.5)*1.4;
+      const _ks = 1 + Math.random()*1.5;
+      particles.push({
+        x: _bx, y: _by,
+        vx: Math.cos(_ang2)*_ks, vy: Math.sin(_ang2)*_ks,
+        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+        size: 9 + Math.random()*3,
+        color: Math.random() > 0.5 ? '#a4f' : '#f0f',
+        type: 'glitchtext', text: _glyphs[Math.floor(Math.random()*_glyphs.length)]
+      });
+    }
+  }
 }
 
 // ---- Ripper mod plumbing: scales damage like getScaledGun() and runs the
@@ -28351,21 +28441,20 @@ function render() {
         const _wAng = (p.angle || 0) + _renderSwing;
         const _bodyRoot = PLAYER_RADIUS + _floatGap + 8;
         const _bodyTip  = PLAYER_RADIUS + _floatGap + 11 + _bL;
+        const _trailCol = _meleeMainColor();
         const _prev = p._rPrevBladeWorldAng;
         if (_prev !== undefined) {
           let _d = _wAng - _prev;
           const _absD = Math.abs(_d);
           if (_absD > 0.005) {
             const _midAng = _prev + _d * 0.5;
-            const _spanCone = _absD * 1.10; // slight overlap, no gaps
-            // Wide trail (filled wedge with quadratic-fade life)
+            const _spanCone = _absD * 1.10;
             particles.push({
               x: p.x, y: p.y, vx: 0, vy: 0,
               life: 13, maxLife: 13, size: _bodyTip,
-              color: def.color, type: 'blade_sweep',
+              color: _trailCol, type: 'blade_sweep',
               _innerR: _bodyRoot, _angle: _midAng, _cone: _spanCone
             });
-            // Thin solid tip-path line — same prev-angle span, longer life
             particles.push({
               x: p.x, y: p.y, vx: 0, vy: 0,
               life: 22, maxLife: 22, size: _bodyTip + 4,
@@ -28374,6 +28463,9 @@ function render() {
             });
           }
         }
+        // Per-class flourish (fire flames / ice shards / arc bolts / wind
+        // pulse rings / corrupt glitch chars) along the blade body.
+        _emitMeleeClassFlourish(p, _wAng, _bodyRoot, _bodyTip);
         p._rPrevBladeWorldAng = _wAng;
       } else if (!_isActive) {
         p._rPrevBladeWorldAng = undefined;
@@ -28381,24 +28473,32 @@ function render() {
 
       ctx.save();
       ctx.rotate(_renderSwing);
+      // Class color for blade visuals — shifts when thermal/cryo/arc/pulse/
+      // corrupt is active. Default cyan if no class is dominant.
+      const _cls = _meleeMainColor();
+      // Blade body tint also shifts subtly per class for a recognizable look
+      const _domClsForBody = (runMods && runMods.dominantClass) || null;
+      const _bodyTint = _domClsForBody === 'fire' ? '#fec' :
+                        _domClsForBody === 'ice' ? '#dff' :
+                        _domClsForBody === 'chain' ? '#dff' :
+                        _domClsForBody === 'wind' ? '#eef' :
+                        _domClsForBody === 'corrupt' ? '#ddf' : '#cdf';
 
       // ---- 1) GRIP (dark) with two color bands for wrap ----
       ctx.fillStyle = '#181818'; ctx.globalAlpha = _bA;
       ctx.fillRect(_hStart, -3.2, _hEnd - _hStart, 6.4);
-      // Wrap bands in class color
-      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.75;
+      ctx.fillStyle = _cls; ctx.globalAlpha = _bA * 0.75;
       ctx.fillRect(_hStart + 1, -3.2, 1.6, 6.4);
       ctx.fillRect(_hStart + 4.6, -3.2, 1.4, 6.4);
 
       // ---- 2) CROSS-GUARD (perpendicular bar, dark with class trim) ----
       ctx.fillStyle = '#222'; ctx.globalAlpha = _bA;
       ctx.fillRect(_gX, -7.5, 2.5, 15);
-      // Bright leading edge
-      ctx.fillStyle = def.color; ctx.globalAlpha = _bA;
+      ctx.fillStyle = _cls; ctx.globalAlpha = _bA;
       ctx.fillRect(_gX + 2.5, -7.5, 0.8, 15);
 
       // ---- 3) BLADE — outer glow polygon (wider, dim, class-colored) ----
-      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.32;
+      ctx.fillStyle = _cls; ctx.globalAlpha = _bA * 0.32;
       ctx.beginPath();
       ctx.moveTo(_bStart, _topRoot - 1.5);
       ctx.lineTo(_bMid,   _topMid - 1.2);
@@ -28409,7 +28509,7 @@ function render() {
       ctx.fill();
 
       // ---- 4) BLADE — main body (slightly tinted from class color) ----
-      ctx.fillStyle = '#cdf'; ctx.globalAlpha = _bA * 0.92;
+      ctx.fillStyle = _bodyTint; ctx.globalAlpha = _bA * 0.92;
       ctx.beginPath();
       ctx.moveTo(_bStart, _topRoot);
       ctx.lineTo(_bMid,   _topMid);
@@ -28428,7 +28528,7 @@ function render() {
       ctx.stroke();
 
       // ---- 6) BLADE — energy core stripe down the middle ----
-      ctx.strokeStyle = def.color; ctx.lineWidth = 0.9; ctx.globalAlpha = _bA * 0.85;
+      ctx.strokeStyle = _cls; ctx.lineWidth = 0.9; ctx.globalAlpha = _bA * 0.85;
       ctx.beginPath();
       ctx.moveTo(_bStart + 1, (_topRoot + _botRoot) * 0.5);
       ctx.lineTo(_bMid,       (_topMid + _botMid) * 0.5);
@@ -28437,7 +28537,7 @@ function render() {
 
       // ---- 7) Tip glow halo + bright tip dot ----
       const _tipR = _ready ? 2.6 : 1.6;
-      ctx.fillStyle = def.color; ctx.globalAlpha = _bA * 0.55;
+      ctx.fillStyle = _cls; ctx.globalAlpha = _bA * 0.55;
       ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR + 2.5, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.globalAlpha = _bA;
       ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR, 0, Math.PI*2); ctx.fill();
@@ -28454,7 +28554,7 @@ function render() {
         const _tdx = Math.cos(p.angle) * _tipLocal, _tdy = Math.sin(p.angle) * _tipLocal;
         particles.push({ x: p.x + _tdx, y: p.y + _tdy,
           vx: (Math.random()-0.5)*0.8, vy: 0.4 + Math.random()*0.5,
-          life: 10, maxLife: 10, size: 1.5, color: def.color, type: 'spark' });
+          life: 10, maxLife: 10, size: 1.5, color: _meleeMainColor(), type: 'spark' });
         p._rTipDrip = null;
       }
       } // end blade-visible block
@@ -28514,7 +28614,7 @@ function render() {
       if (_cdR > 0) {
         ctx.save();
         ctx.translate(p.x + _bodyOX, p.y + _bodyOY);
-        ctx.strokeStyle = def.color;
+        ctx.strokeStyle = _meleeMainColor();
         ctx.lineWidth = 2;
         ctx.globalAlpha = 0.65;
         ctx.beginPath();
