@@ -17606,8 +17606,10 @@ function _meleeHitVFX(z, isCrit, mainCol) {
 // ============================================================
 // DEADSHOT — charge a piercing long-range shot
 // ============================================================
-const DEADSHOT_COOLDOWN = 0;    // primary weapon — charge time IS the rate-limiter
+const DEADSHOT_COOLDOWN = 0;    // legacy special cooldown — unused now
+const DEADSHOT_POST_FIRE_LOCK = 42; // 0.7s lock after firing — prevents spam
 const DEADSHOT_MAX_CHARGE = 60; // 1s to full charge (reduced from 2s)
+let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charges
 
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
@@ -17631,6 +17633,8 @@ function releaseDeadshot() {
 }
 
 function updateDeadshot() {
+  // Tick the post-fire lockout regardless of charging state.
+  if (_deadshotPostFireTimer > 0) _deadshotPostFireTimer--;
   if (!_deadshotCharging) return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) { _deadshotCharging = false; _deadshotCharge = 0; return; }
@@ -17641,16 +17645,25 @@ function updateDeadshot() {
   const _dsClassId = _m.beaconElement || null;
   const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#f44') : '#f44';
   const chargePct = _deadshotCharge / DEADSHOT_MAX_CHARGE;
-  // Charging VFX — enhanced with targeting laser
+  // Charge VFX — particles get sucked INTO the muzzle (not the player). Tight
+  // focus, dense at higher charge, like Discharge's converge but on the weapon.
   const mx = lp.x + Math.cos(lp.angle)*22, my = lp.y + Math.sin(lp.angle)*22;
-  // Converging energy (more particles at higher charge)
-  if (gameTime % 2 === 0) {
-    const _cCount = 1 + Math.floor(chargePct * 2);
+  // Inward-converging force motes — 3-5 per frame, spawn on a tight ring around
+  // the muzzle and accelerate toward it. Ring shrinks as charge builds.
+  {
+    const _cCount = 3 + Math.floor(chargePct * 3);
+    const _ringR = 26 - chargePct * 14; // 26px → 12px as charge fills
+    const _spd = 2.5 + chargePct * 3;
     for (let ci = 0; ci < _cCount; ci++) {
-      const a = Math.random()*Math.PI*2, r = 12 + (1-chargePct)*25;
-      particles.push({ x: mx + Math.cos(a)*r, y: my + Math.sin(a)*r,
-        vx: -Math.cos(a)*(2.5+chargePct*2), vy: -Math.sin(a)*(2.5+chargePct*2),
-        life: 8, maxLife: 8, size: 2 + chargePct*3, color: bColor, type: 'spark' });
+      const a = Math.random()*Math.PI*2;
+      particles.push({ x: mx + Math.cos(a)*_ringR, y: my + Math.sin(a)*_ringR,
+        vx: -Math.cos(a)*_spd, vy: -Math.sin(a)*_spd,
+        life: 8, maxLife: 8, size: 1.5 + chargePct*2, color: bColor, type: 'spark' });
+    }
+    // Bright white core mote every other frame — sells the convergence point
+    if (gameTime % 2 === 0) {
+      particles.push({ x: mx + (Math.random()-0.5)*4, y: my + (Math.random()-0.5)*4,
+        vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.5 + chargePct*2, color: '#fff', type: 'spark' });
     }
   }
   // Targeting laser dots along aim direction
@@ -17663,9 +17676,10 @@ function updateDeadshot() {
         vx: 0, vy: 0, life: 4, maxLife: 4, size: 1 + chargePct, color: bColor, type: 'spark' });
     }
   }
-  // Full-charge ready pulse
-  if (_deadshotCharge >= DEADSHOT_MAX_CHARGE && gameTime % 30 === 0) {
-    particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 20, color: bColor, type: 'wakering' });
+  // Full-charge ready pulse — louder and more frequent now that 1.0 is reached fast
+  if (_deadshotCharge >= DEADSHOT_MAX_CHARGE && gameTime % 18 === 0) {
+    particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 22, color: '#fff', type: 'wakering' });
+    particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 30, color: bColor, type: 'wakering' });
     playSound(1000, 0.05, 'sine', 0.03);
   }
   if (_deadshotCharge % 15 === 0) playSound(300 + _deadshotCharge * 8, 0.04, 'sine', 0.05);
@@ -17675,12 +17689,15 @@ function _fireDeadshot(lp) {
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
   _deadshotCharge = 0;
-  // No special-button cooldown — charge time IS the rate limiter for primary use.
+  // Lock out new charges briefly so the player can't spam-fire taps.
+  _deadshotPostFireTimer = DEADSHOT_POST_FIRE_LOCK;
   if (DEADSHOT_COOLDOWN > 0) lp._beaconCooldown = DEADSHOT_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || null; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
-  const baseDmg = 35 + Math.floor(chargePct * 80); // 35-115 damage (tap is meaningful)
+  // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
+  const baseDmg = Math.floor(30 + chargePct * 90);
+  const isFullCharge = chargePct >= 0.95;
   // Single-target by default. OVERPENETRATE mod card adds pierce.
   // RAILGUN at full charge still grants infinite pierce as the build's payoff.
   const isRailgun = _m.railgun && chargePct >= 1.0;
@@ -17705,6 +17722,7 @@ function _fireDeadshot(lp) {
       _beaconBullet: false, _deadshotRound: true, _deadshotColor: bColor,
       _armorPierce: !!_m.armorPierce, _tracerMark: !!_m.tracerRound,
       _chainKill: _m.chainKill || 0, _railgun: isRailgun,
+      _deadshotFullCharge: isFullCharge,
     });
   };
   _mkDeadshotBullet(lp.x, lp.y, 1);
@@ -17755,6 +17773,39 @@ function _fireDeadshot(lp) {
   }
   playSound(100, 0.12, 'square', 0.1); playSound(60, 0.1, 'sine', 0.06);
   if (chargePct >= 0.8) triggerGlitchSurge(0.3, 12);
+  // ---- FULL-CHARGE LAUNCH FLASH ----
+  // When the round leaves at maximum power, sell the force with a bright
+  // multi-layer flash at the muzzle: white core, expanding rings, radial
+  // force lines, extra ember spray. Tap-fire skips this entirely.
+  if (isFullCharge && !isRailgun) {
+    const _muzzleX = lp.x + Math.cos(a)*24, _muzzleY = lp.y + Math.sin(a)*24;
+    // White core flash
+    particles.push({ x: _muzzleX, y: _muzzleY, vx:0, vy:0, life: 6, maxLife: 6, size: 32, color: '#fff', type: 'explosion' });
+    particles.push({ x: _muzzleX, y: _muzzleY, vx:0, vy:0, life: 10, maxLife: 10, size: 22, color: bColor, type: 'explosion' });
+    // Expanding rings
+    particles.push({ x: _muzzleX, y: _muzzleY, vx:0, vy:0, life: 12, maxLife: 12, size: 60, color: '#fff', type: 'wakering' });
+    particles.push({ x: _muzzleX, y: _muzzleY, vx:0, vy:0, life: 18, maxLife: 18, size: 90, color: bColor, type: 'wakering' });
+    // 12 radial force lines (lightning style — short bright streaks fanning out)
+    for (let _fli = 0; _fli < 12; _fli++) {
+      const _fla = (_fli / 12) * Math.PI * 2;
+      const _flLen = 24 + Math.random() * 14;
+      particles.push({ x: _muzzleX, y: _muzzleY, vx:0, vy:0, life: 8, maxLife: 8, size: 1.5,
+        color: Math.random() > 0.5 ? '#fff' : bColor, type: 'lightning',
+        tx: _muzzleX + Math.cos(_fla) * _flLen, ty: _muzzleY + Math.sin(_fla) * _flLen });
+    }
+    // Extra forward ember cone — the launch tongue of fire
+    for (let _fei = 0; _fei < 18; _fei++) {
+      const _fea = a + (Math.random() - 0.5) * 0.7;
+      const _fes = 5 + Math.random() * 7;
+      particles.push({ x: _muzzleX, y: _muzzleY, vx: Math.cos(_fea)*_fes, vy: Math.sin(_fea)*_fes,
+        life: 14 + Math.random() * 6, maxLife: 20, size: 3 + Math.random() * 2.5,
+        color: ['#fff','#ffe',bColor,bColor][Math.floor(Math.random()*4)], type: 'spark' });
+    }
+    // Heavier kick + an extra crack on top of the existing thump
+    screenShake.intensity = Math.max(screenShake.intensity, 14);
+    playSound(1200, 0.04, 'square', 0.08);
+    triggerGlitchSurge(0.4, 14);
+  }
   // TRIPLE TAP: 2 more rapid follow-up shots at full charge
   if (_m.tripleTap && chargePct >= 1.0) {
     const _ttColor = bColor, _ttA = a;
@@ -19981,6 +20032,9 @@ function update() {
     {
       if (isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
+      // DEADSHOT skips aim assist — every shot is a deliberate aimed shot.
+      const _curWp = lp.weapons && lp.weapons[lp.currentWeapon];
+      const _aimAssistDisabled = _curWp && WEAPON_DEFS[_curWp.type] && WEAPON_DEFS[_curWp.type]._charge;
       let _desiredAngle = _autoAimAngle;
       if (_shootHeld) {
         if (isMobile) { rightJoystick.aiming = true; rightJoystick.firing = true; }
@@ -19991,7 +20045,7 @@ function update() {
         // If no lock, find nearest enemy in facing direction + within range.
         // Throttled: if a scan just rejected every candidate, don't re-scan every frame —
         // wait ~6 frames so we aren't paying N sqrt + scoring every frame while nothing qualifies.
-        if (!_autoAimTarget) {
+        if (!_autoAimTarget && !_aimAssistDisabled) {
           if (_autoAimRetargetTimer > 0) {
             _autoAimRetargetTimer--;
           } else {
@@ -20010,10 +20064,10 @@ function update() {
           }
         }
         // Locked on: nudge aim toward target (assist, not full snap)
-        if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
+        if (_autoAimTarget && !_aimAssistDisabled && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
           _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
         } else {
-          // No target in cone: fire in movement/facing direction
+          // No target in cone (or aim assist disabled): fire in movement/facing direction
           const moveMag = Math.sqrt(dx*dx+dy*dy);
           if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
         }
@@ -21024,7 +21078,8 @@ function update() {
         // tick / fire / release VFX live in updateDeadshot() / _fireDeadshot().
         const _wasFiring = lp._wasFiringCharge || false;
         if (shouldFire && !(lp._empDisabled > 0)) {
-          if (!_deadshotCharging) {
+          // Post-fire lockout blocks new charges so deadshot can't be spammed.
+          if (!_deadshotCharging && _deadshotPostFireTimer <= 0) {
             _deadshotCharging = true;
             _deadshotCharge = 0;
             playSound(400, 0.06, 'sine', 0.08);
@@ -21388,6 +21443,40 @@ function update() {
                     screenShake.intensity = Math.max(screenShake.intensity, 5);
                     // Sharp impact crack on top of the existing thump
                     playSound(900, 0.04, 'square', 0.08);
+                    // ---- FULL-CHARGE IMPACT BLOWOUT ----
+                    // Stack on top: bigger flash, wider rings, lingering ember
+                    // burst + a louder bass thump + glitch surge. Tap-fire skips.
+                    if (b._deadshotFullCharge) {
+                      // Doubled white core + larger colored secondary
+                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: 40, color: '#fff', type: 'explosion' });
+                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 14, maxLife: 14, size: 28, color: _impC, type: 'explosion' });
+                      // Two extra wider rings for the shockwave
+                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 16, maxLife: 16, size: 56, color: '#fff', type: 'wakering' });
+                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 22, maxLife: 22, size: 78, color: _impC, type: 'wakering' });
+                      // 12 long radial blowout streaks
+                      for (let _bsi = 0; _bsi < 12; _bsi++) {
+                        const _bsa = (_bsi / 12) * Math.PI * 2 + Math.random() * 0.25;
+                        const _bsv = 8 + Math.random() * 4;
+                        particles.push({ x: z.x, y: z.y, vx: Math.cos(_bsa)*_bsv, vy: Math.sin(_bsa)*_bsv,
+                          life: 18, maxLife: 18, size: 3 + Math.random() * 2,
+                          color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
+                      }
+                      // Lingering ember rain — 14 small embers drifting + falling
+                      for (let _eri = 0; _eri < 14; _eri++) {
+                        const _era = Math.random() * Math.PI * 2;
+                        const _erv = 2 + Math.random() * 4;
+                        particles.push({ x: z.x, y: z.y,
+                          vx: Math.cos(_era)*_erv, vy: Math.sin(_era)*_erv - 1,
+                          life: 30 + Math.random() * 10, maxLife: 40,
+                          size: 1.5 + Math.random() * 1.5,
+                          color: Math.random() > 0.4 ? _impC : '#fff', type: 'spark' });
+                      }
+                      // Bigger scorch + shake + bass + glitch
+                      decals.push({ x: z.x, y: z.y, size: 30, alpha: 0.6, color: '#310' });
+                      screenShake.intensity = Math.max(screenShake.intensity, 10);
+                      playSound(60, 0.18, 'sine', 0.18);
+                      triggerGlitchSurge(0.35, 14);
+                    }
                   }
                   // IMPACT BLAST: each hit creates a mini explosion
                   if (_m.wideSpread > 0 && !b._impactBlasted) {
