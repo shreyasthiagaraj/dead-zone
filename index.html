@@ -5687,9 +5687,9 @@ function spawnTrenchSection(idx) {
     triggerGlitchSurge(0.6, 60);
     screenShake.intensity = Math.max(screenShake.intensity, 12);
     hapticBossIntro();
-    // Cinematic reveal: pull camera out so the player sees the room + boss in
-    // one frame, then snap back over ~1.4s. (Hit-stop removed for smoothness.)
-    triggerCameraZoom(0.78, 1500);
+    // (Cinematic camera pull-out removed — it exposed the unfilled canvas
+    // edges as a white border, which read as a bug. Shake + glitch surge
+    // still carry the boss-spawn moment.)
     // Big dramatic particle burst at boss spawn point
     for (let bi = 0; bi < 40; bi++) {
       const ba = (bi / 40) * Math.PI * 2, bs = 3 + Math.random() * 6;
@@ -7600,10 +7600,19 @@ function _overheatBodyColor(stacks) {
 // OVERHEAT is a true stacking status, mirroring CHILL. Each application adds
 // stacks (additive, not max-takes). Cap is 5 + reactorBloom level. Tick damage
 // scales with stack count. Card-gated MELTDOWN combust at cap (THERMAL DETONATION).
+// Re-apply cooldown: prevents zone/pool effects from instantly maxing the
+// stack counter every tick. Each status carries a per-zombie cooldown frame
+// counter that gates re-application until enough time has passed.
+// Decremented in the per-zombie status tick (see line ~22152 area).
+const _STATUS_APPLY_CD = 14; // ~233 ms between applications
+
 function applyOverheat(z, stacks, force) {
   if (!isHost) return;
   if (!stacks || stacks <= 0) stacks = 1;
   force = force || 1;
+  // Re-apply cooldown — skip if too soon after last application
+  if (z._overheatApplyCd && z._overheatApplyCd > 0) return;
+  z._overheatApplyCd = _STATUS_APPLY_CD;
   const _m = runMods || {};
   // HEAT WAVE synergy: 2x stacks on Exposed enemies
   if (_m.synHeatWave && z._exposed) stacks *= 2;
@@ -7672,6 +7681,9 @@ function applyChill(z, stacks, force) {
   if (!isHost) return;
   // Post-freeze immunity — can't be chilled for 1s after thaw
   if (z._chillImmune > 0) return;
+  // Re-apply cooldown
+  if (z._chillApplyCd && z._chillApplyCd > 0) return;
+  z._chillApplyCd = _STATUS_APPLY_CD;
   force = force || 1;
   const m = runMods || {};
   const bonus = m.coldSnap > 0 ? 1 + 0.5 * m.coldSnap : 1;
@@ -7714,6 +7726,9 @@ function applyCharged(z) {
 }
 function applyExposed(z) {
   if (!isHost) return;
+  // Re-apply cooldown
+  if (z._exposedApplyCd && z._exposedApplyCd > 0) return;
+  z._exposedApplyCd = _STATUS_APPLY_CD;
   const _m = runMods || {};
   const _wasExposed = z._exposed;
   z._exposed = true;
@@ -7725,6 +7740,9 @@ function applyExposed(z) {
 }
 function applyCorrupt(z, stacks) {
   if (!isHost) return;
+  // Re-apply cooldown — prevents corruption pools from maxing stacks instantly
+  if (z._corruptApplyCd && z._corruptApplyCd > 0) return;
+  z._corruptApplyCd = _STATUS_APPLY_CD;
   const m = runMods || {};
   const threshold = m.compromisedCore > 0 ? 4 : 5;
   // FROZEN CORRUPTION: double stacks on Chilled enemies
@@ -18105,7 +18123,7 @@ function applyDashTrailEffects(lp) {
   // ---- IGNITION TRAIL (thermal): drop fire puddles BEHIND + slightly ahead ----
   if (hasBurnout && gameTime % 2 === 0) {
     const px = lp.x - ddx * 14, py = lp.y - ddy * 14; // mostly behind, slightly forward
-    const pudR = _m.burnoutWake >= 2 ? 40 : 30;
+    const pudR = _m.burnoutWake >= 2 ? 60 : 48;
     // Spawn a burnout puddle (reuse burnoutPuddles array)
     burnoutPuddles.push({ x: px, y: py, radius: pudR, life: 180, maxLife: 180 }); // 3s
     // Damage + overheat anything already standing in the puddle
@@ -20489,7 +20507,7 @@ function update() {
         }
         // ---- BLIGHT ZONE: corruption pool at dash ENDPOINT ----
         if (_rm.glitchWake > 0) {
-          const bzR = _rm.glitchWake >= 2 ? 90 : 65;
+          const bzR = _rm.glitchWake >= 2 ? 120 : 95;
           const bzDur = 240; // 4s
           // Spawn a corruption pool (reuse burnoutPuddles with a corrupt flag)
           burnoutPuddles.push({ x: lp.x, y: lp.y, radius: bzR, life: bzDur, maxLife: bzDur, _corrupt: true, _glitchLv: _rm.glitchWake });
@@ -22305,6 +22323,14 @@ function update() {
         const zt=ZOMBIE_TYPES[z.type];
         const _now=performance.now();
 
+        // ---- STATUS RE-APPLY COOLDOWNS ----
+        // Tick down per-status apply cooldowns so zone effects (corrupt pool,
+        // fire puddle, etc.) can't max stacks instantly — there's a small
+        // delay between applications.
+        if (z._overheatApplyCd > 0) z._overheatApplyCd--;
+        if (z._chillApplyCd > 0) z._chillApplyCd--;
+        if (z._corruptApplyCd > 0) z._corruptApplyCd--;
+        if (z._exposedApplyCd > 0) z._exposedApplyCd--;
         // ---- VULNERABILITY HANDLING (all bosses) ----
         // Tick the vuln timer + detect HP thresholds (75/50/25%) for cross-boss
         // staggers. Bosses with no vuln state run their normal AI below.
@@ -24859,6 +24885,11 @@ function _renderParallaxBackground() {
 
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
+  // Defensive: paint the canvas with the body bg color so any cameraZoom < 1
+  // (or out-of-bounds region) doesn't leak the underlying page-bg through
+  // transparent pixels — which on some setups read as a bright/white edge.
+  ctx.fillStyle = '#030308';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   // 'dying' is the brief SIGNAL LOST beat between the kill blow and the death
   // screen — keep the world visible so the player sees the instance fail in place.
   if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'dying' && gameState !== 'mods_view' && gameState !== 'shop' && gameState !== 'shell' && gameState !== 'reforge' && gameState !== 'signallab') { renderMenuBackground(); renderMinimap(); return; }
