@@ -16161,7 +16161,7 @@ function updateDischarge() {
           if (z.hp <= 0) continue;
           const dx = z.x - w.x, dy = z.y - w.y, d = Math.sqrt(dx * dx + dy * dy);
           if (d < 80) {
-            damageZombie(z, 100, d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0);
+            damageZombie(z, 100, d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0, true);
             z.staggerTimer = Math.max(z.staggerTimer || 0, 40);
           }
         }
@@ -19729,22 +19729,29 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       const bs = 6 + Math.random()*10; // fast!
       particles.push({x:z.x,y:z.y,vx:Math.cos(ba)*bs+kbx*0.4,vy:Math.sin(ba)*bs+kby*0.4,life:25+Math.random()*20,maxLife:45,size:3+Math.random()*4,color:['#f0f','#f4a','#d0f','#f08','#ff2fff'][Math.floor(Math.random()*5)],type:'blood'});
     }
-    // CASCADE: shockwave on discharge kills — big radius, solid damage, visible ring
+    // CASCADE: shockwave on discharge kills — big radius, solid damage, visible ring.
+    // Depth-capped at 3 chain links so a dense cluster doesn't trigger an
+    // exponential chain that piles up hundreds of particles in one frame.
     if (z._hitByDischarge && (runMods||{}).cascade) {
-      const _casR = 120;
-      for (const oz of zombies) {
-        if (oz === z || oz.hp <= 0) continue;
-        const cdx = oz.x - z.x, cdy = oz.y - z.y, cd = Math.sqrt(cdx*cdx+cdy*cdy);
-        if (cd < _casR) {
-          const _casClose = 1 - cd / _casR;
-          damageZombie(oz, Math.floor(80 * _casClose), (cdx/(cd||1))*10, (cdy/(cd||1))*10);
-          oz.staggerTimer = Math.max(oz.staggerTimer||0, 20);
-          oz._hitByDischarge = true; // chain cascades
+      const _casDepth = z._cascadeDepth || 0;
+      if (_casDepth < 3) {
+        const _casR = 120;
+        for (const oz of zombies) {
+          if (oz === z || oz.hp <= 0) continue;
+          const cdx = oz.x - z.x, cdy = oz.y - z.y, cd = Math.sqrt(cdx*cdx+cdy*cdy);
+          if (cd < _casR) {
+            const _casClose = 1 - cd / _casR;
+            // Silent — cascade ring + sparks below provide the read.
+            damageZombie(oz, Math.floor(80 * _casClose), (cdx/(cd||1))*10, (cdy/(cd||1))*10, true);
+            oz.staggerTimer = Math.max(oz.staggerTimer||0, 20);
+            oz._hitByDischarge = true; // chain cascades
+            oz._cascadeDepth = _casDepth + 1;
+          }
         }
+        // Visible expanding ring + sparks
+        particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_casR,color:'#f80',type:'wakering'});
+        for (let ci = 0; ci < 12; ci++) { const ca = (ci/12)*Math.PI*2, cs = 3+Math.random()*5; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#fa0',type:'spark'}); }
       }
-      // Visible expanding ring + sparks
-      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_casR,color:'#f80',type:'wakering'});
-      for (let ci = 0; ci < 12; ci++) { const ca = (ci/12)*Math.PI*2, cs = 3+Math.random()*5; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#fa0',type:'spark'}); }
     }
   }
   // Overkill gibs — when damage far exceeds remaining HP
@@ -20345,7 +20352,7 @@ function update() {
           playSound(600, 0.1, 'square', 0.06);
           screenShake.intensity = Math.max(screenShake.intensity, 4);
           // Chain into Charged enemies
-          if (isHost) { const maxJ=(_rm.dischargeBurst>=2?4:2)+(_rm.staticChain||0); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0);applyCharged(bZ);particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
+          if (isHost) { const maxJ=(_rm.dischargeBurst>=2?4:2)+(_rm.staticChain||0); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0,true);applyCharged(bZ);particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
         }
         // Kinetic Wake Lv3: enemies hit by endpoint burst become Exposed
         if (_rm.kineticWake >= 3 && isHost) {
