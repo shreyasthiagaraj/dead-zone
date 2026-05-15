@@ -16802,30 +16802,34 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // 1. FORWARD LUNGE — clear flashy piercing strike with extra reach
+  // 1. FORWARD LUNGE — clear flashy piercing strike
   { kind:'forwardlunge', range: 195, cone: Math.PI * 32/180, damage: 16, knockback: 60, stagger: 40, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 48 },
-  // 2. 180 deg ARC SWIPE — half-circle in front of the player
-  { kind:'arcswipe',     range: 115, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC',
-    swingDelta: Math.PI, finisher: false },
-  // 3. 270 deg REVERSE SPIN — three-quarter revolution starting from where
-  //    the previous arc ended (continuous flow, no snap to symmetric start).
-  { kind:'arcswipe',     range: 125, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 280, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
+  // 2. SLASH — quick light L->R cut, flows out of the lunge
+  { kind:'arcswipe',     range: 100, cone: Math.PI * 0.7,    damage: 10, knockback: 35, stagger: 26, cooldown:  95, color:'#4ff', tone: 820, dir:  1, label:'SLASH',
+    swingDelta: Math.PI * 0.7,  swingFollowPrev: true },
+  // 3. 180 deg ARC SWIPE — the big half-circle middle of the combo
+  { kind:'arcswipe',     range: 120, cone: Math.PI,          damage: 18, knockback: 55, stagger: 42, cooldown: 125, color:'#4ff', tone: 720, dir: -1, label:'ARC',
+    swingDelta: Math.PI,       swingFollowPrev: true },
+  // 4. CROSS — quick R->L counter slash (mirror of strike 2)
+  { kind:'arcswipe',     range: 105, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 32, cooldown:  95, color:'#4ff', tone: 680, dir:  1, label:'CROSS',
+    swingDelta: Math.PI * 0.75, swingFollowPrev: true },
+  // 5. 270 deg SPIN — three-quarter revolution finisher, continues out of the
+  //    previous strike's end angle.
+  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 250, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
     swingDelta: Math.PI * 1.5, swingFollowPrev: true, finisher: true },
 ];
-// Brief grace period after a finisher before the next combo can start —
-// even on release+repress. Keeps the player from chaining infinite combos.
+// Brief delay between one combo finishing and the next combo's first strike.
+// Lets the moment breathe and prevents endless looping while still letting
+// the player hold fire to chain combos.
 const RIPPER_INTER_COMBO_COOLDOWN = 320;
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
 function _swingMelee(p, def) {
   if (!p || !p.alive) return;
-  // Combo lockout: after the FINISHER fires, no more swings until the
-  // player releases fire and re-presses. Set by the finisher step below,
-  // cleared by the local fire-input block on release.
-  if (p._rComboLocked) return;
   const now = performance.now();
-  // Brief grace after a finisher even on release+repress — keeps the player
-  // from chaining combos back-to-back without a beat in between.
+  // Inter-combo grace period — a beat between one combo finishing and the
+  // next combo's first strike. Hold-to-fire still chains combos through
+  // this gate; it just paces them so they aren't seamless.
   if (p._rNoSwingUntil && now < p._rNoSwingUntil) return;
   // ---- DASH-STRIKE: a swing within ~280 ms of dashing fires as a
   // beefier lunging attack instead of the next combo step. Consumed once
@@ -16885,10 +16889,10 @@ function _swingMelee(p, def) {
   p._rPrevBladeWorldAng = undefined;
   // Run the swing
   _runComboStep(p, def, step, idx);
-  // After the FINISHER fires, lock the combo until the player releases AND
-  // enforce a small grace period before the next combo can start.
+  // After the FINISHER fires, enforce a small inter-combo cooldown. The
+  // player can still hold fire — the next combo just won't start firing
+  // until the cooldown elapses.
   if (step.finisher) {
-    p._rComboLocked = true;
     p._rNoSwingUntil = now + step.cooldown + RIPPER_INTER_COMBO_COOLDOWN;
   }
   // Advance combo
@@ -20975,10 +20979,9 @@ function update() {
     {
       const _curDef = WEAPON_DEFS[w.type];
       if (_curDef && _curDef._melee) {
-        // Hold-to-fire: each tick attempts a swing; per-step cooldown inside
-        // _swingMelee paces the combo. Combo lockout after FINISHER requires
-        // a release-then-press to start a fresh combo.
-        if (!shouldFire) lp._rComboLocked = false;
+        // Hold-to-fire: each tick attempts a swing. Per-step cooldown inside
+        // _swingMelee paces the combo; an inter-combo cooldown gates the gap
+        // between one combo's finisher and the next combo's first strike.
         if (shouldFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
         // Stop the gun loop sound — melee uses per-hit sounds, not the loop.
         if (!shouldFire) stopWeaponLoop();
