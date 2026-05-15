@@ -15999,6 +15999,7 @@ const DISCHARGE_RANGE_MAX = 180; // maximum wave reach (full charge) — 360° a
 const DISCHARGE_CHARGE_TIME = 90; // frames to full charge (~1.5s)
 const DISCHARGE_ANGLE = Math.PI * 2; // 360° — full circle nova
 const DISCHARGE_TAP_FLOOR = 2 / 3; // tap fires as if held ~1s — base release is meaningful
+const DISCHARGE_LINGER_FRAMES = 10; // frames the hairline rim holds at max before dissolving
 let _dischargeActive = false;
 let _dischargeWave = null;
 let _dischargeCharging = false;
@@ -16207,10 +16208,10 @@ function updateDischarge() {
     // Fall through to damage / absorb / front-particle logic with frozen radius.
   } else {
     // ---- EXPANSION PHASE ----
-    // Ease-out: starts ~52 px/frame, decays sharply via (1-pct)^1.6 so the
-    // shockwave reads as losing energy as it spreads. Total ~22-26 frames.
+    // Ease-out: starts ~73 px/frame, decays via (1-pct)^1.3 so the shockwave
+    // reads as losing energy as it spreads. Snappy: hits max in ~6-8 frames.
     const _expandPct = w.radius / w.maxRadius;
-    const _speed = 50 * Math.pow(1 - _expandPct, 1.6) + 2.5;
+    const _speed = 70 * Math.pow(1 - _expandPct, 1.3) + 3;
     w.radius = Math.min(w.maxRadius, w.radius + _speed);
 
     // Dust trail particles — emit every frame so the trail stays continuous
@@ -16266,9 +16267,9 @@ function updateDischarge() {
         screenShake.intensity = Math.max(screenShake.intensity, 6);
         return;
       }
-      // Enter LINGER phase — held at boundary for ~14 frames before dissolving.
+      // Enter LINGER phase — held at boundary briefly before dissolving.
       w._lingering = true;
-      w._lingerFrames = 14;
+      w._lingerFrames = DISCHARGE_LINGER_FRAMES;
       // Peak flash at max extent — sells "the shockwave reaches its edge"
       const _flashCount = 18;
       for (let _di = 0; _di < _flashCount; _di++) {
@@ -26446,7 +26447,7 @@ function render() {
     // Inner shockwave catches up during linger — trail's inner edge pulls
     // toward center as the lingering frames count down. Reads as the slower
     // mass behind the rim arriving at the boundary.
-    const _lingerProgress = isLingering ? Math.max(0, 1 - w._lingerFrames / 14) : 0;
+    const _lingerProgress = isLingering ? Math.max(0, 1 - w._lingerFrames / DISCHARGE_LINGER_FRAMES) : 0;
     const trailR = Math.max(0, (w.radius - 60) * (1 - _lingerProgress * 0.85));
     ctx.globalAlpha = alpha * 0.12;
     ctx.fillStyle = w.color;
