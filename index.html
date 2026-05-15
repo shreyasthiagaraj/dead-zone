@@ -1077,7 +1077,7 @@ if (!SPECIAL_DEFS[selectedSpecial]) selectedSpecial = 'beacon';
 const PRIMARY_WEAPON_OPTIONS = {
   pistol: { id:'pistol', name:'SIDEARM', icon:'⌖', color:'#ff0', desc:'Hitscan pistol — reliable mid-range force blast' },
   ripper: { id:'ripper', name:'RIPPER',  icon:'⚔', color:'#4ff', desc:'Close-quarters cone slash + forward lunge — cleaves multiple targets' },
-  deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#f44', desc:'Hold to charge, release to fire — high damage, heavy knockback, single target' },
+  deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#f44', desc:'Hold to charge, release to fire — high damage, heavy knockback. Full charge pierces everything.' },
 };
 let selectedPrimary = localStorage.getItem('necrowave_primary') || 'pistol';
 if (!PRIMARY_WEAPON_OPTIONS[selectedPrimary]) selectedPrimary = 'pistol';
@@ -1861,9 +1861,6 @@ const UPGRADE_POOL = [
   // ---- DEADSHOT MODS (primary weapon cards — only when DEADSHOT is equipped) ----
   { id:'quick_draw', name:'QUICK DRAW', rarity:'common', max:1, icon:'⚡', color:'#f44',
     descs:['DEADSHOT charges 30% faster.'], flavor:'overclocked capacitor bank' },
-  { id:'deadshot_pierce', name:'OVERPENETRATE', rarity:'rare', max:2, icon:'⫸', color:'#f44',
-    descs:['DEADSHOT bullets pierce +1 enemy.', 'DEADSHOT bullets pierce +2 enemies.'],
-    flavor:'the round does not stop until it has to' },
   { id:'armor_pierce', name:'ARMOR PIERCE', rarity:'rare', max:1, icon:'⊘', color:'#f44',
     descs:['DEADSHOT ignores armor, shields, and damage reduction.'],
     flavor:'hardened penetrator round' },
@@ -2092,7 +2089,7 @@ function rebuildRunMods() {
     // Payload mods
     clusterBomb: 0, stickyCharge: 0, napalmZone: 0, concussiveBlast: 0, rapidPayload: 0,
     // Deadshot mods
-    quickDraw: 0, deadshotPierce: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
+    quickDraw: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
     dominantClass: null, // highest class for bullet tinting
@@ -2229,7 +2226,6 @@ function rebuildRunMods() {
       case 'rapid_payload':   m.rapidPayload += n; break;
       // Deadshot mods
       case 'quick_draw':      m.quickDraw += n; break;
-      case 'deadshot_pierce': m.deadshotPierce = (m.deadshotPierce || 0) + n; break;
       case 'armor_pierce':    m.armorPierce = true; break;
       case 'tracer_round':    m.tracerRound = true; break;
       case 'railgun':         m.railgun = true; break;
@@ -2424,7 +2420,6 @@ const _SPECIAL_CARD_MAP = {
 // Cards that only apply when the player has DEADSHOT as their primary weapon.
 const _DEADSHOT_CARDS = new Set([
   'quick_draw', 'armor_pierce', 'tracer_round', 'railgun', 'chain_kill', 'triple_tap',
-  'deadshot_pierce',
 ]);
 
 // Cards that only apply to a HITSCAN (gun) primary weapon. When the player is
@@ -12142,7 +12137,7 @@ const WEAPON_DESCS = {
   lightning: 'Tesla coil. Chain lightning jumps between 3 nearby enemies.',
   rpg: 'Massive explosion. Instakill radius. Be careful not to blow yourself up.',
   ripper: 'Close-range cone slash with a forward lunge. Cleaves multiple targets.',
-  deadshot: 'Hold to charge, release to fire. Heavy single-shot with massive knockback. Single target unless you grab OVERPENETRATE.',
+  deadshot: 'Hold to charge, release to fire. Heavy single-shot with massive knockback. Tap = single target. Full charge punches through everything in line.',
 };
 const ELEMENT_DESCS = {
   fire: 'Ignites enemies for burn damage over time. Does not spread.',
@@ -17607,8 +17602,8 @@ function _meleeHitVFX(z, isCrit, mainCol) {
 // DEADSHOT — charge a piercing long-range shot
 // ============================================================
 const DEADSHOT_COOLDOWN = 0;    // legacy special cooldown — unused now
-const DEADSHOT_POST_FIRE_LOCK = 42; // 0.7s lock after firing — prevents spam
-const DEADSHOT_MAX_CHARGE = 60; // 1s to full charge (reduced from 2s)
+const DEADSHOT_POST_FIRE_LOCK = 18; // 0.3s lock after firing — prevents spam
+const DEADSHOT_MAX_CHARGE = 42; // 0.7s to full charge (-30% from 1s)
 let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charges
 
 let _deadshotCharging = false;
@@ -17698,10 +17693,10 @@ function _fireDeadshot(lp) {
   // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
   const baseDmg = Math.floor(30 + chargePct * 90);
   const isFullCharge = chargePct >= 0.95;
-  // Single-target by default. OVERPENETRATE mod card adds pierce.
-  // RAILGUN at full charge still grants infinite pierce as the build's payoff.
+  // Single-target on tap or partial charge. Full charge punches through
+  // everything in line — that's the payoff for the hold.
   const isRailgun = _m.railgun && chargePct >= 1.0;
-  const pierce = isRailgun ? 99 : (_m.deadshotPierce || 0);
+  const pierce = isFullCharge ? 99 : 0;
   const a = lp.angle;
   const speed = 22;
   const bulletSize = isRailgun ? (3 + chargePct*3) * 1.3 : (3 + chargePct*3);
