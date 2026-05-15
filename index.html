@@ -16802,14 +16802,14 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // 1. FORWARD LUNGE — strong piercing thrust, big forward commit
-  { kind:'forwardlunge', range: 210, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 150, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',       lungeDistance: 90 },
-  // 2. ARC SWIPE — 180 deg L->R sweep
-  { kind:'arcswipe',     range: 135, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 150, color:'#4ff', tone: 760, dir:  1, label:'ARC' },
-  // 3. REVERSE ARC SWIPE — 180 deg R->L sweep (mirror)
-  { kind:'arcswipe',     range: 140, cone: Math.PI,          damage: 22, knockback: 58, stagger: 48, cooldown: 160, color:'#0ff', tone: 700, dir: -1, label:'REVERSE ARC' },
+  // 1. FORWARD LUNGE — short forward step + flashy piercing strike
+  { kind:'forwardlunge', range: 200, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 100, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',       lungeDistance: 45 },
+  // 2. ARC SWIPE — 180 deg R->L sweep (opens the combo's wide-clear)
+  { kind:'arcswipe',     range: 135, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 105, color:'#4ff', tone: 760, dir: -1, label:'ARC' },
+  // 3. REVERSE ARC SWIPE — 180 deg L->R sweep (mirror)
+  { kind:'arcswipe',     range: 140, cone: Math.PI,          damage: 22, knockback: 58, stagger: 48, cooldown: 115, color:'#0ff', tone: 700, dir:  1, label:'REVERSE ARC' },
   // 4. FINISHER LUNGE — sharp-tip forward cone, massive knockback
-  { kind:'lungestrike',  range: 240, cone: Math.PI * 50/180, damage: 38, knockback:280, stagger:120, cooldown: 320, color:'#f80', tone: 240, dir:  0, label:'FINISHER!',   finisher: true, lungeDistance: 36 },
+  { kind:'lungestrike',  range: 240, cone: Math.PI * 50/180, damage: 38, knockback:280, stagger:120, cooldown: 250, color:'#f80', tone: 240, dir:  0, label:'FINISHER!',   finisher: true, lungeDistance: 36 },
 ];
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
@@ -16963,26 +16963,69 @@ function _runComboStep(p, def, step, idx) {
       screenShake.intensity = Math.max(screenShake.intensity, _shake);
     }
   } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
-    // ---- FORWARD THRUST: narrow tip-impact pop. Most of the visual comes
-    // from the blade's thrust pulse emitted by the renderer.
+    // ---- FORWARD THRUST: flashy piercing strike. The blade's thrust pulse
+    // drives the strike forward; this block lays down a forward energy beam
+    // + tip impact + spark fan + smoke trail for the "punching forward" feel.
     const _tx = p.x + c * range, _ty = p.y + s * range;
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 20, color: '#fff', type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 7, maxLife: 7, size: 14, color: mainCol, type: 'wakering' });
-    for (let i = 0; i < 8; i++) {
-      const _ta = Math.random()*Math.PI*2, _ts = 2 + Math.random()*3;
+    const _fl = (step.kind === 'forwardlunge');
+    // 4-stack forward energy beam (thicker on forwardlunge than plain jab)
+    if (_fl) {
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 9, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+    }
+    // Tip impact pop — wider + brighter for forward lunge
+    const _wR1 = _fl ? 40 : 20, _wR2 = _fl ? 26 : 14;
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: _wR1, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: _wR2, color: mainCol, type: 'wakering' });
+    if (_fl) {
+      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 4, maxLife: 4, size: 14, color: '#fff', type: 'spark' });
+    }
+    // Spark fan at the tip — more on forward lunge
+    const _sparkN = _fl ? 18 : 8;
+    for (let i = 0; i < _sparkN; i++) {
+      const _ta = Math.random()*Math.PI*2, _ts = 2 + Math.random()*(_fl ? 5 : 3);
       particles.push({
         x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
-        life: 7, maxLife: 7, size: 2 + Math.random()*1.5,
+        life: 8 + Math.floor(Math.random()*4), maxLife: 12,
+        size: 2 + Math.random()*1.8,
         color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
       });
     }
-    // FORWARD LUNGE: small forward glide via the lunge tick (same mechanism
-    // the finisher uses). Only applies if step defines a lungeDistance.
+    // Forward-flying sparks along the strike line (forwardlunge only)
+    if (_fl) {
+      for (let i = 0; i < 12; i++) {
+        const _f = 0.3 + Math.random() * 0.7;
+        const _spread = (Math.random()-0.5) * 0.32;
+        const _sa = a + _spread;
+        const _sp = 4 + Math.random()*5;
+        particles.push({
+          x: p.x + Math.cos(_sa)*(_f*range),
+          y: p.y + Math.sin(_sa)*(_f*range),
+          vx: Math.cos(_sa)*_sp, vy: Math.sin(_sa)*_sp,
+          life: 8, maxLife: 8, size: 2 + Math.random()*1.5,
+          color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
+        });
+      }
+      // Kick-off smoke plume behind the player
+      for (let i = 0; i < 8; i++) {
+        const _ka = a + Math.PI + (Math.random()-0.5)*1.5;
+        const _ks = 1 + Math.random()*2;
+        particles.push({
+          x: p.x + Math.cos(_ka)*5, y: p.y + Math.sin(_ka)*5,
+          vx: Math.cos(_ka)*_ks, vy: Math.sin(_ka)*_ks,
+          life: 12 + Math.floor(Math.random()*4), maxLife: 16,
+          size: 4 + Math.random()*3, color: '#777', type: 'smoke', _smokeAlpha: 0.5
+        });
+      }
+    }
+    // FORWARD LUNGE: smooth-decay glide via the lunge tick.
     if (isLocal && step.lungeDistance) {
       p._rLungeVx = c * (step.lungeDistance * 0.42);
       p._rLungeVy = s * (step.lungeDistance * 0.42);
     }
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, 5);
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 7 : 5);
   } else if (step.kind === 'lungestrike') {
     // ---- FORWARD CONE: Meta-Knight-style sharp-tip thrust ----
     // Visualized as a single arrowhead pointing forward (sharp at the tip,
@@ -28293,51 +28336,30 @@ function render() {
       const _topRoot = -5.5, _topMid = -3.8;
       const _botRoot = 5.5,  _botMid = 2.6;
 
-      // ---- BLADE TRAIL: each frame during an active sweep, emit two arcs
-      // at the blade's CURRENT world angle:
-      //   1. A WIDE bright sweep at the blade-tip radius — thickest at the
-      //      sword (newest segment, full alpha) and thinning along the arc
-      //      behind it (older segments fade naturally with life).
-      //   2. A THIN cutting-edge trail at the very tip distance — the
-      //      "point of the sword" carving its path, lingers and fades after
-      //      the swing.
-      // Also a few body sparks along the blade so the whole edge reads as
-      // damaging, not just the tip.
+      // ---- BLADE TRAIL: each frame during an active sweep, emit a THICK
+      // filled-wedge segment along the sword's path (Discharge-style),
+      // plus a thin lingering tip-path arc at the very tip. Older segments
+      // fade with life — the brightest band is always at the blade itself.
       const _isActive = _swP > 0 && _swP < 1;
       if (_isActive && !_isJab && !_isLunge) {
         const _wAng = (p.angle || 0) + _renderSwing;
-        const _cosA = Math.cos(_wAng), _sinA = Math.sin(_wAng);
-        const _bodyRoot = PLAYER_RADIUS + _floatGap + 11;
-        const _bodyTip  = _bodyRoot + _bL;
-        // 1) Wide sweep segment at mid-blade radius
+        const _bodyRoot = PLAYER_RADIUS + _floatGap + 8;  // a bit inboard of grip end
+        const _bodyTip  = PLAYER_RADIUS + _floatGap + 11 + _bL;
+        // 1) Thick filled-wedge segment from root to tip — the swept band
         particles.push({
           x: p.x, y: p.y, vx: 0, vy: 0,
-          life: 15, maxLife: 15, size: _bodyTip * 0.92,
-          color: def.color, type: 'slash_arc',
-          _angle: _wAng, _cone: 0.48
+          life: 14, maxLife: 14, size: _bodyTip,
+          color: def.color, type: 'blade_sweep',
+          _innerR: _bodyRoot, _angle: _wAng, _cone: 0.42
         });
-        // 2) Thin cutting-edge arc at the very tip — the sword's tip-path
-        //    record, lingers and fades after the swing.
+        // 2) Thin bright cutting-edge arc at the very tip — lingers after
+        //    the swing fades, traces the sword's full path
         particles.push({
           x: p.x, y: p.y, vx: 0, vy: 0,
           life: 22, maxLife: 22, size: _bodyTip + 4,
           color: '#fff', type: 'slash_arc',
           _angle: _wAng, _cone: 0.22
         });
-        // 3) Body sparks at 4 sample points along the blade
-        for (let _bi = 0; _bi < 4; _bi++) {
-          const _t = _bi / 3;
-          const _bd = _bodyRoot + (_bodyTip - _bodyRoot) * _t;
-          const _bx = p.x + _cosA * _bd;
-          const _by = p.y + _sinA * _bd;
-          particles.push({
-            x: _bx + (Math.random()-0.5)*2, y: _by + (Math.random()-0.5)*2,
-            vx: 0, vy: 0,
-            life: 8 + Math.floor(Math.random()*3), maxLife: 11,
-            size: 1.8 + Math.random()*1.2,
-            color: Math.random() > 0.4 ? '#fff' : def.color, type: 'spark'
-          });
-        }
       }
 
       ctx.save();
@@ -28977,6 +28999,47 @@ function render() {
         ctx.fillStyle = '#fff';
         ctx.globalAlpha = _alpha;
         ctx.beginPath(); ctx.arc(_len, 0, 2.5, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      } else if(p.type==='blade_sweep'){
+        // Thick filled-wedge sword trail — runs from the blade root (innerR)
+        // to the tip (size = outerR), spanning a small angle. Newer segments
+        // are brightest; older ones fade with life. Stacks per-frame to form
+        // a continuous Discharge-style swept band along the blade's path.
+        const _alpha = p.life / p.maxLife;
+        const _innerR = p._innerR || 20;
+        const _outerR = p.size;
+        const _ang = p._angle || 0;
+        const _halfC = (p._cone || 0.5) * 0.5;
+        ctx.save();
+        // Outer ambient glow (radial gradient — the haze around the band)
+        ctx.globalAlpha = _alpha * 0.18;
+        const _glow = ctx.createRadialGradient(p.x, p.y, _innerR, p.x, p.y, _outerR * 1.08);
+        _glow.addColorStop(0, 'transparent');
+        _glow.addColorStop(0.55, p.color);
+        _glow.addColorStop(1, 'transparent');
+        ctx.fillStyle = _glow;
+        ctx.beginPath();
+        ctx.moveTo(p.x + Math.cos(_ang - _halfC) * _innerR, p.y + Math.sin(_ang - _halfC) * _innerR);
+        ctx.arc(p.x, p.y, _outerR * 1.08, _ang - _halfC, _ang + _halfC);
+        ctx.arc(p.x, p.y, _innerR, _ang + _halfC, _ang - _halfC, true);
+        ctx.closePath();
+        ctx.fill();
+        // Solid wedge band — the body of the trail
+        ctx.globalAlpha = _alpha * 0.55;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, _outerR, _ang - _halfC, _ang + _halfC);
+        ctx.arc(p.x, p.y, _innerR, _ang + _halfC, _ang - _halfC, true);
+        ctx.closePath();
+        ctx.fill();
+        // Bright white leading edge at the tip radius
+        ctx.globalAlpha = _alpha;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, _outerR, _ang - _halfC, _ang + _halfC);
+        ctx.stroke();
         ctx.restore();
         ctx.globalAlpha = 1;
       } else if(p.type==='slash_mark'){
