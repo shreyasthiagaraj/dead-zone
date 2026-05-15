@@ -16338,9 +16338,9 @@ function updateDischarge() {
       const pushDir = d > 0.1 ? 1 : 0;
       const pushX = pushDir ? (dx/d)*28 : Math.cos(w.angle)*28;
       const pushY = pushDir ? (dy/d)*28 : Math.sin(w.angle)*28;
-      // Damage ramps with charge: 80 base → 120 at full (+50% on full charge).
+      // Damage ramps with charge: 60 base → 90 at full (+50% on full charge).
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
-      const baseDmg = Math.floor(80 * _dmgMult * _chargeDmgMult);
+      const baseDmg = Math.floor(60 * _dmgMult * _chargeDmgMult);
       // Silent — wave has its own per-hit ring + sparks below, and big wave
       // VFX is already loud. Skipping the 50-particle impact storm prevents
       // FPS drops when the wave sweeps a cluster.
@@ -16631,10 +16631,8 @@ function updatePayload() {
     const _plCol = gc2;
     const _plCol2 = _plCls === 'fire' ? '#fa0' : _plCls === 'ice' ? '#cff' : _plCls === 'chain' ? '#8ff' : _plCls === 'wind' ? '#eef' : _plCls === 'corrupt' ? '#f0f' : '#fa0';
     const _plSmoke = _plCls === 'fire' ? '#421' : _plCls === 'ice' ? '#235' : _plCls === 'chain' ? '#124' : _plCls === 'corrupt' ? '#201' : '#111';
-    // Payload shockwave — discharge-style: fast ease-out expand, then a held
-    // hairline-rim linger so the player can read the explosion. ~36 frames total
-    // (was 14): ~15 frames expansion, ~21 frames linger + fade.
-    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:36, maxLife:36, size:radius*1.6, color:_plCol, type:'payload_shockwave', _plCol2, _seed: Math.random()*1000 });
+    // Payload shockwave — fast expand, slow fade, irregular inner edge
+    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:14, maxLife:14, size:radius*1.6, color:_plCol, type:'payload_shockwave', _plCol2, _seed: Math.random()*1000 });
     // Bright center flash
     particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:4, maxLife:4, size:18, color:'#fff', type:'spark' });
     // Radial sparks (trimmed from 40 -> 24 — still reads as a big explosion at
@@ -16783,7 +16781,7 @@ function updatePayload() {
               if (dd < _cRadius + z.radius) { const _cl=1-dd/(_cRadius+z.radius); damageZombie(z, Math.floor(_cDmg*_cl), dd>1?(ddx/dd)*10:0, dd>1?(ddy/dd)*10:0, true); } }
           }
           // FULL explosion per cluster hit — same intensity as main
-          particles.push({x:cx,y:cy,vx:0,vy:0,life:30,maxLife:30,size:_cRadius*1.5,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
+          particles.push({x:cx,y:cy,vx:0,vy:0,life:12,maxLife:12,size:_cRadius*1.5,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
           particles.push({x:cx,y:cy,vx:0,vy:0,life:4,maxLife:4,size:12,color:'#fff',type:'spark'});
           for (let i = 0; i < 24; i++) { const a2=Math.random()*Math.PI*2,s2=3+Math.random()*8;
             particles.push({x:cx,y:cy,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:18,maxLife:18,size:4+Math.random()*4,color:i<6?'#fff':_cGc,type:'explosion'}); }
@@ -21321,6 +21319,11 @@ function update() {
         if(z.x<_bbXMin||z.x>_bbXMax||z.y<_bbYMin||z.y>_bbYMax)continue;
         const _bhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_bhit){
+                  // Per-bullet hit dedup: pierce shouldn't hit the same enemy
+                  // twice (was happening when a slow/wide bullet stayed inside
+                  // a zombie's hitbox across frames — every frame counted as a
+                  // fresh hit). Each zombie can only be damaged once per bullet.
+                  if (b._hitZombies && b._hitZombies.has(z.zid)) continue;
                   // Range check — skip enemies beyond effective gun range
                   if (b._originX != null) {
                     const _erd = (z.x-b._originX)**2+(z.y-b._originY)**2;
@@ -21401,47 +21404,61 @@ function update() {
                   // Three-point rule: origin (flash), path (streaks), impact (decal).
                   if (b._deadshotRound) {
                     const _impA = Math.atan2(b.vy, b.vx), _impC = b._deadshotColor || b.color;
-                    // Origin: white-hot core flash + colored secondary
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 24, color: '#fff', type: 'explosion' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 16, color: _impC, type: 'explosion' });
-                    // Expanding rings — white inner + colored outer
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#fff', type: 'wakering' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 38, color: _impC, type: 'wakering' });
-                    // 4-directional cross lightning lines (kept, longer reach)
+                    // Origin: triple-stack flash for a punchy bright core
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#fff', type: 'explosion' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 32, color: '#fff', type: 'explosion' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 22, color: _impC, type: 'explosion' });
+                    // Expanding rings — three concentric for depth (white inner, colored mid, faint outer)
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 28, color: '#fff', type: 'wakering' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 46, color: _impC, type: 'wakering' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: 62, color: _impC, type: 'wakering' });
+                    // 4-directional cross lightning lines (longer reach now)
                     for (let ci = 0; ci < 4; ci++) {
-                      const ca = _impA + ci * Math.PI/2, cLen = 28 + Math.random()*14;
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 1, color: '#fff', type: 'lightning',
+                      const ca = _impA + ci * Math.PI/2, cLen = 36 + Math.random()*16;
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.5, color: '#fff', type: 'lightning',
                         tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
                     }
-                    // 8 radial impact streaks for star-burst feel
-                    for (let _si = 0; _si < 8; _si++) {
-                      const _sa = (_si / 8) * Math.PI * 2 + Math.random() * 0.3;
-                      const _sv = 6 + Math.random() * 3;
+                    // 12 radial impact streaks for star-burst feel (was 8)
+                    for (let _si = 0; _si < 12; _si++) {
+                      const _sa = (_si / 12) * Math.PI * 2 + Math.random() * 0.25;
+                      const _sv = 7 + Math.random() * 4;
                       particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
-                        life: 12, maxLife: 12, size: 2.5 + Math.random() * 1.5,
+                        life: 14, maxLife: 14, size: 3 + Math.random() * 2,
                         color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                     }
-                    // Punch-through sparks continuing past enemy (denser)
-                    for (let pi = 0; pi < 10; pi++) {
-                      const pa = _impA + (Math.random()-0.5)*0.6, ps = 4+Math.random()*6;
+                    // Punch-through sparks continuing past enemy (denser, longer)
+                    for (let pi = 0; pi < 14; pi++) {
+                      const pa = _impA + (Math.random()-0.5)*0.6, ps = 5+Math.random()*7;
                       particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
-                        life: 14+Math.random()*6, maxLife: 20, size: 2+Math.random()*2.5,
+                        life: 16+Math.random()*8, maxLife: 24, size: 2.5+Math.random()*2.5,
                         color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
                     }
+                    // Perpendicular impact splash — sells the broadside force
+                    {
+                      const _ppA = _impA + Math.PI / 2;
+                      for (let _pp = 0; _pp < 6; _pp++) {
+                        const _pa = _ppA + (Math.PI * (_pp < 3 ? 0 : 1)) + (Math.random()-0.5)*0.4;
+                        const _ps = 4 + Math.random() * 3;
+                        particles.push({ x: z.x, y: z.y, vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
+                          life: 12, maxLife: 12, size: 2 + Math.random()*1.5,
+                          color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
+                      }
+                    }
                     // Smoke puff for body
-                    for (let _smi = 0; _smi < 4; _smi++) {
+                    for (let _smi = 0; _smi < 6; _smi++) {
                       const _sma = Math.random() * Math.PI * 2;
                       particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
                         vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
-                        life: 22 + Math.random() * 8, maxLife: 30,
+                        life: 24 + Math.random() * 10, maxLife: 34,
                         size: 5 + Math.random() * 3, color: '#433',
                         type: 'smoke', _smokeAlpha: 0.22 });
                     }
                     // Scorch decal at impact
-                    decals.push({ x: z.x, y: z.y, size: 18, alpha: 0.5, color: '#310' });
-                    screenShake.intensity = Math.max(screenShake.intensity, 5);
-                    // Sharp impact crack on top of the existing thump
+                    decals.push({ x: z.x, y: z.y, size: 26, alpha: 0.55, color: '#310' });
+                    screenShake.intensity = Math.max(screenShake.intensity, 7);
+                    // Sharp impact crack + a small glitch surge for crunch
                     playSound(900, 0.04, 'square', 0.08);
+                    triggerGlitchSurge(0.18, 6);
                     // ---- FULL-CHARGE IMPACT BLOWOUT ----
                     // Stack on top: bigger flash, wider rings, lingering ember
                     // burst + a louder bass thump + glitch surge. Tap-fire skips.
@@ -21798,7 +21815,7 @@ function update() {
                     _kp.hp=Math.min(_kp.maxHp,_kp.hp+healAmt);
                   }}
                   if(z.splitOnDeath||ZOMBIE_TYPES[z.type]?.splitOnDeath)splitZombie(z);
-                  zombies.splice(j,1);}b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}}}
+                  zombies.splice(j,1);}if(!b._hitZombies)b._hitZombies=new Set();b._hitZombies.add(z.zid);b.pierced++;if(b.pierced>b.pierce){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}}}}
       // Zombie bullets hurt players (no friendly fire — player bullets never hurt players)
       else if(b.owner==='zombie'){
         // Siege mode: zombie bullets damage wall sections they pass through
@@ -21843,6 +21860,8 @@ function update() {
         if(z.x<_bbXMin||z.x>_bbXMax||z.y<_bbYMin||z.y>_bbYMax)continue;
         const _vhit=_bfast?lineCircleHit(_bpx,_bpy,b.x,b.y,z.x,z.y,z.radius+b.size)>=0:dist(b,z)<z.radius+b.size;
         if(_vhit){
+        // Per-bullet hit dedup — same enemy can't be hit twice as it pierces
+        if (b._hitZombies && b._hitZombies.has(z.zid)) continue;
         // Client-side hit prediction: speculative damage for immediate visual feedback
         // (host confirms on next sync — any mismatch self-corrects silently)
         const predDmg = b.damage || WEAPON_DEFS[getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon]?.type||'pistol']?.damage || 10;
@@ -21876,7 +21895,7 @@ function update() {
           for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#f0f',type:'blood'});
         }
         playHitSound();
-        b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}
+        if(!b._hitZombies)b._hitZombies=new Set();b._hitZombies.add(z.zid);b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}
       }}
     }
   }
@@ -29202,74 +29221,61 @@ function render() {
           ctx.stroke();
         }
       } else if(p.type==='payload_shockwave'){
-        // Payload shockwave — discharge-style timing: fast ease-out expansion,
-        // then a held LINGER phase where the rim thins to a hairline and pulses
-        // before dissolving. Gives the player time to process the explosion.
-        const _t = 1 - p.life / p.maxLife;     // 0→1 lifetime progress
-        const _expFrac = 0.42;                  // first 42% of life is expansion
-        const _isLinger = _t >= _expFrac;
-        const _expT = _isLinger ? 1 : (_t / _expFrac);
-        const _lingerT = _isLinger ? (_t - _expFrac) / (1 - _expFrac) : 0;
-        // Cubic-ish ease-out: fast start, slow finish at the boundary
-        const _easedExpand = 1 - Math.pow(1 - _expT, 1.6);
-        const _outerR = Math.max(6, p.size * _easedExpand);
-        // Rim thickness ramps thick → thin → hairline (mirrors discharge rim)
-        const _thickness = _isLinger
-          ? Math.max(1.4, 4 * (1 - _lingerT) + 1.4)
-          : Math.max(3, 18 * Math.pow(1 - _expT, 1.1));
-        // Alpha: bright through expansion, soft pulse + slow fade through linger
-        const _alpha = _isLinger
-          ? Math.max(0, (1 - _lingerT * 0.95)) * (1 + 0.35 * Math.sin((1 - _lingerT) * 14))
-          : (0.7 + 0.3 * (1 - _expT * 0.4));
+        // Payload shockwave: fast expand → slow deceleration, irregular inner edge
+        const _prog = 1 - p.life/p.maxLife; // 0→1
+        // Eased expansion: fast start, slow end (cubic ease-out)
+        const _easedProg = 1 - Math.pow(1 - _prog, 3);
+        const _outerR = Math.max(6, p.size * _easedProg);
+        // Alpha fades faster (quadratic) so ring doesn't linger
+        const _alpha = Math.pow(p.life/p.maxLife, 1.5);
+        const _thickness = 6 + (1 - _prog) * 10; // THICK ring
         const _seed = p._seed || 0;
+        // Outer shockwave ring — IRREGULAR (not a perfect circle)
         const _ringSegs = 24;
-        // Outer shockwave ring — IRREGULAR (less wobble during linger)
-        const _wobble = _isLinger ? 0.04 : 0.08;
         ctx.strokeStyle = p.color; ctx.lineWidth = _thickness;
-        ctx.globalAlpha = _alpha * 0.6;
+        ctx.globalAlpha = _alpha * 0.55;
         ctx.beginPath();
         for (let si = 0; si <= _ringSegs; si++) {
           const _a = (si / _ringSegs) * Math.PI * 2;
-          const _rNoise = Math.sin(_seed + si * 3.1 + _t * 5) * _wobble + Math.sin(_seed * 1.3 + si * 5.7) * (_wobble * 0.6);
+          const _rNoise = Math.sin(_seed + si * 3.1 + _prog * 5) * 0.08 + Math.sin(_seed * 1.3 + si * 5.7) * 0.05;
           const _r = _outerR * (1 + _rNoise);
           if (si === 0) ctx.moveTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
           else ctx.lineTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
         }
         ctx.closePath(); ctx.stroke();
-        // White inner edge — also ramps thinner
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, _thickness * 0.4);
-        ctx.globalAlpha = _alpha * 0.45;
+        // White inner edge — also irregular
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, _thickness * 0.35);
+        ctx.globalAlpha = _alpha * 0.4;
         ctx.beginPath();
         for (let si = 0; si <= _ringSegs; si++) {
           const _a = (si / _ringSegs) * Math.PI * 2;
-          const _rNoise = Math.sin(_seed + si * 3.1 + _t * 5) * _wobble;
+          const _rNoise = Math.sin(_seed + si * 3.1 + _prog * 5) * 0.08;
           const _r = (_outerR - _thickness*0.4) * (1 + _rNoise);
           if (si === 0) ctx.moveTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
           else ctx.lineTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
         }
         ctx.closePath(); ctx.stroke();
-        // Irregular inner fill — visible during expansion, fades during linger
-        // so the residual mass settles as the rim thins out.
-        const _innerR = _outerR * (_isLinger ? (0.85 - _lingerT * 0.55) : (0.65 + _expT * 0.2));
+        // Irregular inner fill — BIG, OBVIOUS, jagged blob
+        const _innerR = _outerR * (0.65 + _prog * 0.15);
         ctx.fillStyle = p._plCol2 || p.color;
-        ctx.globalAlpha = _alpha * (_isLinger ? 0.22 : 0.4);
+        ctx.globalAlpha = _alpha * 0.4; // much more visible
         ctx.beginPath();
         const _segs = 18;
         for (let si = 0; si <= _segs; si++) {
           const _a = (si / _segs) * Math.PI * 2;
-          const _noise = Math.sin(_seed + si * 2.7 + _t * 4) * 0.35 + Math.sin(_seed * 0.7 + si * 4.1 + _t * 2) * 0.25;
+          const _noise = Math.sin(_seed + si * 2.7 + _prog * 4) * 0.35 + Math.sin(_seed * 0.7 + si * 4.1 + _prog * 2) * 0.25;
           const _r = _innerR * (0.65 + _noise * 0.6);
           if (si === 0) ctx.moveTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
           else ctx.lineTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
         }
         ctx.closePath(); ctx.fill();
-        // Brighter irregular core — fades faster than the outer fill
+        // Brighter irregular core — more visible
         ctx.fillStyle = p.color;
-        ctx.globalAlpha = _alpha * (_isLinger ? 0.15 : 0.32);
+        ctx.globalAlpha = _alpha * 0.3;
         ctx.beginPath();
         for (let si = 0; si <= _segs; si++) {
           const _a = (si / _segs) * Math.PI * 2;
-          const _noise = Math.sin(_seed + si * 3.3 + _t * 2) * 0.35;
+          const _noise = Math.sin(_seed + si * 3.3 + _prog * 2) * 0.35;
           const _r = _innerR * (0.4 + _noise * 0.3);
           if (si === 0) ctx.moveTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
           else ctx.lineTo(p.x + Math.cos(_a)*_r, p.y + Math.sin(_a)*_r);
