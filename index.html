@@ -17211,7 +17211,7 @@ function _runComboStep(p, def, step, idx) {
     }
     // Post-damage hooks: AoE synergy combos, lightning rod arcs, universal chain.
     _applyMeleeAttackPostHit(p, z, dmg);
-    _meleeHitVFX(z, isCrit, mainCol);
+    _meleeHitVFX(z, isCrit, mainCol, p.x, p.y);
   }
 
   // ---- COMBO LABEL + SOUND ----
@@ -17525,43 +17525,84 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   }
 }
 
-function _meleeHitVFX(z, isCrit, mainCol) {
-  // ==== HEAVY IMPACT: layered rings + starburst + sparks + blood + shake + sfx ====
-  // Triple-stacked wakerings (outer color, mid white, inner bright)
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: isCrit ? 58 : 40, color: isCrit ? '#f0f' : mainCol, type: 'wakering' });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: isCrit ? 42 : 28, color: '#fff', type: 'wakering' });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 4, maxLife: 4, size: isCrit ? 22 : 14, color: '#fff', type: 'spark' });
-  // 8-point starburst lines (was 4) — bigger reach so the impact reads across
-  // the enemy body
-  const _starN = isCrit ? 10 : 8;
+function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
+  // ==== EXPLOSIVE BLADE IMPACT ====
+  // Directional force from the strike origin (player) toward the enemy —
+  // drives a directional cleave slash mark + a forward spark cone. Reads as
+  // "the blade carved into the enemy from THIS direction." Falls back to
+  // a non-directional burst if srcX/Y aren't supplied.
+  const _zr = z.radius || 14;
+  let _dirA = 0, _hasDir = false;
+  if (typeof srcX === 'number' && typeof srcY === 'number') {
+    _dirA = Math.atan2(z.y - srcY, z.x - srcX);
+    _hasDir = true;
+  }
+  // ---- 1) BRIGHT WHITE CORE FLASH at the hit point — short-life filled spark
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 3, maxLife: 3,
+    size: isCrit ? 30 : 22, color: '#fff', type: 'spark' });
+  // ---- 2) Quad-stacked wakerings (was 3) — bigger outer ring for the boom
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+    size: isCrit ? 78 : 56, color: isCrit ? '#f0f' : mainCol, type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8,
+    size: isCrit ? 54 : 38, color: '#fff', type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6,
+    size: isCrit ? 36 : 24, color: mainCol, type: 'wakering' });
+  // ---- 3) DIRECTIONAL CLEAVE — slash mark perpendicular to the strike line
+  //         shows the cut direction. _priority so it survives crowded frames.
+  if (_hasDir) {
+    particles.push({
+      x: z.x, y: z.y, vx: 0, vy: 0,
+      life: 14, maxLife: 14, size: isCrit ? 26 : 18,
+      color: isCrit ? '#f0f' : '#fff', type: 'slash_mark',
+      _angle: _dirA + Math.PI/2,
+      _priority: true
+    });
+  }
+  // ---- 4) 12-point starburst lines (was 8-10) — bigger reach
+  const _starN = isCrit ? 14 : 12;
   for (let _ci = 0; _ci < _starN; _ci++) {
     const _ca = (_ci/_starN)*Math.PI*2;
-    const _cl = isCrit ? 28 : 22;
+    const _cl = isCrit ? 36 : 28;
     particles.push({
-      x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 2,
+      x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 2,
       color: isCrit ? '#f0f' : '#fff', type: 'lightning',
       tx: z.x + Math.cos(_ca)*_cl, ty: z.y + Math.sin(_ca)*_cl
     });
   }
-  // Spark burst — way more (was 16/28)
-  const _scount = isCrit ? 48 : 32;
+  // ---- 5) RADIAL spark burst — full 360 explosion of sparks
+  const _scount = isCrit ? 60 : 44;
   for (let _si = 0; _si < _scount; _si++) {
-    const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random()*6;
+    const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random()*7;
     particles.push({
       x: z.x, y: z.y, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
-      life: 9 + Math.floor(Math.random()*6), maxLife: 15,
+      life: 10 + Math.floor(Math.random()*7), maxLife: 17,
       size: 2 + Math.random()*2.5,
       color: Math.random()>0.4 ? '#fff' : (isCrit ? '#f0f' : mainCol),
       type: 'spark'
     });
   }
-  // Blood splatter — pink/magenta-tinted to match game's gore palette
-  const _bloodN = isCrit ? 12 : 8;
+  // ---- 6) DIRECTIONAL spark CONE in the strike direction (force-through feel)
+  if (_hasDir) {
+    const _coneN = isCrit ? 18 : 14;
+    for (let _di = 0; _di < _coneN; _di++) {
+      const _da = _dirA + (Math.random()-0.5) * 0.95; // ±27 deg
+      const _ds = 5 + Math.random()*6;
+      particles.push({
+        x: z.x, y: z.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
+        life: 9 + Math.floor(Math.random()*5), maxLife: 14,
+        size: 2 + Math.random()*2,
+        color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
+      });
+    }
+  }
+  // ---- 7) Blood splatter — flies AWAY from the strike direction for crits
+  const _bloodN = isCrit ? 16 : 10;
   for (let _bi = 0; _bi < _bloodN; _bi++) {
-    const _ba = Math.random() * Math.PI * 2, _bs = 2 + Math.random()*4;
+    const _ba = _hasDir ? (_dirA + (Math.random()-0.5)*1.4) : (Math.random() * Math.PI * 2);
+    const _bs = 2 + Math.random()*4;
     particles.push({
-      x: z.x + (Math.random()-0.5)*(z.radius||14)*0.6,
-      y: z.y + (Math.random()-0.5)*(z.radius||14)*0.6,
+      x: z.x + (Math.random()-0.5)*_zr*0.6,
+      y: z.y + (Math.random()-0.5)*_zr*0.6,
       vx: Math.cos(_ba)*_bs, vy: Math.sin(_ba)*_bs,
       life: 18 + Math.floor(Math.random()*10), maxLife: 28,
       size: 2.5 + Math.random()*2.5,
@@ -17569,34 +17610,87 @@ function _meleeHitVFX(z, isCrit, mainCol) {
       type: 'blood'
     });
   }
-  // Pixel-chunk bursts on crit (extra "broke off" feel)
-  if (isCrit) {
-    for (let _pf = 0; _pf < 8; _pf++) {
-      const _pa = Math.random()*Math.PI*2, _ps = 3 + Math.random()*4;
+  // ---- 8) PIXEL chunks — broke-off body chunks (more on crit)
+  const _chunkN = isCrit ? 14 : 6;
+  for (let _pf = 0; _pf < _chunkN; _pf++) {
+    const _pa = _hasDir ? (_dirA + (Math.random()-0.5)*1.6) : (Math.random()*Math.PI*2);
+    const _ps = 3 + Math.random()*4;
+    particles.push({
+      x: z.x + (Math.random()-0.5)*_zr,
+      y: z.y + (Math.random()-0.5)*_zr,
+      vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
+      life: 16 + Math.floor(Math.random()*8), maxLife: 24,
+      size: 2 + Math.random()*2,
+      color: Math.random()<0.4 ? '#fff' : (isCrit ? '#f0f' : mainCol),
+      type: 'spark', _pixel: true
+    });
+  }
+  // ---- 9) CLASS-themed accent particles (mirror the per-class blade flourishes)
+  const _domCls = (runMods && runMods.dominantClass) || null;
+  if (_domCls === 'fire') {
+    for (let _fi = 0; _fi < 8; _fi++) {
+      const _fa = Math.random()*Math.PI*2, _fs = 2 + Math.random()*4;
       particles.push({
-        x: z.x + (Math.random()-0.5)*(z.radius||14),
-        y: z.y + (Math.random()-0.5)*(z.radius||14),
-        vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
-        life: 16 + Math.floor(Math.random()*6), maxLife: 22,
-        size: 2 + Math.random()*2, color: Math.random()<0.5 ? '#fff' : '#f0f',
-        type: 'spark', _pixel: true
+        x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs - 1.2,
+        life: 14 + Math.floor(Math.random()*6), maxLife: 20,
+        size: 3 + Math.random()*2,
+        color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)], type: 'spark'
+      });
+    }
+  } else if (_domCls === 'ice') {
+    for (let _ii = 0; _ii < 10; _ii++) {
+      const _ia = Math.random()*Math.PI*2, _is = 3 + Math.random()*4;
+      particles.push({
+        x: z.x, y: z.y, vx: Math.cos(_ia)*_is, vy: Math.sin(_ia)*_is,
+        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+        size: 2 + Math.random()*1.8,
+        color: Math.random()>0.4 ? '#cff' : '#8ef', type: 'spark', _pixel: true
+      });
+    }
+  } else if (_domCls === 'chain') {
+    for (let _li = 0; _li < 4; _li++) {
+      const _la = Math.random()*Math.PI*2;
+      const _llen = 18 + Math.random()*16;
+      particles.push({
+        x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 1.5,
+        color: Math.random()>0.4 ? '#4ff' : '#fff', type: 'lightning',
+        tx: z.x + Math.cos(_la)*_llen, ty: z.y + Math.sin(_la)*_llen
+      });
+    }
+  } else if (_domCls === 'wind') {
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#cef', type: 'wakering' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 34, color: '#eef', type: 'wakering' });
+  } else if (_domCls === 'corrupt') {
+    const _glyphs = ['0','1','#','%','~','?','!','/','*','░'];
+    for (let _ci2 = 0; _ci2 < 5; _ci2++) {
+      const _ca2 = Math.random()*Math.PI*2, _cs2 = 1.5 + Math.random()*2.5;
+      particles.push({
+        x: z.x, y: z.y, vx: Math.cos(_ca2)*_cs2, vy: Math.sin(_ca2)*_cs2 - 0.6,
+        life: 15 + Math.floor(Math.random()*5), maxLife: 20,
+        size: 10 + Math.random()*4,
+        color: Math.random()>0.5 ? '#a4f' : '#f0f',
+        type: 'glitchtext', text: _glyphs[Math.floor(Math.random()*_glyphs.length)]
       });
     }
   }
-  // Per-hit screen shake — adds up via Math.max when cleaving
-  screenShake.intensity = Math.max(screenShake.intensity, isCrit ? 7 : 5);
+  // ---- 10) Per-hit screen shake (Math.max so cleaving stacks cleanly) ----
+  screenShake.intensity = Math.max(screenShake.intensity, isCrit ? 9 : 6);
   // Force the hit-flash on the enemy body harder (visible white tint)
-  z.hitFlash = Math.max(z.hitFlash || 0, isCrit ? 14 : 10);
-  // Bigger damage flash glow
-  if (typeof z._compressFrames !== 'undefined') z._compressFrames = 4;
-  // Sound effect: distinct ringing impact thud on the actual hit
+  z.hitFlash = Math.max(z.hitFlash || 0, isCrit ? 16 : 12);
+  if (typeof z._compressFrames !== 'undefined') z._compressFrames = 5;
+  // Bigger knockback nudge that gets read as recoil even on small hits
+  if (_hasDir) {
+    z.vx += Math.cos(_dirA) * (isCrit ? 1.8 : 1.2);
+    z.vy += Math.sin(_dirA) * (isCrit ? 1.8 : 1.2);
+  }
+  // ---- 11) Sound — louder + extra crit thump
   if (typeof playHitSound === 'function') playHitSound();
-  // Higher-freq ring tone so the impact has metallic bite (matches blade theme)
-  playSound(2400 + Math.random()*400, 0.045, 'square', 0.06);
-  playSound(180, 0.06, 'sawtooth', 0.08);
+  playSound(2400 + Math.random()*400, 0.045, 'square', 0.07);
+  playSound(180, 0.06, 'sawtooth', 0.09);
+  if (isCrit) playSound(90, 0.10, 'sawtooth', 0.12);
   // Crit floating text
   if (isCrit) {
-    floatingTexts.push({ x: z.x, y: z.y - (z.radius||14) - 12, text: 'CRITICAL!', color: '#f0f', vx: 0, vy: -1.2, life: 28, maxLife: 28 });
+    floatingTexts.push({ x: z.x, y: z.y - _zr - 12, text: 'CRITICAL!', color: '#f0f', vx: 0, vy: -1.2, life: 28, maxLife: 28 });
   }
 }
 
