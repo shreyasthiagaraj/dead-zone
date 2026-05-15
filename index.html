@@ -1077,7 +1077,7 @@ if (!SPECIAL_DEFS[selectedSpecial]) selectedSpecial = 'beacon';
 const PRIMARY_WEAPON_OPTIONS = {
   pistol: { id:'pistol', name:'SIDEARM', icon:'⌖', color:'#ff0', desc:'Hitscan pistol — reliable mid-range force blast' },
   ripper: { id:'ripper', name:'RIPPER',  icon:'⚔', color:'#4ff', desc:'Close-quarters cone slash + forward lunge — cleaves multiple targets' },
-  deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#f44', desc:'Hold to charge, release to fire — high damage, heavy knockback. Full charge pierces everything.' },
+  deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#0ff', desc:'Hold to charge, release to fire — high damage, heavy knockback. Full charge pierces everything.' },
 };
 let selectedPrimary = localStorage.getItem('necrowave_primary') || 'pistol';
 if (!PRIMARY_WEAPON_OPTIONS[selectedPrimary]) selectedPrimary = 'pistol';
@@ -1859,20 +1859,20 @@ const UPGRADE_POOL = [
   { id:'rapid_payload', name:'RAPID PAYLOAD', rarity:'common', max:1, icon:'»', color:'#fa0',
     descs:['Your SPECIAL has -30% cooldown.'], flavor:'accelerated reload cycle' },
   // ---- DEADSHOT MODS (primary weapon cards — only when DEADSHOT is equipped) ----
-  { id:'quick_draw', name:'QUICK DRAW', rarity:'common', max:1, icon:'⚡', color:'#f44',
+  { id:'quick_draw', name:'QUICK DRAW', rarity:'common', max:1, icon:'⚡', color:'#0ff',
     descs:['DEADSHOT charges 30% faster.'], flavor:'overclocked capacitor bank' },
-  { id:'armor_pierce', name:'ARMOR PIERCE', rarity:'rare', max:1, icon:'⊘', color:'#f44',
+  { id:'armor_pierce', name:'ARMOR PIERCE', rarity:'rare', max:1, icon:'⊘', color:'#0ff',
     descs:['DEADSHOT ignores armor, shields, and damage reduction.'],
     flavor:'hardened penetrator round' },
-  { id:'tracer_round', name:'TRACER ROUND', rarity:'rare', max:1, icon:'◎', color:'#f44',
+  { id:'tracer_round', name:'TRACER ROUND', rarity:'rare', max:1, icon:'◎', color:'#0ff',
     descs:['DEADSHOT marks the first enemy hit for 4s — your ATTACK bullets home toward the mark.'],
     flavor:'target acquisition lock' },
-  { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#f44',
+  { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#0ff',
     descs:['DEADSHOT becomes a wide piercing beam at full charge (3x width) — damages everything in line.'],
     flavor:'electromagnetic acceleration — maximum yield' },
-  { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:1, icon:'⚯', color:'#f44',
+  { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:1, icon:'⚯', color:'#0ff',
     descs:['DEADSHOT kills fire a bolt at the nearest enemy (60% dmg).'], flavor:'execution protocol — one kill leads to another' },
-  { id:'triple_tap', name:'TRIPLE TAP', rarity:'epic', max:1, icon:'⫶', color:'#f44',
+  { id:'triple_tap', name:'TRIPLE TAP', rarity:'epic', max:1, icon:'⫶', color:'#0ff',
     descs:['DEADSHOT fires 3 rapid shots at full charge (70% dmg each). Overwhelming burst.'],
     flavor:'three-round burst — no survivors' },
   // ---- UTILITY (common) ----
@@ -8581,7 +8581,7 @@ const WEAPON_DEFS = {
   // Deadshot: charge weapon. Hold the trigger to charge, release to fire one
   // heavy shot. Damage and knockback scale with charge. Single-target unless
   // the OVERPENETRATE mod card is owned. _charge flag routes input handling.
-  deadshot: { name: 'Deadshot', color: '#f44', bulletColor: '#f44', damage: 100, fireRate: 0, bulletSpeed: 22, spread: 0, magSize: 999, bulletSize: 4, knockback: 18, pierce: 0, infinite: true, shakeIntensity: 8, aimLine: 'sniper', _charge: true, sound: { freq: 100, duration: 0.12, type: 'square' } },
+  deadshot: { name: 'Deadshot', color: '#0ff', bulletColor: '#0ff', damage: 100, fireRate: 0, bulletSpeed: 30, spread: 0, magSize: 999, bulletSize: 5, knockback: 18, pierce: 0, infinite: true, shakeIntensity: 8, aimLine: 'sniper', _charge: true, sound: { freq: 100, duration: 0.12, type: 'square' } },
 };
 function createWeapon(type) { const d = WEAPON_DEFS[type]; if(!d) return createWeapon('pistol'); return { type, ammo: d.magSize, reserveAmmo: d.infinite ? Infinity : d.totalAmmo, reloading: false, reloadTimer: 0, lastFired: 0, muzzleFlash: 0, burstLeft: 0, burstTimer: 0 }; }
 
@@ -11439,7 +11439,7 @@ function openDebugPicker() {
     { id: 'beacon', label: '◎ BEACON', color: '#0ff' },
     { id: 'discharge', label: '⚡ DISCH', color: '#f80' },
     { id: 'payload', label: '💣 PAYLOAD', color: '#fa0' },
-    { id: 'deadshot', label: '◆ DEADSHOT', color: '#f44' },
+    { id: 'deadshot', label: '◆ DEADSHOT', color: '#0ff' },
   ];
   const _makeTab = (cls, parent) => {
     const btn = document.createElement('button');
@@ -17722,7 +17722,8 @@ function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
 // ============================================================
 const DEADSHOT_COOLDOWN = 0;    // legacy special cooldown — unused now
 const DEADSHOT_POST_FIRE_LOCK = 18; // 0.3s lock after firing — prevents spam
-const DEADSHOT_MAX_CHARGE = 42; // 0.7s to full charge (-30% from 1s)
+const DEADSHOT_MAX_CHARGE = 36; // 0.6s to full charge (-15% from 0.7s)
+const DEADSHOT_BULLET_SIZE = 5;   // fixed — never grows with charge
 let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charges
 
 let _deadshotCharging = false;
@@ -17757,7 +17758,7 @@ function updateDeadshot() {
   const chargeSpeed = 1 + (_m.quickDraw || 0) * 0.5;
   _deadshotCharge = Math.min(DEADSHOT_MAX_CHARGE, _deadshotCharge + chargeSpeed);
   const _dsClassId = _m.beaconElement || null;
-  const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#f44') : '#f44';
+  const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#0ff') : '#0ff';
   const chargePct = _deadshotCharge / DEADSHOT_MAX_CHARGE;
   // Charge VFX — particles get sucked INTO the muzzle (not the player). Tight
   // focus, dense at higher charge, like Discharge's converge but on the weapon.
@@ -17808,7 +17809,7 @@ function _fireDeadshot(lp) {
   if (DEADSHOT_COOLDOWN > 0) lp._beaconCooldown = DEADSHOT_COOLDOWN;
   const _m = runMods || {};
   const classId = _m.beaconElement || null; // beacon element cards apply to deadshot
-  const bColor = classId ? (_ELEM_COLOR[classId] || '#f44') : '#f44';
+  const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
   // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
   const baseDmg = Math.floor(30 + chargePct * 90);
   const isFullCharge = chargePct >= 0.95;
@@ -17817,8 +17818,10 @@ function _fireDeadshot(lp) {
   const isRailgun = _m.railgun && chargePct >= 1.0;
   const pierce = isFullCharge ? 99 : 0;
   const a = lp.angle;
-  const speed = 22;
-  const bulletSize = isRailgun ? (3 + chargePct*3) * 1.3 : (3 + chargePct*3);
+  const speed = 30;
+  // Bullet size is FIXED — never grows with charge. Charge only changes
+  // damage / knockback / pierce / VFX intensity.
+  const bulletSize = isRailgun ? DEADSHOT_BULLET_SIZE * 1.3 : DEADSHOT_BULLET_SIZE;
   const bulletLife = isRailgun ? 120 : 60;
   // Heavy knockback always — even tap should send enemies flying.
   const knockback = 12 + chargePct * 18; // 12-30 (was 4-10)
@@ -21300,16 +21303,23 @@ function update() {
     if(b.flame){b.vx*=0.96;b.vy*=0.96;b.size*=1.03;}
     // Hitscan bullets: no per-frame trail (they're instant). Trail VFX created at fire time.
     // Elemental bullet particle trails
-    // Deadshot arrow trail — long, dense streak. Spawned every frame so the
-    // trail fills behind the round; multiple particles for depth (body spark +
-    // bright white core ember + an occasional smoke puff for body).
+    // Deadshot trail — bright cyan light streaks + alternating black/cyan
+    // smoke puffs. Spawned every frame; particles linger behind the round
+    // since it now travels fast (speed 30).
     if(b._deadshotRound){const _dc=b._deadshotColor||b.color;
-      // Body spark — main trail color, longer life so the streak persists
-      particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*4,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*4,vx:-b.vx*0.08+(Math.random()-0.5)*1,vy:-b.vy*0.08+(Math.random()-0.5)*1,life:24+Math.random()*8,maxLife:32,size:3+Math.random()*2.5,color:_dc,type:'spark'});
-      // Bright white core ember — sells the heat of the projectile
-      particles.push({x:b.x-(b.vx*0.15)+(Math.random()-0.5)*2,y:b.y-(b.vy*0.15)+(Math.random()-0.5)*2,vx:-b.vx*0.05+(Math.random()-0.5)*0.5,vy:-b.vy*0.05+(Math.random()-0.5)*0.5,life:14+Math.random()*4,maxLife:18,size:1.6+Math.random()*1.2,color:Math.random()>0.5?'#fff':'#ffe',type:'spark'});
-      // Trailing smoke puff every 3 frames — wispy wake
-      if(gameTime%3===0){const _sa=Math.atan2(b.vy,b.vx)+Math.PI;particles.push({x:b.x+(Math.random()-0.5)*3,y:b.y+(Math.random()-0.5)*3,vx:Math.cos(_sa)*1.4+(Math.random()-0.5)*0.6,vy:Math.sin(_sa)*1.4+(Math.random()-0.5)*0.6,life:30+Math.random()*10,maxLife:40,size:5+Math.random()*3,color:'#532',type:'smoke',_smokeAlpha:0.18});}
+      // Body streak — bright cyan, long life so the streak reads as light
+      particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*3,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*3,vx:-b.vx*0.08+(Math.random()-0.5)*0.6,vy:-b.vy*0.08+(Math.random()-0.5)*0.6,life:26+Math.random()*8,maxLife:34,size:3+Math.random()*2,color:_dc,type:'spark'});
+      // Bright white-cyan core ember — sells the heat / light of the projectile
+      particles.push({x:b.x-(b.vx*0.15)+(Math.random()-0.5)*2,y:b.y-(b.vy*0.15)+(Math.random()-0.5)*2,vx:-b.vx*0.04+(Math.random()-0.5)*0.4,vy:-b.vy*0.04+(Math.random()-0.5)*0.4,life:14+Math.random()*4,maxLife:18,size:1.8+Math.random()*1.2,color:Math.random()>0.4?'#fff':'#cff',type:'spark'});
+      // Alternating smoke puffs every 2 frames — black (gravity/heat) then
+      // cyan-tinted (energy wake). The contrast pulls the eye to the trail.
+      if(gameTime%2===0){
+        const _sa=Math.atan2(b.vy,b.vx)+Math.PI;
+        const _isBlack=(gameTime%4===0);
+        const _smCol=_isBlack?'#111':_dc;
+        const _smAlpha=_isBlack?0.32:0.20;
+        particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:Math.cos(_sa)*(1.0+Math.random()*0.6)+(Math.random()-0.5)*0.5,vy:Math.sin(_sa)*(1.0+Math.random()*0.6)+(Math.random()-0.5)*0.5,life:34+Math.random()*14,maxLife:48,size:5+Math.random()*4,color:_smCol,type:'smoke',_smokeAlpha:_smAlpha});
+      }
       // Railgun: denser trailing streaks + parallel energy wisps
       if(b._railgun){const _ra=Math.atan2(b.vy,b.vx),_rPerp=_ra+Math.PI/2;for(let _ri=0;_ri<2;_ri++){const _ro=(Math.random()-0.5)*8;particles.push({x:b.x-b.vx*0.5+Math.cos(_rPerp)*_ro,y:b.y-b.vy*0.5+Math.sin(_rPerp)*_ro,vx:-b.vx*0.04+(Math.random()-0.5)*0.5,vy:-b.vy*0.04+(Math.random()-0.5)*0.5,life:18+Math.random()*4,maxLife:22,size:1.5+Math.random()*1.5,color:_dc,type:'spark'});}}
     }
@@ -21516,99 +21526,112 @@ function update() {
                     if (_savedArmor !== undefined) z._armor = _savedArmor;
                     if (_savedShield !== undefined) z._shielded_aura = _savedShield;
                   }
-                  // DEADSHOT IMPACT: white-core flash → ring → cross + radial
-                  // streaks → punch-through sparks → smoke → scorch decal.
-                  // Three-point rule: origin (flash), path (streaks), impact (decal).
+                  // DEADSHOT IMPACT: PERF-CONSCIOUS — only the FIRST hit per
+                  // bullet (b.pierced === 0) gets the full flashy burst. With
+                  // pierce-99, subsequent enemies hit get a much slimmer
+                  // impact so a single shot through 8 enemies doesn't spawn
+                  // 700+ particles + 8 glitch surges in a frame.
                   if (b._deadshotRound) {
                     const _impA = Math.atan2(b.vy, b.vx), _impC = b._deadshotColor || b.color;
-                    // Origin: triple-stack flash for a punchy bright core
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#fff', type: 'explosion' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 32, color: '#fff', type: 'explosion' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 22, color: _impC, type: 'explosion' });
-                    // Expanding rings — three concentric for depth (white inner, colored mid, faint outer)
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 28, color: '#fff', type: 'wakering' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 46, color: _impC, type: 'wakering' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: 62, color: _impC, type: 'wakering' });
-                    // 4-directional cross lightning lines (longer reach now)
-                    for (let ci = 0; ci < 4; ci++) {
-                      const ca = _impA + ci * Math.PI/2, cLen = 36 + Math.random()*16;
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.5, color: '#fff', type: 'lightning',
-                        tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
-                    }
-                    // 12 radial impact streaks for star-burst feel (was 8)
-                    for (let _si = 0; _si < 12; _si++) {
-                      const _sa = (_si / 12) * Math.PI * 2 + Math.random() * 0.25;
-                      const _sv = 7 + Math.random() * 4;
-                      particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
-                        life: 14, maxLife: 14, size: 3 + Math.random() * 2,
-                        color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
-                    }
-                    // Punch-through sparks continuing past enemy (denser, longer)
-                    for (let pi = 0; pi < 14; pi++) {
-                      const pa = _impA + (Math.random()-0.5)*0.6, ps = 5+Math.random()*7;
-                      particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
-                        life: 16+Math.random()*8, maxLife: 24, size: 2.5+Math.random()*2.5,
-                        color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
-                    }
-                    // Perpendicular impact splash — sells the broadside force
-                    {
-                      const _ppA = _impA + Math.PI / 2;
-                      for (let _pp = 0; _pp < 6; _pp++) {
-                        const _pa = _ppA + (Math.PI * (_pp < 3 ? 0 : 1)) + (Math.random()-0.5)*0.4;
-                        const _ps = 4 + Math.random() * 3;
-                        particles.push({ x: z.x, y: z.y, vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
-                          life: 12, maxLife: 12, size: 2 + Math.random()*1.5,
+                    const _isFirstHit = (b.pierced || 0) === 0;
+                    if (_isFirstHit) {
+                      // Origin: triple-stack flash for a punchy bright core
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#fff', type: 'explosion' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 32, color: '#fff', type: 'explosion' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 22, color: _impC, type: 'explosion' });
+                      // Three concentric expanding rings
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 28, color: '#fff', type: 'wakering' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 46, color: _impC, type: 'wakering' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: 62, color: _impC, type: 'wakering' });
+                      // 4-directional cross lightning lines
+                      for (let ci = 0; ci < 4; ci++) {
+                        const ca = _impA + ci * Math.PI/2, cLen = 36 + Math.random()*16;
+                        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.5, color: '#fff', type: 'lightning',
+                          tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
+                      }
+                      // 12 radial impact streaks
+                      for (let _si = 0; _si < 12; _si++) {
+                        const _sa = (_si / 12) * Math.PI * 2 + Math.random() * 0.25;
+                        const _sv = 7 + Math.random() * 4;
+                        particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
+                          life: 14, maxLife: 14, size: 3 + Math.random() * 2,
                           color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                       }
-                    }
-                    // Smoke puff for body
-                    for (let _smi = 0; _smi < 6; _smi++) {
-                      const _sma = Math.random() * Math.PI * 2;
-                      particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
-                        vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
-                        life: 24 + Math.random() * 10, maxLife: 34,
-                        size: 5 + Math.random() * 3, color: '#433',
-                        type: 'smoke', _smokeAlpha: 0.22 });
-                    }
-                    // Scorch decal at impact
-                    decals.push({ x: z.x, y: z.y, size: 26, alpha: 0.55, color: '#310' });
-                    screenShake.intensity = Math.max(screenShake.intensity, 7);
-                    // Sharp impact crack + a small glitch surge for crunch
-                    playSound(900, 0.04, 'square', 0.08);
-                    triggerGlitchSurge(0.18, 6);
-                    // ---- FULL-CHARGE IMPACT BLOWOUT ----
-                    // Stack on top: bigger flash, wider rings, lingering ember
-                    // burst + a louder bass thump + glitch surge. Tap-fire skips.
-                    if (b._deadshotFullCharge) {
-                      // Doubled white core + larger colored secondary
-                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: 40, color: '#fff', type: 'explosion' });
-                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 14, maxLife: 14, size: 28, color: _impC, type: 'explosion' });
-                      // Two extra wider rings for the shockwave
-                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 16, maxLife: 16, size: 56, color: '#fff', type: 'wakering' });
-                      particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 22, maxLife: 22, size: 78, color: _impC, type: 'wakering' });
-                      // 12 long radial blowout streaks
-                      for (let _bsi = 0; _bsi < 12; _bsi++) {
-                        const _bsa = (_bsi / 12) * Math.PI * 2 + Math.random() * 0.25;
-                        const _bsv = 8 + Math.random() * 4;
-                        particles.push({ x: z.x, y: z.y, vx: Math.cos(_bsa)*_bsv, vy: Math.sin(_bsa)*_bsv,
-                          life: 18, maxLife: 18, size: 3 + Math.random() * 2,
-                          color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
+                      // Punch-through sparks
+                      for (let pi = 0; pi < 14; pi++) {
+                        const pa = _impA + (Math.random()-0.5)*0.6, ps = 5+Math.random()*7;
+                        particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+                          life: 16+Math.random()*8, maxLife: 24, size: 2.5+Math.random()*2.5,
+                          color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
                       }
-                      // Lingering ember rain — 14 small embers drifting + falling
-                      for (let _eri = 0; _eri < 14; _eri++) {
-                        const _era = Math.random() * Math.PI * 2;
-                        const _erv = 2 + Math.random() * 4;
-                        particles.push({ x: z.x, y: z.y,
-                          vx: Math.cos(_era)*_erv, vy: Math.sin(_era)*_erv - 1,
-                          life: 30 + Math.random() * 10, maxLife: 40,
-                          size: 1.5 + Math.random() * 1.5,
-                          color: Math.random() > 0.4 ? _impC : '#fff', type: 'spark' });
+                      // Perpendicular splash
+                      {
+                        const _ppA = _impA + Math.PI / 2;
+                        for (let _pp = 0; _pp < 6; _pp++) {
+                          const _pa = _ppA + (Math.PI * (_pp < 3 ? 0 : 1)) + (Math.random()-0.5)*0.4;
+                          const _ps = 4 + Math.random() * 3;
+                          particles.push({ x: z.x, y: z.y, vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
+                            life: 12, maxLife: 12, size: 2 + Math.random()*1.5,
+                            color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
+                        }
                       }
-                      // Bigger scorch + shake + bass + glitch
-                      decals.push({ x: z.x, y: z.y, size: 30, alpha: 0.6, color: '#310' });
-                      screenShake.intensity = Math.max(screenShake.intensity, 10);
-                      playSound(60, 0.18, 'sine', 0.18);
-                      triggerGlitchSurge(0.35, 14);
+                      // Smoke puff
+                      for (let _smi = 0; _smi < 6; _smi++) {
+                        const _sma = Math.random() * Math.PI * 2;
+                        particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
+                          vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
+                          life: 24 + Math.random() * 10, maxLife: 34,
+                          size: 5 + Math.random() * 3, color: '#433',
+                          type: 'smoke', _smokeAlpha: 0.22 });
+                      }
+                      decals.push({ x: z.x, y: z.y, size: 26, alpha: 0.55, color: '#310' });
+                      screenShake.intensity = Math.max(screenShake.intensity, 7);
+                      playSound(900, 0.04, 'square', 0.08);
+                      // Glitch surge: ONE per shot, on first hit only
+                      triggerGlitchSurge(0.18, 6);
+                      // ---- FULL-CHARGE IMPACT BLOWOUT (first hit only) ----
+                      if (b._deadshotFullCharge) {
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: 40, color: '#fff', type: 'explosion' });
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 14, maxLife: 14, size: 28, color: _impC, type: 'explosion' });
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 16, maxLife: 16, size: 56, color: '#fff', type: 'wakering' });
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 22, maxLife: 22, size: 78, color: _impC, type: 'wakering' });
+                        for (let _bsi = 0; _bsi < 12; _bsi++) {
+                          const _bsa = (_bsi / 12) * Math.PI * 2 + Math.random() * 0.25;
+                          const _bsv = 8 + Math.random() * 4;
+                          particles.push({ x: z.x, y: z.y, vx: Math.cos(_bsa)*_bsv, vy: Math.sin(_bsa)*_bsv,
+                            life: 18, maxLife: 18, size: 3 + Math.random() * 2,
+                            color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
+                        }
+                        for (let _eri = 0; _eri < 14; _eri++) {
+                          const _era = Math.random() * Math.PI * 2;
+                          const _erv = 2 + Math.random() * 4;
+                          particles.push({ x: z.x, y: z.y,
+                            vx: Math.cos(_era)*_erv, vy: Math.sin(_era)*_erv - 1,
+                            life: 30 + Math.random() * 10, maxLife: 40,
+                            size: 1.5 + Math.random() * 1.5,
+                            color: Math.random() > 0.4 ? _impC : '#fff', type: 'spark' });
+                        }
+                        decals.push({ x: z.x, y: z.y, size: 30, alpha: 0.6, color: '#310' });
+                        screenShake.intensity = Math.max(screenShake.intensity, 10);
+                        playSound(60, 0.18, 'sine', 0.18);
+                        triggerGlitchSurge(0.35, 14);
+                      }
+                    } else {
+                      // PIERCED HIT (b.pierced > 0): slim impact only — small
+                      // flash + a few directional sparks + a small wakering.
+                      // Keeps each pierce hit visible without nuking framerate
+                      // when the shot punches through 5+ enemies.
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#fff', type: 'explosion' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 28, color: _impC, type: 'wakering' });
+                      for (let pi = 0; pi < 6; pi++) {
+                        const pa = _impA + (Math.random()-0.5)*0.7, ps = 4+Math.random()*5;
+                        particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+                          life: 12, maxLife: 12, size: 2+Math.random()*1.5,
+                          color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
+                      }
+                      // Lighter shake, no glitch surge, no decal
+                      screenShake.intensity = Math.max(screenShake.intensity, 3);
+                      playSound(900, 0.03, 'square', 0.05);
                     }
                   }
                   // IMPACT BLAST: each hit creates a mini explosion
@@ -21904,7 +21927,7 @@ function update() {
                       _ckHit.add(_ckBest.zid);
                       damageZombie(_ckBest, _ckDmg, 0, 0);
                       // Lightning bolt VFX from corpse to target
-                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 1, color: b._deadshotColor || '#f44', type: 'lightning', tx: _ckBest.x, ty: _ckBest.y });
+                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 1, color: b._deadshotColor || '#0ff', type: 'lightning', tx: _ckBest.x, ty: _ckBest.y });
                       for (let _ck = 0; _ck < 4; _ck++) { const _ca = Math.random()*Math.PI*2; particles.push({x:_ckBest.x,y:_ckBest.y,vx:Math.cos(_ca)*3,vy:Math.sin(_ca)*3,life:8,maxLife:8,size:2,color:b._deadshotColor||'#f44',type:'spark'}); }
                       _ckLast = _ckBest;
                     }
@@ -27883,12 +27906,27 @@ function render() {
       ctx.globalAlpha = 0.9; ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(_rl * 0.9, 0, _rw * 0.5, 0, Math.PI * 2); ctx.fill();
     } else {
-      // Normal deadshot: arrow-shaped projectile
-      ctx.fillStyle = '#fff'; ctx.shadowColor = _dsC; ctx.shadowBlur = 12;
-      ctx.beginPath(); ctx.moveTo(b.size*2.5, 0); ctx.lineTo(-b.size*1.5, -b.size*1.2); ctx.lineTo(-b.size*0.5, 0); ctx.lineTo(-b.size*1.5, b.size*1.2); ctx.closePath(); ctx.fill();
-      ctx.globalAlpha = 0.8; ctx.fillStyle = _dsC;
-      ctx.beginPath(); ctx.moveTo(b.size*2, 0); ctx.lineTo(-b.size, -b.size*0.8); ctx.lineTo(-b.size*0.3, 0); ctx.lineTo(-b.size, b.size*0.8); ctx.closePath(); ctx.fill();
-      ctx.shadowBlur = 0;
+      // Normal deadshot: bright illuminated arrow with stacked fake-glow
+      // (NO shadowBlur — that was killing fps with pierce-99). Layered shapes
+      // give a punchy lit-from-within look.
+      // Wide ambient halo (large dim oval, set fillStyle once)
+      ctx.fillStyle = _dsC;
+      ctx.globalAlpha = 0.16;
+      ctx.beginPath(); ctx.ellipse(0, 0, b.size*4.5, b.size*2.2, 0, 0, Math.PI*2); ctx.fill();
+      // Tighter glow layer
+      ctx.globalAlpha = 0.34;
+      ctx.beginPath(); ctx.ellipse(0, 0, b.size*3, b.size*1.4, 0, 0, Math.PI*2); ctx.fill();
+      // Cyan arrow body (slightly larger than core)
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath(); ctx.moveTo(b.size*2.8, 0); ctx.lineTo(-b.size*1.5, -b.size*1.3); ctx.lineTo(-b.size*0.5, 0); ctx.lineTo(-b.size*1.5, b.size*1.3); ctx.closePath(); ctx.fill();
+      // White-hot core arrow (illuminated center)
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.moveTo(b.size*2.2, 0); ctx.lineTo(-b.size*0.9, -b.size*0.7); ctx.lineTo(-b.size*0.2, 0); ctx.lineTo(-b.size*0.9, b.size*0.7); ctx.closePath(); ctx.fill();
+      // Hot tip dot — pulsing brightness via gameTime sin so the bullet
+      // visibly throbs as it travels (cheap, just one arc)
+      const _pulse = 0.85 + Math.sin(gameTime * 0.6) * 0.15;
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = _pulse;
+      ctx.beginPath(); ctx.arc(b.size*2.4, 0, b.size*0.55, 0, Math.PI*2); ctx.fill();
     }
     ctx.globalAlpha = 1; ctx.restore();
     // Trailing particles (emitted in update loop via _deadshotRound flag)
