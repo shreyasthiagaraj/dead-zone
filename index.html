@@ -16802,15 +16802,19 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // 1. FORWARD LUNGE — short forward step + flashy piercing strike
-  { kind:'forwardlunge', range: 165, cone: Math.PI * 32/180, damage: 14, knockback: 55, stagger: 38, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 42 },
-  // 2. 180 deg ARC SWIPE — sweeps a half-circle in front of the player
+  // 1. FORWARD LUNGE — clear flashy piercing strike with extra reach
+  { kind:'forwardlunge', range: 195, cone: Math.PI * 32/180, damage: 16, knockback: 60, stagger: 40, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 48 },
+  // 2. 180 deg ARC SWIPE — half-circle in front of the player
   { kind:'arcswipe',     range: 115, cone: Math.PI,          damage: 18, knockback: 50, stagger: 42, cooldown: 130, color:'#4ff', tone: 760, dir:  1, label:'ARC',
     swingDelta: Math.PI, finisher: false },
-  // 3. 360 deg REVERSE ARC — full revolution in the opposite direction
-  { kind:'arcswipe',     range: 125, cone: Math.PI * 2,      damage: 30, knockback: 90, stagger: 75, cooldown: 280, color:'#f80', tone: 480, dir: -1, label:'360 SPIN!',
-    swingDelta: Math.PI * 2, finisher: true },
+  // 3. 270 deg REVERSE SPIN — three-quarter revolution starting from where
+  //    the previous arc ended (continuous flow, no snap to symmetric start).
+  { kind:'arcswipe',     range: 125, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 280, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
+    swingDelta: Math.PI * 1.5, swingFollowPrev: true, finisher: true },
 ];
+// Brief grace period after a finisher before the next combo can start —
+// even on release+repress. Keeps the player from chaining infinite combos.
+const RIPPER_INTER_COMBO_COOLDOWN = 320;
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
 
 function _swingMelee(p, def) {
@@ -16820,6 +16824,9 @@ function _swingMelee(p, def) {
   // cleared by the local fire-input block on release.
   if (p._rComboLocked) return;
   const now = performance.now();
+  // Brief grace after a finisher even on release+repress — keeps the player
+  // from chaining combos back-to-back without a beat in between.
+  if (p._rNoSwingUntil && now < p._rNoSwingUntil) return;
   // ---- DASH-STRIKE: a swing within ~280 ms of dashing fires as a
   // beefier lunging attack instead of the next combo step. Consumed once
   // per dash; the regular combo continues afterward.
@@ -16857,10 +16864,17 @@ function _swingMelee(p, def) {
     // Thrust strikes — start from current pose, end pointing straight forward
     p._rSwingStartAngle = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.62;
     p._rSwingEndAngle = 0;
+  } else if (step.swingFollowPrev) {
+    // Sweep strike that follows from the previous attack's end position
+    // (continuous flow, no symmetric snap).
+    const _sign = (step.dir >= 0 ? 1 : -1);
+    const _delta = step.swingDelta || Math.PI;
+    p._rSwingStartAngle = (p._rBladeAngle !== undefined) ? p._rBladeAngle : 0;
+    p._rSwingEndAngle = p._rSwingStartAngle + _delta * _sign;
   } else {
     // Sweep strikes — symmetric around forward so the swept area covers the
     // step's swingDelta in front of the player. Forced regardless of where
-    // the blade was previously so 180/360 coverage is guaranteed.
+    // the blade was previously so 180 deg coverage is guaranteed.
     const _sign = (step.dir >= 0 ? 1 : -1);
     const _delta = step.swingDelta || Math.PI;
     p._rSwingStartAngle = -(_delta * 0.5) * _sign;
@@ -16871,8 +16885,12 @@ function _swingMelee(p, def) {
   p._rPrevBladeWorldAng = undefined;
   // Run the swing
   _runComboStep(p, def, step, idx);
-  // After the FINISHER fires, lock the combo until the player releases.
-  if (step.finisher) p._rComboLocked = true;
+  // After the FINISHER fires, lock the combo until the player releases AND
+  // enforce a small grace period before the next combo can start.
+  if (step.finisher) {
+    p._rComboLocked = true;
+    p._rNoSwingUntil = now + step.cooldown + RIPPER_INTER_COMBO_COOLDOWN;
+  }
   // Advance combo
   p._rComboIdx = (idx + 1) % RIPPER_COMBO.length;
   p._rComboWindow = now + RIPPER_COMBO_WINDOW;
@@ -16970,60 +16988,80 @@ function _runComboStep(p, def, step, idx) {
       screenShake.intensity = Math.max(screenShake.intensity, _shake);
     }
   } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
-    // ---- FORWARD THRUST: flashy piercing strike. The blade's thrust pulse
-    // drives the strike forward; this block lays down a forward energy beam
-    // + tip impact + spark fan + smoke trail for the "punching forward" feel.
+    // ---- FORWARD THRUST: clear, flashy piercing strike. Forward energy
+    // beam, big tip impact, forward-flying sparks, kick-off smoke. The
+    // forwardlunge variant gets a much bigger pop than a plain jab.
     const _tx = p.x + c * range, _ty = p.y + s * range;
     const _fl = (step.kind === 'forwardlunge');
-    // 4-stack forward energy beam (thicker on forwardlunge than plain jab)
+    // Stacked forward energy beam (5 layers on forwardlunge)
     if (_fl) {
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 9, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.5, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 12, color: mainCol, type: 'lightning', tx: _tx, ty: _ty, _priority: true });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 8,  color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 4,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: 2,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
+      // Two side beams to give the strike's "spear" silhouette
+      const _sideOff = 6;
+      particles.push({ x: p.x + Math.cos(a+Math.PI/2)*_sideOff, y: p.y + Math.sin(a+Math.PI/2)*_sideOff,
+        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+        tx: _tx + Math.cos(a+Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a+Math.PI/2)*_sideOff*0.4 });
+      particles.push({ x: p.x + Math.cos(a-Math.PI/2)*_sideOff, y: p.y + Math.sin(a-Math.PI/2)*_sideOff,
+        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+        tx: _tx + Math.cos(a-Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a-Math.PI/2)*_sideOff*0.4 });
     }
-    // Tip impact pop — wider + brighter for forward lunge
-    const _wR1 = _fl ? 40 : 20, _wR2 = _fl ? 26 : 14;
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: _wR1, color: '#fff', type: 'wakering' });
-    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: _wR2, color: mainCol, type: 'wakering' });
+    // Tip impact — bigger + brighter on forwardlunge
+    const _wR1 = _fl ? 60 : 20;
+    const _wR2 = _fl ? 38 : 14;
+    const _wR3 = _fl ? 22 : 0;
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 12 : 9, maxLife: _fl ? 12 : 9, size: _wR1, color: '#fff', type: 'wakering' });
+    particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 10 : 7, maxLife: _fl ? 10 : 7, size: _wR2, color: mainCol, type: 'wakering' });
     if (_fl) {
-      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 4, maxLife: 4, size: 14, color: '#fff', type: 'spark' });
+      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: _wR3, color: '#fff', type: 'spark' });
+      // Bright tip flash circle + 8 radial spike bolts for "punched through" feel
+      for (let _spi = 0; _spi < 8; _spi++) {
+        const _spA = (_spi/8)*Math.PI*2 + Math.random()*0.2;
+        const _spL = 22 + Math.random()*12;
+        particles.push({
+          x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: 1.5,
+          color: '#fff', type: 'lightning',
+          tx: _tx + Math.cos(_spA)*_spL, ty: _ty + Math.sin(_spA)*_spL
+        });
+      }
     }
-    // Spark fan at the tip — more on forward lunge
-    const _sparkN = _fl ? 18 : 8;
+    // Spark fan at the tip
+    const _sparkN = _fl ? 26 : 8;
     for (let i = 0; i < _sparkN; i++) {
-      const _ta = Math.random()*Math.PI*2, _ts = 2 + Math.random()*(_fl ? 5 : 3);
+      const _ta = Math.random()*Math.PI*2, _ts = 2.5 + Math.random()*(_fl ? 6 : 3);
       particles.push({
         x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
-        life: 8 + Math.floor(Math.random()*4), maxLife: 12,
-        size: 2 + Math.random()*1.8,
+        life: 9 + Math.floor(Math.random()*5), maxLife: 14,
+        size: 2 + Math.random()*2.2,
         color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
       });
     }
-    // Forward-flying sparks along the strike line (forwardlunge only)
+    // Forward-flying sparks along the strike line + kick-off plume
     if (_fl) {
-      for (let i = 0; i < 12; i++) {
-        const _f = 0.3 + Math.random() * 0.7;
-        const _spread = (Math.random()-0.5) * 0.32;
+      for (let i = 0; i < 18; i++) {
+        const _f = 0.25 + Math.random() * 0.75;
+        const _spread = (Math.random()-0.5) * 0.36;
         const _sa = a + _spread;
-        const _sp = 4 + Math.random()*5;
+        const _sp = 4 + Math.random()*6;
         particles.push({
           x: p.x + Math.cos(_sa)*(_f*range),
           y: p.y + Math.sin(_sa)*(_f*range),
           vx: Math.cos(_sa)*_sp, vy: Math.sin(_sa)*_sp,
-          life: 8, maxLife: 8, size: 2 + Math.random()*1.5,
+          life: 9, maxLife: 9, size: 2 + Math.random()*1.8,
           color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
         });
       }
       // Kick-off smoke plume behind the player
-      for (let i = 0; i < 8; i++) {
-        const _ka = a + Math.PI + (Math.random()-0.5)*1.5;
-        const _ks = 1 + Math.random()*2;
+      for (let i = 0; i < 12; i++) {
+        const _ka = a + Math.PI + (Math.random()-0.5)*1.6;
+        const _ks = 1.2 + Math.random()*2.4;
         particles.push({
-          x: p.x + Math.cos(_ka)*5, y: p.y + Math.sin(_ka)*5,
+          x: p.x + Math.cos(_ka)*6, y: p.y + Math.sin(_ka)*6,
           vx: Math.cos(_ka)*_ks, vy: Math.sin(_ka)*_ks,
-          life: 12 + Math.floor(Math.random()*4), maxLife: 16,
-          size: 4 + Math.random()*3, color: '#777', type: 'smoke', _smokeAlpha: 0.5
+          life: 14 + Math.floor(Math.random()*5), maxLife: 19,
+          size: 5 + Math.random()*3, color: '#888', type: 'smoke', _smokeAlpha: 0.55
         });
       }
     }
@@ -17031,8 +17069,9 @@ function _runComboStep(p, def, step, idx) {
     if (isLocal && step.lungeDistance) {
       p._rLungeVx = c * (step.lungeDistance * 0.42);
       p._rLungeVy = s * (step.lungeDistance * 0.42);
+      if (_fl) triggerCameraZoom(1.025, 130);
     }
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 7 : 5);
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : 5);
   } else if (step.kind === 'lungestrike') {
     // ---- FORWARD CONE: Meta-Knight-style sharp-tip thrust ----
     // Visualized as a single arrowhead pointing forward (sharp at the tip,
@@ -28449,15 +28488,19 @@ function render() {
           if (_absD > 0.005) {
             const _midAng = _prev + _d * 0.5;
             const _spanCone = _absD * 1.10;
+            // Trail life kept short — only ~5 wedges visible at once before
+            // they cube-fade out. No more ghost-blade afterimage.
             particles.push({
               x: p.x, y: p.y, vx: 0, vy: 0,
-              life: 13, maxLife: 13, size: _bodyTip,
+              life: 9, maxLife: 9, size: _bodyTip,
               color: _trailCol, type: 'blade_sweep',
               _innerR: _bodyRoot, _angle: _midAng, _cone: _spanCone
             });
+            // Thin tip-path line lingers a bit longer so the swing's path
+            // is still readable after the wide trail has faded.
             particles.push({
               x: p.x, y: p.y, vx: 0, vy: 0,
-              life: 22, maxLife: 22, size: _bodyTip + 4,
+              life: 18, maxLife: 18, size: _bodyTip + 4,
               color: '#fff', type: 'tip_line',
               _angle: _midAng, _cone: _spanCone
             });
@@ -29120,11 +29163,12 @@ function render() {
         ctx.globalAlpha = 1;
       } else if(p.type==='blade_sweep'){
         // Smooth flowing blade trail — wedges spawned per-frame stack into a
-        // continuous swept band along the sword's path. Alpha fades QUADRATIC
-        // so the trail is bright at the sword (newest) and quickly fades
-        // toward the swing's origin (oldest). No hard edges.
+        // continuous swept band along the sword's path. CUBIC fade ensures
+        // older wedges drop transparency aggressively, so we don't see
+        // ghost-blade afterimages — the trail reads as "opaque at the
+        // sword, near-transparent at the swing's origin."
         const _ageRev = p.life / p.maxLife;
-        const _alpha = _ageRev * _ageRev; // quadratic fade — translucent at tail
+        const _alpha = _ageRev * _ageRev * _ageRev; // cubic — sharp drop-off
         const _innerR = p._innerR || 20;
         const _outerR = p.size;
         const _ang = p._angle || 0;
@@ -29132,9 +29176,9 @@ function render() {
         ctx.save();
         const _grad = ctx.createRadialGradient(p.x, p.y, _innerR, p.x, p.y, _outerR);
         _grad.addColorStop(0,    'rgba(77,238,255,0)');
-        _grad.addColorStop(0.55, 'rgba(77,238,255,' + (_alpha * 0.35).toFixed(3) + ')');
-        _grad.addColorStop(0.85, 'rgba(180,250,255,' + (_alpha * 0.7).toFixed(3) + ')');
-        _grad.addColorStop(1,    'rgba(255,255,255,' + (_alpha * 0.95).toFixed(3) + ')');
+        _grad.addColorStop(0.55, 'rgba(77,238,255,' + (_alpha * 0.30).toFixed(3) + ')');
+        _grad.addColorStop(0.85, 'rgba(180,250,255,' + (_alpha * 0.6).toFixed(3) + ')');
+        _grad.addColorStop(1,    'rgba(255,255,255,' + (_alpha * 0.85).toFixed(3) + ')');
         ctx.fillStyle = _grad;
         ctx.beginPath();
         ctx.arc(p.x, p.y, _outerR, _ang - _halfC, _ang + _halfC);
