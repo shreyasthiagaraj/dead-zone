@@ -1588,15 +1588,15 @@ function updateStreak() {}
 const UPGRADE_POOL = [
   // ---- CLASS APPLICATION (common, max 1) ----
   { id:'thermal_rounds', name:'THERMAL ROUNDS', rarity:'common', max:1, icon:'🔥', color:'#f80',
-    descs:['Your ATTACK applies OVERHEAT. +22% damage.'], flavor:'thermal throttle exploit — they cook from the inside' },
+    descs:['Your ATTACK applies OVERHEAT. +30% damage. Special hits much harder.'], flavor:'thermal throttle exploit — they cook from the inside' },
   { id:'cryo_rounds', name:'CRYO ROUNDS', rarity:'common', max:1, icon:'🧊', color:'#8ef',
-    descs:['Your ATTACK applies CHILL. +22% damage.'], flavor:'clock-cycle freeze. time slows for the target' },
+    descs:['Your ATTACK applies CHILL. +30% damage. Special hits much harder.'], flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC ROUNDS', rarity:'common', max:1, icon:'⚡', color:'#4ff',
-    descs:['Your ATTACK applies CHARGED. +22% damage.'], flavor:'shared-bus signal jumps between nodes' },
+    descs:['Your ATTACK applies CHARGED. +30% damage. Special hits much harder.'], flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE SHOT', rarity:'common', max:1, icon:'💨', color:'#cef',
-    descs:['Your ATTACK applies EXPOSED with knockback. +22% damage.'], flavor:'kinetic payload. impact registered.' },
+    descs:['Your ATTACK applies EXPOSED with knockback. +30% damage. Special hits much harder.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL PAYLOAD', rarity:'common', max:1, icon:'☣', color:'#a4f',
-    descs:['Your ATTACK applies CORRUPT. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
+    descs:['Your ATTACK applies CORRUPT. +30% damage. Special hits much harder.'], flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 1) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:1, icon:'🔥', color:'#f80',
     descs:['OVERHEAT cap +1. +33% DoT damage. +50% MELTDOWN radius.'], flavor:'thermal runaway. the reactor goes critical.', prereqs:['thermal_rounds|burnout_wake'] },
@@ -1973,6 +1973,12 @@ const UPGRADE_POOL = [
     descs:['After 3 kills in 2s: your next ATTACK is a full 360° spin.'], flavor:'momentum overflows.' },
   { id:'riposte', name:'RIPOSTE', rarity:'rare', max:1, icon:'⊕', color:'#4ff',
     descs:['Taking damage instantly readies your next ATTACK.'], flavor:'they hit you. you hit harder.' },
+  { id:'extended_reach', name:'EXTENDED REACH', rarity:'rare', max:1, icon:'↔', color:'#4ff',
+    descs:['Your ATTACK reaches 35% farther.'], flavor:'a longer blade ends it sooner.' },
+  { id:'mag_pull', name:'MAGNETIZE', rarity:'rare', max:1, icon:'🧲', color:'#4ff',
+    descs:['Each ATTACK yanks nearby enemies toward you.'], flavor:'they come to the blade.' },
+  { id:'detonator', name:'DETONATOR', rarity:'epic', max:1, icon:'✸', color:'#4ff',
+    descs:['Your finisher triggers a massive explosion.'], flavor:'end every combo with a bang.' },
   // ---- CROSS-WEAPON (universal) ----
   { id:'stagger_strike', name:'STAGGER STRIKE', rarity:'rare', max:1, icon:'⚔', color:'#fa0',
     descs:['Your ATTACK staggers enemies for 0.5s.'], flavor:'every hit interrupts.' },
@@ -2110,6 +2116,7 @@ function rebuildRunMods() {
     quickDraw: 0, armorPierce: false, tracerRound: false, railgun: false, chainKill: 0,
     // Computed (set below)
     damageMult: 0, fireRateMult: 0, pierceAdd: 0, statusForce: 1,
+    specialDmgMult: 1, // class build scales the special weapon up to 2x
     dominantClass: null, // highest class for bullet tinting
   };
   for (const id in runUpgrades) {
@@ -2289,6 +2296,9 @@ function rebuildRunMods() {
       case 'bloodletter':        m.bloodletter = true; break;
       case 'whirlwind':          m.whirlwind = true; break;
       case 'riposte':            m.riposte = true; break;
+      case 'extended_reach':     m.extendedReach = true; break;
+      case 'mag_pull':           m.magPull = true; break;
+      case 'detonator':          m.detonator = true; break;
       // Cross-weapon
       case 'stagger_strike':     m.staggerStrike = true; break;
       case 'execution':          m.execution = true; break;
@@ -2301,6 +2311,13 @@ function rebuildRunMods() {
   if (m.piercingShot > 0) { m.pierceAdd += 1; }
   // Elemental rounds: +5 flat damage per level (+10 for Pulse). Only one class active at a time.
   m.flatDamageBonus = 5 * (m.thermalRoundsLv + m.cryoRoundsLv + m.arcRoundsLv + m.viralPayloadLv) + 10 * m.pulseShotLv;
+  // CLASS CARD DAMAGE: each class ROUNDS card adds +30% main-attack damage
+  // (applies to both pistol via getScaledGun and sword via _scaleMeleeDamage).
+  const _classRoundCount = (m.thermalRoundsLv>0?1:0) + (m.cryoRoundsLv>0?1:0) + (m.arcRoundsLv>0?1:0) + (m.pulseShotLv>0?1:0) + (m.viralPayloadLv>0?1:0);
+  m.damageMult += 0.30 * _classRoundCount;
+  // SPECIAL scales harder off total damage investment — feels significantly
+  // stronger as a class build comes online, capped at +100% (2x).
+  m.specialDmgMult = 1 + Math.min(1.0, m.damageMult * 1.4);
   // Dominant class for bullet tinting
   // Dominant class for bullet tinting — only count ROUNDS cards, not wake/dash cards
   // (dash cards shouldn't change bullet color — that's confusing)
@@ -2461,6 +2478,7 @@ const _GUN_ONLY_CARDS = new Set([
 // Cards that only apply when the player has RIPPER as their primary weapon.
 const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
+  'extended_reach', 'mag_pull', 'detonator',
 ]);
 function _isMeleeEquipped() {
   const lp = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
@@ -15873,7 +15891,7 @@ function updateBeacon() {
     if (gameTime % 10 === 0) { // tick every 10 frames
       for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);
         if (d < zoneR) {
-          damageZombie(z, _bm.hazardZone >= 2 ? 6 : 4, 0, 0, true);
+          damageZombie(z, Math.max(1,Math.round((_bm.hazardZone >= 2 ? 6 : 4)*(_bm.specialDmgMult||1))), 0, 0, true);
           if (b.classId==='fire') applyOverheat(z, 5, 1);
           if (b.classId==='ice') applyChill(z, 1);
           if (b.classId==='chain') applyCharged(z);
@@ -15955,7 +15973,7 @@ function updateBeacon() {
       for (let _bs = 0; _bs < _shots; _bs++) {
         const _ba = a + (_bs - (_shots-1)/2) * _spreadStep;
         bullets.push({ x:b.x+Math.cos(_ba)*12,y:b.y+Math.sin(_ba)*12, vx:Math.cos(_ba)*14,vy:Math.sin(_ba)*14,
-          damage:BEACON_DAMAGE, color:bColor, size:2.5, knockback:1, pierce:0, pierced:0,
+          damage:Math.max(1,Math.round(BEACON_DAMAGE*(_bm.specialDmgMult||1))), color:bColor, size:2.5, knockback:1, pierce:0, pierced:0,
           life:18, maxLife:18, flame:false, explosive:false, explosionRadius:0,
           tracer:false, chain:false, chainRange:0, chainCount:0, laserGlow:false, grenade:false,
           owner:'player', ownerId:getLocalPlayer()?.id, trail:[], crit:false,
@@ -16242,7 +16260,7 @@ function updateDischarge() {
         // Damage on return wave band
         if (!w._collapseHitSet.has(z.zid) && Math.abs(d - w.radius) < 35) {
           w._collapseHitSet.add(z.zid);
-          damageZombie(z, Math.floor(60 * (w.chargePct || 1)), 0, 0, true);
+          damageZombie(z, Math.floor(60 * (w.chargePct || 1) * (_m.specialDmgMult || 1)), 0, 0, true);
           z.staggerTimer = Math.max(z.staggerTimer || 0, 20);
         }
       }
@@ -16262,7 +16280,7 @@ function updateDischarge() {
           if (z.hp <= 0) continue;
           const dx = z.x - w.x, dy = z.y - w.y, d = Math.sqrt(dx * dx + dy * dy);
           if (d < 80) {
-            damageZombie(z, 100, d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0, true);
+            damageZombie(z, Math.floor(100 * (_m.specialDmgMult || 1)), d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0, true);
             z.staggerTimer = Math.max(z.staggerTimer || 0, 40);
           }
         }
@@ -16432,7 +16450,8 @@ function updateDischarge() {
   const halfAngle = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
   const waveFront = w.radius;
   const waveBack = Math.max(0, w.radius - 30); // wave thickness ~30px
-  const _dmgMult = 1;
+  // Class build scales the special up to +100% via specialDmgMult.
+  const _dmgMult = (_m.specialDmgMult || 1);
   // Damage enemies in the wave band
   if (isHost) {
     for (const z of zombies) {
@@ -16719,7 +16738,8 @@ function updatePayload() {
   if (g.timer <= 0) {
     // CONCUSSIVE BLAST: increased radius
     let radius = 90 * (1 + (_m.concussiveBlast || 0) * 0.35);
-    const dmg = 140;
+    // Class build scales the special up to +100% via specialDmgMult.
+    const dmg = Math.floor(140 * (_m.specialDmgMult || 1));
     const gc2 = g.classId ? (_ELEM_COLOR[g.classId] || '#fa0') : '#fa0';
     if (isHost) {
       for (const z of zombies) {
@@ -16975,12 +16995,30 @@ function _swingMelee(p, def) {
   if (p === getLocalPlayer() && p._dashStrikeWindow && now < p._dashStrikeWindow) {
     p._dashStrikeWindow = 0;
     _runDashStrike(p, def, now);
+    // The dash-strike IS the opening move — holding now flows into the jab
+    // flurry, tapping continues the standard combo from the slash.
+    p._rOpened = true;
+    p._rFreshPress = false;
     return;
   }
   // Combo state
   if (p._rComboIdx === undefined) p._rComboIdx = 0;
-  if (now > (p._rComboWindow || 0)) p._rComboIdx = 0;
+  if (now > (p._rComboWindow || 0)) { p._rComboIdx = 0; p._rOpened = false; }
   const idx = p._rComboIdx;
+  // ---- HOLD-vs-TAP BRANCH ----
+  // The opening LUNGE (idx 0) or a dash-strike starts the combo. After
+  // that: HOLDING the button continuously runs a rapid forward jab
+  // flurry; RELEASING then tapping runs the standard combo (slash → arc
+  // → cross → 270 spin), one step per tap, skipping the spent lunge.
+  const _freshPress = !!p._rFreshPress;
+  if (p._rOpened && !_freshPress) {
+    if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN) return;
+    _runJabFlurry(p, def);
+    // Keep the combo alive so idx doesn't reset back to LUNGE mid-flurry.
+    p._rComboWindow = now + RIPPER_COMBO_WINDOW;
+    return;
+  }
+  p._rFreshPress = false;
   const step = RIPPER_COMBO[idx];
   // Per-step cooldown gate
   if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown) return;
@@ -16998,7 +17036,7 @@ function _swingMelee(p, def) {
   p._rSwingLunge = step.kind === 'lungestrike';
   p._rSwingFinisher = !!step.finisher;
   p._rSwingFirstBig = !!step.firstBig;
-  p._rSwingRange = step.range;
+  p._rSwingRange = step.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
   // Capture explicit start/end angles for the swing animation. The renderer
   // interpolates between these with no lerp catch-up — clean, decisive
   // motion that lingers at the END angle when the swing finishes.
@@ -17032,6 +17070,11 @@ function _swingMelee(p, def) {
   // until the cooldown elapses.
   if (step.finisher) {
     p._rNoSwingUntil = now + step.cooldown + RIPPER_INTER_COMBO_COOLDOWN;
+    p._rOpened = false; // next combo opens with a fresh LUNGE
+  } else {
+    // The opening LUNGE (or any non-finisher step) is spent — from here a
+    // continuous hold becomes the jab flurry.
+    p._rOpened = true;
   }
   // Advance combo
   p._rComboIdx = (idx + 1) % RIPPER_COMBO.length;
@@ -17063,7 +17106,7 @@ function _runDashStrike(p, def, now) {
   p._rSwingLunge = true;
   p._rSwingFinisher = false;
   p._rSwingFirstBig = false;
-  p._rSwingRange = _DASH_STRIKE_STEP.range;
+  p._rSwingRange = _DASH_STRIKE_STEP.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
   _runComboStep(p, def, _DASH_STRIKE_STEP, -1);
   // The dash-strike substitutes for the combo's opening LUNGE when fired
   // at the start of a fresh combo. Skip past strike 0 so the player doesn't
@@ -17075,11 +17118,55 @@ function _runDashStrike(p, def, now) {
   }
 }
 
+// ---- JAB FLURRY: the held-attack alternate. After the opening LUNGE /
+// dash-strike, keeping the button down runs rapid forward thrusts that
+// alternate left/right wind-up. Lighter per-hit than the combo but
+// relentless while held. Releasing exits the flurry; a re-tap runs the
+// standard combo instead.
+const _JAB_COOLDOWN = 120; // ms between jabs — rapid but readable
+const _JAB_STEP = {
+  kind: 'jab',
+  range: 135, cone: Math.PI * 26 / 180,
+  damage: 6, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
+  color: '#4ff', tone: 980, dir: 0, label: '',
+};
+function _runJabFlurry(p, def) {
+  const now = performance.now();
+  p._rJabSide = !p._rJabSide;
+  const _side = p._rJabSide ? 1 : -1;
+  if (!p._rSwordOn && p === getLocalPlayer()) _emitSwordMaterialize(p);
+  p._rSwordOn = true;
+  p._rLastSwing = now;
+  p._rSwingAngle = p.angle;
+  p._rSwingStep = -2;
+  p._rSwingCooldown = _JAB_STEP.cooldown;
+  p._rSwingDir = 0;
+  p._rSwingKind = 'jab';
+  p._rSwingJab = true;
+  p._rSwingHeavy = false;
+  p._rSwingLunge = false;
+  p._rSwingFinisher = false;
+  p._rSwingFirstBig = false;
+  p._rSwingRange = _JAB_STEP.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
+  // Alternating wind-up: blade cocked to one side, thrust dead ahead.
+  p._rSwingStartAngle = _side * 0.45;
+  p._rSwingEndAngle = 0;
+  p._rPrevBladeWorldAng = undefined;
+  // Short forward + lateral hop so the flurry reads as advancing jabs.
+  if (p === getLocalPlayer()) {
+    const a = p.angle;
+    p._rLungeVx = Math.cos(a) * 3.0 + Math.cos(a + _side * Math.PI / 2) * 1.4;
+    p._rLungeVy = Math.sin(a) * 3.0 + Math.sin(a + _side * Math.PI / 2) * 1.4;
+  }
+  _runComboStep(p, def, _JAB_STEP, -2);
+}
+
 function _runComboStep(p, def, step, idx) {
   const a = p.angle, c = Math.cos(a), s = Math.sin(a);
   const mainCol = step.color;
-  const range = step.range;
   const _rmCombo = runMods || {};
+  // CARD: EXTENDED REACH — the blade strikes 35% farther.
+  const range = step.range * (_rmCombo.extendedReach ? 1.35 : 1);
   // CARD: WHIRLWIND — after 3 kills in 2s, next swing is 360°
   const _wwActive = _rmCombo.whirlwind && p._whirlwindReady;
   // CARD: CLEAVE — cone +30%
@@ -17358,6 +17445,33 @@ function _runComboStep(p, def, step, idx) {
     _meleeHitVFX(z, isCrit, mainCol, p.x, p.y);
   }
 
+  // ---- CARD: MAGNETIZE — each attack yanks nearby enemies toward the
+  // player so the blade always has meat in range. Velocity is host-
+  // authoritative (zombie positions are synced); the inward energy
+  // streaks render on every client for feedback.
+  if (_rmCombo.magPull) {
+    const _pullR = range * 2.4;
+    for (const z of zombies) {
+      if (!z || z.hp <= 0) continue;
+      const dx = p.x - z.x, dy = p.y - z.y;
+      const d = Math.hypot(dx, dy);
+      if (d > _pullR || d < 26) continue;
+      const _nd = d || 1;
+      // Farther enemies get tugged harder so they close the gap fast,
+      // but cap it so they don't overshoot through the player.
+      const _pull = Math.min(13, 5 + (d / _pullR) * 9);
+      if (isHost) { z.vx += (dx / _nd) * _pull; z.vy += (dy / _nd) * _pull; }
+      if (isLocal && Math.random() < 0.6) {
+        particles.push({
+          x: z.x, y: z.y,
+          vx: (dx / _nd) * 6, vy: (dy / _nd) * 6,
+          life: 9, maxLife: 9, size: 2 + Math.random() * 1.5,
+          color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark'
+        });
+      }
+    }
+  }
+
   // ---- BARRELS / PROPS / CHESTS in the swing arc ----
   // The sword carves through the same destructibles bullets do (explosive
   // barrels, props, chests). Skip the special interactive terminals.
@@ -17382,6 +17496,65 @@ function _runComboStep(p, def, step, idx) {
         particles.push({ x: _br.x + Math.cos(_sa)*_br.radius, y: _br.y + Math.sin(_sa)*_br.radius,
           vx: Math.cos(_sa)*3, vy: Math.sin(_sa)*3, life: 12, maxLife: 12, size: 2, color: '#ff0', type: 'spark' });
       }
+    }
+  }
+
+  // ---- CARD: DETONATOR — the finisher ends in a massive explosion.
+  // Damage + knockback are host-authoritative; the blast VFX render on
+  // every client so non-host players see the payoff too.
+  if (step.finisher && _rmCombo.detonator) {
+    const _exCol = (typeof _meleeMainColor === 'function') ? _meleeMainColor() : '#f80';
+    const _exR = range * 1.5 + 70;
+    const _exX = p.x + c * range * 0.55, _exY = p.y + s * range * 0.55;
+    const _exDmg = _scaleMeleeDamage(48);
+    if (isHost) {
+      for (const z of zombies) {
+        if (!z || z.hp <= 0) continue;
+        const dx = z.x - _exX, dy = z.y - _exY;
+        const d = Math.hypot(dx, dy);
+        if (d > _exR + (z.radius || 14)) continue;
+        const _nd = d || 1;
+        const _close = 1 - Math.min(1, d / _exR);
+        const _ed = Math.max(1, Math.floor(_exDmg * (0.55 + _close * 0.45)));
+        const _ekb = 26 + _close * 22;
+        damageZombie(z, _ed, (dx / _nd) * _ekb, (dy / _nd) * _ekb, true);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
+      }
+    } else if (isLocal) {
+      // Client-side hit prediction so the blast feels responsive on non-host.
+      for (const z of zombies) {
+        if (!z || z.hp <= 0) continue;
+        const dx = z.x - _exX, dy = z.y - _exY;
+        const d = Math.hypot(dx, dy);
+        if (d > _exR + (z.radius || 14)) continue;
+        const _close = 1 - Math.min(1, d / _exR);
+        z.hp -= Math.max(1, Math.floor(_exDmg * (0.55 + _close * 0.45)));
+      }
+    }
+    if (isHost) damageBarrelsInRadius(_exX, _exY, _exR * 0.85);
+    // Blast VFX — expanding rings + radial spark fan + smoke + flash.
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 16, maxLife: 16, size: _exR, color: '#fff', type: 'wakering', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 20, maxLife: 20, size: _exR * 0.78, color: _exCol, type: 'wakering', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 24, maxLife: 24, size: _exR * 0.52, color: _exCol, type: 'wakering' });
+    for (let _ei = 0; _ei < 26; _ei++) {
+      const _ea = (_ei / 26) * Math.PI * 2 + Math.random() * 0.25;
+      const _es = 6 + Math.random() * 9;
+      particles.push({ x: _exX, y: _exY, vx: Math.cos(_ea) * _es, vy: Math.sin(_ea) * _es,
+        life: 14 + Math.floor(Math.random() * 8), maxLife: 22, size: 3 + Math.random() * 3,
+        color: Math.random() > 0.45 ? _exCol : '#fff', type: 'spark' });
+    }
+    for (let _si = 0; _si < 8; _si++) {
+      const _sa = Math.random() * Math.PI * 2, _ss = 1 + Math.random() * 2.5;
+      particles.push({ x: _exX, y: _exY, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+        life: 26 + Math.random() * 14, maxLife: 40, size: 7 + Math.random() * 5,
+        color: '#333', type: 'smoke', _smokeAlpha: 0.22 });
+    }
+    if (isLocal) {
+      screenShake.intensity = Math.max(screenShake.intensity, 14);
+      if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.35, 14);
+      playSound(46, 0.26, 'sawtooth', 0.16);
+      playSound(110, 0.16, 'square', 0.08);
+      if (typeof hapticSpecial === 'function') hapticSpecial();
     }
   }
 
@@ -17993,7 +18166,8 @@ function _fireDeadshot(lp) {
   const classId = _m.beaconElement || null; // beacon element cards apply to deadshot
   const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
   // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
-  const baseDmg = Math.floor(30 + chargePct * 90);
+  // Class build scales the special up to +100% via specialDmgMult.
+  const baseDmg = Math.floor((30 + chargePct * 90) * (_m.specialDmgMult || 1));
   const isFullCharge = chargePct >= 0.95;
   // Single-target on tap or partial charge. Full charge punches through
   // everything in line — that's the payoff for the hold.
@@ -21567,10 +21741,14 @@ function update() {
     {
       const _curDef = WEAPON_DEFS[w.type];
       if (_curDef && _curDef._melee) {
-        // Hold-to-fire: each tick attempts a swing. Per-step cooldown inside
-        // _swingMelee paces the combo; an inter-combo cooldown gates the gap
-        // between one combo's finisher and the next combo's first strike.
-        if (shouldFire && !(lp._empDisabled > 0)) fireWeaponForPlayer(lp);
+        // Hold-to-fire with a hold-vs-tap branch: the opening LUNGE starts a
+        // combo, then HOLDING runs a rapid jab flurry while RELEASING and
+        // re-tapping runs the standard combo. We flag the press rising-edge
+        // so _swingMelee can tell a fresh tap from a continuous hold.
+        const _mHeld = shouldFire && !(lp._empDisabled > 0);
+        if (_mHeld && !lp._rFireHeld) lp._rFreshPress = true;
+        lp._rFireHeld = _mHeld;
+        if (_mHeld) fireWeaponForPlayer(lp);
         // Stop the gun loop sound — melee uses per-hit sounds, not the loop.
         if (!shouldFire) stopWeaponLoop();
       } else if (_curDef && _curDef._charge) {
@@ -21667,8 +21845,16 @@ function update() {
           }
         }
         if (inp.weapon !== undefined && inp.weapon < p.weapons.length) p.currentWeapon = inp.weapon;
-        p._firing = !!inp.firing;
-        if (inp.firing) fireWeaponForPlayer(p);
+        {
+          const _prevFiring = !!p._firing;
+          p._firing = !!inp.firing;
+          if (inp.firing) {
+            // Mirror the local press rising-edge so remote players also get
+            // the hold-vs-tap melee branch (tap = combo, hold = jab flurry).
+            if (!_prevFiring) p._rFreshPress = true;
+            fireWeaponForPlayer(p);
+          }
+        }
         // Tick down remote player timers (host-authoritative)
         if (p.invincible > 0) p.invincible -= 16.67;
         if (p.damageFlash > 0) p.damageFlash--;
