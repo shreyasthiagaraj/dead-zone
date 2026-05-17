@@ -16932,7 +16932,7 @@ const RIPPER_COMBO = [
     swingDelta: Math.PI * 0.75, swingFollowPrev: true },
   // 5. 270 deg SPIN — three-quarter revolution finisher, continues out of the
   //    previous strike's end angle.
-  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 250, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
+  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 150, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
     swingDelta: Math.PI * 1.5, swingFollowPrev: true, finisher: true },
 ];
 // Brief delay between one combo finishing and the next combo's first strike.
@@ -17335,6 +17335,33 @@ function _runComboStep(p, def, step, idx) {
     // Post-damage hooks: AoE synergy combos, lightning rod arcs, universal chain.
     _applyMeleeAttackPostHit(p, z, dmg);
     _meleeHitVFX(z, isCrit, mainCol, p.x, p.y);
+  }
+
+  // ---- BARRELS / PROPS / CHESTS in the swing arc ----
+  // The sword carves through the same destructibles bullets do (explosive
+  // barrels, props, chests). Skip the special interactive terminals.
+  for (let _bi = barrels.length - 1; _bi >= 0; _bi--) {
+    const _br = barrels[_bi];
+    if (!_br) continue;
+    if (_br._shopChest || _br._signalLab || _br._forge || _br._armory) continue;
+    const _bdx = _br.x - p.x, _bdy = _br.y - p.y;
+    const _bd = Math.hypot(_bdx, _bdy);
+    if (_bd > range + (_br.radius || 14)) continue;
+    const _bza = Math.atan2(_bdy, _bdx);
+    let _bda = _bza - a; while (_bda > Math.PI) _bda -= Math.PI*2; while (_bda < -Math.PI) _bda += Math.PI*2;
+    if (Math.abs(_bda) > halfCone) continue;
+    _br.hp--;
+    _br._hitFlash = 8;
+    if (_br.hp <= 0) {
+      explodeBarrel(_br, _bi);
+    } else {
+      playHitSound();
+      for (let _sp = 0; _sp < 5; _sp++) {
+        const _sa = Math.random()*Math.PI*2;
+        particles.push({ x: _br.x + Math.cos(_sa)*_br.radius, y: _br.y + Math.sin(_sa)*_br.radius,
+          vx: Math.cos(_sa)*3, vy: Math.sin(_sa)*3, life: 12, maxLife: 12, size: 2, color: '#ff0', type: 'spark' });
+      }
+    }
   }
 
   // ---- COMBO LABEL + SOUND ----
@@ -23956,7 +23983,7 @@ function update() {
     }
     // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
     // Also catches NaN hp zombies (invincibility bug from simultaneous damage sources)
-    for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<=0){
+    for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<1){
       score+=dz.score;kills++;if(gameMode==='survival'){survivalZombiesKilled++;}
       // Combo tracking — 2.5s window between kills extends the streak
       const _prevCombo = _comboCount;
@@ -28436,6 +28463,10 @@ function render() {
   }
   // Zombie bodies
   for(const z of zombies){
+    // Never render a dead/dying enemy (incl. non-host predicted-kill or a
+    // straggler stuck at fractional HP). Prevents the "empty health bar
+    // left behind where an enemy died" bug.
+    if (z.hp <= 0) continue;
     if (z.x < _zvL || z.x > _zvR || z.y < _zvT || z.y > _zvB) continue; // off-screen cull
     // Trench spawn-in: inward pinch streaks converging on the spawn point,
     // then a quick flash, with the body scaling up underneath.
@@ -28936,7 +28967,7 @@ function render() {
     ctx.globalAlpha=1;ctx.shadowColor=eyeC;ctx.shadowBlur=10;ctx.fillStyle=eyeC;
     ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
     ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
-    ctx.shadowBlur=0;ctx.restore();if(z.hp<z.maxHp&&z.hp>0){
+    ctx.shadowBlur=0;ctx.restore();if(z.hp<z.maxHp&&z.hp>=1){
       // Health bar proportional to maxHp — bigger enemies get wider bars
       const _isBoss = z.boss||z.type==='boss';
       const _hpRatio = Math.min(1, (z.maxHp || 100) / 500);
@@ -29323,12 +29354,8 @@ function render() {
       ctx.lineTo(_bEnd - 1,   0);
       ctx.stroke();
 
-      // ---- 7) Tip glow halo + bright tip dot ----
-      const _tipR = _ready ? 2.6 : 1.6;
-      ctx.fillStyle = _cls; ctx.globalAlpha = _bA * 0.55;
-      ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR + 2.5, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.globalAlpha = _bA;
-      ctx.beginPath(); ctx.arc(_bEnd, 0, _tipR, 0, Math.PI*2); ctx.fill();
+      // (Tip glow halo + bright tip dot removed — it made the blade read
+      // like a glowing baton. The sharp polygon point is the tip now.)
 
       // Ready-state tip drip: occasional spark
       if (_ready && Math.random() < 0.06) {
