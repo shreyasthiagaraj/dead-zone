@@ -17118,6 +17118,43 @@ function _runDashStrike(p, def, now) {
   }
 }
 
+// ---- MELEE APPROACH: forward movement on jab/lunge exists ONLY to close
+// the gap to an enemy that's just out of reach. If the nearest in-cone
+// enemy is already in range, pinned, or there's no enemy at all, the
+// attack does NOT move the player — this stops the player from gliding
+// into an enemy's body and eating contact damage. The closing velocity
+// is clamped to stop just at strike range, never inside the enemy.
+function _meleeApproachVel(p, a, range, cone, opts) {
+  opts = opts || {};
+  const _reachMult = opts.reachMult || 1.0;
+  const _speedMult = opts.speedMult || 1.0;
+  const _maxStep = opts.maxStep || Infinity;
+  const _halfC = cone / 2;
+  const _checkR = range * 1.55 * _reachMult;
+  let _bestZ = null, _bestD = Infinity;
+  for (const z of zombies) {
+    if (!z || z.hp <= 0) continue;
+    const dx = z.x - p.x, dy = z.y - p.y;
+    const d = Math.hypot(dx, dy);
+    const _zr = z.radius || 14;
+    if (d <= range + _zr) continue;       // already in range — don't move
+    if (d > _checkR + _zr) continue;      // too far — don't chase
+    const za = Math.atan2(dy, dx);
+    let da = za - a; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
+    if (Math.abs(da) > _halfC) continue;  // outside the swing cone
+    if (d < _bestD) { _bestD = d; _bestZ = z; }
+  }
+  if (!_bestZ) return null;
+  const dx = _bestZ.x - p.x, dy = _bestZ.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const _zr = _bestZ.radius || 14;
+  // Stop just at the strike edge — well outside the enemy's body.
+  const _gap = d - (range * 0.9 + _zr);
+  if (_gap <= 3) return null;
+  const _v = Math.min(_maxStep, _gap * 0.42 * _speedMult);
+  return { vx: (dx / d) * _v, vy: (dy / d) * _v };
+}
+
 // ---- JAB FLURRY: the held-attack alternate. After the opening LUNGE /
 // dash-strike, keeping the button down runs rapid forward thrusts that
 // alternate left/right wind-up. Lighter per-hit than the combo but
@@ -17127,7 +17164,7 @@ const _JAB_COOLDOWN = 120; // ms between jabs — rapid but readable
 const _JAB_STEP = {
   kind: 'jab',
   range: 135, cone: Math.PI * 26 / 180,
-  damage: 6, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
+  damage: 15, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
   color: '#4ff', tone: 980, dir: 0, label: '',
 };
 function _runJabFlurry(p, def) {
@@ -17152,11 +17189,12 @@ function _runJabFlurry(p, def) {
   p._rSwingStartAngle = _side * 0.45;
   p._rSwingEndAngle = 0;
   p._rPrevBladeWorldAng = undefined;
-  // Short forward + lateral hop so the flurry reads as advancing jabs.
+  // Inch forward ONLY to reach an enemy that's just out of range. No
+  // free forward drift — keeps the player from walking into the enemy.
   if (p === getLocalPlayer()) {
-    const a = p.angle;
-    p._rLungeVx = Math.cos(a) * 3.0 + Math.cos(a + _side * Math.PI / 2) * 1.4;
-    p._rLungeVy = Math.sin(a) * 3.0 + Math.sin(a + _side * Math.PI / 2) * 1.4;
+    const _jr = _JAB_STEP.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
+    const _av = _meleeApproachVel(p, p.angle, _jr, _JAB_STEP.cone, { maxStep: 6 });
+    if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
   }
   _runComboStep(p, def, _JAB_STEP, -2);
 }
@@ -17174,41 +17212,17 @@ function _runComboStep(p, def, step, idx) {
   if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#4ff'); }
   const isLocal = (p === getLocalPlayer());
 
-  // ---- AUTO-LUNGE on first strike of a fresh combo ----
-  // If the nearest forward enemy is just outside reach (<= 1.55x range), apply
-  // a smoothly-decaying velocity so the player glides into striking distance
-  // instead of whiffing. Runs only on idx === 0 for the local player.
+  // ---- AUTO-LUNGE on the opening strike ----
+  // The opening LUNGE only glides the player forward if there's an enemy
+  // just out of reach to close on. No enemy / already in range → the
+  // player stays put (no walking into the enemy). LUNGE card extends
+  // both the chase range and the closing speed.
   if (idx === 0 && isLocal) {
-    const _checkR = range * 1.55;
-    const _halfC = cone / 2;
-    let _bestZ = null, _bestD = Infinity;
-    for (const z of zombies) {
-      if (!z || z.hp <= 0) continue;
-      const dx = z.x - p.x, dy = z.y - p.y;
-      const d = Math.hypot(dx, dy);
-      const _zr = z.radius || 14;
-      if (d <= range + _zr) continue;       // already in range, no lunge needed
-      if (d > _checkR + _zr) continue;      // too far — don't lunge
-      const za = Math.atan2(dy, dx);
-      let da = za - a; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
-      if (Math.abs(da) > _halfC) continue;  // outside cone
-      if (d < _bestD) { _bestD = d; _bestZ = z; }
-    }
-    if (_bestZ) {
-      const dx = _bestZ.x - p.x, dy = _bestZ.y - p.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const _zr = _bestZ.radius || 14;
-      // Distance we need to close: gap to "just in range"
-      const _gap = (d - (range * 0.92 + _zr)); // a bit past edge so the hit lands
-      if (_gap > 0) {
-        // Velocity tuned so 0.72 decay settles after ~6 frames
-        // CARD: LUNGE — +60% lunge distance
-        const _lungeMult = _rmCombo.lunge ? 1.6 : 1.0;
-        const _initialV = _gap * 0.42 * _lungeMult;
-        p._rLungeVx = (dx / d) * _initialV;
-        p._rLungeVy = (dy / d) * _initialV;
-      }
-    }
+    const _av = _meleeApproachVel(p, a, range, cone, {
+      reachMult: _rmCombo.lunge ? 1.6 : 1.0,
+      speedMult: _rmCombo.lunge ? 1.6 : 1.0,
+    });
+    if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
   }
 
   // ---- ORIGIN flash (small — strikes are faster + lighter now) ----
@@ -17234,32 +17248,43 @@ function _runComboStep(p, def, step, idx) {
   } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
     // ---- FORWARD THRUST: clear, flashy piercing strike. Forward energy
     // beam, big tip impact, forward-flying sparks, kick-off smoke. The
-    // forwardlunge variant gets a much bigger pop than a plain jab.
+    // forwardlunge is the biggest; the held JAB is its own forceful tier
+    // (not the weak fallback) so the hold attack reads as a real punch.
     const _tx = p.x + c * range, _ty = p.y + s * range;
     const _fl = (step.kind === 'forwardlunge');
-    // Stacked forward energy beam (5 layers on forwardlunge)
-    if (_fl) {
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 12, color: mainCol, type: 'lightning', tx: _tx, ty: _ty, _priority: true });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 8,  color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 4,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: 2,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
-      // Two side beams to give the strike's "spear" silhouette
-      const _sideOff = 6;
-      particles.push({ x: p.x + Math.cos(a+Math.PI/2)*_sideOff, y: p.y + Math.sin(a+Math.PI/2)*_sideOff,
-        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
-        tx: _tx + Math.cos(a+Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a+Math.PI/2)*_sideOff*0.4 });
-      particles.push({ x: p.x + Math.cos(a-Math.PI/2)*_sideOff, y: p.y + Math.sin(a-Math.PI/2)*_sideOff,
-        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
-        tx: _tx + Math.cos(a-Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a-Math.PI/2)*_sideOff*0.4 });
+    const _jab = (step.kind === 'jab');
+    // Stacked forward energy beam — full on forwardlunge, a punchy
+    // 3-layer bolt on every jab so the flurry stays visually loud.
+    if (_fl || _jab) {
+      const _bw = _fl ? 1 : 0.72; // jab beam slightly thinner
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 12*_bw, color: mainCol, type: 'lightning', tx: _tx, ty: _ty, _priority: _fl });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 8*_bw,  color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 4*_bw,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
+      if (_fl) {
+        particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+        // Two side beams to give the strike's "spear" silhouette
+        const _sideOff = 6;
+        particles.push({ x: p.x + Math.cos(a+Math.PI/2)*_sideOff, y: p.y + Math.sin(a+Math.PI/2)*_sideOff,
+          vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+          tx: _tx + Math.cos(a+Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a+Math.PI/2)*_sideOff*0.4 });
+        particles.push({ x: p.x + Math.cos(a-Math.PI/2)*_sideOff, y: p.y + Math.sin(a-Math.PI/2)*_sideOff,
+          vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+          tx: _tx + Math.cos(a-Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a-Math.PI/2)*_sideOff*0.4 });
+      }
     }
-    // Tip impact — bigger + brighter on forwardlunge
-    const _wR1 = _fl ? 60 : 20;
-    const _wR2 = _fl ? 38 : 14;
-    const _wR3 = _fl ? 22 : 0;
+    // Tip impact — three tiers: forwardlunge > jab > plain.
+    const _wR1 = _fl ? 60 : (_jab ? 42 : 20);
+    const _wR2 = _fl ? 38 : (_jab ? 28 : 14);
+    const _wR3 = _fl ? 22 : (_jab ? 14 : 0);
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 12 : 9, maxLife: _fl ? 12 : 9, size: _wR1, color: '#fff', type: 'wakering' });
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 10 : 7, maxLife: _fl ? 10 : 7, size: _wR2, color: mainCol, type: 'wakering' });
-    if (_fl) {
+    if (_fl || _jab) {
       particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: _wR3, color: '#fff', type: 'spark' });
+      // Perpendicular cleave streak at the tip — sells the impact.
+      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 18 : 13, maxLife: _fl ? 18 : 13,
+        size: _fl ? 38 : 26, color: mainCol, type: 'slash_mark', _angle: a + Math.PI/2, _priority: _fl });
+    }
+    if (_fl) {
       // Bright tip flash circle + 8 radial spike bolts for "punched through" feel
       for (let _spi = 0; _spi < 8; _spi++) {
         const _spA = (_spi/8)*Math.PI*2 + Math.random()*0.2;
@@ -17271,10 +17296,11 @@ function _runComboStep(p, def, step, idx) {
         });
       }
     }
-    // Spark fan at the tip
-    const _sparkN = _fl ? 26 : 8;
+    // Spark fan at the tip — three tiers.
+    const _sparkN = _fl ? 26 : (_jab ? 15 : 8);
+    const _sparkV = _fl ? 6 : (_jab ? 4.5 : 3);
     for (let i = 0; i < _sparkN; i++) {
-      const _ta = Math.random()*Math.PI*2, _ts = 2.5 + Math.random()*(_fl ? 6 : 3);
+      const _ta = Math.random()*Math.PI*2, _ts = 2.5 + Math.random()*_sparkV;
       particles.push({
         x: _tx, y: _ty, vx: Math.cos(_ta)*_ts, vy: Math.sin(_ta)*_ts,
         life: 9 + Math.floor(Math.random()*5), maxLife: 14,
@@ -17282,13 +17308,15 @@ function _runComboStep(p, def, step, idx) {
         color: Math.random()>0.5 ? '#fff' : mainCol, type: 'spark'
       });
     }
-    // Forward-flying sparks along the strike line + kick-off plume
-    if (_fl) {
-      for (let i = 0; i < 18; i++) {
+    // Forward-flying sparks along the strike line — forwardlunge gets a
+    // big plume; jab gets a tighter, lighter streak.
+    if (_fl || _jab) {
+      const _ffN = _fl ? 18 : 9;
+      for (let i = 0; i < _ffN; i++) {
         const _f = 0.25 + Math.random() * 0.75;
-        const _spread = (Math.random()-0.5) * 0.36;
+        const _spread = (Math.random()-0.5) * (_fl ? 0.36 : 0.26);
         const _sa = a + _spread;
-        const _sp = 4 + Math.random()*6;
+        const _sp = (_fl ? 4 : 5) + Math.random()*6;
         particles.push({
           x: p.x + Math.cos(_sa)*(_f*range),
           y: p.y + Math.sin(_sa)*(_f*range),
@@ -17297,6 +17325,8 @@ function _runComboStep(p, def, step, idx) {
           color: Math.random()>0.4 ? '#fff' : mainCol, type: 'spark'
         });
       }
+    }
+    if (_fl) {
       // Kick-off smoke plume behind the player
       for (let i = 0; i < 12; i++) {
         const _ka = a + Math.PI + (Math.random()-0.5)*1.6;
@@ -17309,13 +17339,10 @@ function _runComboStep(p, def, step, idx) {
         });
       }
     }
-    // FORWARD LUNGE: smooth-decay glide via the lunge tick.
-    if (isLocal && step.lungeDistance) {
-      p._rLungeVx = c * (step.lungeDistance * 0.42);
-      p._rLungeVy = s * (step.lungeDistance * 0.42);
-      if (_fl) triggerCameraZoom(1.025, 130);
-    }
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : 5);
+    // No free forward glide here — approach movement is decided up front
+    // by _meleeApproachVel (only closes a gap to an out-of-reach enemy).
+    if (isLocal && _fl) triggerCameraZoom(1.025, 130);
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : (_jab ? 7 : 5));
   } else if (step.kind === 'lungestrike') {
     // ---- FORWARD CONE: Meta-Knight-style sharp-tip thrust ----
     // Visualized as a single arrowhead pointing forward (sharp at the tip,
@@ -17395,11 +17422,12 @@ function _runComboStep(p, def, step, idx) {
         size: 2.5 + Math.random()*2.5, color: '#fff', type: 'spark'
       });
     }
-    // Trigger the lunge motion (smooth-decay velocity in the per-frame tick)
+    // Forward motion ONLY to close a gap to an out-of-reach enemy — the
+    // dash-strike never glides the player into an enemy's body. A
+    // dash-strike is a gap-closer by nature, so it chases a bit farther.
     if (isLocal) {
-      const _lungeAmt = step.lungeDistance || 55;
-      p._rLungeVx = c * (_lungeAmt * 0.42);
-      p._rLungeVy = s * (_lungeAmt * 0.42);
+      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.5, speedMult: 1.35 });
+      if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
       screenShake.intensity = Math.max(screenShake.intensity, 10);
       triggerCameraZoom(1.03, 150);
     }
