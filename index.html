@@ -16999,11 +16999,12 @@ function _swingMelee(p, def) {
     // flurry, tapping continues the standard combo from the slash.
     p._rOpened = true;
     p._rFreshPress = false;
+    p._rJabCount = 0; // fresh flurry budget
     return;
   }
   // Combo state
   if (p._rComboIdx === undefined) p._rComboIdx = 0;
-  if (now > (p._rComboWindow || 0)) { p._rComboIdx = 0; p._rOpened = false; }
+  if (now > (p._rComboWindow || 0)) { p._rComboIdx = 0; p._rOpened = false; p._rJabCount = 0; }
   const idx = p._rComboIdx;
   // ---- HOLD-vs-TAP BRANCH ----
   // The opening LUNGE (idx 0) or a dash-strike starts the combo. After
@@ -17013,12 +17014,24 @@ function _swingMelee(p, def) {
   const _freshPress = !!p._rFreshPress;
   if (p._rOpened && !_freshPress) {
     if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN) return;
+    // The flurry is capped at 6 jabs. Once spent, take a short beat and
+    // close the combo — the next press re-opens with a fresh LUNGE (or a
+    // tap runs the standard combo).
+    if ((p._rJabCount || 0) >= 6) {
+      p._rNoSwingUntil = now + RIPPER_INTER_COMBO_COOLDOWN;
+      p._rOpened = false;
+      p._rJabCount = 0;
+      p._rComboIdx = 0;
+      return;
+    }
+    p._rJabCount = (p._rJabCount || 0) + 1;
     _runJabFlurry(p, def);
     // Keep the combo alive so idx doesn't reset back to LUNGE mid-flurry.
     p._rComboWindow = now + RIPPER_COMBO_WINDOW;
     return;
   }
   p._rFreshPress = false;
+  p._rJabCount = 0; // a combo step / opening resets the flurry budget
   const step = RIPPER_COMBO[idx];
   // Per-step cooldown gate
   if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown) return;
@@ -17253,36 +17266,36 @@ function _runComboStep(p, def, step, idx) {
     const _tx = p.x + c * range, _ty = p.y + s * range;
     const _fl = (step.kind === 'forwardlunge');
     const _jab = (step.kind === 'jab');
-    // Stacked forward energy beam — full on forwardlunge, a punchy
-    // 3-layer bolt on every jab so the flurry stays visually loud.
-    if (_fl || _jab) {
-      const _bw = _fl ? 1 : 0.72; // jab beam slightly thinner
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 12*_bw, color: mainCol, type: 'lightning', tx: _tx, ty: _ty, _priority: _fl });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 8*_bw,  color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
-      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 4*_bw,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
-      if (_fl) {
-        particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
-        // Two side beams to give the strike's "spear" silhouette
-        const _sideOff = 6;
-        particles.push({ x: p.x + Math.cos(a+Math.PI/2)*_sideOff, y: p.y + Math.sin(a+Math.PI/2)*_sideOff,
-          vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
-          tx: _tx + Math.cos(a+Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a+Math.PI/2)*_sideOff*0.4 });
-        particles.push({ x: p.x + Math.cos(a-Math.PI/2)*_sideOff, y: p.y + Math.sin(a-Math.PI/2)*_sideOff,
-          vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
-          tx: _tx + Math.cos(a-Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a-Math.PI/2)*_sideOff*0.4 });
-      }
+    // Forward energy beam — full stacked bolt on forwardlunge only. The
+    // jab gets just one faint short thrust line so a 6-hit flurry isn't
+    // a wall of beams.
+    if (_fl) {
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 12, color: mainCol, type: 'lightning', tx: _tx, ty: _ty, _priority: true });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 8,  color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 4,  color: '#fff',  type: 'lightning', tx: _tx, ty: _ty });
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2, color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+      // Two side beams to give the strike's "spear" silhouette
+      const _sideOff = 6;
+      particles.push({ x: p.x + Math.cos(a+Math.PI/2)*_sideOff, y: p.y + Math.sin(a+Math.PI/2)*_sideOff,
+        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+        tx: _tx + Math.cos(a+Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a+Math.PI/2)*_sideOff*0.4 });
+      particles.push({ x: p.x + Math.cos(a-Math.PI/2)*_sideOff, y: p.y + Math.sin(a-Math.PI/2)*_sideOff,
+        vx: 0, vy: 0, life: 8, maxLife: 8, size: 3, color: mainCol, type: 'lightning',
+        tx: _tx + Math.cos(a-Math.PI/2)*_sideOff*0.4, ty: _ty + Math.sin(a-Math.PI/2)*_sideOff*0.4 });
+    } else if (_jab) {
+      particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 3.5, color: mainCol, type: 'lightning', tx: _tx, ty: _ty });
     }
     // Tip impact — three tiers: forwardlunge > jab > plain.
-    const _wR1 = _fl ? 60 : (_jab ? 42 : 20);
-    const _wR2 = _fl ? 38 : (_jab ? 28 : 14);
-    const _wR3 = _fl ? 22 : (_jab ? 14 : 0);
+    const _wR1 = _fl ? 60 : (_jab ? 30 : 20);
+    const _wR2 = _fl ? 38 : (_jab ? 19 : 14);
+    const _wR3 = _fl ? 22 : (_jab ? 9 : 0);
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 12 : 9, maxLife: _fl ? 12 : 9, size: _wR1, color: '#fff', type: 'wakering' });
     particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 10 : 7, maxLife: _fl ? 10 : 7, size: _wR2, color: mainCol, type: 'wakering' });
     if (_fl || _jab) {
       particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: 6, maxLife: 6, size: _wR3, color: '#fff', type: 'spark' });
       // Perpendicular cleave streak at the tip — sells the impact.
-      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 18 : 13, maxLife: _fl ? 18 : 13,
-        size: _fl ? 38 : 26, color: mainCol, type: 'slash_mark', _angle: a + Math.PI/2, _priority: _fl });
+      particles.push({ x: _tx, y: _ty, vx: 0, vy: 0, life: _fl ? 18 : 11, maxLife: _fl ? 18 : 11,
+        size: _fl ? 38 : 18, color: mainCol, type: 'slash_mark', _angle: a + Math.PI/2, _priority: _fl });
     }
     if (_fl) {
       // Bright tip flash circle + 8 radial spike bolts for "punched through" feel
@@ -17297,8 +17310,8 @@ function _runComboStep(p, def, step, idx) {
       }
     }
     // Spark fan at the tip — three tiers.
-    const _sparkN = _fl ? 26 : (_jab ? 15 : 8);
-    const _sparkV = _fl ? 6 : (_jab ? 4.5 : 3);
+    const _sparkN = _fl ? 26 : (_jab ? 10 : 8);
+    const _sparkV = _fl ? 6 : (_jab ? 3.5 : 3);
     for (let i = 0; i < _sparkN; i++) {
       const _ta = Math.random()*Math.PI*2, _ts = 2.5 + Math.random()*_sparkV;
       particles.push({
@@ -17311,7 +17324,7 @@ function _runComboStep(p, def, step, idx) {
     // Forward-flying sparks along the strike line — forwardlunge gets a
     // big plume; jab gets a tighter, lighter streak.
     if (_fl || _jab) {
-      const _ffN = _fl ? 18 : 9;
+      const _ffN = _fl ? 18 : 5;
       for (let i = 0; i < _ffN; i++) {
         const _f = 0.25 + Math.random() * 0.75;
         const _spread = (Math.random()-0.5) * (_fl ? 0.36 : 0.26);
@@ -17342,7 +17355,7 @@ function _runComboStep(p, def, step, idx) {
     // No free forward glide here — approach movement is decided up front
     // by _meleeApproachVel (only closes a gap to an out-of-reach enemy).
     if (isLocal && _fl) triggerCameraZoom(1.025, 130);
-    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : (_jab ? 7 : 5));
+    if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : (_jab ? 5.5 : 5));
   } else if (step.kind === 'lungestrike') {
     // ---- FORWARD CONE: Meta-Knight-style sharp-tip thrust ----
     // Visualized as a single arrowhead pointing forward (sharp at the tip,
