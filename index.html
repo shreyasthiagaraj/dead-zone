@@ -16101,6 +16101,7 @@ let _dischargeActive = false;
 let _dischargeWave = null;
 let _dischargeCharging = false;
 let _dischargeCharge = 0;
+let _dischargeMaxFlashed = false; // max-charge ready cue fired once per charge
 
 function activateDischarge() {
   const lp = getLocalPlayer();
@@ -16151,6 +16152,26 @@ function updateDischargeCharge() {
       life: 14, maxLife: 14, size: 3+Math.random()*2, color: Math.random()>0.5?bColor:'#fff', type: 'spark' });
   }
   if (_dischargeCharge % 20 === 0) playSound(200 + _dischargeCharge * 6, 0.03, 'sine', 0.04);
+  // ---- MAX-CHARGE READY CUE ----
+  // One bright ring pop the instant it tops off, then a steady pulse so the
+  // player clearly knows it's ready to release.
+  if (chargePct >= 1) {
+    if (!_dischargeMaxFlashed) {
+      _dischargeMaxFlashed = true;
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 70, color: '#fff', type: 'wakering' });
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 52, color: bColor, type: 'wakering' });
+      for (let _ri = 0; _ri < 16; _ri++) { const _ra = (_ri/16)*Math.PI*2; particles.push({ x: lp.x + Math.cos(_ra)*30, y: lp.y + Math.sin(_ra)*30, vx: Math.cos(_ra)*4, vy: Math.sin(_ra)*4, life: 12, maxLife: 12, size: 3, color: '#fff', type: 'spark' }); }
+      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 18, 'RELEASE!', '#fff');
+      playSound(1400, 0.06, 'sine', 0.1);
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+    }
+    // Steady "ready" pulse ring every 14 frames while held at max
+    if (gameTime % 14 === 0) {
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 44, color: bColor, type: 'wakering' });
+    }
+  } else {
+    _dischargeMaxFlashed = false;
+  }
 }
 
 function _fireDischarge(lp) {
@@ -17870,6 +17891,7 @@ let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charge
 
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
+let _deadshotMaxFlashed = false; // max-charge ready cue fired once per charge
 
 // Deadshot: hold button to charge + aim, release to fire. Tap = quick shot.
 function activateDeadshot() {
@@ -17936,11 +17958,26 @@ function updateDeadshot() {
         vx: 0, vy: 0, life: 4, maxLife: 4, size: 1 + chargePct, color: bColor, type: 'spark' });
     }
   }
-  // Full-charge ready pulse — louder and more frequent now that 1.0 is reached fast
-  if (_deadshotCharge >= DEADSHOT_MAX_CHARGE && gameTime % 18 === 0) {
-    particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 22, color: '#fff', type: 'wakering' });
-    particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 30, color: bColor, type: 'wakering' });
-    playSound(1000, 0.05, 'sine', 0.03);
+  // ---- MAX-CHARGE READY CUE ----
+  if (_deadshotCharge >= DEADSHOT_MAX_CHARGE) {
+    if (!_deadshotMaxFlashed) {
+      _deadshotMaxFlashed = true;
+      // One bright pop at the muzzle the instant it tops off
+      particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 56, color: '#fff', type: 'wakering' });
+      particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 12, maxLife: 12, size: 40, color: bColor, type: 'wakering' });
+      for (let _ri = 0; _ri < 14; _ri++) { const _ra = (_ri/14)*Math.PI*2; particles.push({ x: mx, y: my, vx: Math.cos(_ra)*5, vy: Math.sin(_ra)*5, life: 11, maxLife: 11, size: 2.5, color: '#fff', type: 'spark' }); }
+      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 18, 'RELEASE!', '#fff');
+      playSound(1500, 0.06, 'sine', 0.1);
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+    }
+    // Steady ready pulse at the muzzle while held at max
+    if (gameTime % 14 === 0) {
+      particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 12, maxLife: 12, size: 26, color: '#fff', type: 'wakering' });
+      particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 34, color: bColor, type: 'wakering' });
+      playSound(1000, 0.05, 'sine', 0.03);
+    }
+  } else {
+    _deadshotMaxFlashed = false;
   }
   if (_deadshotCharge % 15 === 0) playSound(300 + _deadshotCharge * 8, 0.04, 'sine', 0.05);
 }
@@ -29353,6 +29390,91 @@ function render() {
       ctx.lineTo(_bMid,       (_topMid + _botMid) * 0.5);
       ctx.lineTo(_bEnd - 1,   0);
       ctx.stroke();
+
+      // ---- 6b) CLASS BLADE AURA — each element transforms the blade so a
+      // thermal sword FEELS thermal, etc. Drawn in blade-local space.
+      if (_domClsForBody) {
+        const _nowMs = performance.now();
+        const _bladeLen = _bEnd - _bStart;
+        if (_domClsForBody === 'fire') {
+          // Molten core gradient + flickering flame licks along the edge
+          const _fg = ctx.createLinearGradient(_bStart, 0, _bEnd, 0);
+          _fg.addColorStop(0, 'rgba(255,80,0,' + (_bA*0.55).toFixed(2) + ')');
+          _fg.addColorStop(0.5, 'rgba(255,150,0,' + (_bA*0.4).toFixed(2) + ')');
+          _fg.addColorStop(1, 'rgba(255,230,120,' + (_bA*0.25).toFixed(2) + ')');
+          ctx.fillStyle = _fg;
+          ctx.beginPath();
+          ctx.moveTo(_bStart, _topRoot); ctx.lineTo(_bMid, _topMid); ctx.lineTo(_bEnd, 0);
+          ctx.lineTo(_bMid, _botMid); ctx.lineTo(_bStart, _botRoot); ctx.closePath(); ctx.fill();
+          // 4 flame licks rising off the cutting edge
+          ctx.fillStyle = '#fa0'; ctx.globalAlpha = _bA * 0.8;
+          for (let _fi = 0; _fi < 4; _fi++) {
+            const _ft = 0.2 + _fi * 0.22;
+            const _fx = _bStart + _bladeLen * _ft;
+            const _flick = Math.sin(_nowMs*0.02 + _fi*1.7) * 2;
+            const _fey = _topRoot - 1 + (_topMid - _topRoot) * _ft;
+            ctx.beginPath();
+            ctx.moveTo(_fx - 2.5, _fey);
+            ctx.lineTo(_fx + _flick, _fey - 6 - Math.abs(_flick));
+            ctx.lineTo(_fx + 2.5, _fey);
+            ctx.closePath(); ctx.fill();
+          }
+        } else if (_domClsForBody === 'ice') {
+          // Crystalline chevrons + cold sheen
+          ctx.strokeStyle = '#cff'; ctx.lineWidth = 1; ctx.globalAlpha = _bA * 0.8;
+          for (let _ii = 0; _ii < 4; _ii++) {
+            const _it = 0.18 + _ii * 0.22;
+            const _ix = _bStart + _bladeLen * _it;
+            const _iw = 3 - _ii * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(_ix - _iw, _topMid*0.5 - 2);
+            ctx.lineTo(_ix, 0);
+            ctx.lineTo(_ix - _iw, _botMid*0.5 + 2);
+            ctx.stroke();
+          }
+          // Frost sheen
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.6; ctx.globalAlpha = _bA * 0.5;
+          ctx.beginPath(); ctx.moveTo(_bStart, _topRoot*0.7); ctx.lineTo(_bEnd, 0); ctx.stroke();
+        } else if (_domClsForBody === 'chain') {
+          // Jagged lightning bolt running the blade centerline (animated)
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4; ctx.globalAlpha = _bA;
+          ctx.beginPath();
+          const _segs = 6;
+          for (let _ci = 0; _ci <= _segs; _ci++) {
+            const _ct = _ci / _segs;
+            const _cx = _bStart + _bladeLen * _ct;
+            const _jit = (_ci === 0 || _ci === _segs) ? 0 : (Math.sin(_nowMs*0.04 + _ci*2.3) * 3.5);
+            if (_ci === 0) ctx.moveTo(_cx, 0); else ctx.lineTo(_cx, _jit);
+          }
+          ctx.stroke();
+          // dim cyan after-glow of the bolt
+          ctx.strokeStyle = '#4ff'; ctx.lineWidth = 3; ctx.globalAlpha = _bA * 0.3;
+          ctx.stroke();
+        } else if (_domClsForBody === 'wind') {
+          // Air-distortion: 2 thin parallel arcs flanking the blade + shimmer
+          ctx.strokeStyle = '#cef'; ctx.lineWidth = 0.8; ctx.globalAlpha = _bA * 0.5;
+          for (const _side of [-1, 1]) {
+            const _off = 3 * _side + Math.sin(_nowMs*0.012)*1.2;
+            ctx.beginPath();
+            ctx.moveTo(_bStart, _off);
+            ctx.quadraticCurveTo(_bMid, _off*0.5, _bEnd, 0);
+            ctx.stroke();
+          }
+        } else if (_domClsForBody === 'corrupt') {
+          // Glitch displacement: 3 horizontally-offset core slices that jitter
+          for (let _gi = 0; _gi < 3; _gi++) {
+            const _goff = (Math.random() - 0.5) * 4;
+            const _gy = (_gi - 1) * 1.6;
+            ctx.strokeStyle = _gi === 1 ? '#f0f' : '#a4f';
+            ctx.lineWidth = 1; ctx.globalAlpha = _bA * (0.4 + Math.random()*0.4);
+            ctx.beginPath();
+            ctx.moveTo(_bStart + _goff, _gy);
+            ctx.lineTo(_bEnd + _goff, _gy*0.3);
+            ctx.stroke();
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // (Tip glow halo + bright tip dot removed — it made the blade read
       // like a glowing baton. The sharp polygon point is the tip now.)
