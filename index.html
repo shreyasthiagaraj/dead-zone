@@ -16111,7 +16111,7 @@ function activateNova() {
 const DISCHARGE_COOLDOWN = 120;  // 2 seconds
 const DISCHARGE_RANGE_MIN = 70;  // minimum wave reach (tap)
 const DISCHARGE_RANGE_MAX = 180; // maximum wave reach (full charge) — 360° area is much bigger so radius stays compact
-const DISCHARGE_CHARGE_TIME = 90; // frames to full charge (~1.5s)
+const DISCHARGE_CHARGE_TIME = 54; // frames to full charge (~0.9s)
 const DISCHARGE_ANGLE = Math.PI * 2; // 360° — full circle nova
 const DISCHARGE_TAP_FLOOR = 2 / 3; // tap fires as if held ~1s — base release is meaningful
 const DISCHARGE_LINGER_FRAMES = 10; // frames the hairline rim holds at max before dissolving
@@ -16176,16 +16176,41 @@ function updateDischargeCharge() {
   if (chargePct >= 1) {
     if (!_dischargeMaxFlashed) {
       _dischargeMaxFlashed = true;
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 70, color: '#fff', type: 'wakering' });
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 52, color: bColor, type: 'wakering' });
-      for (let _ri = 0; _ri < 16; _ri++) { const _ra = (_ri/16)*Math.PI*2; particles.push({ x: lp.x + Math.cos(_ra)*30, y: lp.y + Math.sin(_ra)*30, vx: Math.cos(_ra)*4, vy: Math.sin(_ra)*4, life: 12, maxLife: 12, size: 3, color: '#fff', type: 'spark' }); }
-      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 18, 'RELEASE!', '#fff');
-      playSound(1400, 0.06, 'sine', 0.1);
-      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      // Big unmistakable "MAXED" detonation cue.
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: 108, color: '#fff', type: 'wakering', _priority: true });
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: 84, color: bColor, type: 'wakering', _priority: true });
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 13, maxLife: 13, size: 58, color: '#fff', type: 'wakering' });
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: 30, color: '#fff', type: 'spark' });
+      for (let _ri = 0; _ri < 28; _ri++) {
+        const _ra = (_ri/28)*Math.PI*2;
+        const _rs = 5 + (_ri % 2 ? 3 : 0);
+        particles.push({ x: lp.x + Math.cos(_ra)*26, y: lp.y + Math.sin(_ra)*26,
+          vx: Math.cos(_ra)*_rs, vy: Math.sin(_ra)*_rs,
+          life: 14, maxLife: 14, size: 3, color: _ri%2 ? bColor : '#fff', type: 'spark' });
+      }
+      // Cross-flash bolts for a "fully armed" snap.
+      for (let _ci = 0; _ci < 4; _ci++) {
+        const _ca = (_ci/4)*Math.PI*2 + Math.PI/4;
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 2,
+          color: '#fff', type: 'lightning',
+          tx: lp.x + Math.cos(_ca)*70, ty: lp.y + Math.sin(_ca)*70 });
+      }
+      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 18, 'MAX CHARGE', bColor);
+      playSound(1400, 0.07, 'sine', 0.11);
+      playSound(900, 0.10, 'square', 0.07);
+      screenShake.intensity = Math.max(screenShake.intensity, 7);
+      triggerGlitchSurge(0.25, 10);
     }
-    // Steady "ready" pulse ring every 14 frames while held at max
-    if (gameTime % 14 === 0) {
-      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 44, color: bColor, type: 'wakering' });
+    // Steady "ARMED" pulse — twin rings + orbiting sparks so it's
+    // obvious the wave is fully loaded and waiting on release.
+    if (gameTime % 12 === 0) {
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 13, maxLife: 13, size: 52, color: bColor, type: 'wakering' });
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: 38, color: '#fff', type: 'wakering' });
+      for (let _pi = 0; _pi < 4; _pi++) {
+        const _pa = (gameTime*0.06) + (_pi/4)*Math.PI*2;
+        particles.push({ x: lp.x + Math.cos(_pa)*36, y: lp.y + Math.sin(_pa)*36,
+          vx: 0, vy: 0, life: 8, maxLife: 8, size: 2.5, color: bColor, type: 'spark' });
+      }
     }
   } else {
     _dischargeMaxFlashed = false;
@@ -16466,9 +16491,11 @@ function updateDischarge() {
       const pushDir = d > 0.1 ? 1 : 0;
       const pushX = pushDir ? (dx/d)*28 : Math.cos(w.angle)*28;
       const pushY = pushDir ? (dy/d)*28 : Math.sin(w.angle)*28;
-      // Damage ramps with charge: 30 base → 45 at full (+50% on full charge).
+      // Damage ramps with charge (30 base → 45 at full), then a discrete
+      // +40% MAX-CHARGE payoff for topping the bar all the way off.
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
-      const baseDmg = Math.floor(30 * _dmgMult * _chargeDmgMult);
+      const _maxChargeBonus = (w.chargePct || 0) >= 0.95 ? 1.4 : 1;
+      const baseDmg = Math.floor(30 * _dmgMult * _chargeDmgMult * _maxChargeBonus);
       // Silent — wave has its own per-hit ring + sparks below, and big wave
       // VFX is already loud. Skipping the 50-particle impact storm prevents
       // FPS drops when the wave sweeps a cluster.
