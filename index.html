@@ -17047,10 +17047,9 @@ function updatePayload() {
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
 const RIPPER_COMBO = [
-  // 1. FORWARD LUNGE — clear flashy piercing strike
-  { kind:'forwardlunge', range: 195, cone: Math.PI * 32/180, damage: 16, knockback: 60, stagger: 40, cooldown: 110, color:'#4ff', tone: 920, dir:  0, label:'LUNGE',     lungeDistance: 48 },
-  // 2. SLASH — quick light L->R cut, flows out of the lunge
-  { kind:'arcswipe',     range: 100, cone: Math.PI * 0.7,    damage: 10, knockback: 35, stagger: 26, cooldown:  95, color:'#4ff', tone: 820, dir:  1, label:'SLASH',
+  // 1. SLASH — quick light L->R cut opens the combo (no initial lunge;
+  //    the dash-strike is the only way to start with a forward thrust).
+  { kind:'arcswipe',     range: 100, cone: Math.PI * 0.7,    damage: 12, knockback: 35, stagger: 26, cooldown:  95, color:'#4ff', tone: 820, dir:  1, label:'SLASH',
     swingDelta: Math.PI * 0.7,  swingFollowPrev: true },
   // 3. 180 deg ARC SWIPE — the big half-circle middle of the combo
   { kind:'arcswipe',     range: 120, cone: Math.PI,          damage: 18, knockback: 55, stagger: 42, cooldown: 125, color:'#4ff', tone: 720, dir: -1, label:'ARC',
@@ -17212,14 +17211,11 @@ function _runDashStrike(p, def, now) {
   p._rSwingFirstBig = false;
   p._rSwingRange = _DASH_STRIKE_STEP.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
   _runComboStep(p, def, _DASH_STRIKE_STEP, -1);
-  // The dash-strike substitutes for the combo's opening LUNGE when fired
-  // at the start of a fresh combo. Skip past strike 0 so the player doesn't
-  // lunge twice in a row. If a combo is already mid-chain (idx > 0), leave
-  // combo state alone — dash-strike is a bonus extra in that case.
-  if ((p._rComboIdx || 0) === 0) {
-    p._rComboIdx = 1;
-    p._rComboWindow = now + RIPPER_COMBO_WINDOW;
-  }
+  // Dash-strike stands on its own — the combo no longer has an opening
+  // lunge to skip. Leave the combo index alone so the next swing runs
+  // the SLASH (idx 0) normally. Refresh the combo window so chaining
+  // into the combo right after dash-strike still works.
+  p._rComboWindow = now + RIPPER_COMBO_WINDOW;
 }
 
 // ---- MELEE APPROACH: forward movement on jab/lunge exists ONLY to close
@@ -20361,14 +20357,19 @@ function _startBossVuln(z, frames, reason) {
 }
 
 // ============================================================
-// ATTACK TELEGRAPH — unified anticipation system.
-// AI sets z._tele = { kind, t, ang, half, reach, tx, ty } during a windup.
-// Renderer (after the body draw) paints: an internal color flush of the
-// enemy's own color (intensifying with t), a contracting charge ring, and
-// a kind-specific directional tell so the player can read WHERE the attack
-// lands. The flush is the universal "winding up" cue — every enemy speaks it.
-// kinds: 'cone' (sweepers) | 'line' (chargers/lancers) | 'aoe' (slammers) |
-// 'reticle' (leapers / ranged target) | 'point' (muzzle / source).
+// ATTACK TELEGRAPH — body-local anticipation only.
+// Read the enemy's own posture and color, NEVER a UI indicator on the
+// ground. Tells live in (a) body scale (squash/stretch), (b) body shake,
+// (c) color flush + glow halo. The "kind" picks which physical pose:
+//   crouch  — Y-squash + X-bulge   (basic melee, leaper, charger, bull, prowler)
+//   rise    — Y-stretch + X-pinch  (slammers — they straighten up before slam)
+//   pull    — back-tilt along -ang (lancer, lash — they reel back to strike)
+//   spin    — small wobble rotate  (reaper twists before sweep)
+//   tense   — no scale, just shake (phaser slash, generic flinch)
+//   point   — no body morph, just  (ranged — body brightens, edge muzzle dot)
+//             a brighter muzzle dot at the body edge along ang
+// The scale + shake are applied in the rotated body block (see body draw).
+// This function draws the AURA only: bigger fake-glow halo + brighter core.
 // ============================================================
 function _setTele(z, kind, t, opts) {
   if (!z) return;
@@ -20376,112 +20377,83 @@ function _setTele(z, kind, t, opts) {
   z._tele = {
     kind, t: Math.max(0, Math.min(1, t)),
     ang: opts.ang || 0,
-    half: opts.half || 0,
-    reach: opts.reach || 0,
-    tx: opts.tx, ty: opts.ty,
     col: opts.col || z.color || '#f44',
   };
 }
 function _clearTele(z) { if (z) z._tele = null; }
+// Per-frame body shake offset for the windup. Stable-random per zombie+frame
+// so jitter is busy but not flickery.
+function _teleShakeOffset(z) {
+  const te = z && z._tele;
+  if (!te) return { x: 0, y: 0 };
+  if (z.staggerTimer > 0 || z._shocked > 0 || z._frozen || z._frozenTimer > 0) return { x: 0, y: 0 };
+  const mag = 0.4 + te.t * 3.2;
+  const _s1 = Math.sin(performance.now() * 0.06 + (z.zid || 0) * 0.7) * mag;
+  const _s2 = Math.cos(performance.now() * 0.07 + (z.zid || 0) * 1.1) * mag;
+  return { x: _s1, y: _s2 };
+}
+// Per-frame body scale (and small rotation wobble) for the windup. Applied
+// in the rotated body block AFTER ctx.rotate(z.angle).
+function _teleBodyScale(z) {
+  const te = z && z._tele;
+  if (!te) return null;
+  if (z.staggerTimer > 0 || z._shocked > 0 || z._frozen || z._frozenTimer > 0) return null;
+  const t = te.t;
+  if (te.kind === 'crouch') return { sx: 1 + t * 0.18, sy: 1 - t * 0.22, rot: 0 };
+  if (te.kind === 'rise')   return { sx: 1 - t * 0.12, sy: 1 + t * 0.28, rot: 0 };
+  if (te.kind === 'pull')   return { sx: 1 - t * 0.16, sy: 1 + t * 0.10, rot: 0 };
+  if (te.kind === 'spin')   return { sx: 1, sy: 1, rot: Math.sin(performance.now() * 0.045 + (z.zid||0)) * t * 0.35 };
+  // 'tense' / 'point' / unknown — no morph
+  return null;
+}
 function _drawTelegraph(z, _zr) {
   const te = z._tele; if (!te) return;
-  // Suppress telegraph when CC'd — the attack isn't happening this frame.
+  // Suppress when CC'd — the attack isn't happening this frame.
   if (z.staggerTimer > 0 || z._shocked > 0 || z._frozen || z._frozenTimer > 0) return;
   const tt = te.t, col = te.col;
   // Pulse accelerates as t→1 so the windup reads as "tightening"
-  const _pulseSpeed = 0.012 + tt * 0.022;
-  const _pulse = 0.65 + Math.sin(performance.now() * _pulseSpeed) * 0.35;
-  // ---- 1. INTERNAL COLOR FLUSH ----
-  // Re-fill the body shape with the enemy's bright color, alpha rising with t.
-  // Sits ON TOP of the normal body so the color "lights up from the inside."
+  const _pulseSpeed = 0.014 + tt * 0.030;
+  const _pulse = 0.55 + Math.sin(performance.now() * _pulseSpeed) * 0.45;
+  // ---- AURA HALO ----
+  // Soft fake-glow ring tightly surrounding the body — reads as "the creature
+  // is charged up" without being a damage indicator. Two layers (wide dim,
+  // tight bright) for a "lit from inside" feel.
+  const _haloOuter = _zr + 6 + tt * 4;
+  const _haloInner = _zr + 2 + tt * 2;
+  ctx.fillStyle = col;
+  ctx.globalAlpha = (0.10 + tt * 0.22) * _pulse;
+  ctx.beginPath(); ctx.arc(z.x, z.y, _haloOuter, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = (0.18 + tt * 0.32) * _pulse;
+  ctx.beginPath(); ctx.arc(z.x, z.y, _haloInner, 0, Math.PI * 2); ctx.fill();
+  // ---- INTERNAL COLOR FLUSH ----
+  // Re-fill the body shape with the enemy's bright color, intensity rising
+  // with t. This makes the silhouette "light up from inside" — the universal
+  // "winding up" read.
   ctx.save();
   ctx.translate(z.x, z.y); ctx.rotate(z.angle);
-  ctx.globalAlpha = (0.18 + tt * 0.45) * _pulse;
+  const _bs = _teleBodyScale(z);
+  if (_bs) { ctx.scale(_bs.sx, _bs.sy); if (_bs.rot) ctx.rotate(_bs.rot); }
+  ctx.globalAlpha = (0.25 + tt * 0.55) * _pulse;
   ctx.fillStyle = col;
   _drawZombieShape(ctx, z.type, _zr);
   ctx.fill();
-  // Bright core dot — extra punch as t nears 1
-  if (tt > 0.55) {
-    ctx.globalAlpha = (tt - 0.5) * 1.4 * _pulse;
+  // Bright pulsing core — extra punch as t nears 1
+  if (tt > 0.4) {
+    ctx.globalAlpha = (tt - 0.35) * 1.8 * _pulse;
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(0, 0, _zr * 0.35, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, _zr * 0.32 * (0.7 + 0.3 * Math.sin(performance.now() * 0.05)), 0, Math.PI * 2); ctx.fill();
   }
   ctx.restore();
   ctx.globalAlpha = 1;
-  // ---- 2. CONTRACTING CHARGE RING ----
-  // Starts wide and tightens toward the body as t→1
-  const _ringR = _zr + 6 + (1 - tt) * 22;
-  ctx.strokeStyle = col;
-  ctx.globalAlpha = (0.30 + tt * 0.55) * _pulse; ctx.lineWidth = 2 + tt * 2.5;
-  ctx.beginPath(); ctx.arc(z.x, z.y, _ringR, 0, Math.PI * 2); ctx.stroke();
-  // ---- 3. DIRECTIONAL TELL ----
-  if (te.kind === 'cone' && te.reach > 0) {
-    const _hA = te.half || (Math.PI / 4);
-    const _r = te.reach;
-    ctx.globalAlpha = (0.18 + tt * 0.35) * _pulse;
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.moveTo(z.x, z.y);
-    ctx.arc(z.x, z.y, _r, te.ang - _hA, te.ang + _hA);
-    ctx.closePath(); ctx.fill();
-    // Bright outline
-    ctx.globalAlpha = (0.45 + tt * 0.5) * _pulse;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(z.x + Math.cos(te.ang - _hA) * _r, z.y + Math.sin(te.ang - _hA) * _r);
-    ctx.lineTo(z.x, z.y);
-    ctx.lineTo(z.x + Math.cos(te.ang + _hA) * _r, z.y + Math.sin(te.ang + _hA) * _r);
-    ctx.stroke();
-  } else if (te.kind === 'line' && te.reach > 0) {
-    const _ex = z.x + Math.cos(te.ang) * te.reach;
-    const _ey = z.y + Math.sin(te.ang) * te.reach;
-    const _w = (te.half || 8); // line half-width
-    // Filled rect (translated/rotated) as the path band
-    ctx.save();
-    ctx.translate(z.x, z.y); ctx.rotate(te.ang);
-    ctx.globalAlpha = (0.18 + tt * 0.35) * _pulse;
-    ctx.fillStyle = col;
-    ctx.fillRect(_zr, -_w, te.reach - _zr, _w * 2);
-    // Bright dashed centerline
-    ctx.globalAlpha = (0.5 + tt * 0.4) * _pulse;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.setLineDash([8, 6]);
-    ctx.beginPath(); ctx.moveTo(_zr, 0); ctx.lineTo(te.reach, 0); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-    void _ex; void _ey;
-  } else if (te.kind === 'aoe' && te.reach > 0) {
-    const _cx = (te.tx != null) ? te.tx : z.x;
-    const _cy = (te.ty != null) ? te.ty : z.y;
-    // Filled circle showing the slam radius
-    ctx.globalAlpha = (0.15 + tt * 0.30) * _pulse;
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.arc(_cx, _cy, te.reach, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = (0.55 + tt * 0.4) * _pulse;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(_cx, _cy, te.reach, 0, Math.PI * 2); ctx.stroke();
-  } else if (te.kind === 'reticle' && te.reach > 0 && te.tx != null) {
-    // Shrinking targeting reticle at (tx,ty)
-    const _ringR2 = te.reach * (1.4 - tt * 0.6);
-    ctx.globalAlpha = (0.35 + tt * 0.55) * _pulse;
-    ctx.strokeStyle = col; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(te.tx, te.ty, _ringR2, 0, Math.PI * 2); ctx.stroke();
-    // Cross-hair
-    ctx.globalAlpha = (0.5 + tt * 0.4) * _pulse;
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    const _cl = _ringR2 + 6;
-    ctx.beginPath();
-    ctx.moveTo(te.tx - _cl, te.ty); ctx.lineTo(te.tx + _cl, te.ty);
-    ctx.moveTo(te.tx, te.ty - _cl); ctx.lineTo(te.tx, te.ty + _cl);
-    ctx.stroke();
-  } else if (te.kind === 'point') {
-    // Muzzle / source glow at the body edge along ang
+  // ---- POINT (ranged): bright muzzle dot at the body edge ----
+  if (te.kind === 'point') {
     const _mx = z.x + Math.cos(te.ang) * _zr;
     const _my = z.y + Math.sin(te.ang) * _zr;
-    const _mR = 3 + tt * 8;
-    ctx.globalAlpha = (0.35 + tt * 0.6) * _pulse;
+    const _mR = 2.5 + tt * 6;
+    ctx.globalAlpha = (0.45 + tt * 0.5) * _pulse;
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(_mx, _my, _mR, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = (0.6 + tt * 0.4) * _pulse;
+    ctx.globalAlpha = (0.7 + tt * 0.3) * _pulse;
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(_mx, _my, _mR * 0.5, 0, Math.PI * 2); ctx.fill();
   }
@@ -23339,7 +23311,7 @@ function update() {
           if(z._chargeState==='approach'&&zd<200){z._chargeState='wind';z._chargeTimer=30;z._chargeWindMax=30;}
           if(z._chargeState==='wind'){z._chargeTimer--;z.vx*=0.5;z.vy*=0.5;
             const _cAng = Math.atan2(zdy, zdx);
-            _setTele(z, 'line', 1 - z._chargeTimer / (z._chargeWindMax || 30), { ang: _cAng, half: 12, reach: 200, col: z.color });
+            _setTele(z, 'crouch', 1 - z._chargeTimer / (z._chargeWindMax || 30), { ang: _cAng, col: z.color });
             if(z._chargeTimer<=0){z._chargeState='charge';z._chargeTimer=20;z._chargeDx=zdx/zd;z._chargeDy=zdy/zd;_clearTele(z);
               // Charge-start burst
               for(let _ci=0;_ci<10;_ci++){const _csa=_cAng+(Math.random()-0.5)*0.6,_css=4+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(_csa)*_css,vy:Math.sin(_csa)*_css,life:10,maxLife:10,size:2+Math.random()*2,color:Math.random()>0.5?'#fff':z.color,type:'spark'});}
@@ -23669,7 +23641,7 @@ function update() {
             z.vx=0;z.vy=0;z._leapTimer--;
             if (!z._leapMax) z._leapMax = z._leapTimer + 1;
             // Reticle at the landing point — telegraph WHERE not just WHEN
-            _setTele(z, 'reticle', 1 - z._leapTimer / z._leapMax, { reach: 100, tx: z._leapTx, ty: z._leapTy, col: z.color });
+            _setTele(z, 'crouch', 1 - z._leapTimer / z._leapMax, { col: z.color });
             z.x+=(Math.random()-0.5)*3;z.y+=(Math.random()-0.5)*3; // shake
             if(z._leapTimer<=0){z._leapState='leap';z._leapTimer=12;z._leapMax=0;_clearTele(z);
               const la=Math.atan2(z._leapTy-z.y,z._leapTx-z.x);z.vx=Math.cos(la)*12;z.vy=Math.sin(la)*12;}
@@ -23818,7 +23790,7 @@ function update() {
           } else if(z._leapState==='windup'){
             z.vx=0;z.vy=0;z._leapTimer--;
             if (!z._leapMax) z._leapMax = z._leapTimer + 1;
-            _setTele(z, 'reticle', 1 - z._leapTimer / z._leapMax, { reach: 60, tx: z._leapTx, ty: z._leapTy, col: z.color });
+            _setTele(z, 'crouch', 1 - z._leapTimer / z._leapMax, { col: z.color });
             z.x+=(Math.random()-0.5)*2;z.y+=(Math.random()-0.5)*2;
             if(z._leapTimer<=0){z._leapState='leap';z._leapTimer=10;z._leapMax=0;_clearTele(z);
               const la=Math.atan2(z._leapTy-z.y,z._leapTx-z.x);z.vx=Math.cos(la)*14;z.vy=Math.sin(la)*14;}
@@ -23841,7 +23813,7 @@ function update() {
           if(z._mortarTimer>=Math.floor(z.fireRate/16.67)&&zd<400){
             z._chargeUp = (z._chargeUp || 0) + 1;
             // Telegraph the LANDING SPOT with a reticle — mortar tells where it lands
-            _setTele(z, 'reticle', z._chargeUp / 35, { reach: 60, tx: np.x, ty: np.y, col: z.color });
+            _setTele(z, 'tense', z._chargeUp / 35, { col: z.color });
             if (z._chargeUp >= 35) {
               z._chargeUp = 0; z._mortarTimer=0; _clearTele(z);
               const bx=np.x+(Math.random()-0.5)*40, by=np.y+(Math.random()-0.5)*40;
@@ -23909,7 +23881,7 @@ function update() {
               z.vx=0;z.vy=0;z._slashTimer--;
               z.angle = Math.atan2(np.y-z.y, np.x-z.x); // face player during windup
               if (!z._slashMax) z._slashMax = z._slashTimer + 1;
-              _setTele(z, 'cone', 1 - z._slashTimer / z._slashMax, { ang: z.angle, half: 0.8, reach: 50, col: z.color });
+              _setTele(z, 'tense', 1 - z._slashTimer / z._slashMax, { col: z.color });
               if (z._slashTimer <= 0) { z._slashState = 'swing'; z._slashTimer = 6; z._slashAngle = z.angle; z._slashMax = 0; _clearTele(z); }
             } else if (z._slashState === 'swing') {
               z.vx=0;z.vy=0;z._slashTimer--;
@@ -24000,7 +23972,7 @@ function update() {
               z.vx*=0.3;z.vy*=0.3;z._slashTimer--;
               z.angle = Math.atan2(np.y-z.y, np.x-z.x);
               if (!z._slashMax) z._slashMax = z._slashTimer + 1;
-              _setTele(z, 'cone', 1 - z._slashTimer / z._slashMax, { ang: z.angle, half: 1.05, reach: 45, col: z.color });
+              _setTele(z, 'crouch', 1 - z._slashTimer / z._slashMax, { col: z.color });
               // Shake during windup
               z.x+=(Math.random()-0.5)*1.5;z.y+=(Math.random()-0.5)*1.5;
               if (z._slashTimer <= 0) { z._slashState = 'swing'; z._slashTimer = 8; z._slashAngle = z.angle; z._slashMax = 0; _clearTele(z); }
@@ -24076,7 +24048,7 @@ function update() {
             }
           } else if(z._prowlState==='wind'){
             z.vx*=0.3;z.vy*=0.3;z._prowlTimer--;
-            _setTele(z, 'line', 1 - z._prowlTimer / (z._prowlWindMax || 10), { ang: z._prowlAng || Math.atan2(_chaseDy,_chaseDx), half: 10, reach: 140, col: z.color });
+            _setTele(z, 'crouch', 1 - z._prowlTimer / (z._prowlWindMax || 10), { ang: z._prowlAng || Math.atan2(_chaseDy,_chaseDx), col: z.color });
             if(z._prowlTimer<=0){z._prowlState='lunge';z._prowlTimer=8;_clearTele(z);}
           } else if(z._prowlState==='lunge'){
             z.vx=z._prowlDx*z.speed*3;z.vy=z._prowlDy*z.speed*3;
@@ -24121,7 +24093,7 @@ function update() {
           } else if(z._bullState==='telegraph'){
             z.vx*=0.1;z.vy*=0.1;z._bullTimer--;
             if (!z._bullMax) z._bullMax = z._bullTimer + 1;
-            _setTele(z, 'line', 1 - z._bullTimer / z._bullMax, { ang: z._bullAng, half: 14, reach: 220, col: z.color });
+            _setTele(z, 'crouch', 1 - z._bullTimer / z._bullMax, { ang: z._bullAng, col: z.color });
             // Red glow + ground sparks
             if(z._bullTimer%3===0){const sa=z._bullAng+(Math.random()-0.5)*0.5;particles.push({x:z.x+Math.cos(sa)*z.radius,y:z.y+Math.sin(sa)*z.radius,vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:10,maxLife:10,size:3,color:z.color,type:'spark'});}
             if(z._bullTimer<=0){z._bullState='charge';z._bullTimer=20;z._bullMax=0;_clearTele(z);
@@ -24187,7 +24159,7 @@ function update() {
             z.vx*=0.15;z.vy*=0.15;z._reaperTimer--;
             if (!z._reaperMax) z._reaperMax = z._reaperTimer + 1;
             z._reaperAng=Math.atan2(np.y-z.y,np.x-z.x);
-            _setTele(z, 'cone', 1 - z._reaperTimer / z._reaperMax, { ang: z._reaperAng, half: Math.PI * 0.5, reach: 85, col: z.color });
+            _setTele(z, 'spin', 1 - z._reaperTimer / z._reaperMax, { ang: z._reaperAng, col: z.color });
             if(z._reaperTimer<=0){z._reaperState='sweep';z._reaperTimer=10;z._reaperMax=0;_clearTele(z);}
           } else if(z._reaperState==='sweep'){
             z.vx*=0.2;z.vy*=0.2;z._reaperTimer--;
@@ -24223,7 +24195,7 @@ function update() {
           } else if(z._crushState==='windup'){
             z.vx=0;z.vy=0;z._crushTimer--;
             if (!z._crushMax) z._crushMax = z._crushTimer + 1;
-            _setTele(z, 'aoe', 1 - z._crushTimer / z._crushMax, { reach: 120, col: z.color });
+            _setTele(z, 'rise', 1 - z._crushTimer / z._crushMax, { col: z.color });
             // Telegraph: body rises (scale effect handled in render via _crushState), ground cracks
             if(z._crushTimer%5===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*12,y:z.y+Math.sin(sa)*12,vx:0,vy:-1.5,life:10,maxLife:10,size:3,color:z.color,type:'spark'});}
             if(z._crushTimer<=0){z._crushState='slam';z._crushTimer=6;z._crushMax=0;_clearTele(z);}
@@ -24301,7 +24273,7 @@ function update() {
           } else if(z._lashState==='windup'){
             z.vx*=0.15;z.vy*=0.15;z._lashTimer--;
             if (!z._lashMax) z._lashMax = z._lashTimer + 1;
-            _setTele(z, 'cone', 1 - z._lashTimer / z._lashMax, { ang: z._lashAng, half: Math.PI / 3, reach: 100, col: z.color });
+            _setTele(z, 'pull', 1 - z._lashTimer / z._lashMax, { ang: z._lashAng, col: z.color });
             // Tentacle telegraph — tendrils extend toward player (kept for flavor)
             if(z._lashTimer%4===0){
               const _ta=z._lashAng+(Math.random()-0.5)*1.0;
@@ -24351,7 +24323,7 @@ function update() {
           } else if(z._lancerState==='windup'){
             z.vx*=0.1;z.vy*=0.1;z._lancerTimer--;
             if (!z._lancerMax) z._lancerMax = z._lancerTimer + 1;
-            _setTele(z, 'line', 1 - z._lancerTimer / z._lancerMax, { ang: z._lancerAng, half: 6, reach: 140, col: z.color });
+            _setTele(z, 'pull', 1 - z._lancerTimer / z._lancerMax, { ang: z._lancerAng, col: z.color });
             // Pullback telegraph — body shifts backward, lance tip glows
             const _la=z._lancerAng+Math.PI;
             if(z._lancerTimer%3===0){
@@ -24473,9 +24445,7 @@ function update() {
               const _wa = Math.atan2(np.y - z.y, np.x - z.x);
               z._meleeAng = _wa;
               // Unified telegraph — cone wedge showing the lunge arc
-              _setTele(z, 'cone', 1 - z._meleeTimer / z._meleeMax, {
-                ang: _wa, half: Math.PI / 4, reach: z.radius + 42, col: z.color,
-              });
+              _setTele(z, 'crouch', 1 - z._meleeTimer / z._meleeMax, { ang: _wa, col: z.color });
               // Rising-pitch windup chirp at start
               if (z._meleeTimer === _mwMax - 1) playSound(220 + Math.min(120, z.radius * 3), 0.06, 'square', 0.04);
               if (z._meleeTimer <= 0) {
@@ -29237,11 +29207,20 @@ function render() {
       }
       ctx.restore();
     }
-    ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
+    // Apply telegraph shake to the body translate so the whole creature
+    // jitters as it winds up (visuals only — z.x/z.y aren't mutated).
+    const _tShk = _teleShakeOffset(z);
+    ctx.save();ctx.translate(z.x + _tShk.x, z.y + _tShk.y);ctx.rotate(z.angle);
     if(z._spawnAnim>0){
       const t=1-z._spawnAnim/(z._spawnAnimMax||30);
       const sc=0.25+t*0.75;
       ctx.scale(sc,sc);
+    }
+    // Body squash/stretch/wobble for windup poses.
+    const _tBs = _teleBodyScale(z);
+    if (_tBs) {
+      ctx.scale(_tBs.sx, _tBs.sy);
+      if (_tBs.rot) ctx.rotate(_tBs.rot);
     }
     // ---- BOSS: CORRUPTED ADMIN PROCESS — complex geometric render ----
     // Multi-layered: outer rotating wireframe rings, inner pulsing tesseract core,
