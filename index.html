@@ -8705,6 +8705,65 @@ function _installParticleThrottle(arr) {
   return arr;
 }
 let bullets = [], zombies = [], particles = _installParticleThrottle([]), pickups = [], decals = [], floatingTexts = [], explosions = [], obstacles = [], barrels = [];
+
+// ============================================================================
+// SPATIAL GRID for zombie broadphase queries.
+// Built once at the top of each tick; consumed by zombie-zombie separation
+// (was O(n²) at 60+ zombies) and any radius query that walks `zombies`.
+// Cell size ≈ 2× typical zombie radius so a neighbor at most spans 9 cells.
+// Buckets are reused across frames — clear in place, never reallocate.
+// ============================================================================
+const _ZG_CELL = 96;
+let _zGridBuckets = []; // _zGridBuckets[gx + gy*_zgW] = Array<zombie>
+let _zgW = 0, _zgH = 0, _zgArenaW = 0, _zgArenaH = 0;
+function _buildZombieGrid() {
+  // Recompute grid dims if arena resized (level transition, mode change).
+  if (typeof ARENA_W === 'undefined' || typeof ARENA_H === 'undefined') return;
+  if (_zgArenaW !== ARENA_W || _zgArenaH !== ARENA_H) {
+    _zgArenaW = ARENA_W; _zgArenaH = ARENA_H;
+    _zgW = Math.ceil(ARENA_W / _ZG_CELL) + 1;
+    _zgH = Math.ceil(ARENA_H / _ZG_CELL) + 1;
+    _zGridBuckets = new Array(_zgW * _zgH);
+    for (let i = 0; i < _zGridBuckets.length; i++) _zGridBuckets[i] = [];
+  }
+  // Clear buckets in place (no reallocation).
+  for (let i = 0; i < _zGridBuckets.length; i++) {
+    const b = _zGridBuckets[i];
+    if (b && b.length) b.length = 0;
+  }
+  // Bucket alive zombies. (Dead ones are also filtered at consumer sites.)
+  for (let i = 0; i < zombies.length; i++) {
+    const z = zombies[i];
+    if (z.hp <= 0) continue;
+    const gx = z.x < 0 ? 0 : z.x >= ARENA_W ? _zgW - 1 : (z.x / _ZG_CELL) | 0;
+    const gy = z.y < 0 ? 0 : z.y >= ARENA_H ? _zgH - 1 : (z.y / _ZG_CELL) | 0;
+    const idx = gx + gy * _zgW;
+    const bucket = _zGridBuckets[idx];
+    if (bucket) bucket.push(z);
+  }
+}
+// Invoke cb(zombie) for every zombie in cells overlapping a radius around (x,y).
+// May invoke for zombies just outside the radius — caller must do precise test.
+function _forZombiesNear(x, y, r, cb) {
+  if (!_zgW) return;
+  const minGx = Math.max(0, ((x - r) / _ZG_CELL) | 0);
+  const maxGx = Math.min(_zgW - 1, ((x + r) / _ZG_CELL) | 0);
+  const minGy = Math.max(0, ((y - r) / _ZG_CELL) | 0);
+  const maxGy = Math.min(_zgH - 1, ((y + r) / _ZG_CELL) | 0);
+  for (let gy = minGy; gy <= maxGy; gy++) {
+    const row = gy * _zgW;
+    for (let gx = minGx; gx <= maxGx; gx++) {
+      const bucket = _zGridBuckets[gx + row];
+      if (!bucket) continue;
+      for (let k = 0; k < bucket.length; k++) cb(bucket[k]);
+    }
+  }
+}
+
+// PERF: AI gating + status-particle budget — reset each tick.
+const AI_FULL_RANGE = 1400;          // beyond this from nearest player, skip type-specific AI
+const AI_FULL_RANGE_SQ = AI_FULL_RANGE * AI_FULL_RANGE;
+let _statusParticleBudget = 0;       // refilled at top of update()
 let xpOrbs = []; // neon XP crystals dropped by zombies: { x, y, vx, vy, value, tier, bobTimer, magnetized }
 let hazeParticles = []; // ground haze wisps
 
@@ -20969,6 +21028,12 @@ function lerp(a,b,t){return a+(b-a)*t;}
 function update() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
   gameTime++;
+  // PERF: build spatial grid once per tick. Consumers: zombie-zombie separation
+  // (used to be O(n²)), and any other zombie radius query that wants O(n+k).
+  _buildZombieGrid();
+  // PERF: reset per-tick status-effect particle budget so dense DoT swarms
+  // can't flood the particle array. Mobile gets a tighter cap.
+  _statusParticleBudget = (typeof isMobile !== 'undefined' && isMobile) ? 14 : 28;
   // Combo timer decay — streak resets after 2.5s without a kill
   if (_comboTimer > 0) {
     _comboTimer--;
@@ -23054,7 +23119,7 @@ function update() {
       // OVERHEAT: each stack ticks 4 dmg every 0.5s (30 frames). Duration 3s
       // (180 frames, refreshes on application). At cap with Reactor Bloom Lv2
       // and Thermal Runaway, ticks ~46 dmg × 6 = ~280 DOT total.
-      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._thermalRunawayActive?2:1;const _rbMult=1+0.33*(runMods.reactorBloom||0);if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&gameTime%6===0){const _en=Math.min(6,1+z._overheat);for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
+      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._thermalRunawayActive?2:1;const _rbMult=1+0.33*(runMods.reactorBloom||0);if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%6===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(6,1+z._overheat));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
       // FROZEN: hard CC, skip AI — thaw restores speed + grants 1s chill immunity
       if(z._frozen&&z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z._frozen=false;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._chillImmune=60;z._chill=0;z._chillTimer=0;}continue;}
       // Legacy frozen compat
@@ -23063,13 +23128,13 @@ function update() {
       if(z._chillImmune>0)z._chillImmune--;
       // CHILL: slow movement (-20%/stack) + slow attack rate (+30%/stack) — restore on expiry
       if(z._chill>0&&z._chillTimer>0){z._chillTimer--;const slowFactor=Math.max(0.1,1-z._chill*0.2);z.speed=(ZOMBIE_TYPES[z.type]?.speed||2)*slowFactor;const _frm=1+z._chill*0.3;z._fireRateMult=z.boss?Math.min(_frm,1.4):_frm;if(z._chillTimer<=0){z._chill=0;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._fireRateMult=1;}
-        // Frost breath particles — more with more stacks
-        if(gameTime%(6-Math.min(4,z._chill))===0){const fa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(fa)*z.radius,y:z.y+Math.sin(fa)*z.radius,vx:Math.cos(fa)*0.8,vy:-0.8-Math.random()*0.5,life:16+z._chill*3,maxLife:28,size:1.5+z._chill*0.5,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});}
+        // Frost breath particles — more with more stacks (stagger by zid + budget guard)
+        if(((gameTime+z.zid)%(6-Math.min(4,z._chill))===0)&&_statusParticleBudget>0){_statusParticleBudget--;const fa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(fa)*z.radius,y:z.y+Math.sin(fa)*z.radius,vx:Math.cos(fa)*0.8,vy:-0.8-Math.random()*0.5,life:16+z._chill*3,maxLife:28,size:1.5+z._chill*0.5,color:Math.random()>0.3?'#8ef':'#cff',type:'spark'});}
       }
       // Legacy slow compat
       else if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;if(z._slowTimer<=0)z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}
       // CHARGED: tick down conduit mark (spark spawn halved from every 4 to every 8 frames)
-      if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(gameTime%8===0){const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
+      if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(((gameTime+z.zid)%8===0)&&_statusParticleBudget>0){_statusParticleBudget--;const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
       // CHARGED enemies: chance per frame to take a small shock (5-10 dmg) with flying sparks.
       // No more "bolt from the player" — the spark burst radiates from the enemy itself,
       // reading as the conduit's stored charge arcing out on its own.
@@ -23087,11 +23152,11 @@ function update() {
       if(z._exposed&&z._exposedTimer>0){z._exposedTimer--;if(z._exposedTimer<=0)z._exposed=false;}
       if(z._slamCooldown>0)z._slamCooldown--;
       // COMPROMISED: tick down, emit glitch particles (spawn halved from every 5 to every 10 frames)
-      if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0){z._compromised=false;z._corrupt=0;}if(gameTime%10===0)particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}
+      if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0){z._compromised=false;z._corrupt=0;}if(((gameTime+z.zid)%10===0)&&_statusParticleBudget>0){_statusParticleBudget--;particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}}
       // (Live Wire & Viral Burn passive single-status DoTs removed — both
       // synergies now only fire as on-hit / on-death dual-status combos.)
       // Corrupt stacks (not yet Compromised): shed purple particles so status is visible
-      if((z._corruptStacks||0)+(z._corrupt||0)>0&&gameTime%8===0){const _csi=Math.max(z._corruptStacks||0,z._corrupt||0);for(let _cp=0;_cp<_csi;_cp++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius*0.8,y:z.y+Math.sin(a)*z.radius*0.8,vx:Math.cos(a)*0.5+(Math.random()-0.5),vy:-0.8-Math.random()*0.5,life:14,maxLife:14,size:1.5+Math.random()*1.5,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}}
+      if((z._corruptStacks||0)+(z._corrupt||0)>0&&((gameTime+z.zid)%8===0)&&_statusParticleBudget>0){const _csi=Math.min(_statusParticleBudget,Math.max(z._corruptStacks||0,z._corrupt||0));_statusParticleBudget-=_csi;for(let _cp=0;_cp<_csi;_cp++){const a=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(a)*z.radius*0.8,y:z.y+Math.sin(a)*z.radius*0.8,vx:Math.cos(a)*0.5+(Math.random()-0.5),vy:-0.8-Math.random()*0.5,life:14,maxLife:14,size:1.5+Math.random()*1.5,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}}
       // Tick down aftershock vulnerability, discharge mark, and tracer mark
       if (z._aftershockVuln > 0) z._aftershockVuln--;
       if (z._tracerMarked > 0) z._tracerMarked--;
@@ -23179,6 +23244,30 @@ function update() {
       }
 
       if(z.aware){
+        // ---- PERF: OFF-SCREEN AI GATING ----
+        // Zombies far from any player skip type-specific behavior, chase offset
+        // reroll, and bullet-target marking — they just walk straight toward the
+        // nearest player at their normal speed. The moment they come into range
+        // (z._npD <= AI_FULL_RANGE) they resume full AI. Excluded:
+        //   - Bosses (always run full AI for telegraph reliability)
+        //   - Stalkers / snipers (range-dependent behavior would break)
+        //   - Siege wall attackers and horde invaders (objective targets, not players)
+        // Reuses cached z._npD from the nearest-player pass above.
+        if (!z.boss
+            && z.type !== 'stalker' && z.type !== 'sniper'
+            && !(gameMode === 'siege' && z._siegeWallTarget)
+            && !(gameMode === 'horde' && z._invader)
+            && z._npD > AI_FULL_RANGE) {
+          z.angle = Math.atan2(zdy, zdx);
+          const _farLen = zd || 1;
+          z.vx = (zdx / _farLen) * z.speed;
+          z.vy = (zdy / _farLen) * z.speed;
+          z.x += z.vx; z.y += z.vy;
+          z.x = clamp(z.x, z.radius, ARENA_W - z.radius);
+          z.y = clamp(z.y, z.radius, ARENA_H - z.radius);
+          pushOutOfObstacles(z, z.radius);
+          continue;
+        }
         // ---- PER-ZOMBIE TARGET OFFSET ----
         // Each zombie chases (player + offset), not the player directly. Assigned
         // once on first aggro, re-rolled every ZOMBIE_CHASE_OFFSET_REROLL frames.
@@ -24515,8 +24604,34 @@ function update() {
           z._wallStuck = 0;
         }
       }
-      // Separation: squared-distance compare first so we only sqrt when actually overlapping
-      for(const o of zombies){if(o===z)continue;const sx=z.x-o.x,sy=z.y-o.y,sd2=sx*sx+sy*sy,md2=z.radius+o.radius,md22=md2*md2;if(sd2<md22&&sd2>0){const sd=Math.sqrt(sd2);const p=(md2-sd)/sd*0.3;z.x+=sx*p;z.y+=sy*p;}}
+      // Separation via spatial grid (was O(n²) full-array scan). Walks at most
+      // 9 cells around this zombie; precise overlap test is unchanged.
+      {
+        const _zr = z.radius;
+        const _searchR = _zr + 64; // 64 = max plausible other-zombie radius
+        const _minGx = Math.max(0, ((z.x - _searchR) / _ZG_CELL) | 0);
+        const _maxGx = Math.min(_zgW - 1, ((z.x + _searchR) / _ZG_CELL) | 0);
+        const _minGy = Math.max(0, ((z.y - _searchR) / _ZG_CELL) | 0);
+        const _maxGy = Math.min(_zgH - 1, ((z.y + _searchR) / _ZG_CELL) | 0);
+        for (let _gy = _minGy; _gy <= _maxGy; _gy++) {
+          const _row = _gy * _zgW;
+          for (let _gx = _minGx; _gx <= _maxGx; _gx++) {
+            const _bucket = _zGridBuckets[_gx + _row];
+            if (!_bucket) continue;
+            for (let _bi = 0; _bi < _bucket.length; _bi++) {
+              const o = _bucket[_bi];
+              if (o === z) continue;
+              const sx = z.x - o.x, sy = z.y - o.y, sd2 = sx*sx + sy*sy;
+              const md2 = _zr + o.radius, md22 = md2 * md2;
+              if (sd2 < md22 && sd2 > 0) {
+                const sd = Math.sqrt(sd2);
+                const p = (md2 - sd) / sd * 0.3;
+                z.x += sx * p; z.y += sy * p;
+              }
+            }
+          }
+        }
+      }
       // Push zombies out of players — prevent visual overlap.
       // Skip for any player who is mid-dash (they ghost through enemies).
       // Full separation (1.0x) so zombies can't clip inside the player sprite.
