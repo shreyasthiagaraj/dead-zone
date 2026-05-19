@@ -17246,7 +17246,11 @@ function _runJabFlurry(p, def) {
 
 function _runComboStep(p, def, step, idx) {
   const a = p.angle, c = Math.cos(a), s = Math.sin(a);
-  const mainCol = step.color;
+  // When a class is dominant, the WHOLE strike takes its color (beam,
+  // tip rings, sparks) so a thermal swing reads thermal end to end.
+  // Falls back to the step's own color when no class is active.
+  const _domClsCol = (runMods && runMods.dominantClass && _ELEM_COLOR[runMods.dominantClass]) ? _ELEM_COLOR[runMods.dominantClass] : null;
+  const mainCol = _domClsCol || step.color;
   const _rmCombo = runMods || {};
   // CARD: EXTENDED REACH — the blade strikes 35% farther.
   const range = step.range * (_rmCombo.extendedReach ? 1.35 : 1);
@@ -17710,81 +17714,156 @@ function _emitSwordDispersal(p) {
 function _emitMeleeClassFlourish(p, wAng, bodyRoot, bodyTip) {
   const _domCls = (runMods && runMods.dominantClass) || null;
   if (!_domCls) return;
+  // Helper: a point somewhere along the blade body.
+  const _pt = (t) => {
+    const _bd = bodyRoot + (bodyTip - bodyRoot) * t;
+    return [p.x + Math.cos(wAng) * _bd, p.y + Math.sin(wAng) * _bd];
+  };
+  const _tipX = p.x + Math.cos(wAng) * bodyTip;
+  const _tipY = p.y + Math.sin(wAng) * bodyTip;
+
   if (_domCls === 'fire') {
-    if (Math.random() < 0.65) {
-      const _t = Math.random();
-      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
-      const _bx = p.x + Math.cos(wAng) * _bd;
-      const _by = p.y + Math.sin(wAng) * _bd;
+    // Roaring flame: rising licks + embers + heat smoke streaming off the edge.
+    const _fn = 2 + Math.floor(Math.random()*2);
+    for (let _i = 0; _i < _fn; _i++) {
+      const [_bx, _by] = _pt(Math.random());
       particles.push({
         x: _bx, y: _by,
-        vx: (Math.random()-0.5)*1.5, vy: -1.3 - Math.random()*0.8,
-        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
-        size: 3 + Math.random()*1.8,
-        color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],
+        vx: (Math.random()-0.5)*1.8, vy: -2.0 - Math.random()*1.6,
+        life: 14 + Math.floor(Math.random()*7), maxLife: 21,
+        size: 3.5 + Math.random()*3,
+        color: ['#f30','#f60','#f90','#fc0','#ff0'][Math.floor(Math.random()*5)],
         type: 'spark'
       });
     }
+    // Dark heat-haze smoke trailing the blade
+    if (Math.random() < 0.7) {
+      const [_sx, _sy] = _pt(0.3 + Math.random()*0.6);
+      particles.push({
+        x: _sx, y: _sy, vx: (Math.random()-0.5)*0.6, vy: -0.8 - Math.random()*0.7,
+        life: 16 + Math.floor(Math.random()*8), maxLife: 24,
+        size: 7 + Math.random()*5,
+        color: Math.random() > 0.5 ? '#611' : '#822', type: 'smoke',
+        _smokeAlpha: 0.30 + Math.random()*0.12
+      });
+    }
+    // Occasional bright fireball burst at the tip
+    if (Math.random() < 0.22) {
+      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0, life: 7, maxLife: 7, size: 16, color: '#fc0', type: 'wakering' });
+      particles.push({ x: _tipX, y: _tipY, vx: 0, vy: 0, life: 5, maxLife: 5, size: 9,  color: '#fff', type: 'spark' });
+    }
   } else if (_domCls === 'ice') {
-    if (Math.random() < 0.65) {
-      const _t = 0.4 + Math.random()*0.6;
-      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
-      const _bx = p.x + Math.cos(wAng) * _bd;
-      const _by = p.y + Math.sin(wAng) * _bd;
+    // Cryo gas with sparkles: pale frozen mist + glittering crystal motes.
+    if (Math.random() < 0.8) {
+      const [_gx, _gy] = _pt(0.25 + Math.random()*0.7);
+      particles.push({
+        x: _gx, y: _gy, vx: (Math.random()-0.5)*0.8, vy: -0.3 - Math.random()*0.5,
+        life: 20 + Math.floor(Math.random()*10), maxLife: 30,
+        size: 8 + Math.random()*6,
+        color: Math.random() > 0.5 ? '#aef' : '#cff', type: 'smoke',
+        _smokeAlpha: 0.20 + Math.random()*0.12
+      });
+    }
+    const _sn = 2 + Math.floor(Math.random()*3);
+    for (let _i = 0; _i < _sn; _i++) {
+      const [_bx, _by] = _pt(0.3 + Math.random()*0.7);
       const _perp = wAng + Math.PI * 0.5 * (Math.random() < 0.5 ? 1 : -1);
-      const _ps = 2 + Math.random()*2;
+      const _ps = 1.5 + Math.random()*2.5;
       particles.push({
         x: _bx, y: _by,
-        vx: Math.cos(_perp)*_ps, vy: Math.sin(_perp)*_ps,
-        life: 12 + Math.floor(Math.random()*5), maxLife: 17,
-        size: 2 + Math.random()*1.5,
-        color: Math.random() > 0.4 ? '#cff' : '#8ef',
+        vx: Math.cos(_perp)*_ps + (Math.random()-0.5), vy: Math.sin(_perp)*_ps + (Math.random()-0.5),
+        life: 10 + Math.floor(Math.random()*8), maxLife: 18,
+        size: 1.5 + Math.random()*1.8,
+        color: Math.random() > 0.35 ? '#fff' : '#8ef',
         type: 'spark', _pixel: true
       });
     }
   } else if (_domCls === 'chain') {
-    if (Math.random() < 0.5) {
-      const _tipX = p.x + Math.cos(wAng) * bodyTip;
-      const _tipY = p.y + Math.sin(wAng) * bodyTip;
-      const _ang2 = wAng + (Math.random()-0.5)*1.4;
-      const _len = 12 + Math.random()*16;
+    // Electric arcs: multiple forking bolts leaping off the blade + bright nodes.
+    const _bn = 2 + Math.floor(Math.random()*2);
+    for (let _i = 0; _i < _bn; _i++) {
+      const [_ox, _oy] = _pt(0.45 + Math.random()*0.55);
+      const _ang2 = wAng + (Math.random()-0.5)*2.4;
+      const _len = 16 + Math.random()*26;
+      const _ex = _ox + Math.cos(_ang2)*_len, _ey = _oy + Math.sin(_ang2)*_len;
       particles.push({
-        x: _tipX, y: _tipY, vx: 0, vy: 0,
-        life: 5, maxLife: 5, size: 1.5,
-        color: Math.random() > 0.4 ? '#4ff' : '#fff',
-        type: 'lightning',
-        tx: _tipX + Math.cos(_ang2)*_len, ty: _tipY + Math.sin(_ang2)*_len
+        x: _ox, y: _oy, vx: 0, vy: 0, life: 5, maxLife: 5, size: 2,
+        color: Math.random() > 0.45 ? '#4ff' : '#fff', type: 'lightning',
+        tx: _ex, ty: _ey
       });
+      // Forked sub-bolt
+      if (Math.random() < 0.7) {
+        const _fa = _ang2 + (Math.random()-0.5)*1.6;
+        const _fl = 8 + Math.random()*12;
+        particles.push({
+          x: _ex, y: _ey, vx: 0, vy: 0, life: 4, maxLife: 4, size: 1.4,
+          color: '#aff', type: 'lightning',
+          tx: _ex + Math.cos(_fa)*_fl, ty: _ey + Math.sin(_fa)*_fl
+        });
+      }
+    }
+    // Crackle node on the blade
+    if (Math.random() < 0.5) {
+      const [_nx, _ny] = _pt(0.6 + Math.random()*0.4);
+      particles.push({ x: _nx, y: _ny, vx: 0, vy: 0, life: 4, maxLife: 4, size: 4 + Math.random()*3, color: '#fff', type: 'spark' });
     }
   } else if (_domCls === 'wind') {
-    if (Math.random() < 0.4) {
-      const _t = 0.5 + Math.random()*0.5;
-      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
-      const _bx = p.x + Math.cos(wAng) * _bd;
-      const _by = p.y + Math.sin(wAng) * _bd;
+    // Pulse waves: expanding pressure rings rolling off the blade + speed streaks.
+    if (Math.random() < 0.55) {
+      const [_rx, _ry] = _pt(0.55 + Math.random()*0.45);
+      particles.push({ x: _rx, y: _ry, vx: 0, vy: 0, life: 11, maxLife: 11, size: 14 + Math.random()*8, color: '#cef', type: 'wakering' });
+      particles.push({ x: _rx, y: _ry, vx: 0, vy: 0, life: 9,  maxLife: 9,  size: 8 + Math.random()*5, color: '#eff', type: 'wakering' });
+    }
+    const _wn = 2 + Math.floor(Math.random()*2);
+    for (let _i = 0; _i < _wn; _i++) {
+      const [_ox, _oy] = _pt(0.4 + Math.random()*0.6);
+      const _perp = wAng + Math.PI * 0.5 * (Math.random() < 0.5 ? 1 : -1);
+      const _len = 14 + Math.random()*18;
       particles.push({
-        x: _bx, y: _by, vx: 0, vy: 0,
-        life: 8, maxLife: 8, size: 8 + Math.random()*4,
-        color: '#cef', type: 'wakering'
+        x: _ox, y: _oy, vx: 0, vy: 0, life: 6, maxLife: 6, size: 1.6,
+        color: '#dff', type: 'lightning',
+        tx: _ox + Math.cos(_perp)*_len, ty: _oy + Math.sin(_perp)*_len
       });
     }
+    // Faint air haze
+    if (Math.random() < 0.4) {
+      const [_hx, _hy] = _pt(0.5);
+      particles.push({ x: _hx, y: _hy, vx: 0, vy: -0.3, life: 14, maxLife: 14, size: 9 + Math.random()*5, color: '#dff', type: 'smoke', _smokeAlpha: 0.14 });
+    }
   } else if (_domCls === 'corrupt') {
-    if (Math.random() < 0.45) {
-      const _t = Math.random();
-      const _bd = bodyRoot + (bodyTip - bodyRoot) * _t;
-      const _bx = p.x + Math.cos(wAng) * _bd;
-      const _by = p.y + Math.sin(wAng) * _bd;
-      const _glyphs = ['0','1','#','%','~','?','!','/','*','░'];
-      const _ang2 = wAng + (Math.random()-0.5)*1.4;
-      const _ks = 1 + Math.random()*1.5;
+    // Corruption: streaming glitch glyphs + datamosh blocks + purple haze.
+    const _glyphs = ['0','1','#','%','~','?','!','/','*','░','▓','x','§','¤'];
+    const _gn = 2 + Math.floor(Math.random()*2);
+    for (let _i = 0; _i < _gn; _i++) {
+      const [_bx, _by] = _pt(Math.random());
+      const _ang2 = wAng + (Math.random()-0.5)*2.0;
+      const _ks = 1 + Math.random()*2;
       particles.push({
         x: _bx, y: _by,
         vx: Math.cos(_ang2)*_ks, vy: Math.sin(_ang2)*_ks,
-        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
-        size: 9 + Math.random()*3,
-        color: Math.random() > 0.5 ? '#a4f' : '#f0f',
+        life: 13 + Math.floor(Math.random()*7), maxLife: 20,
+        size: 9 + Math.random()*5,
+        color: ['#a4f','#f0f','#80f','#0fa'][Math.floor(Math.random()*4)],
         type: 'glitchtext', text: _glyphs[Math.floor(Math.random()*_glyphs.length)]
       });
+    }
+    // Datamosh blocks scattering
+    const _dn = 2 + Math.floor(Math.random()*2);
+    for (let _i = 0; _i < _dn; _i++) {
+      const [_dx, _dy] = _pt(0.3 + Math.random()*0.7);
+      const _da = wAng + (Math.random()-0.5)*Math.PI;
+      const _ds = 1.5 + Math.random()*2.5;
+      particles.push({
+        x: _dx, y: _dy, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
+        life: 8 + Math.floor(Math.random()*6), maxLife: 14,
+        size: 2.5 + Math.random()*3,
+        color: Math.random() > 0.5 ? '#f0f' : '#a4f',
+        type: 'spark', _pixel: true
+      });
+    }
+    if (Math.random() < 0.4) {
+      const [_hx, _hy] = _pt(0.5);
+      particles.push({ x: _hx, y: _hy, vx: (Math.random()-0.5)*0.5, vy: -0.2, life: 16, maxLife: 16, size: 9 + Math.random()*5, color: '#406', type: 'smoke', _smokeAlpha: 0.26 });
     }
   }
 }
@@ -18065,49 +18144,98 @@ function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
   // ---- 9) CLASS-themed accent particles (mirror the per-class blade flourishes)
   const _domCls = (runMods && runMods.dominantClass) || null;
   if (_domCls === 'fire') {
-    for (let _fi = 0; _fi < 8; _fi++) {
-      const _fa = Math.random()*Math.PI*2, _fs = 2 + Math.random()*4;
+    // Fireball burst: bright bloom ring + erupting embers + dark smoke.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: isCrit ? 52 : 38, color: '#f60', type: 'wakering', _priority: true });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 7,  maxLife: 7,  size: isCrit ? 30 : 22, color: '#fc0', type: 'wakering' });
+    const _fn = isCrit ? 22 : 14;
+    for (let _fi = 0; _fi < _fn; _fi++) {
+      const _fa = Math.random()*Math.PI*2, _fs = 3 + Math.random()*6;
       particles.push({
-        x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs - 1.2,
-        life: 14 + Math.floor(Math.random()*6), maxLife: 20,
-        size: 3 + Math.random()*2,
-        color: ['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)], type: 'spark'
+        x: z.x, y: z.y, vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs - 1.6,
+        life: 14 + Math.floor(Math.random()*8), maxLife: 22,
+        size: 3 + Math.random()*3,
+        color: ['#f30','#f60','#f90','#fc0','#ff0'][Math.floor(Math.random()*5)], type: 'spark'
       });
     }
+    for (let _fs2 = 0; _fs2 < (isCrit ? 5 : 3); _fs2++) {
+      const _sa = Math.random()*Math.PI*2;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*1.5, vy: Math.sin(_sa)*1.5 - 1.0,
+        life: 18 + Math.floor(Math.random()*8), maxLife: 26, size: 7 + Math.random()*5,
+        color: Math.random()>0.5 ? '#611' : '#822', type: 'smoke', _smokeAlpha: 0.30 });
+    }
   } else if (_domCls === 'ice') {
-    for (let _ii = 0; _ii < 10; _ii++) {
-      const _ia = Math.random()*Math.PI*2, _is = 3 + Math.random()*4;
+    // Frost shatter: cryo gas bloom + crystal shards + glittering sparkles.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: isCrit ? 46 : 34, color: '#aef', type: 'smoke', _smokeAlpha: 0.34, _priority: true });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 9, maxLife: 9, size: isCrit ? 30 : 22, color: '#cff', type: 'wakering' });
+    const _in = isCrit ? 22 : 14;
+    for (let _ii = 0; _ii < _in; _ii++) {
+      const _ia = Math.random()*Math.PI*2, _is = 3 + Math.random()*5;
       particles.push({
         x: z.x, y: z.y, vx: Math.cos(_ia)*_is, vy: Math.sin(_ia)*_is,
-        life: 14 + Math.floor(Math.random()*5), maxLife: 19,
-        size: 2 + Math.random()*1.8,
+        life: 14 + Math.floor(Math.random()*6), maxLife: 20,
+        size: 2 + Math.random()*2,
         color: Math.random()>0.4 ? '#cff' : '#8ef', type: 'spark', _pixel: true
       });
     }
-  } else if (_domCls === 'chain') {
-    for (let _li = 0; _li < 4; _li++) {
-      const _la = Math.random()*Math.PI*2;
-      const _llen = 18 + Math.random()*16;
-      particles.push({
-        x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 1.5,
-        color: Math.random()>0.4 ? '#4ff' : '#fff', type: 'lightning',
-        tx: z.x + Math.cos(_la)*_llen, ty: z.y + Math.sin(_la)*_llen
-      });
+    for (let _tw = 0; _tw < (isCrit ? 8 : 5); _tw++) {
+      const _ta = Math.random()*Math.PI*2, _td = 6 + Math.random()*18;
+      particles.push({ x: z.x + Math.cos(_ta)*_td, y: z.y + Math.sin(_ta)*_td,
+        vx: 0, vy: 0, life: 5 + Math.floor(Math.random()*5), maxLife: 10,
+        size: 1.5 + Math.random()*1.5, color: '#fff', type: 'spark' });
     }
+  } else if (_domCls === 'chain') {
+    // Electric burst: radial fork bolts + a chained branch + crackle core.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: isCrit ? 24 : 16, color: '#fff', type: 'spark', _priority: true });
+    const _ln = isCrit ? 9 : 6;
+    for (let _li = 0; _li < _ln; _li++) {
+      const _la = (_li/_ln)*Math.PI*2 + Math.random()*0.4;
+      const _llen = 22 + Math.random()*22;
+      const _ex = z.x + Math.cos(_la)*_llen, _ey = z.y + Math.sin(_la)*_llen;
+      particles.push({
+        x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: 2,
+        color: Math.random()>0.4 ? '#4ff' : '#fff', type: 'lightning',
+        tx: _ex, ty: _ey
+      });
+      if (Math.random() < 0.6) {
+        const _fa = _la + (Math.random()-0.5)*1.8, _fl = 10 + Math.random()*14;
+        particles.push({ x: _ex, y: _ey, vx: 0, vy: 0, life: 5, maxLife: 5, size: 1.4,
+          color: '#aff', type: 'lightning', tx: _ex + Math.cos(_fa)*_fl, ty: _ey + Math.sin(_fa)*_fl });
+      }
+    }
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: isCrit ? 30 : 22, color: '#4ff', type: 'wakering' });
   } else if (_domCls === 'wind') {
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: '#cef', type: 'wakering' });
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 34, color: '#eef', type: 'wakering' });
+    // Pulse shock: stacked pressure rings + radial pressure streaks.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: isCrit ? 30 : 22, color: '#cef', type: 'wakering', _priority: true });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: isCrit ? 48 : 36, color: '#eff', type: 'wakering' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: isCrit ? 66 : 50, color: '#dff', type: 'wakering' });
+    const _wn = isCrit ? 12 : 8;
+    for (let _wi = 0; _wi < _wn; _wi++) {
+      const _wa = (_wi/_wn)*Math.PI*2;
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 1.6,
+        color: '#dff', type: 'lightning',
+        tx: z.x + Math.cos(_wa)*(26 + Math.random()*14), ty: z.y + Math.sin(_wa)*(26 + Math.random()*14) });
+    }
   } else if (_domCls === 'corrupt') {
-    const _glyphs = ['0','1','#','%','~','?','!','/','*','░'];
-    for (let _ci2 = 0; _ci2 < 5; _ci2++) {
-      const _ca2 = Math.random()*Math.PI*2, _cs2 = 1.5 + Math.random()*2.5;
+    // Corruption detonation: glyph spray + datamosh blocks + purple haze.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: isCrit ? 42 : 30, color: '#80f', type: 'wakering', _priority: true });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: isCrit ? 40 : 28, color: '#406', type: 'smoke', _smokeAlpha: 0.30 });
+    const _glyphs = ['0','1','#','%','~','?','!','/','*','░','▓','x','§','¤'];
+    const _cn = isCrit ? 9 : 6;
+    for (let _ci2 = 0; _ci2 < _cn; _ci2++) {
+      const _ca2 = Math.random()*Math.PI*2, _cs2 = 2 + Math.random()*3.5;
       particles.push({
         x: z.x, y: z.y, vx: Math.cos(_ca2)*_cs2, vy: Math.sin(_ca2)*_cs2 - 0.6,
-        life: 15 + Math.floor(Math.random()*5), maxLife: 20,
-        size: 10 + Math.random()*4,
-        color: Math.random()>0.5 ? '#a4f' : '#f0f',
+        life: 15 + Math.floor(Math.random()*6), maxLife: 21,
+        size: 10 + Math.random()*5,
+        color: ['#a4f','#f0f','#80f','#0fa'][Math.floor(Math.random()*4)],
         type: 'glitchtext', text: _glyphs[Math.floor(Math.random()*_glyphs.length)]
       });
+    }
+    for (let _db = 0; _db < (isCrit ? 12 : 8); _db++) {
+      const _da = Math.random()*Math.PI*2, _ds = 2 + Math.random()*4;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
+        life: 9 + Math.floor(Math.random()*6), maxLife: 15, size: 2.5 + Math.random()*3,
+        color: Math.random()>0.5 ? '#f0f' : '#a4f', type: 'spark', _pixel: true });
     }
   }
   // ---- 10) Per-hit screen shake (Math.max so cleaving stacks cleanly) ----
