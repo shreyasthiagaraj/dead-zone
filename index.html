@@ -8413,6 +8413,7 @@ let _autoAimTarget = null;
 let _autoAimScore = 0;             // current target's score (for threshold comparison)
 let _autoAimAngle = 0;
 let _autoAimRetargetTimer = 0;
+let _autoAimSuppress = 0; // frames to skip re-acquire after player aims away
 let _autoAimDragX = 0;
 let _autoAimDragY = 0;
 let _autoAimTouchId = null;
@@ -20746,14 +20747,30 @@ function update() {
       let _desiredAngle = _autoAimAngle;
       if (_shootHeld) {
         if (isMobile) { rightJoystick.aiming = true; rightJoystick.firing = true; }
+        // The player's only intentional aim vector is the movement stick
+        // (mobile = left stick + shoot button, desktop = arrows/drag + 'A').
+        // _inMag/_inA = how hard and which way they're steering this frame.
+        const _inMag = Math.sqrt(dx*dx + dy*dy);
+        const _inA = _inMag > 0.01 ? Math.atan2(dy, dx) : _autoAimAngle;
+        if (_autoAimSuppress > 0) _autoAimSuppress--;
         // If locked target is dead or gone, immediately retarget
         if (_autoAimTarget && _autoAimTarget.hp <= 0 && !_autoAimTarget.alive) {
           _autoAimTarget = null;
         }
+        // SOFT-RELEASE: if there's a lock and the player is actively pushing
+        // the stick more than ~50° away from the target, they want to aim
+        // elsewhere — drop the lock and suppress re-acquire briefly so it
+        // doesn't instantly snap back.
+        if (_autoAimTarget && _inMag > 0.4) {
+          const _tgtA = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
+          let _away = _inA - _tgtA;
+          while (_away > Math.PI) _away -= Math.PI*2;
+          while (_away < -Math.PI) _away += Math.PI*2;
+          if (Math.abs(_away) > 0.9) { _autoAimTarget = null; _autoAimSuppress = 18; }
+        }
         // If no lock, find nearest enemy in facing direction + within range.
-        // Throttled: if a scan just rejected every candidate, don't re-scan every frame —
-        // wait ~6 frames so we aren't paying N sqrt + scoring every frame while nothing qualifies.
-        if (!_autoAimTarget) {
+        // Throttled; skipped entirely while suppressed (player aimed away).
+        if (!_autoAimTarget && _autoAimSuppress <= 0) {
           if (_autoAimRetargetTimer > 0) {
             _autoAimRetargetTimer--;
           } else {
@@ -20771,25 +20788,12 @@ function update() {
             }
           }
         }
-        // Locked on: SOFT assist — snap to target only while the player's raw
-        // aim is close to it. If the player rotates their aim away, drop the
-        // lock so they can free-aim. Threshold ~20° tolerance.
+        // Locked on: assist toward the target. Otherwise free-aim in the
+        // player's steering direction (or hold current angle if neutral).
         if (_autoAimTarget && (_autoAimTarget.hp > 0 || _autoAimTarget.alive)) {
-          const _tgtA = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
-          let _aimDiff = _autoAimAngle - _tgtA;
-          while (_aimDiff > Math.PI) _aimDiff -= Math.PI*2;
-          while (_aimDiff < -Math.PI) _aimDiff += Math.PI*2;
-          if (Math.abs(_aimDiff) > 0.35) {
-            // Player is aiming away — release the lock and free-aim.
-            _autoAimTarget = null;
-            _desiredAngle = _autoAimAngle;
-          } else {
-            _desiredAngle = _tgtA;
-          }
-        } else {
-          // No target in cone: fire in movement/facing direction
-          const moveMag = Math.sqrt(dx*dx+dy*dy);
-          if (moveMag > 0.2) _desiredAngle = Math.atan2(dy, dx);
+          _desiredAngle = Math.atan2(_autoAimTarget.y - lp.y, _autoAimTarget.x - lp.x);
+        } else if (_inMag > 0.2) {
+          _desiredAngle = _inA;
         }
         // Stop firing if magazine empty (reloading)
         if (isMobile && _gunReloading) rightJoystick.firing = false;
@@ -22174,48 +22178,40 @@ function update() {
                     const _impA = Math.atan2(b.vy, b.vx), _impC = b._deadshotColor || b.color;
                     const _isFirstHit = (b.pierced || 0) === 0;
                     if (_isFirstHit) {
-                      // Origin: triple-stack flash for a punchy bright core
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 14, color: '#fff', type: 'explosion' });
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 32, color: '#fff', type: 'explosion' });
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 22, color: _impC, type: 'explosion' });
-                      // Three concentric expanding rings
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 28, color: '#fff', type: 'wakering' });
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 46, color: _impC, type: 'wakering' });
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: 62, color: _impC, type: 'wakering' });
-                      // 4-directional cross lightning lines
+                      // PERF: trimmed ~50 → ~22 particles. The hiccup was the
+                      // one-frame spawn burst (this + per-enemy death gore when
+                      // a charged shot pierce-kills several at once), NOT the
+                      // screenshake (which is a single Math.max + cheap render
+                      // offsets). Glitch surge dropped on non-full-charge.
+                      // Origin: double flash
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 30, color: '#fff', type: 'explosion' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 13, maxLife: 13, size: 22, color: _impC, type: 'explosion' });
+                      // Two concentric rings
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 30, color: '#fff', type: 'wakering' });
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: 54, color: _impC, type: 'wakering' });
+                      // 4-directional cross lightning (cheap, high-impact)
                       for (let ci = 0; ci < 4; ci++) {
                         const ca = _impA + ci * Math.PI/2, cLen = 36 + Math.random()*16;
                         particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.5, color: '#fff', type: 'lightning',
                           tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
                       }
-                      // 12 radial impact streaks
-                      for (let _si = 0; _si < 12; _si++) {
-                        const _sa = (_si / 12) * Math.PI * 2 + Math.random() * 0.25;
+                      // 6 radial impact streaks (was 12)
+                      for (let _si = 0; _si < 6; _si++) {
+                        const _sa = (_si / 6) * Math.PI * 2 + Math.random() * 0.3;
                         const _sv = 7 + Math.random() * 4;
                         particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
                           life: 14, maxLife: 14, size: 3 + Math.random() * 2,
                           color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                       }
-                      // Punch-through sparks
-                      for (let pi = 0; pi < 14; pi++) {
+                      // 6 punch-through sparks (was 14)
+                      for (let pi = 0; pi < 6; pi++) {
                         const pa = _impA + (Math.random()-0.5)*0.6, ps = 5+Math.random()*7;
                         particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
                           life: 16+Math.random()*8, maxLife: 24, size: 2.5+Math.random()*2.5,
                           color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
                       }
-                      // Perpendicular splash
-                      {
-                        const _ppA = _impA + Math.PI / 2;
-                        for (let _pp = 0; _pp < 6; _pp++) {
-                          const _pa = _ppA + (Math.PI * (_pp < 3 ? 0 : 1)) + (Math.random()-0.5)*0.4;
-                          const _ps = 4 + Math.random() * 3;
-                          particles.push({ x: z.x, y: z.y, vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
-                            life: 12, maxLife: 12, size: 2 + Math.random()*1.5,
-                            color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
-                        }
-                      }
-                      // Smoke puff
-                      for (let _smi = 0; _smi < 6; _smi++) {
+                      // 2 smoke puffs (was 6)
+                      for (let _smi = 0; _smi < 2; _smi++) {
                         const _sma = Math.random() * Math.PI * 2;
                         particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
                           vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
@@ -22224,24 +22220,20 @@ function update() {
                           type: 'smoke', _smokeAlpha: 0.22 });
                       }
                       decals.push({ x: z.x, y: z.y, size: 26, alpha: 0.55, color: '#310' });
-                      screenShake.intensity = Math.max(screenShake.intensity, 7);
+                      screenShake.intensity = Math.max(screenShake.intensity, 6);
                       playSound(900, 0.04, 'square', 0.08);
-                      // Glitch surge: ONE per shot, on first hit only
-                      triggerGlitchSurge(0.18, 6);
                       // ---- FULL-CHARGE IMPACT BLOWOUT (first hit only) ----
                       if (b._deadshotFullCharge) {
-                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 10, maxLife: 10, size: 40, color: '#fff', type: 'explosion' });
-                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 14, maxLife: 14, size: 28, color: _impC, type: 'explosion' });
-                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 16, maxLife: 16, size: 56, color: '#fff', type: 'wakering' });
-                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 22, maxLife: 22, size: 78, color: _impC, type: 'wakering' });
-                        for (let _bsi = 0; _bsi < 12; _bsi++) {
-                          const _bsa = (_bsi / 12) * Math.PI * 2 + Math.random() * 0.25;
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 12, maxLife: 12, size: 40, color: '#fff', type: 'explosion' });
+                        particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 20, maxLife: 20, size: 72, color: _impC, type: 'wakering' });
+                        for (let _bsi = 0; _bsi < 6; _bsi++) {
+                          const _bsa = (_bsi / 6) * Math.PI * 2 + Math.random() * 0.3;
                           const _bsv = 8 + Math.random() * 4;
                           particles.push({ x: z.x, y: z.y, vx: Math.cos(_bsa)*_bsv, vy: Math.sin(_bsa)*_bsv,
                             life: 18, maxLife: 18, size: 3 + Math.random() * 2,
                             color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                         }
-                        for (let _eri = 0; _eri < 14; _eri++) {
+                        for (let _eri = 0; _eri < 6; _eri++) {
                           const _era = Math.random() * Math.PI * 2;
                           const _erv = 2 + Math.random() * 4;
                           particles.push({ x: z.x, y: z.y,
@@ -22251,9 +22243,10 @@ function update() {
                             color: Math.random() > 0.4 ? _impC : '#fff', type: 'spark' });
                         }
                         decals.push({ x: z.x, y: z.y, size: 30, alpha: 0.6, color: '#310' });
-                        screenShake.intensity = Math.max(screenShake.intensity, 10);
+                        screenShake.intensity = Math.max(screenShake.intensity, 8);
                         playSound(60, 0.18, 'sine', 0.18);
-                        triggerGlitchSurge(0.35, 14);
+                        // One short glitch surge only on the full-charge payoff
+                        triggerGlitchSurge(0.22, 8);
                       }
                     } else {
                       // PIERCED HIT (b.pierced > 0): MINIMAL impact — only a
