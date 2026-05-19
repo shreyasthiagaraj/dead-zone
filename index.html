@@ -5193,25 +5193,40 @@ function generateTrenchMap(seed) {
         if (gx < GRID_W && gy >= 0 && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = false;
       }
     }
-    // ---- PATHABILITY CHECK: BFS flood-fill from spawn zone to door zone ----
+    // ---- PATHABILITY CHECK: BFS flood-fill from actual spawn zone to actual exit zone ----
+    // Uses the section's real entry/exit directions (not just W→E). For N/S exits,
+    // the target is the top/bottom-center cell, not the east wall. If the template
+    // walls block the path, carve an L-shaped 3-wide corridor from spawn to exit.
     {
-      const doorCY = baseY + Math.floor(secH / 2);
-      const spawnX = baseX + 3, doorX = baseX + secW - 2;
+      const _entryD = _sectionEntryDirs[si] || 'W';
+      const _exitD  = _sectionExitDirs[si] || 'E';
+      // Spawn cell (cells away from the entry wall — matches the player teleport in
+      // initTrenchSection / section-advance handler).
+      let _spawnGX, _spawnGY;
+      if (_entryD === 'W')      { _spawnGX = baseX + 3;            _spawnGY = baseY + Math.floor(secH / 2); }
+      else if (_entryD === 'E') { _spawnGX = baseX + secW - 4;     _spawnGY = baseY + Math.floor(secH / 2); }
+      else if (_entryD === 'N') { _spawnGX = baseX + Math.floor(secW / 2); _spawnGY = baseY + 3; }
+      else                       { _spawnGX = baseX + Math.floor(secW / 2); _spawnGY = baseY + secH - 4; } // 'S'
+      // Exit cell on the wall the corridor opens onto.
+      let _exitGX, _exitGY;
+      if (_exitD === 'E')       { _exitGX = baseX + secW - 2;      _exitGY = baseY + Math.floor(secH / 2); }
+      else if (_exitD === 'W')  { _exitGX = baseX + 1;             _exitGY = baseY + Math.floor(secH / 2); }
+      else if (_exitD === 'N')  { _exitGX = baseX + Math.floor(secW / 2); _exitGY = baseY + 1; }
+      else                       { _exitGX = baseX + Math.floor(secW / 2); _exitGY = baseY + secH - 2; } // 'S'
+      // BFS from spawn — accepts any cell within 1 of the exit target.
       const visited = new Set();
       const queue = [];
-      for (let dy = 1; dy < secH - 1; dy++) {
-        const sy = baseY + dy;
-        if (spawnX < GRID_W && sy >= 0 && sy < GRID_H && dungeonGrid[sy] && dungeonGrid[sy][spawnX]) {
-          const key = spawnX + ',' + sy;
-          if (!visited.has(key)) { visited.add(key); queue.push([spawnX, sy]); }
-        }
+      // Seed with spawn cell (clamped to interior if it landed on a wall)
+      const _seedX = Math.max(baseX + 1, Math.min(baseX + secW - 2, _spawnGX));
+      const _seedY = Math.max(baseY + 1, Math.min(baseY + secH - 2, _spawnGY));
+      if (_seedX < GRID_W && _seedY < GRID_H && dungeonGrid[_seedY] && dungeonGrid[_seedY][_seedX]) {
+        visited.add(_seedX + ',' + _seedY);
+        queue.push([_seedX, _seedY]);
       }
       let reachable = false;
       while (queue.length > 0) {
         const [cx, cy] = queue.shift();
-        // Reached door column?
-        if (cx >= doorX) { reachable = true; break; }
-        // Expand neighbors (4-directional)
+        if (Math.abs(cx - _exitGX) <= 1 && Math.abs(cy - _exitGY) <= 1) { reachable = true; break; }
         const neighbors = [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
         for (const [nx, ny] of neighbors) {
           if (nx < baseX + 1 || nx >= baseX + secW - 1 || ny < baseY + 1 || ny >= baseY + secH - 1) continue;
@@ -5224,11 +5239,19 @@ function generateTrenchMap(seed) {
         }
       }
       if (!reachable) {
-        // Carve a 3-cell-tall corridor at door center height across the entire section
-        for (let cx = baseX + 1; cx < baseX + secW - 1 && cx < GRID_W; cx++) {
-          for (let dy = doorCY - 1; dy <= doorCY + 1; dy++) {
-            if (dy >= baseY + 1 && dy < baseY + secH - 1 && dy < GRID_H && dungeonGrid[dy]) dungeonGrid[dy][cx] = true;
-          }
+        // L-shaped 3-wide corridor from spawn to exit. Horizontal leg first at
+        // spawn Y, then vertical leg at exit X. Guarantees a path regardless of
+        // entry/exit direction combo.
+        const _carveCell = (gx, gy) => {
+          if (gx >= baseX + 1 && gx < baseX + secW - 1 && gy >= baseY + 1 && gy < baseY + secH - 1 && gx < GRID_W && gy < GRID_H && dungeonGrid[gy]) dungeonGrid[gy][gx] = true;
+        };
+        const _stepX = _exitGX >= _spawnGX ? 1 : -1;
+        for (let cx = _spawnGX; cx !== _exitGX + _stepX; cx += _stepX) {
+          for (let dy = -1; dy <= 1; dy++) _carveCell(cx, _spawnGY + dy);
+        }
+        const _stepY = _exitGY >= _spawnGY ? 1 : -1;
+        for (let cy = _spawnGY; cy !== _exitGY + _stepY; cy += _stepY) {
+          for (let dx = -1; dx <= 1; dx++) _carveCell(_exitGX + dx, cy);
         }
       }
     }
