@@ -401,6 +401,12 @@ body.mobile #mobile-buttons { display: block; }
 #wave-announce { position: fixed; top: 25%; width: 100%; text-align: center; z-index: 30; pointer-events: none; opacity: 0; transition: opacity 0.3s; }
 #wave-announce .wave-num { font-size: clamp(22px, 5vw, 44px); color: #f0f; font-weight: bold; text-shadow: 0 0 20px rgba(255,0,255,0.6), 0 0 40px rgba(255,0,255,0.2); }
 #wave-announce .wave-sub { font-size: clamp(10px, 2.5vw, 14px); color: #0ff; margin-top: 4px; text-shadow: 0 0 8px rgba(0,255,255,0.4); }
+/* Arcade points: persistent top-center counter. Pops on each kill via inline scale. */
+#arcade-points { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 28; pointer-events: none; font-family: 'Courier New', monospace; font-weight: bold; color: #fa0; text-align: center; line-height: 1.1; display: none; transform-origin: 50% 0%; transition: transform 0.18s cubic-bezier(.5,1.6,.5,1); }
+#arcade-points .ap-label { font-size: clamp(9px, 1.6vw, 12px); letter-spacing: 3px; color: #fa0a; text-shadow: 0 0 6px rgba(255,170,0,0.4); margin-bottom: 1px; }
+#arcade-points .ap-value { font-size: clamp(28px, 5.5vw, 44px); color: #fa0; text-shadow: 0 0 14px rgba(255,170,0,0.7), 0 0 28px rgba(255,170,0,0.35); font-variant-numeric: tabular-nums; }
+#arcade-points .ap-streak { font-size: clamp(10px, 1.8vw, 14px); color: #f0f; text-shadow: 0 0 8px rgba(255,0,255,0.5); margin-top: 2px; min-height: 1em; }
+#arcade-points.popping { transform: translateX(-50%) scale(1.16); }
 #pickup-msg { position: fixed; top: 55%; width: 100%; text-align: center; z-index: 30; pointer-events: none; font-size: 16px; color: #0f0; opacity: 0; text-shadow: 0 0 12px rgba(0,255,0,0.5), 0 0 24px rgba(0,255,0,0.2); }
 
 /* ============================================================ */
@@ -551,6 +557,7 @@ body.mobile #mobile-buttons { display: block; }
 </div>
 <div id="streak-hud" style="display:none"></div>
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
+<div id="arcade-points"><div class="ap-label">SCORE</div><div class="ap-value">0</div><div class="ap-streak"></div></div>
 <!-- effects-bar moved inside hud-topleft -->
 <div id="mobile-buttons">
   <div class="mobile-btn mark-ready" id="btn-mark" aria-label="Mark">
@@ -1108,6 +1115,15 @@ let siegeRepairHeld = false; // player is holding the REPAIR button
 
 let survivalZombiesTotal = 0, survivalZombiesSpawned = 0, survivalZombiesKilled = 0;
 let waveSummaryActive = false, waveSummaryTimer = 0;
+
+// Arcade mode — endless waves on a big open arena. Tight score loop, rare drops.
+// Distinct from survival: no shop, no perk picks; bigger map; longer rest gaps;
+// every kill spawns a flashy +X points label and bumps a top-of-screen counter.
+let arcadeWave = 0, arcadeWaveState = 'countdown', arcadeWaveTimer = 0;
+let arcadeZombiesTotal = 0, arcadeZombiesSpawned = 0, arcadeZombiesKilled = 0;
+let arcadeStreak = 0, arcadeStreakTimer = 0; // chain-kill multiplier
+let arcadeScoreDisplay = 0; // smoothed value the HUD lerps toward score
+let arcadeCounterPulse = 0; // 0..1, decays — drives the HUD pop on each kill
 
 // ============================================================
 // ARCADE ESCALATION SYSTEM
@@ -4243,7 +4259,9 @@ function maybeDropPickup(zombie) {
   const t = zombie.type;
   const isBoss = !!zombie.boss;
   const isElite = !isBoss && (t === 'tank' || t === 'brute' || t === 'sniper' || t === 'shielder' || t === 'splitter' || t === 'stalker');
-  let dropChance = 0.20; // all enemies: 20% drop rate (was 12% — game was too unforgiving)
+  // Arcade mode: lower drop rate overall so the player feels the squeeze.
+  // Wave-clear rewards (handled in updateArcadeWaves) make up the difference.
+  let dropChance = (gameMode === 'arcade') ? 0.12 : 0.20;
   if (isBoss)  dropChance = 1.0;
   if (Math.random() > dropChance) return;
 
@@ -4254,6 +4272,12 @@ function maybeDropPickup(zombie) {
     if (r < 0.25)      kind = 'element';
     else if (r < 0.65) kind = 'powerup';
     else               kind = 'health';  // boss: 35% health drop (was 15%)
+  } else if (gameMode === 'arcade') {
+    // Arcade: health drops are RARE. Power-ups dominate so kills feel rewarding
+    // without trivialising survival. Health pickup ≈ 5% of drops × 12% drop rate
+    // ≈ 0.6% of kills — about one per ~170 kills.
+    if (r < 0.95) kind = 'powerup';
+    else          kind = 'health';
   } else {
     // Health split bumped so survivability goes up without nerfing power-ups much.
     if (r < 0.50)      kind = 'powerup';
@@ -9301,6 +9325,7 @@ function progValueFromMode() {
   if (gameMode === 'siege') return siegeWave || 0;
   if (gameMode === 'gauntlet') return gauntletRoom || 0;
   if (gameMode === 'survival') return survivalWave || 0;
+  if (gameMode === 'arcade') return arcadeWave || 0;
   return level || 1;
 }
 let dungeonGrid = null, rooms = [], roomDetails = [], roomGrid = null; // roomGrid[y][x] = room index or -1
@@ -10310,6 +10335,67 @@ function generateArena(seed) {
   uploadDungeonGrid();
 }
 
+// Arcade arena: bigger and more open than survival's. Sparse cover (chunky cover
+// blocks well-spread) keeps the action constant and dodgeable. Same theming as
+// arena (furnace) for the high-action vibe; lighter detail since the map is huge.
+function generateArcadeArena(seed) {
+  // 25% wider/taller than the standard arena — lots of room to kite + maneuver.
+  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 1.25), Math.floor(DEFAULT_ARENA_H * 1.25));
+  const rng = seededRandom(seed || Date.now());
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  const margin = 22;
+  const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
+  carveRoom(arena);
+  rooms.push(arena);
+  // Sparse cover — fewer blocks than survival but bigger, well-spaced. Sightlines
+  // stay long so ranged enemies and player can actually use the space.
+  const numObstacles = 14 + Math.floor(rng() * 7); // 14-20 chunky blocks
+  const placed = [];
+  const centerX = GRID_W / 2, centerY = GRID_H / 2;
+  // Each obstacle must be at least MIN_GAP cells from every other (no clusters).
+  const MIN_GAP = 6;
+  for (let att = 0; att < 400 && placed.length < numObstacles; att++) {
+    const ow = 3 + Math.floor(rng() * 4), oh = 3 + Math.floor(rng() * 4); // 3-6 cells
+    const ox = margin + 4 + Math.floor(rng() * (arena.w - ow - 8));
+    const oy = margin + 4 + Math.floor(rng() * (arena.h - oh - 8));
+    const ocx = ox + ow / 2, ocy = oy + oh / 2;
+    // Spawn safe-zone (10-cell radius around center)
+    if (Math.abs(ocx - centerX) < 10 && Math.abs(ocy - centerY) < 10) continue;
+    let overlap = false;
+    for (const p of placed) {
+      const pcx = p.x + p.w / 2, pcy = p.y + p.h / 2;
+      if (Math.abs(ocx - pcx) < (ow + p.w) / 2 + MIN_GAP && Math.abs(ocy - pcy) < (oh + p.h) / 2 + MIN_GAP) { overlap = true; break; }
+    }
+    if (overlap) continue;
+    for (let y = oy; y < oy + oh && y < GRID_H; y++) for (let x = ox; x < ox + ow && x < GRID_W; x++) dungeonGrid[y][x] = false;
+    placed.push({ x: ox, y: oy, w: ow, h: oh });
+  }
+  arena.theme = ROOM_THEMES[4];
+  arena.brightness = 1.0;
+  arena.flicker = false;
+  roomDetails = [];
+  const arenaDetails = [];
+  const numDebris = 20 + Math.floor(rng() * 12);
+  for (let di = 0; di < numDebris; di++) {
+    const px = (arena.x + 3 + rng() * (arena.w - 6)) * CELL_SIZE;
+    const py = (arena.y + 3 + rng() * (arena.h - 6)) * CELL_SIZE;
+    if (dungeonGrid[Math.floor(py/CELL_SIZE)] && dungeonGrid[Math.floor(py/CELL_SIZE)][Math.floor(px/CELL_SIZE)]) {
+      const kind = rng();
+      if (kind < 0.35) arenaDetails.push({ type: 'stain', x: px, y: py, size: 12 + rng() * 28, color: rng() < 0.5 ? '#2a1515' : '#1a1a10' });
+      else if (kind < 0.6) arenaDetails.push({ type: 'rubble', x: px, y: py, size: 6 + rng() * 10, count: 3 + Math.floor(rng() * 4) });
+      else if (kind < 0.8) arenaDetails.push({ type: 'scratch', x: px, y: py, angle: rng() * Math.PI, len: 8 + rng() * 15 });
+      else arenaDetails.push({ type: 'crate', x: px, y: py, size: 10 + rng() * 8, angle: rng() * 0.3 - 0.15 });
+    }
+  }
+  roomDetails.push({ ri: 0, theme: arena.theme, details: arenaDetails, brightness: 1.0, flicker: false });
+  buildRoomGrid();
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
+}
+
 function generateHordeArena(seed) {
   setArenaDimensions(DEFAULT_ARENA_W, DEFAULT_ARENA_H);
   const rng = seededRandom(seed || Date.now());
@@ -10421,7 +10507,7 @@ function getRandomFloorPos() {
     const hy = CELL_SIZE * 2 + Math.random() * (ARENA_H - CELL_SIZE * 4);
     return { x: hx, y: hy };
   }
-  if (gameMode === 'survival' && rooms.length > 0) {
+  if ((gameMode === 'survival' || gameMode === 'arcade') && rooms.length > 0) {
     // Pick random floor cell in the arena
     const r = rooms[0];
     for (let att = 0; att < 50; att++) {
@@ -10760,7 +10846,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench';
+  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench';
   const baseBright = _brightMode ? 0.35 : 0.25;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -10934,6 +11020,8 @@ function showScreen(id) {
   const inGame = !id || id === 'pause-screen' || id === 'wave-summary-screen' || id === 'perk-screen';
   const hudVis = inGame ? '' : 'none';
   ['hud-topleft','mobile-buttons','center-hud','btn-menu'].forEach(h => { const el=document.getElementById(h); if(el) el.style.display = hudVis === 'none' ? 'none' : (h === 'hud-topleft' || h === 'btn-menu' ? 'flex' : ''); });
+  // Arcade counter visibility: hidden on menus; in-game it shows itself via updateHUD when gameMode==='arcade'.
+  { const apEl = document.getElementById('arcade-points'); if (apEl) { if (!inGame) apEl.style.display = 'none'; /* in-game state handled by updateHUD */ } }
 }
 
 function showLobbyScreen() { showScreen('lobby-screen'); document.getElementById('lobby-code').textContent = lobbyCode; updateLobbyUI(); }
@@ -10970,7 +11058,7 @@ function updateLobbyUI() {
   document.getElementById('lobby-code').textContent = lobbyCode;
   // Show game mode label
   const modeDisp = document.getElementById('mode-display');
-  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'trench' ? 'MODE: TRENCH' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : gameMode === 'siege' ? 'MODE: SIEGE' : 'MODE: CO-OP';
+  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'trench' ? 'MODE: TRENCH' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : gameMode === 'arcade' ? 'MODE: ARCADE' : gameMode === 'siege' ? 'MODE: SIEGE' : 'MODE: CO-OP';
 }
 
 // Internal: the real death screen routine. showDeathScreen() wraps it with a
@@ -11053,8 +11141,8 @@ function _realShowDeathScreen() {
 
   // Mode-specific progression stat (horde has no progression — it's one continuous level)
   const showProg = gameMode !== 'horde';
-  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
-  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
+  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
+  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
 
   // Leaderboard history — store up to 50 runs per mode, display all of them in a scrollable list
   const lbKey = `deadzone_lb_${gameMode}`;
@@ -11460,6 +11548,7 @@ const MODE_CARDS = [
   { id: 'siege',    title: 'SIEGE',    color: '#f80', desc: 'Two walls. Waves from both sides.',  svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="17" y2="21"/><line x1="11" y1="8" x2="11" y2="16"/><line x1="13" y1="8" x2="13" y2="16"/></svg>' },
   { id: 'gauntlet', title: 'GAUNTLET', color: '#fa4', desc: 'Room by room. Boss every 5.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="6" height="12"/><rect x="9" y="6" width="6" height="12"/><rect x="15" y="6" width="6" height="12"/></svg>' },
   { id: 'survival', title: 'SURVIVAL', color: '#ff0', desc: 'Endless waves. Pick a perk each wave.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 L14 9 L20 9 L15 13 L17 20 L12 16 L7 20 L9 13 L4 9 L10 9 Z"/></svg>' },
+  { id: 'arcade',   title: 'ARCADE',   color: '#fa0', desc: 'Chase the high score. Endless action.', svg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 18 8 10 12 14 16 6 21 12"/><circle cx="3" cy="18" r="1.2" fill="currentColor" stroke="none"/><circle cx="21" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>' },
 ];
 function renderModeGrid(containerId, onPick) {
   const el = document.getElementById(containerId);
@@ -13218,8 +13307,8 @@ function calculateDeathStats() {
   lbHistory.sort((a, b) => b.score - a.score);
   if (lbHistory.length > 50) lbHistory.length = 50;
   localStorage.setItem(lbKey, JSON.stringify(lbHistory));
-  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
-  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
+  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
+  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
   return { shardsEarned, survivalTime, survivalMin, survivalSec, kills, progLabel, progValue, isNewBest, runBitsEarned };
 }
 
@@ -13426,6 +13515,10 @@ function startSoloGame() {
     generateArena(window._currentLevelSeed);
     exitPos = null;
     resetSurvivalState();
+  } else if (gameMode === 'arcade') {
+    generateArcadeArena(window._currentLevelSeed);
+    exitPos = null;
+    resetArcadeState();
   } else if (gameMode === 'horde') {
     generateHordeArena(window._currentLevelSeed);
     exitPos = null;
@@ -13453,11 +13546,12 @@ function startSoloGame() {
   if (gameMode === 'dungeon') placeExit();
   showScreen(null);
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic((gameMode === 'horde' || gameMode === 'siege') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'descent') startDescent();
   else if (gameMode === 'trench') startTrench();
   else if (gameMode === 'survival') startSurvivalWave();
+  else if (gameMode === 'arcade') startArcadeWave();
   else if (gameMode === 'horde') startHorde();
   else if (gameMode === 'siege') startSiege();
   else if (gameMode === 'gauntlet') startGauntlet();
@@ -13489,6 +13583,10 @@ function startMultiplayerGame() {
     generateArena(lobbySeed);
     exitPos = null;
     resetSurvivalState();
+  } else if (gameMode === 'arcade') {
+    generateArcadeArena(lobbySeed);
+    exitPos = null;
+    resetArcadeState();
   } else if (gameMode === 'horde') {
     generateHordeArena(lobbySeed);
     exitPos = null;
@@ -13534,13 +13632,14 @@ function startMultiplayerGame() {
   if (gameMode === 'dungeon') { placeExit(); }
   level = 1;
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic((gameMode === 'horde' || gameMode === 'siege') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   showScreen(null);
   document.activeElement?.blur(); canvas.focus();
   if (isHost) {
     if (gameMode === 'descent') startDescent();
     else if (gameMode === 'trench') startTrench();
     else if (gameMode === 'survival') startSurvivalWave();
+    else if (gameMode === 'arcade') startArcadeWave();
     else if (gameMode === 'horde') startHorde();
     else if (gameMode === 'siege') startSiege();
     else if (gameMode === 'gauntlet') startGauntlet();
@@ -19574,6 +19673,187 @@ function getZombieTypesForWave(wave) {
   return t;
 }
 
+// ============================================================
+// ARCADE MODE — endless waves, big open map, flashy point feedback.
+// Distinct from survival: no shop/perk picks, bigger map, longer rest gaps,
+// every kill spawns a "+points" label and bumps a top-of-screen counter.
+// ============================================================
+const ARCADE_REST_FRAMES = 600;            // 10s breather between waves
+const ARCADE_STREAK_WINDOW = 180;          // 3s to chain kills for combo
+const ARCADE_BOSS_INTERVAL = 10;           // boss every 10th wave
+
+function resetArcadeState() {
+  arcadeWave = 0;
+  arcadeWaveState = 'countdown';
+  arcadeWaveTimer = 180; // 3s pre-game countdown
+  arcadeZombiesTotal = 0;
+  arcadeZombiesSpawned = 0;
+  arcadeZombiesKilled = 0;
+  arcadeStreak = 0;
+  arcadeStreakTimer = 0;
+  arcadeScoreDisplay = 0;
+  arcadeCounterPulse = 0;
+}
+
+function startArcadeWave() {
+  arcadeWave++;
+  resetWaveKills();
+  // Scale: starts gentle, ramps each wave. ~6+wave*2.2 enemies, capped to keep
+  // mobile from drowning. Boss waves get fewer mooks (boss is the spectacle).
+  const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
+  arcadeZombiesTotal = isBoss ? Math.floor(8 + arcadeWave * 1.2) : Math.floor(6 + arcadeWave * 2.2);
+  arcadeZombiesSpawned = 0;
+  arcadeZombiesKilled = 0;
+  arcadeWaveState = 'active';
+  playWaveStartSound();
+  const el = document.getElementById('wave-announce');
+  if (isBoss) {
+    document.getElementById('wave-num').textContent = `BOSS · WAVE ${arcadeWave}`;
+    document.getElementById('wave-sub').textContent = 'Take it down for the bonus.';
+  } else {
+    document.getElementById('wave-num').textContent = `WAVE ${arcadeWave}`;
+    const subs = ['Stay moving.', 'Chain those kills.', 'High score time.', 'Don\'t stop.',
+                  'Light it up.', 'Survive the swarm.', 'Run the score up.', 'Keep the streak alive.'];
+    document.getElementById('wave-sub').textContent = subs[(arcadeWave - 1) % subs.length];
+  }
+  el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+  if (isBoss) spawnArcadeBoss();
+  // Replenish barrels each wave for cover variety
+  spawnBarrels(arcadeWave === 1 ? 8 : 2 + Math.floor(Math.random() * 3));
+}
+
+function spawnArcadeBoss() {
+  const arena = rooms[0];
+  const edge = Math.floor(Math.random() * 4);
+  let gx, gy;
+  if (edge === 0) { gx = arena.x + 2; gy = Math.floor(arena.y + arena.h / 2); }
+  else if (edge === 1) { gx = arena.x + arena.w - 3; gy = Math.floor(arena.y + arena.h / 2); }
+  else if (edge === 2) { gx = Math.floor(arena.x + arena.w / 2); gy = arena.y + 2; }
+  else { gx = Math.floor(arena.x + arena.w / 2); gy = arena.y + arena.h - 3; }
+  const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
+  const tier = Math.floor(arcadeWave / ARCADE_BOSS_INTERVAL);
+  const bossHp = 450 + tier * 350;
+  const bossSpeed = 1.2 + tier * 0.1;
+  const bossRadius = 26 + Math.min(tier * 2, 10);
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp,
+    speed: bossSpeed, radius: bossRadius, color: '#fa0', damage: 32 + tier * 4,
+    score: 2000 + tier * 1000, type: 'boss', attackCooldown: 0, hitFlash: 0,
+    ranged: false, fireRate: 0, lastFired: 0, explodeOnDeath: true,
+    explosionRadius: 80 + tier * 10, angle: 0, staggerTimer: 0, aware: true,
+    wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0,
+    lastX: 0, lastY: 0, boss: true });
+  showGlitchCallout('boss');
+}
+
+function spawnArcadeZombie() {
+  const ts = getZombieTypesForWave(arcadeWave);
+  const tk = ts[Math.floor(Math.random() * ts.length)];
+  const t = ZOMBIE_TYPES[tk];
+  const arena = rooms[0];
+  const edge = Math.floor(Math.random() * 4);
+  let gx, gy;
+  if (edge === 0) { gx = arena.x + 1; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+  else if (edge === 1) { gx = arena.x + arena.w - 2; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
+  else if (edge === 2) { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + 1; }
+  else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
+  const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
+  // Slightly gentler HP scaling than survival — arcade leans on volume + variety,
+  // not on bullet-sponge enemies. The fun is mowing them down.
+  const sc = 1 + (arcadeWave - 1) * 0.10;
+  const hp = t.hp * sc;
+  const spd = t.speed + (arcadeWave - 1) * 0.025;
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd,
+    radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk,
+    attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0,
+    lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0,
+    angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2,
+    wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
+}
+
+function updateArcadeWaves() {
+  if (!isHost || gameMode !== 'arcade') return;
+  // Streak timer ticks down every frame regardless of state
+  if (arcadeStreakTimer > 0) {
+    arcadeStreakTimer--;
+    if (arcadeStreakTimer <= 0) arcadeStreak = 0;
+  }
+  if (arcadeWaveState === 'countdown') {
+    arcadeWaveTimer--;
+    if (arcadeWaveTimer <= 0) startArcadeWave();
+    return;
+  }
+  if (arcadeWaveState === 'rest') {
+    arcadeWaveTimer--;
+    if (arcadeWaveTimer <= 0) startArcadeWave();
+    return;
+  }
+  // Active wave — sustained spawning. Higher concurrent cap than survival so
+  // the action stays dense on the bigger map.
+  const maxActive = Math.min(18, 7 + arcadeWave);
+  const spawnRate = Math.max(3, 22 - arcadeWave * 2);
+  spawnTimer++;
+  if (spawnTimer % spawnRate === 0 && arcadeZombiesSpawned < arcadeZombiesTotal && zombies.length < maxActive) {
+    const burstCount = arcadeWave >= 6 ? Math.min(3, arcadeZombiesTotal - arcadeZombiesSpawned)
+                     : arcadeWave >= 3 ? Math.min(2, arcadeZombiesTotal - arcadeZombiesSpawned)
+                     : 1;
+    for (let b = 0; b < burstCount; b++) {
+      spawnArcadeZombie();
+      arcadeZombiesSpawned++;
+    }
+  }
+  // Wave complete: all spawned, all dead.
+  if (arcadeZombiesKilled >= arcadeZombiesTotal && zombies.length === 0) {
+    arcadeWaveState = 'rest';
+    arcadeWaveTimer = ARCADE_REST_FRAMES;
+    // Bonus on wave clear — bigger every 5 waves, bigger still on boss waves.
+    const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
+    const isMilestone = arcadeWave % 5 === 0;
+    const bonus = isBoss ? 5000 * Math.floor(arcadeWave / ARCADE_BOSS_INTERVAL)
+                : isMilestone ? 1000 * arcadeWave : 300 * arcadeWave;
+    score += bonus;
+    arcadeCounterPulse = 1;
+    const lpx = getLocalPlayer() ? getLocalPlayer().x : 0;
+    const lpy = getLocalPlayer() ? getLocalPlayer().y : 0;
+    addFloatingText(lpx, lpy - 40, `WAVE ${arcadeWave} CLEAR  +${bonus}`, '#fa0');
+    // Health drops are rare — only on milestone clears (every 5th wave) and bosses.
+    if (isBoss || isMilestone) spawnHealthPickup();
+    // Always drop one power-up to reward the player during the breather.
+    const p = getRandomFloorPos();
+    const pw = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+    pickups.push({ type: 'powerup', powerupId: pw.id, x: p.x, y: p.y, bobTimer: Math.random() * Math.PI * 2 });
+  }
+}
+
+// Called from damageZombie when a zombie dies in arcade mode. Awards score (with
+// streak multiplier), spawns the flashy +X label, and pulses the HUD counter.
+function _arcadeAwardKill(z) {
+  if (gameMode !== 'arcade') return;
+  // Streak multiplier: 1x → 2x at 5 chain kills → 3x at 15 → 4x at 30 → 5x cap.
+  arcadeStreak++;
+  arcadeStreakTimer = ARCADE_STREAK_WINDOW;
+  const mult = arcadeStreak >= 30 ? 5 : arcadeStreak >= 15 ? 4 : arcadeStreak >= 5 ? 3 : arcadeStreak >= 2 ? 2 : 1;
+  const basePts = (z && z.score) ? z.score : 10;
+  const pts = basePts * mult;
+  score += pts;
+  kills++;
+  if (gameMode === 'arcade') arcadeZombiesKilled++;
+  // Spawn the flashy label — bigger on high multipliers / boss kills.
+  const isBoss = !!(z && z.boss);
+  const color = isBoss ? '#f0f' : (mult >= 3 ? '#f0f' : mult >= 2 ? '#fa0' : '#ff0');
+  const label = (mult > 1 ? `+${pts}  x${mult}` : `+${pts}`);
+  floatingTexts.push({
+    x: z.x, y: z.y - (z.radius || 14) - 8,
+    text: label, color,
+    vx: 0, vy: -1.8,
+    life: 50, maxLife: 50,
+    _arcadePoints: true,
+    _pulse: 10,
+    _bigLabel: isBoss || mult >= 3,
+  });
+  // Bump the HUD counter pulse — clamped, decays in updateHUD.
+  arcadeCounterPulse = Math.min(1, arcadeCounterPulse + 0.6);
+}
+
 // ---- HORDE MODE ----
 let hordeTimer = 0; // frames survived
 const HORDE_CIRCLE_RADIUS = 120; // pixels — defend zone radius
@@ -20550,6 +20830,13 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
   z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
+  // Arcade mode: every death (bullet, DoT, AoE, explosion) routes through here
+  // so we award points + spawn the flashy "+X" label exactly once per kill.
+  // _arcadeScored flag dedupes against the bullet-block score path below.
+  if (gameMode === 'arcade' && prevHp > 0 && z.hp <= 0 && !z._arcadeScored) {
+    z._arcadeScored = true;
+    _arcadeAwardKill(z);
+  }
   // IMPACT DETONATION — every hit is an explosion at the target
   if (!silent) {
     const _hfExposed = z._exposed;
@@ -22927,7 +23214,7 @@ function update() {
                   particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:nz.x,ty:nz.y});
                   // Sparks at chain point
                   for(let li=0;li<4;li++){particles.push({x:nz.x+(Math.random()-0.5)*12,y:nz.y+(Math.random()-0.5)*12,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8+Math.random()*8,maxLife:16,size:2+Math.random()*2,color:'#4ff',type:'spark'});}
-                  damageZombie(nz,b.damage*0.2,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){score+=z.score;kills++;
+                  damageZombie(nz,b.damage*0.2,0,0);nz.staggerTimer=Math.max(nz.staggerTimer,15);playSfx('lightning_fire',0.15)||playSound(1200,0.03,'sine',0.06);lastZ=nz;}}if(z.hp<=0){if(!z._arcadeScored){score+=z.score;kills++;}
                   // Track per-player kills for wave summary
                   const _killer=players.find(pp=>pp.id===b.ownerId);if(_killer){_killer._waveKills=(_killer._waveKills||0)+1;_killer._totalKills=(_killer._totalKills||0)+1;}
                   // Arcade system: run kills + streak (check ownerId matches local player)
@@ -23075,6 +23362,8 @@ function update() {
       updateGauntlet();
     } else if (gameMode === 'survival') {
       updateSurvivalWaves();
+    } else if (gameMode === 'arcade') {
+      updateArcadeWaves();
     } else {
       // Continuous zombie spawning based on level
       spawnTimer++;
@@ -24750,7 +25039,9 @@ function update() {
     // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
     // Also catches NaN hp zombies (invincibility bug from simultaneous damage sources)
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<1){
-      score+=dz.score;kills++;if(gameMode==='survival'){survivalZombiesKilled++;}
+      // Arcade already awarded score+kills via _arcadeAwardKill in damageZombie.
+      if(!dz._arcadeScored){score+=dz.score;kills++;}
+      if(gameMode==='survival'){survivalZombiesKilled++;}
       // Combo tracking — 2.5s window between kills extends the streak
       const _prevCombo = _comboCount;
       _comboCount++;
@@ -25288,7 +25579,7 @@ function update() {
     const sWave = gameMode === 'siege' ? (siegeWave || 0) : 0;
     const sWaveSt = gameMode === 'siege' ? (siegeWaveState || 'rest') : null;
     const sWaveTimer = gameMode === 'siege' ? (siegeWaveTimer || 0) : 0;
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
   }
 
   updateHUD();
@@ -25418,6 +25709,20 @@ function applyHostState(msg) {
       showWaveSummary();
     }
     survivalWaveState = msg.survivalWaveState || survivalWaveState;
+  } else if (msg.gameMode === 'arcade') {
+    // Non-host arcade sync: mirror wave + timer + streak so the persistent counter,
+    // wave callouts, and streak indicator render correctly on clients.
+    if (msg.arcadeWave && msg.arcadeWave !== arcadeWave) {
+      arcadeWave = msg.arcadeWave;
+      const el = document.getElementById('wave-announce');
+      const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
+      document.getElementById('wave-num').textContent = isBoss ? `BOSS · WAVE ${arcadeWave}` : `WAVE ${arcadeWave}`;
+      document.getElementById('wave-sub').textContent = isBoss ? 'Take it down for the bonus.' : 'Run the score up.';
+      el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
+    }
+    arcadeWaveState = msg.arcadeWaveState || arcadeWaveState;
+    arcadeWaveTimer = msg.arcadeWaveTimer || 0;
+    arcadeStreak = msg.arcadeStreak || 0;
   } else {
     // Detect level change — regenerate dungeon on client
     if (msg.level && msg.level !== level) {
@@ -25823,6 +26128,54 @@ function updateHUD() {
   }
   // Clear old perk display (not used in arcade system)
   const pd=document.getElementById('perk-display');if(pd)pd.innerHTML='';
+  // ---- ARCADE MODE: persistent score counter + streak indicator ----
+  // Display block visible only in arcade. Smoothly lerps toward `score` so the
+  // number rolls up satisfyingly after each kill. Pulse class toggles on for one
+  // frame to drive the CSS scale pop.
+  {
+    const ap = document.getElementById('arcade-points');
+    if (ap) {
+      if (gameMode === 'arcade') {
+        if (ap.style.display !== 'block') ap.style.display = 'block';
+        // Lerp display toward true score so the digits visibly tick up
+        if (arcadeScoreDisplay < score) {
+          const delta = score - arcadeScoreDisplay;
+          arcadeScoreDisplay += Math.max(1, Math.ceil(delta * 0.18));
+          if (arcadeScoreDisplay > score) arcadeScoreDisplay = score;
+        } else if (arcadeScoreDisplay > score) {
+          arcadeScoreDisplay = score; // reset/respawn safety
+        }
+        const valEl = ap.querySelector('.ap-value');
+        if (valEl) {
+          const s = arcadeScoreDisplay.toLocaleString();
+          if (valEl.textContent !== s) valEl.textContent = s;
+        }
+        // Pulse: triggered by _arcadeAwardKill setting arcadeCounterPulse=1; decays
+        // here. CSS class toggles the scale.
+        const wantsPop = arcadeCounterPulse > 0.5;
+        if (wantsPop !== ap.classList.contains('popping')) {
+          ap.classList.toggle('popping', wantsPop);
+        }
+        if (arcadeCounterPulse > 0) arcadeCounterPulse = Math.max(0, arcadeCounterPulse - 0.12);
+        // Streak indicator
+        const stEl = ap.querySelector('.ap-streak');
+        if (stEl) {
+          let stText = '';
+          if (arcadeStreak >= 2) {
+            const mult = arcadeStreak >= 30 ? 5 : arcadeStreak >= 15 ? 4 : arcadeStreak >= 5 ? 3 : 2;
+            stText = `x${mult} STREAK · ${arcadeStreak} KILLS`;
+          } else if (arcadeWaveState === 'rest') {
+            stText = `NEXT WAVE IN ${Math.ceil(arcadeWaveTimer / 60)}s`;
+          } else if (arcadeWave > 0) {
+            stText = `WAVE ${arcadeWave}`;
+          }
+          if (stEl.textContent !== stText) stEl.textContent = stText;
+        }
+      } else if (ap.style.display !== 'none') {
+        ap.style.display = 'none';
+      }
+    }
+  }
 }
 
 // ============================================================
@@ -31003,6 +31356,24 @@ function render() {
       ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
       ctx.fillText(ft.text, ft.x, ft.y);
+    } else if (ft._arcadePoints) {
+      // Arcade kill label — bold pop-in, neon glow, fades in last 40% of life.
+      let _apScale = 1;
+      if (ft._pulse > 0) { _apScale = 1 + (ft._pulse / 10) * 0.55; ft._pulse--; }
+      const _baseSize = ft._bigLabel ? 26 : 20;
+      ctx.shadowBlur = ft._bigLabel ? 18 : 12;
+      const _lifeRatio = ft.life / ft.maxLife;
+      ctx.globalAlpha = _lifeRatio < 0.4 ? _lifeRatio / 0.4 : 1;
+      const _apSz = Math.round(_baseSize * _apScale);
+      if (ft._cachedSize !== _apSz) { ft._cachedFont = 'bold ' + _apSz + 'px "Courier New", monospace'; ft._cachedSize = _apSz; }
+      ctx.font = ft._cachedFont;
+      ctx.textAlign = 'center';
+      // White outline for pop
+      ctx.fillStyle = '#fff';
+      ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+      ctx.fillStyle = ft.color;
+      ctx.fillText(ft.text, ft.x, ft.y);
+      ctx.globalAlpha = 1;
     } else {
       ctx.shadowBlur = ft._whisper ? 4 : 8;
       ctx.fillStyle = ft.color;
@@ -31024,7 +31395,7 @@ function render() {
   // Shell: skip fog entirely — room is fully lit
   if (gameState !== 'shell')
   {
-    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
+    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
     // BLACKOUT modifier: halve flashlight range
     if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].modifier && trenchSections[trenchSection].modifier.id === 'blackout') spotRadius = Math.floor(spotRadius * 0.5);
     // THE CORE domain: self-lit, no fog (expand radius massively)
