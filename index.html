@@ -16999,10 +16999,14 @@ const RIPPER_COMBO = [
   // 4. CROSS — quick R->L counter slash (mirror of strike 2)
   { kind:'arcswipe',     range: 105, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 32, cooldown:  95, color:'#4ff', tone: 680, dir:  1, label:'CROSS',
     swingDelta: Math.PI * 0.75, swingFollowPrev: true },
-  // 5. 270 deg SPIN — three-quarter revolution finisher, continues out of the
-  //    previous strike's end angle.
-  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 150, color:'#f80', tone: 480, dir: -1, label:'270 SPIN!',
-    swingDelta: Math.PI * 1.5, swingFollowPrev: true, finisher: true },
+  // 5. 270 deg SPIN — three-quarter revolution windup, continues out of the
+  //    previous strike's end angle. Flows straight into the finisher lunge.
+  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 130, color:'#4ff', tone: 480, dir: -1, label:'270 SPIN',
+    swingDelta: Math.PI * 1.5, swingFollowPrev: true },
+  // 6. FINISHER LUNGE — the climax: a committed forward thrust that drives
+  //    through whatever the spin opened up. Big damage + knockback.
+  { kind:'forwardlunge', range: 210, cone: Math.PI * 34/180, damage: 42, knockback: 115, stagger: 85, cooldown: 165, color:'#f80', tone: 540, dir:  0, label:'FINISHER!',
+    lungeDistance: 72, finisher: true },
 ];
 // Brief delay between one combo finishing and the next combo's first strike.
 // Lets the moment breathe and prevents endless looping while still letting
@@ -17380,9 +17384,14 @@ function _runComboStep(p, def, step, idx) {
         });
       }
     }
-    // No free forward glide here — approach movement is decided up front
-    // by _meleeApproachVel (only closes a gap to an out-of-reach enemy).
-    if (isLocal && _fl) triggerCameraZoom(1.025, 130);
+    // The opening LUNGE gets its approach from the idx-0 AUTO-LUNGE block.
+    // The FINISHER lunge isn't idx 0, so close its gap here — still only
+    // toward an out-of-reach in-cone enemy, never gliding into a body.
+    if (isLocal && _fl && step.finisher) {
+      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.7, speedMult: 1.6 });
+      if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
+    }
+    if (isLocal && _fl) triggerCameraZoom(1.03, 150);
     if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : (_jab ? 5.5 : 5));
   } else if (step.kind === 'lungestrike') {
     // ---- FORWARD CONE: Meta-Knight-style sharp-tip thrust ----
