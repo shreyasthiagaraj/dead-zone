@@ -17251,7 +17251,7 @@ function _meleeApproachVel(p, a, range, cone, opts) {
   // Stop just at the strike edge — well outside the enemy's body.
   const _gap = d - (range * 0.9 + _zr);
   if (_gap <= 3) return null;
-  const _v = Math.min(_maxStep, _gap * 0.42 * _speedMult);
+  const _v = Math.min(_maxStep, _gap * 0.26 * _speedMult); // 0.26 = (1-decay) - safety; no overshoot
   return { vx: (dx / d) * _v, vy: (dy / d) * _v };
 }
 
@@ -17323,8 +17323,8 @@ function _runComboStep(p, def, step, idx) {
   // both the chase range and the closing speed.
   if (idx === 0 && isLocal) {
     const _av = _meleeApproachVel(p, a, range, cone, {
-      reachMult: _rmCombo.lunge ? 1.6 : 1.0,
-      speedMult: _rmCombo.lunge ? 1.6 : 1.0,
+      reachMult: _rmCombo.lunge ? 1.3 : 1.0,
+      speedMult: _rmCombo.lunge ? 1.1 : 1.0,
     });
     if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
   }
@@ -17447,7 +17447,7 @@ function _runComboStep(p, def, step, idx) {
     // The FINISHER lunge isn't idx 0, so close its gap here — still only
     // toward an out-of-reach in-cone enemy, never gliding into a body.
     if (isLocal && _fl && step.finisher) {
-      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.7, speedMult: 1.6 });
+      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.4, speedMult: 1.1 });
       if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
     }
     if (isLocal && _fl) triggerCameraZoom(1.03, 150);
@@ -17535,7 +17535,7 @@ function _runComboStep(p, def, step, idx) {
     // dash-strike never glides the player into an enemy's body. A
     // dash-strike is a gap-closer by nature, so it chases a bit farther.
     if (isLocal) {
-      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.5, speedMult: 1.35 });
+      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.3, speedMult: 1.1 });
       if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
       screenShake.intensity = Math.max(screenShake.intensity, 10);
       triggerCameraZoom(1.03, 150);
@@ -21714,17 +21714,62 @@ function update() {
       }
     }
     // ---- Ripper auto-lunge tick: smooth velocity decay so the player glides
-    // into reach instead of teleporting. Set by _swingMelee on first-strike
-    // when a target is just out of cone reach.
+    // into reach instead of teleporting. The lunge HALTS the instant it
+    // would enter any zombie's body — no more phasing past a closer enemy
+    // to land on the one behind it.
     if (lp._rLungeVx || lp._rLungeVy) {
-      const _nx = lp.x + lp._rLungeVx, _ny = lp.y + lp._rLungeVy;
-      if (typeof obstacleCollision !== 'function' || !obstacleCollision(_nx, _ny, PLAYER_RADIUS, true)) {
-        lp.x = _nx; lp.y = _ny;
+      let _nx = lp.x + lp._rLungeVx, _ny = lp.y + lp._rLungeVy;
+      let _stopped = false;
+      // Wall stop first
+      if (typeof obstacleCollision === 'function' && obstacleCollision(_nx, _ny, PLAYER_RADIUS, true)) {
+        _stopped = true;
       } else {
-        lp._rLungeVx = 0; lp._rLungeVy = 0;
+        // Zombie body stop: clamp the move to land just outside the first
+        // zombie our path would intersect this frame.
+        const _vx = lp._rLungeVx, _vy = lp._rLungeVy;
+        const _vlen2 = _vx*_vx + _vy*_vy;
+        if (_vlen2 > 0.0001) {
+          let _bestT = 1;
+          let _hit = false;
+          for (const _z of zombies) {
+            if (!_z || _z.hp <= 0) continue;
+            const _zr = _z.radius || 14;
+            const _stopR = PLAYER_RADIUS + _zr + 2;
+            const _ex = lp.x - _z.x, _ey = lp.y - _z.y;
+            const _C = _ex*_ex + _ey*_ey - _stopR*_stopR;
+            if (_C <= 0) {
+              // Already overlapping — don't push deeper toward this zombie
+              const _dot = _vx * (_z.x - lp.x) + _vy * (_z.y - lp.y);
+              if (_dot > 0) { _bestT = 0; _hit = true; break; }
+              continue;
+            }
+            const _B = 2 * (_vx * _ex + _vy * _ey);
+            const _disc = _B*_B - 4 * _vlen2 * _C;
+            if (_disc < 0) continue;
+            const _sq = Math.sqrt(_disc);
+            const _t = (-_B - _sq) / (2 * _vlen2);
+            if (_t >= 0 && _t < _bestT) { _bestT = _t; _hit = true; }
+          }
+          if (_hit) {
+            // Stop a hair shy of the contact point so we never end inside.
+            const _safeT = Math.max(0, _bestT - 0.02);
+            _nx = lp.x + _vx * _safeT;
+            _ny = lp.y + _vy * _safeT;
+            _stopped = true;
+          }
+        }
       }
-      lp._rLungeVx *= 0.72; lp._rLungeVy *= 0.72;
-      if (Math.abs(lp._rLungeVx) + Math.abs(lp._rLungeVy) < 0.12) { lp._rLungeVx = 0; lp._rLungeVy = 0; }
+      if (_stopped) {
+        // Apply whatever partial motion was allowed (if any), then kill the lunge.
+        if (typeof obstacleCollision !== 'function' || !obstacleCollision(_nx, _ny, PLAYER_RADIUS, true)) {
+          lp.x = _nx; lp.y = _ny;
+        }
+        lp._rLungeVx = 0; lp._rLungeVy = 0;
+      } else {
+        lp.x = _nx; lp.y = _ny;
+        lp._rLungeVx *= 0.72; lp._rLungeVy *= 0.72;
+        if (Math.abs(lp._rLungeVx) + Math.abs(lp._rLungeVy) < 0.12) { lp._rLungeVx = 0; lp._rLungeVy = 0; }
+      }
     }
     // Beacon cooldown + update
     if(lp._beaconCooldown>0)lp._beaconCooldown--;
