@@ -1322,6 +1322,10 @@ let _arcadeWaveDamageTaken = false; // resets per wave
 let _arcadeMultikillCount = 0;
 let _arcadeMultikillTimer = 0;
 const ARCADE_MULTIKILL_WINDOW = 90; // 1.5s
+// Live time-slow scale — 1.0 normally, 0.35 when TIME SLOW pickup is active.
+// Applied to zombie velocity in the movement step so enemies crawl while the
+// player moves and fires at full speed. Recomputed each frame in updateHUD.
+let _arcadeTimeScale = 1.0;
 // Mod terminal that spawns between waves. The player walks up to it during
 // the rest gap to pick an upgrade card. Cleared when the next wave begins.
 // Shape: { x, y, _entered: bool }
@@ -4458,37 +4462,74 @@ function maybeDropPickup(zombie) {
   const t = zombie.type;
   const isBoss = !!zombie.boss;
   const isElite = !isBoss && (t === 'tank' || t === 'brute' || t === 'sniper' || t === 'shielder' || t === 'splitter' || t === 'stalker');
-  // Arcade mode: lower drop rate overall so the player feels the squeeze.
-  // Wave-clear rewards (handled in updateArcadeWaves) make up the difference.
-  let dropChance = (gameMode === 'arcade') ? 0.12 : 0.20;
+  const x = zombie.x, y = zombie.y;
+
+  // ============================================================
+  // ARCADE MODE: bespoke drop loot table.
+  // Score gems are common (kills should always *feel* paid). Bomb is the
+  // occasional panic save. Elite kills always drop a MEGA GEM in addition
+  // to whatever else they roll.
+  // ============================================================
+  if (gameMode === 'arcade') {
+    // Score balloons (bonus round) drop bonus gems but skip other rolls.
+    if (zombie._scoreBalloon) {
+      pickups.push({ type: 'score_gem', amount: 250, x, y, bobTimer: Math.random()*Math.PI*2 });
+      return;
+    }
+    // Elite kill: guaranteed MEGA GEM.
+    if (isElite) {
+      pickups.push({ type: 'mega_gem', amount: 1500, x, y, bobTimer: Math.random()*Math.PI*2 });
+    }
+    // Boss kill: shower of MEGA GEMs.
+    if (isBoss) {
+      for (let _bi = 0; _bi < 6; _bi++) {
+        const _ba = (_bi / 6) * Math.PI * 2;
+        pickups.push({ type: 'mega_gem', amount: 1500,
+          x: x + Math.cos(_ba)*50, y: y + Math.sin(_ba)*50,
+          bobTimer: Math.random()*Math.PI*2 });
+      }
+    }
+    // Per-kill drop roll. Lots of small drops, occasional big ones.
+    const roll = Math.random();
+    if      (roll < 0.28) pickups.push({ type: 'score_gem', amount: 200, x, y, bobTimer: Math.random()*Math.PI*2 });
+    else if (roll < 0.35) pickups.push({ type: 'powerup', powerupId: _pickArcadePowerupId(), x, y, bobTimer: Math.random()*Math.PI*2 });
+    else if (roll < 0.385) pickups.push({ type: 'bomb_pickup', x, y, bobTimer: Math.random()*Math.PI*2 });
+    else if (roll < 0.395) pickups.push({ type: 'health', amount: 30, x, y, bobTimer: Math.random()*Math.PI*2 });
+    // (remaining ~60% of kills: no drop — score gems on elite/boss are the
+    // consistent reward; per-kill roll is the cherry on top.)
+    return;
+  }
+
+  // ============================================================
+  // OTHER MODES: existing drop logic.
+  // ============================================================
+  let dropChance = 0.20;
   if (isBoss)  dropChance = 1.0;
   if (Math.random() > dropChance) return;
-
-  const x = zombie.x, y = zombie.y;
   const r = Math.random();
   let kind;
   if (isBoss) {
     if (r < 0.25)      kind = 'element';
     else if (r < 0.65) kind = 'powerup';
-    else               kind = 'health';  // boss: 35% health drop (was 15%)
-  } else if (gameMode === 'arcade') {
-    // Arcade: health drops are RARE. Power-ups dominate so kills feel rewarding
-    // without trivialising survival. Health pickup ≈ 5% of drops × 12% drop rate
-    // ≈ 0.6% of kills — about one per ~170 kills.
-    if (r < 0.95) kind = 'powerup';
-    else          kind = 'health';
+    else               kind = 'health';
   } else {
-    // Health split bumped so survivability goes up without nerfing power-ups much.
     if (r < 0.50)      kind = 'powerup';
-    else               kind = 'health';  // non-boss: 50% of drops are health (was 40%)
+    else               kind = 'health';
   }
-
   if (kind === 'powerup') {
     const pw = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pw.id, x, y, bobTimer: Math.random() * Math.PI * 2 });
   } else if (kind === 'health') {
     pickups.push({ type: 'health', amount: 20, x, y, bobTimer: Math.random() * Math.PI * 2 });
   }
+}
+
+// Pick a fun arcade powerup. Skip instant bombs from the rotating-drop pool
+// (their delivery vehicle is the dedicated 'bomb_pickup' type now) — drops
+// from this pool are timed buffs the player can plan around.
+function _pickArcadePowerupId() {
+  const pool = ['rage', 'shield', 'time_slow', 'rage', 'time_slow']; // weighted
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function updateXPOrbs() {
@@ -8702,6 +8743,9 @@ DEAD CODE END */
 const POWERUP_TYPES = [
   { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 600, desc: 'Double damage + faster fire for 10s' },
   { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 600, desc: 'Invincible force field' },
+  // Arcade buff: zombie velocity multiplied by 0.35 for 8s — enemies crawl
+  // while the player moves and fires at full speed.
+  { id: 'time_slow', name: 'TIME SLOW', color: '#a8f', icon: '⏳', duration: 480, desc: 'Enemies move 65% slower for 8s' },
   // Class bombs — instant AoE that inflicts heavy status on all enemies in a wide radius
   { id: 'thermalbomb', name: 'THERMAL BOMB', color: '#f80', icon: '🔥', duration: 1, desc: 'Massive fire blast — heavy Overheat to all nearby' },
   { id: 'cryobomb', name: 'CRYO BOMB', color: '#8ef', icon: '🧊', duration: 1, desc: 'Flash freeze blast — Chill + Freeze to all nearby' },
@@ -19874,6 +19918,91 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
         }
         pickups.splice(i, 1);
       }
+      // ---- ARCADE: SCORE GEM (+200 score) ----
+      // Cyan crystal that magnet-pulls toward the player. Instant +score on pickup.
+      else if (p.type === 'score_gem') {
+        const _gv = p.amount || 200;
+        score += _gv;
+        arcadeCounterPulse = Math.min(1, arcadeCounterPulse + 0.25);
+        if (isLocalUI) {
+          floatingTexts.push({
+            x: pl.x, y: pl.y - 28, text: `+${_gv}`, color: '#0ff',
+            vx: 0, vy: -1.4, life: 36, maxLife: 36,
+            _arcadePoints: true, _pulse: 6,
+          });
+          playSfx('pickup', 0.32) || playPickupSound();
+        }
+        // Pickup sparkle burst
+        for (let _gi = 0; _gi < 6; _gi++) {
+          const _ga = Math.random()*Math.PI*2, _gs = 2 + Math.random()*2;
+          particles.push({ x: p.x, y: p.y, vx: Math.cos(_ga)*_gs, vy: Math.sin(_ga)*_gs,
+            life: 14, maxLife: 14, size: 2 + Math.random(), color: '#0ff', type: 'spark' });
+        }
+        pickups.splice(i, 1);
+      }
+      // ---- ARCADE: MEGA GEM (+1500 score) ----
+      // Big magenta crystal — drops from elite/boss kills. Bigger pickup pop.
+      else if (p.type === 'mega_gem') {
+        const _gv = p.amount || 1500;
+        score += _gv;
+        arcadeCounterPulse = Math.min(1, arcadeCounterPulse + 0.55);
+        if (isLocalUI) {
+          floatingTexts.push({
+            x: pl.x, y: pl.y - 32, text: `+${_gv.toLocaleString()}`, color: '#f0f',
+            vx: 0, vy: -1.6, life: 60, maxLife: 60,
+            _arcadePoints: true, _pulse: 12, _bigLabel: true,
+          });
+          playSfx('pickup', 0.5) || playPickupSound();
+          playSound(1400, 0.12, 'sine', 0.16);
+          triggerCameraZoom(1.025, 220);
+        }
+        for (let _gi = 0; _gi < 14; _gi++) {
+          const _ga = Math.random()*Math.PI*2, _gs = 3 + Math.random()*3;
+          particles.push({ x: p.x, y: p.y, vx: Math.cos(_ga)*_gs, vy: Math.sin(_ga)*_gs,
+            life: 18, maxLife: 18, size: 2 + Math.random()*1.5,
+            color: Math.random()>0.4 ? '#f0f' : '#fff', type: 'spark' });
+        }
+        particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+          size: 38, color: '#f0f', type: 'wakering' });
+        pickups.splice(i, 1);
+      }
+      // ---- ARCADE: BOMB (instant screen-clear) ----
+      // Red icon — picking it up immediately clears the visible threat. Drops
+      // a ring of SCORE GEMS so the player gets paid for the chaos.
+      else if (p.type === 'bomb_pickup') {
+        if (isHost) {
+          // Big radius — 700px covers a single-screen arcade arena from the
+          // pickup point. Damage 220 will one-shot most non-elites.
+          createExplosion(p.x, p.y, 700, 220, 'player');
+          // Reward gems in a ring so the score counter spins up too
+          for (let _bi = 0; _bi < 8; _bi++) {
+            const _ba = (_bi / 8) * Math.PI * 2;
+            const _bx = p.x + Math.cos(_ba) * 80;
+            const _by = p.y + Math.sin(_ba) * 80;
+            pickups.push({ type: 'score_gem', amount: 200, x: _bx, y: _by, bobTimer: Math.random()*Math.PI*2 });
+          }
+        }
+        if (isLocalUI) {
+          // Briefly tint the screen white for impact
+          if (typeof flashEl !== 'undefined') {} // no-op guard
+          screenShake.intensity = Math.max(screenShake.intensity, 14);
+          triggerGlitchSurge(0.3, 18);
+          playSfx('explosion', 0.55) || playExplosionSound();
+          floatingTexts.push({
+            x: pl.x, y: pl.y - 60, text: 'BOMB!', color: '#fa0',
+            vx: 0, vy: -1.0, life: 80, maxLife: 80,
+            _arcadeBigCallout: true, _tier: 4, _pulse: 14,
+          });
+        }
+        // Spark detonation visual (createExplosion already adds some, but louder is better)
+        for (let _bi = 0; _bi < 30; _bi++) {
+          const _ba = Math.random()*Math.PI*2, _bs = 4 + Math.random()*7;
+          particles.push({ x: p.x, y: p.y, vx: Math.cos(_ba)*_bs, vy: Math.sin(_ba)*_bs,
+            life: 22 + Math.random()*8, maxLife: 30,
+            size: 3 + Math.random()*2, color: Math.random()>0.5 ? '#fa0' : '#ff0', type: 'spark' });
+        }
+        pickups.splice(i, 1);
+      }
     }
   }
 }
@@ -20362,6 +20491,41 @@ function _arcadeMultikillTier(count) {
 const _ARCADE_MULTIKILL_BONUS = [0, 100, 300, 700, 1500, 3000, 6000, 12000];
 const _ARCADE_MULTIKILL_COLOR = ['', '#ff0', '#fa0', '#f80', '#f44', '#f0f', '#f0f', '#fc0'];
 
+// Magnet-pull for arcade gems toward the local player. Score gems pull from
+// 250px; mega gems from 380px. Pull intensity scales with proximity so they
+// snap-in once close. Runs every frame from the main update loop.
+function _updateArcadeGemMagnet() {
+  if (gameMode !== 'arcade') return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  for (let i = 0; i < pickups.length; i++) {
+    const p = pickups[i];
+    if (p.type !== 'score_gem' && p.type !== 'mega_gem') continue;
+    const dx = lp.x - p.x, dy = lp.y - p.y;
+    const d2 = dx*dx + dy*dy;
+    const _maxR = p.type === 'mega_gem' ? 380 : 250;
+    if (d2 > _maxR * _maxR) continue;
+    const d = Math.sqrt(d2) || 1;
+    // Pull strength: scales from 2 px/frame at edge to 9 at near range, snap-in
+    // when very close. Faster on mega gems so they feel valuable.
+    const _closeness = 1 - d / _maxR;
+    const _baseSpd = p.type === 'mega_gem' ? 3 : 2;
+    const _maxSpd  = p.type === 'mega_gem' ? 12 : 9;
+    const _pull = _baseSpd + (_maxSpd - _baseSpd) * _closeness;
+    p.x += (dx / d) * _pull;
+    p.y += (dy / d) * _pull;
+    // Suck-trail spark every 2 frames for visible motion
+    if ((gameTime & 1) === 0) {
+      particles.push({
+        x: p.x, y: p.y,
+        vx: -(dx / d) * 1.5, vy: -(dy / d) * 1.5,
+        life: 8, maxLife: 8, size: 1 + Math.random(),
+        color: p.type === 'mega_gem' ? '#f0f' : '#0ff', type: 'spark',
+      });
+    }
+  }
+}
+
 // Fire the multikill callout for a tier crossing. Center the text on the
 // player so it's always in view, scale visuals + sound + shake with tier.
 function _spawnArcadeMultikillCallout(tier) {
@@ -20586,7 +20750,11 @@ function spawnArcadeZombie() {
 }
 
 function updateArcadeWaves() {
-  if (!isHost || gameMode !== 'arcade') return;
+  if (gameMode !== 'arcade') return;
+  // Compute the live time-slow scale every frame from active powerups so the
+  // zombie movement code can read a single global. Runs on host AND client.
+  _arcadeTimeScale = (typeof hasPowerUp === 'function' && hasPowerUp('time_slow')) ? 0.35 : 1.0;
+  if (!isHost) return;
   // Streak timer ticks down every frame regardless of state
   if (arcadeStreakTimer > 0) {
     arcadeStreakTimer--;
@@ -23216,6 +23384,7 @@ function update() {
     spawnAmbientParticles();
     updateOrbital();
     updateXPOrbs();
+    _updateArcadeGemMagnet();
     updateRunOrbitals();
     updateNarrativeBeats();
     // AFTERIMAGE DECOYS: tick down, VFX, expire
@@ -25894,6 +26063,14 @@ function update() {
       // Fast-moving enemies (typically from a pulse shove) substep against walls
       // and bounce off them. Slow chase movement uses the plain clamp+pushOut
       // path so normal pathing (chase-into-wall slide) still works.
+      // ARCADE TIME SLOW: scale zombie velocity by the active time scale so
+      // enemies crawl while the player operates at full speed. Applied here
+      // (just before the move step) so the bounce/substep code consistently
+      // sees the slowed values.
+      if (gameMode === 'arcade' && _arcadeTimeScale !== 1.0) {
+        z.vx *= _arcadeTimeScale;
+        z.vy *= _arcadeTimeScale;
+      }
       const _mv2 = z.vx*z.vx + z.vy*z.vy;
       const _mvSpd = Math.sqrt(_mv2);
       let _hitWallThisFrame = false;
@@ -30204,6 +30381,83 @@ function render() {
     ctx.globalAlpha = 0.8; ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(0, 0, 2 + _pulse, 0, Math.PI * 2); ctx.fill();
     ctx.restore();continue;}
+    // ---- ARCADE: SCORE GEM (cyan crystal) ----
+    if (p.type === 'score_gem') {
+      const bob = Math.sin(p.bobTimer + performance.now() * 0.005) * 2;
+      const pulse = 0.6 + Math.sin(performance.now() * 0.008) * 0.4;
+      ctx.save(); ctx.translate(p.x, p.y + bob); ctx.rotate(performance.now() * 0.003);
+      ctx.globalAlpha = 0.3 * pulse; ctx.fillStyle = '#0ff';
+      ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = '#0ff'; ctx.shadowBlur = 12;
+      ctx.fillStyle = '#0ff';
+      ctx.beginPath();
+      ctx.moveTo(0, -7); ctx.lineTo(5, -2); ctx.lineTo(5, 4); ctx.lineTo(0, 8);
+      ctx.lineTo(-5, 4); ctx.lineTo(-5, -2); ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-1, -1, 1.5, 0, Math.PI*2); ctx.fill();
+      ctx.restore(); continue;
+    }
+    // ---- ARCADE: MEGA GEM (magenta crystal with outer ring) ----
+    if (p.type === 'mega_gem') {
+      const bob = Math.sin(p.bobTimer + performance.now() * 0.005) * 2;
+      const pulse = 0.6 + Math.sin(performance.now() * 0.008) * 0.4;
+      const ringAng = performance.now() * 0.004;
+      ctx.save(); ctx.translate(p.x, p.y + bob);
+      // Outer rotating ring
+      ctx.globalAlpha = 0.85; ctx.strokeStyle = '#f0f'; ctx.lineWidth = 2;
+      ctx.shadowColor = '#f0f'; ctx.shadowBlur = 16;
+      ctx.beginPath(); ctx.arc(0, 0, 18, ringAng, ringAng + Math.PI*1.6); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 22, -ringAng, -ringAng + Math.PI*1.3); ctx.stroke();
+      // Inner ambient glow
+      ctx.globalAlpha = 0.35 * pulse;
+      ctx.fillStyle = '#f0f';
+      ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI*2); ctx.fill();
+      // Crystal core
+      ctx.globalAlpha = 1; ctx.rotate(performance.now() * 0.003);
+      ctx.fillStyle = '#f0f';
+      ctx.beginPath();
+      ctx.moveTo(0, -10); ctx.lineTo(7, -3); ctx.lineTo(7, 5); ctx.lineTo(0, 11);
+      ctx.lineTo(-7, 5); ctx.lineTo(-7, -3); ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-2, -2, 2, 0, Math.PI*2); ctx.fill();
+      ctx.restore(); continue;
+    }
+    // ---- ARCADE: BOMB PICKUP (red icon, ticking glow) ----
+    if (p.type === 'bomb_pickup') {
+      const bob = Math.sin(p.bobTimer + performance.now() * 0.006) * 3;
+      const pulse = 0.5 + Math.sin(performance.now() * 0.012) * 0.5;
+      ctx.save(); ctx.translate(p.x, p.y + bob);
+      ctx.globalAlpha = 0.35 * pulse; ctx.fillStyle = '#f44';
+      ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = '#f44'; ctx.shadowBlur = 14;
+      ctx.fillStyle = '#f44';
+      ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
+      // Skull/explosion glyph
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('💣', 0, 0);
+      ctx.shadowBlur = 0;
+      // Spark crown
+      const spark = Math.sin(performance.now() * 0.02) > 0;
+      if (spark) {
+        ctx.fillStyle = '#ff0';
+        for (let _si = 0; _si < 3; _si++) {
+          const _sa = (_si / 3) * Math.PI * 2 + performance.now() * 0.01;
+          ctx.beginPath();
+          ctx.arc(Math.cos(_sa) * 14, Math.sin(_sa) * 14 - 8, 2, 0, Math.PI*2);
+          ctx.fill();
+        }
+      }
+      ctx.restore(); continue;
+    }
     const bob=Math.sin(p.bobTimer)*3;const age=p._age||0;if(age>420&&Math.floor(age/(age>540?4:8))%2===0)continue;ctx.save();ctx.translate(p.x,p.y+bob);if(p.type==='orbital'){const od=ORBITAL_TYPES.find(o=>o.id===p.orbitalId);if(od){const pulse=0.6+Math.sin(performance.now()*0.006)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=od.color;ctx.shadowBlur=18;ctx.fillStyle=od.color;ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(od.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=od.color;ctx.fillText(od.name,0,22);}ctx.restore();continue;}else if(p.type==='weapon'){const d=WEAPON_DEFS[p.weaponType];if(d){ctx.shadowColor=d.color;ctx.shadowBlur=12;ctx.fillStyle=d.color;ctx.fillRect(-12,-5,24,10);ctx.shadowBlur=0;ctx.fillStyle='#fff';ctx.font='9px monospace';ctx.textAlign='center';ctx.fillText(d.name,0,18);}}else if(p.type==='health'){const hs=p.amount>=25?1.6:p.amount>=15?1.2:0.8;ctx.shadowColor='#4f4';ctx.shadowBlur=8+hs*4;ctx.fillStyle='#4f4';ctx.fillRect(-6*hs,-2*hs,12*hs,4*hs);ctx.fillRect(-2*hs,-6*hs,4*hs,12*hs);ctx.shadowBlur=0;}else if(p.type==='bits'){const bpulse=0.6+Math.sin(performance.now()*0.007)*0.4;ctx.globalAlpha=bpulse;ctx.shadowColor='#ff0';ctx.shadowBlur=12;ctx.fillStyle='#ff0';ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(7,-4);ctx.lineTo(7,4);ctx.lineTo(0,8);ctx.lineTo(-7,4);ctx.lineTo(-7,-4);ctx.closePath();ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#000';ctx.font='bold 7px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('◆',0,0);}else if(p.type==='ammo'){ctx.shadowColor='#fa0';ctx.shadowBlur=10;ctx.fillStyle='#fa0';ctx.fillRect(-4,-6,8,12);ctx.shadowBlur=0;}else if(p.type==='powerup'){const pd=POWERUP_TYPES.find(t=>t.id===p.powerupId);if(pd){const pulse=0.6+Math.sin(performance.now()*0.008)*0.4;ctx.globalAlpha=pulse;ctx.shadowColor=pd.color;ctx.shadowBlur=20;ctx.fillStyle=pd.color;ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 12px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(pd.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=pd.color;ctx.fillText(pd.name,0,20);}}else if(p.type==='element'){const ed=ELEMENT_TYPES.find(e=>e.id===p.elementId);if(ed){const pulse=0.55+Math.sin(performance.now()*0.009)*0.45;ctx.globalAlpha=pulse;ctx.shadowColor=ed.color;ctx.shadowBlur=24;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.3;ctx.fillStyle=ed.color;ctx.beginPath();ctx.arc(0,0,18+Math.sin(performance.now()*0.006)*2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#fff';ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(ed.icon,0,0);ctx.font='8px monospace';ctx.fillStyle=ed.color;ctx.fillText(ed.name,0,22);}}ctx.restore();}
 
   // Descent gate
