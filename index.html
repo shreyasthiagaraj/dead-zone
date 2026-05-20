@@ -4896,11 +4896,10 @@ function spawnDescentSection(idx) {
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
     const ex = (marginX + 2 + Math.random() * (DESCENT_WIDTH - 4)) * CELL_SIZE;
     const ey = sec.y + (0.3 + Math.random() * 0.5) * sec.height;
-    const sc = 1 + idx * 0.06;
-    // No early nerfs — full strength from section 0
-    const _earlyMult = 1.0;
-    const _earlySpd = 0;
-    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * sc * _earlyMult, maxHp: t.hp * sc * _earlyMult, speed: Math.max(0.8, t.speed + idx * 0.01 + _earlySpd), radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
+    const _sm = _enemyStageMult(idx + 1);
+    const _shp = t.hp * _sm.hp;
+    const _sspd = Math.max(0.8, t.speed * _sm.speed);
+    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: _shp, maxHp: _shp, speed: _sspd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false });
   }
   // Spawn boss on boss sections
   if (sec.isBoss) {
@@ -6100,7 +6099,9 @@ function spawnTrenchWave(idx, waveIdx) {
   const _dLocal = idx % 10;
   const _domainBaseHp = [1.0, 1.8, 3.2, 5.5];
   let hpScale = _domainBaseHp[_dIdx] + _dLocal * 0.12;
-  let speedBoost = 0.1 + _dIdx * 0.10 + _dLocal * 0.010;
+  // +15% baseline speed (was 0.1 — now 0.4 — applies the global "enemies are
+  // 15% faster" buff that lands across every mode).
+  let speedBoost = 0.4 + _dIdx * 0.10 + _dLocal * 0.010;
   const dmgScale = 1.0 + _dIdx * 0.40 + _dLocal * 0.045;
   const _lateGameArmor = idx >= 15 ? 0.85 : 1.0;
   // DOUBLE TIME modifier: enemies have 60% HP
@@ -20896,11 +20897,12 @@ function spawnArcadeZombie() {
     else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
     x = gx * CELL_SIZE; y = gy * CELL_SIZE;
   }
-  // HP / speed scale with wave AND wave-type multipliers. Arcade leans on
-  // volume + variety, not bullet-sponge enemies — base ramp is gentle.
-  const sc = (1 + (arcadeWave - 1) * 0.10) * (wt.hpMult || 1);
-  const hp = Math.max(1, Math.floor(t.hp * sc));
-  const spd = (t.speed + (arcadeWave - 1) * 0.025) * (wt.speedMult || 1);
+  // Unified scaling helper (+5% HP, +15% baseline +1%/wave speed) layered
+  // with wave-type multipliers. Arcade leans on volume + variety, not on
+  // bullet-sponge enemies.
+  const _sm = _enemyStageMult(arcadeWave);
+  const hp = Math.max(1, Math.floor(t.hp * _sm.hp * (wt.hpMult || 1)));
+  const spd = t.speed * _sm.speed * (wt.speedMult || 1);
   // Pre-point velocity at the player so the zombie advances from frame 1.
   const _dxIv = cx - x, _dyIv = cy - y;
   const _dIv = Math.sqrt(_dxIv * _dxIv + _dyIv * _dyIv) || 1;
@@ -21647,11 +21649,11 @@ function spawnSurvivalZombie() {
   else if (edge === 2) { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + 1; } // top
   else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; } // bottom
   const x = gx * CELL_SIZE, y = gy * CELL_SIZE;
-  const sc = 1 + (survivalWave - 1) * 0.12;
+  const _sm = _enemyStageMult(survivalWave);
   const hpMult = currentWaveMod ? currentWaveMod.hpMult : 1.0;
   const spdMult = currentWaveMod ? currentWaveMod.speedMult : 1.0;
-  const hp = t.hp * sc * hpMult;
-  const spd = (t.speed + (survivalWave - 1) * 0.03) * spdMult;
+  const hp = t.hp * _sm.hp * hpMult;
+  const spd = t.speed * _sm.speed * spdMult;
   zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd, radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0, lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0, angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
 }
 
@@ -21869,13 +21871,27 @@ function getNearestAlivePlayer(x,y) {
   return {player:best, dist:best?Math.sqrt(bd2):Infinity};
 }
 
+// Unified enemy difficulty scaling. Applied at every spawn site so per-mode
+// scaling stays consistent. Knobs:
+//   - HP +5% per stage (was 10-12% in some modes — gentler now)
+//   - Speed +15% flat baseline (NEW) + 1% per stage
+// Modes still layer their own multipliers (wave-type, domain tier, wave mod).
+function _enemyStageMult(stage) {
+  const s = Math.max(1, stage|0);
+  return {
+    hp:    1 + (s - 1) * 0.05,
+    speed: 1.15 + (s - 1) * 0.01,
+  };
+}
+
 function spawnZombie() {
   const ts=getZombieTypesForLevel(level),tk=ts[Math.floor(Math.random()*ts.length)],t=ZOMBIE_TYPES[tk];
   let br=null; for(let i=1;i<rooms.length;i++){const c=getRoomCenter(rooms[i]);const{dist:d}=getNearestAlivePlayer(c.x,c.y);if(d>400&&(br===null||Math.random()<0.3))br=rooms[i];}
   if(!br) br=rooms[1+Math.floor(Math.random()*(rooms.length-1))]||rooms[0];
   const x=(br.x+1+Math.random()*(br.w-2))*CELL_SIZE,y=(br.y+1+Math.random()*(br.h-2))*CELL_SIZE;
-  const sc=1+(level-1)*0.12;
-  zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:t.hp*sc,maxHp:t.hp*sc,speed:t.speed+(level-1)*0.03,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
+  const _sm=_enemyStageMult(level);
+  const _shp=t.hp*_sm.hp, _sspd=t.speed*_sm.speed;
+  zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:_shp,maxHp:_shp,speed:_sspd,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
 function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter');if(lv>=4)t.push('spitter','brute');if(lv>=5)t.push('exploder');if(lv>=6)t.push('stalker');if(lv<5){t.push('normal','normal');}return t; }
 
@@ -26396,14 +26412,12 @@ function update() {
           if(dot>0) meleeRange-=6; // remote player retreating — tighter contact needed
         }
         const _zt2=ZOMBIE_TYPES[z.type];
-        // Damage gate: only basic melee in the STRIKE state can deal generic
-        // contact damage. Enemies running their own attack state machines
-        // (reaper, bull, lash, lancer, crusher, leaper, prowler, slash/stalker,
-        // grappler, ranged, etc.) deal damage through their dedicated code paths
-        // and do NOT touch-damage on raw proximity. This makes every windup
-        // dodgeable instead of "you got hit by walking into them."
-        const _allowGenericContact = z._meleeState === 'strike';
-        if(pd<meleeRange&&z.attackCooldown<=0&&z.type!=='stalker'&&!_zt2?.phaser&&_allowGenericContact){
+        // Touching enemies hurts. The previous "_meleeState === 'strike'" gate
+        // meant most enemies could be safely walked into between their attack
+        // animations — too permissive. Now any zombie inside meleeRange that's
+        // off its attack cooldown does contact damage. Stalkers/phasers still
+        // skip (they have their own attack patterns that don't include touch).
+        if(pd<meleeRange&&z.attackCooldown<=0&&z.type!=='stalker'&&!_zt2?.phaser){
           damagePlayerObj(p,z.damage,z);
           z.attackCooldown=30;
           // Ram rebound — zombie bounces backward off the hit so they aren't still mashed against the player.
