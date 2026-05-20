@@ -1481,7 +1481,7 @@ const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 2;       // life=2, speed=300: frame 1 sweeps 0-300px (full range), frame 2 cleans up
 const GUN_EFFECTIVE_RANGE = 210;   // base hitscan range in px
-function _getGunRange() { const _lr = (runMods && runMods.longReach) || 0; return GUN_EFFECTIVE_RANGE * (1 + (_lr >= 2 ? 0.70 : _lr >= 1 ? 0.40 : 0)); }
+function _getGunRange() { const _lr = (runMods && runMods.longReach) || 0; return GUN_EFFECTIVE_RANGE * (1 + (_lr > 0 ? _modScale('long_reach', 0.40, 0.08) : 0)); }
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 // Tracks the last completed reload segment so we only fire the click/spark VFX
@@ -2368,9 +2368,9 @@ const _KEY_STATS = {
   viral_payload:  { label:'damage', base:22, step:5, unit:'%' },
   // ---- Class enhancement ----
   reactor_bloom:  { label:'DoT damage', base:33, step:7, unit:'%' },
-  cold_snap:      { label:'damage vs FROZEN', base:100, step:15, unit:'%' },
+  cold_snap:      { label:'freeze duration', base:2, step:0.4, unit:'s' },
   static_chain:   { label:'chain damage', base:30, step:7, unit:' dmg' },
-  vector_snap:    { label:'damage vs EXPOSED', base:40, step:8, unit:'%' },
+  vector_snap:    { label:'KB force', base:1.5, step:0.3, unit:'×' },
   compromised_core:{label:'cloud duration', base:3, step:0.5, unit:'s' },
   // ---- Generic weapon ----
   wide_spread:    { label:'blast radius', base:50, step:8, unit:'px' },
@@ -2818,14 +2818,14 @@ function rebuildRunMods() {
       // chains and Thermal explosions already AoE, so their boost is smaller;
       // Corrupt and Pulse mostly enable other cards to do work, so they get
       // the biggest flat boost to compensate.
-      case 'beacon_thermal': m.beaconElement = 'fire';    m.damageMult += 0.12; break; // OVERHEAT DoT + death explosions
-      case 'beacon_cryo':    m.beaconElement = 'ice';     m.damageMult += 0.14; break; // CHILL → FROZEN shatter kills
-      case 'beacon_arc':     m.beaconElement = 'chain';   m.damageMult += 0.10; break; // chain damage does the scaling
-      case 'beacon_corrupt': m.beaconElement = 'corrupt'; m.damageMult += 0.18; break; // slow-stacking vuln amp
-      case 'beacon_pulse':   m.beaconElement = 'wind';    m.damageMult += 0.20; break; // EXPOSED is utility, not dps
+      case 'beacon_thermal': m.beaconElement = 'fire';    m.damageMult += _modScale('beacon_thermal', 0.12, 0.04); break;
+      case 'beacon_cryo':    m.beaconElement = 'ice';     m.damageMult += _modScale('beacon_cryo', 0.14, 0.04); break;
+      case 'beacon_arc':     m.beaconElement = 'chain';   m.damageMult += _modScale('beacon_arc', 0.10, 0.04); break;
+      case 'beacon_corrupt': m.beaconElement = 'corrupt'; m.damageMult += _modScale('beacon_corrupt', 0.18, 0.04); break;
+      case 'beacon_pulse':   m.beaconElement = 'wind';    m.damageMult += _modScale('beacon_pulse', 0.20, 0.04); break;
       case 'multi_beacon':   m.multiBeacon += n; break;
-      case 'beacon_range':   m.beaconRangeMult = 1 + n * 0.25; break;
-      case 'extended_clip':  m.magBonus = n * 5; break;
+      case 'beacon_range':   m.beaconRangeMult = 1 + _modScale('beacon_range', 0.40, 0.08); break;
+      case 'extended_clip':  m.magBonus = _modScale('extended_clip', 5, 2); break;
       // Discharge mods
       case 'surge_range':     m.surgeRange += n; break;
       case 'aftershock':      m.aftershock += n; break;
@@ -8450,10 +8450,11 @@ function updateBurnoutPuddles() {
       }
       // Lv2 OR CARD: BLIGHT EXPAND — expand pool when enemy dies inside it
       if ((p._glitchLv >= 2 || (runMods||{}).blightExpand) && isHost && gameTime % 10 === 0) {
+        const _beGrow = (runMods||{}).blightExpand ? _modScale('blight_expand', 8, 2) : 8;
         for (const z of zombies) {
           if (z.hp > 0) continue;
           const dx = z.x - p.x, dy = z.y - p.y;
-          if (dx*dx + dy*dy < p.radius * p.radius) { p.radius = Math.min(p.radius + 8, 140); break; }
+          if (dx*dx + dy*dy < p.radius * p.radius) { p.radius = Math.min(p.radius + _beGrow, 140); break; }
         }
       }
     } else {
@@ -8548,7 +8549,7 @@ function applyOverheat(z, stacks, force) {
   const _m = runMods || {};
   // HEAT WAVE synergy: 2x stacks on Exposed enemies
   if (_m.synHeatWave && z._exposed) stacks *= 2;
-  const cap = 5 + (_m.reactorBloom || 0); // 5 / 6 / 7
+  const cap = 5 + (_m.reactorBloom || 0); // 5 + level; mostly cosmetic past +3
   const _prevOH = z._overheat || 0;
   z._overheat = Math.min(cap, _prevOH + Math.ceil(stacks * force));
   z._overheatTimer = 180; // 3s, refreshes on application
@@ -8583,11 +8584,11 @@ function triggerMeltdown(z, cap) {
   if (_meltdownLock) return; // outer guard against same-frame chain reentry
   _meltdownLock = true;
   const _m = runMods || {};
-  const rbMult = 1 + 0.5 * (_m.reactorBloom || 0); // +50% / +100% radius
+  const rbMult = _m.reactorBloom > 0 ? (1 + _modScale('reactor_bloom', 0.33, 0.07)) : 1;
   const r = 80 * rbMult;
   const r2 = r * r;
   const dmg = 60 + 15 * cap;
-  const spread = (_m.meltdown || 0) > 0 ? 3 : 2;
+  const spread = (_m.meltdown || 0) > 0 ? Math.min(8, _modScale('meltdown', 3, 1)) : 2;
   // CARD: HEAT CHAIN — mark spread targets with chain depth so they can re-meltdown
   const _hcDepthNext = (z._heatChainDepth || 0) + 1;
   for (const oz of zombies) {
@@ -8624,7 +8625,7 @@ function applyChill(z, stacks, force) {
   z._chillApplyCd = _STATUS_APPLY_CD;
   force = force || 1;
   const m = runMods || {};
-  const bonus = m.coldSnap > 0 ? 1 + 0.5 * m.coldSnap : 1;
+  const bonus = m.coldSnap > 0 ? 1 + 0.5 * m.coldSnap : 1; // chill stack bonus stays scalar; freeze duration scales via keyStat
   const maxChill = z.boss ? 3 : 5;
   const _prevChill = z._chill || 0;
   z._chill = Math.min(maxChill, _prevChill + Math.ceil(stacks * bonus));
@@ -8633,12 +8634,12 @@ function applyChill(z, stacks, force) {
   if (z.boss) return;
   const threshold = 4;
   if (z._frozen) {
-    const ext = m.coldSnap >= 2 ? 40 : 25;
-    z._frozenTimer = Math.min(180, (z._frozenTimer || 0) + ext); // cap at 3s
+    const ext = m.coldSnap > 0 ? Math.floor(_modScale('cold_snap', 2, 0.4) * 12) : 25;
+    z._frozenTimer = Math.min(240, (z._frozenTimer || 0) + ext);
   } else if (z._chill >= threshold) {
     z._frozen = true;
     hapticFreeze();
-    const frozenDur = m.coldSnap >= 2 ? 150 : 120; // 2s base, 2.5s with coldSnap Lv2
+    const frozenDur = m.coldSnap > 0 ? Math.floor(_modScale('cold_snap', 2, 0.4) * 60) : 120;
     z._frozenTimer = frozenDur;
     z._chill = 0;
     addFloatingText(z.x, z.y - z.radius - 10, 'FROZEN', '#aef');
@@ -8682,9 +8683,9 @@ function applyCorrupt(z, stacks) {
   if (z._corruptApplyCd && z._corruptApplyCd > 0) return;
   z._corruptApplyCd = _STATUS_APPLY_CD;
   const m = runMods || {};
-  const threshold = m.compromisedCore > 0 ? 4 : 5;
+  const threshold = m.compromisedCore > 0 ? 4 : 5; // threshold lowered by mod; duration scales below
   // FROZEN CORRUPTION: double stacks on Chilled enemies
-  const _effectiveStacks = (m.synFrozenCorrupt && z._chill > 0) ? (stacks || 1) * 2 : (stacks || 1);
+  const _effectiveStacks = (m.synFrozenCorrupt && z._chill > 0) ? (stacks || 1) * _modScale('syn_frozen_corrupt', 2.0, 0.3) : (stacks || 1);
   const _prevCorrupt = z._corrupt || 0;
   z._corrupt = Math.min(5, _prevCorrupt + _effectiveStacks);
   // Floating label showing current corrupt stacks (only before compromised threshold)
@@ -8693,7 +8694,7 @@ function applyCorrupt(z, stacks) {
   // both COMPROMISED + CHARGED are present.)
   if (z._corrupt >= threshold && !z._compromised) {
     z._compromised = true;
-    const dur = m.compromisedCore >= 2 ? 450 : 300; // 7.5s or 5s
+    const dur = m.compromisedCore > 0 ? Math.floor(_modScale('compromised_core', 3, 0.5) * 60) : 300;
     z._compromisedTimer = dur;
     // Stacks PERSIST through Compromised — vuln stays. Reset happens when Compromised timer expires.
     addFloatingText(z.x, z.y - z.radius - 12, 'COMPROMISED', '#a4f');
@@ -8707,7 +8708,7 @@ function applyCorrupt(z, stacks) {
         const d2 = (oz.x-z.x)**2+(oz.y-z.y)**2; if (d2 < _ivBestD) { _ivBestD = d2; _ivBest = oz; }
       }
       if (_ivBest) {
-        applyCorrupt(_ivBest, 2);
+        applyCorrupt(_ivBest, _modScale('infection_vector', 2, 1));
         particles.push({x:z.x,y:z.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#a4f',type:'lightning',tx:_ivBest.x,ty:_ivBest.y});
       }
       _synLock = false;
@@ -15446,7 +15447,7 @@ function throwSpike() {
   const a = lp.angle || 0;
   const _classId = _spikeClass();
   const _twin = (runMods || {}).spikeTwin > 0;
-  const _persist = (runMods || {}).spikePersist > 0 ? 1.5 : 1;
+  const _persist = (runMods || {}).spikePersist > 0 ? (1 + _modScale('persistent_spike', 0.50, 0.08)) : 1;
   // Spawn point — at gun barrel tip
   const sx = lp.x + Math.cos(a) * (PLAYER_RADIUS + 10);
   const sy = lp.y + Math.sin(a) * (PLAYER_RADIUS + 10);
@@ -15608,13 +15609,13 @@ function throwSpike() {
 
   // ==== RING SPIKE CLASSES — unique AoE abilities, no projectile ====
   } else if (_classId === 'eruption' || _classId === 'cryodome' || _classId === 'discharge' || _classId === 'impact' || _classId === 'plague') {
-    const _radW = (runMods || {}).spikeWide > 0 ? 1.3 : 1;
+    const _radW = (runMods || {}).spikeWide > 0 ? (1 + _modScale('wide_spike', 0.30, 0.06)) : 1;
     const px = lp.x, py = lp.y;
 
     if (_classId === 'eruption') {
       // ======== THERMAL MINE — deploy armed mine at player feet ========
       spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'eruption',
-        phase: 'armed', _ring: true, _ringR: 90 * _radW,
+        phase: 'armed', _ring: true, _ringR: 90 * _radW, _erDmg: _modScale('eruption_ring', 100, 15),
         lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
       // Deploy VFX — subtle fire puff + placement sound
       for (let i = 0; i < 8; i++) {
@@ -15649,6 +15650,7 @@ function throwSpike() {
         phase: 'gas', _ring: true, _gasDir: _dir, _gasDist: 0, _gasMaxDist: _gasMaxDist,
         _gasSpeed: 5, _gasWidth: 40 * _radW,
         _wallSegs: _segs, _wallAng: _perp,
+        _wallLife: Math.floor(_modScale('cryo_dome', 2, 0.4) * 60),
         lifetime: Math.floor(300 * _persist), maxLife: 300, _pulseTimer: 0 });
       // Origin cryo burst — big smokey frost cloud
       for (let i = 0; i < 20; i++) {
@@ -15688,7 +15690,7 @@ function throwSpike() {
 
     } else if (_classId === 'impact') {
       // ======== KINETIC NOVA — MASSIVE 360° pulse wave, enemies SLIDE across the room ========
-      const _r = 160 * _radW;
+      const _r = _modScale('impact_ring', 200, 25) * 0.8 * _radW;
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - px, dy = z.y - py;
@@ -15775,7 +15777,7 @@ function throwSpike() {
 
     } else if (_classId === 'plague') {
       // ======== MIASMA — thick rolling corruption fog drifting forward ========
-      const _cloudR = 70 * _radW;
+      const _cloudR = _modScale('plague_ring', 250, 25) * 0.28 * _radW;
       const _dirX = Math.cos(a), _dirY = Math.sin(a);
       spikes.push({ x: px + _dirX*15, y: py + _dirY*15, ownerId: lp.id, classId: 'plague',
         phase: 'drifting', _ring: true, _ringR: _cloudR,
@@ -15858,7 +15860,7 @@ function throwSpike() {
 function updateSpikes() {
   if (!isHost) return;
   const m = runMods || {};
-  const _radBoost = m.spikeWide > 0 ? 1.3 : 1;
+  const _radBoost = m.spikeWide > 0 ? (1 + _modScale('wide_spike', 0.30, 0.06)) : 1;
   for (let si = spikes.length - 1; si >= 0; si--) {
     const sp = spikes[si];
     sp._pulseTimer = (sp._pulseTimer || 0) + 1;
@@ -15906,7 +15908,7 @@ function _updateMeteorSpike(sp, _radBoost) {
       sp.x = sp._arcEx; sp.y = sp._arcEy;
       sp.phase = 'landed';
       // Detonation — direct AoE damage + screen shake + huge fireball
-      const _craterR = 90 * _radBoost;
+      const _craterR = _modScale('thermal_spike', 90, 12) * _radBoost;
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
@@ -16117,7 +16119,7 @@ function _updateOrbSpike(sp, _radBoost) {
     // LIGHTNING ROD — passive amplifier. Doesn't fire on its own.
     // The bonus arc is triggered from bullet hit code (checks for nearby planted rod).
     // Here we just handle ambient VFX + lifetime.
-    const _rodR = 200 * _radBoost;
+    const _rodR = _modScale('arc_spike', 200, 25) * _radBoost;
     // Ambient crackle
     if (sp._pulseTimer % 4 === 0) {
       const a = Math.random() * Math.PI * 2;
@@ -16217,7 +16219,8 @@ function _updateTorpedoSpike(sp, _radBoost) {
         const _close = 1 - d / _shockR;
         z.vx += (dx / d) * 18 * _close;
         z.vy += (dy / d) * 18 * _close;
-        damageZombie(z, Math.floor(25 * _close + 8), dx / d * 6, dy / d * 6);
+        const _psDmg = _modScale('pulse_spike', 1.0, 0.20);
+        damageZombie(z, Math.floor((25 * _close + 8) * _psDmg), dx / d * 6, dy / d * 6);
         applyExposed(z);
       }
     }
@@ -16291,7 +16294,7 @@ function _updateSeekerSpike(sp, _radBoost) {
         // Force-apply COMPROMISED
         sp._seekerTarget._corrupt = 5;
         sp._seekerTarget._compromised = true;
-        sp._seekerTarget._compromisedTimer = Math.max(sp._seekerTarget._compromisedTimer || 0, 360);
+        sp._seekerTarget._compromisedTimer = Math.max(sp._seekerTarget._compromisedTimer || 0, Math.floor(_modScale('corrupt_spike', 5, 1) * 60));
         addFloatingText(sp._seekerTarget.x, sp._seekerTarget.y - sp._seekerTarget.radius - 12, 'COMPROMISED', '#a4f');
         sp.phase = 'sticking';
         sp.stuckTo = sp._seekerTarget;
@@ -16388,7 +16391,8 @@ function _updateRingZone(sp, _radBoost) {
         const _close = 1 - d / r;
         z.vx += (dx / d) * 10 * _close;
         z.vy += (dy / d) * 10 * _close;
-        damageZombie(z, Math.floor(55 * _close + 15), dx / d * 5, dy / d * 5);
+        const _erBase = mine._erDmg || 100;
+        damageZombie(z, Math.floor(_erBase * 0.5 * _close + _erBase * 0.15), dx / d * 5, dy / d * 5);
         applyOverheat(z, 2, 1.5);
       }
     }
@@ -16895,7 +16899,7 @@ function deployBeacon() {
     }
     return;
   }
-  const maxBeacons = (_m.multiBeacon > 0) ? 2 : 1;
+  const maxBeacons = (_m.multiBeacon > 0) ? Math.min(4, _modScale('multi_beacon', 2, 1)) : 1;
   if (_beacons.length >= maxBeacons) return;
   if (lp._beaconCooldown > 0) return; // on cooldown
   const _isRecall = _m.recallAnchor > 0;
@@ -16906,7 +16910,7 @@ function deployBeacon() {
   }
   // else: first deploy with multi-beacon — no cooldown yet (wait for 2nd or expiry)
   const classId = _m.beaconElement || null;
-  const _beaconDur = _isRecall ? 600 : (BEACON_DURATION + (_m.extendedUptime || 0) * 120);
+  const _beaconDur = _isRecall ? 600 : (BEACON_DURATION + (_m.extendedUptime > 0 ? _modScale('extended_uptime', 3, 1) * 60 : 0));
   // Launch forward ~100px in aim direction (or drop at feet for recall)
   const _bAng = lp.angle || 0;
   const _launchDist = _isRecall ? 0 : 100;
@@ -16987,8 +16991,8 @@ function deployBeacon() {
 // choice meaningfully colors the blast, not just the turret bullets.
 function _triggerTrapDetonate(b, bColor) {
   const _m = runMods || {};
-  const mineR = _m.trapMine >= 2 ? 200 : 150;
-  const mineD = _m.trapMine >= 2 ? 220 : 150;
+  const mineR = 150 + Math.min(80, _modLevel('trap_mine') * 8);
+  const mineD = _modScale('trap_mine', 150, 20);
   if (isHost) {
     for (const oz of zombies) { if (oz.hp <= 0) continue;
       const odx = oz.x - b.x, ody = oz.y - b.y, od = Math.sqrt(odx*odx + ody*ody);
@@ -17146,10 +17150,11 @@ function updateBeacon() {
   // anything that reaches the center. For damage, combine with Hazard Zone — the classic
   // trap-and-kill combo.
   if (_bm.gravityWell > 0) {
-    const pullR = _bm.gravityWell >= 2 ? 220 : 160;
-    const pullStr = _bm.gravityWell >= 2 ? 3.5 : 2.2;
-    const escapeDamp = _bm.gravityWell >= 2 ? 0.70 : 0.55;
-    const stunFrames = _bm.gravityWell >= 2 ? 14 : 10;
+    const pullR = _modScale('gravity_well', 160, 15);
+    const _gwLv = _modLevel('gravity_well');
+    const pullStr = 2.2 + _gwLv * 0.2;
+    const escapeDamp = Math.min(0.85, 0.55 + _gwLv * 0.03);
+    const stunFrames = 10 + Math.min(8, _gwLv);
     const pullR2 = pullR * pullR;
     for (const z of zombies) { if (z.hp <= 0) continue;
       const dx = b.x - z.x, dy = b.y - z.y, d2 = dx*dx+dy*dy;
@@ -17192,11 +17197,12 @@ function updateBeacon() {
   }
   // ---- HAZARD ZONE: persistent damage field ----
   if (_bm.hazardZone > 0) {
-    const zoneR = _bm.hazardZone >= 2 ? 90 : 60;
+    const zoneR = 60 + Math.min(50, _modLevel('hazard_zone') * 6);
+    const _hzDmg = _modScale('hazard_zone', 5, 2);
     if (gameTime % 10 === 0) { // tick every 10 frames
       for (const z of zombies) { if (z.hp <= 0) continue; const d = Math.sqrt((z.x-b.x)**2+(z.y-b.y)**2);
         if (d < zoneR) {
-          damageZombie(z, Math.max(1,Math.round((_bm.hazardZone >= 2 ? 6 : 4)*(_bm.specialDmgMult||1))), 0, 0, true);
+          damageZombie(z, Math.max(1,Math.round(_hzDmg*(_bm.specialDmgMult||1))), 0, 0, true);
           if (b.classId==='fire') applyOverheat(z, 5, 1);
           if (b.classId==='ice') applyChill(z, 1);
           if (b.classId==='chain') applyCharged(z);
@@ -17263,17 +17269,16 @@ function updateBeacon() {
     }
     if (b.fireCd <= 0 && best) {
       // Rapid Turret mod scales fire rate — lower fireCd = faster shots.
-      const _rtMults = [1.0, 0.75, 0.55, 0.40]; // 0/1/2/3 stacks — 25%/45%/60% faster
-      const _rtLv = Math.min(3, _bm.rapidTurret || 0);
-      let _baseFireCd = Math.max(3, Math.round(BEACON_FIRE_RATE * _rtMults[_rtLv]));
+      let _baseFireCd = Math.max(3, Math.round(BEACON_FIRE_RATE / (1 + (_bm.rapidTurret > 0 ? _modScale('rapid_turret', 0.40, 0.07) : 0))));
       // CARD: OVERDRIVE — last 2s of uptime: fire double-rate
-      if (_bm.overdriveTurret && b.timer <= 120) _baseFireCd = Math.max(2, Math.floor(_baseFireCd * 0.5));
+      const _odWindow = _bm.overdriveTurret ? Math.floor(_modScale('overdrive_turret', 2, 0.5) * 60) : 0;
+      if (_bm.overdriveTurret && b.timer <= _odWindow) _baseFireCd = Math.max(2, Math.floor(_baseFireCd * 0.5));
       b.fireCd = _baseFireCd;
       const a = b.angle;
-      // CARD: BURST TURRET — every 4th shot fires a 3-burst (spread)
+      // CARD: BURST TURRET — every 4th shot fires a multi-burst (spread)
       b._burstCount = (b._burstCount || 0) + 1;
       const _btBurst = _bm.burstTurret && (b._burstCount % 4 === 0);
-      const _shots = _btBurst ? 3 : 1;
+      const _shots = _btBurst ? Math.min(7, _modScale('burst_turret', 3, 1)) : 1;
       const _spreadStep = _btBurst ? 0.18 : 0;
       for (let _bs = 0; _bs < _shots; _bs++) {
         const _ba = a + (_bs - (_shots-1)/2) * _spreadStep;
@@ -17533,7 +17538,7 @@ function _fireDischarge(lp) {
   const classId = _m.beaconElement || null;
   const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
   const waveAngle = DISCHARGE_ANGLE + (_m.wideArc || 0) * (Math.PI / 9);
-  const waveRange = (DISCHARGE_RANGE_MIN + (DISCHARGE_RANGE_MAX - DISCHARGE_RANGE_MIN) * chargePct) * (1 + (_m.surgeRange || 0) * 0.25);
+  const waveRange = (DISCHARGE_RANGE_MIN + (DISCHARGE_RANGE_MAX - DISCHARGE_RANGE_MIN) * chargePct) * (1 + (_m.surgeRange > 0 ? _modScale('surge_range', 0.30, 0.07) : 0));
   const isFullCharge = chargePct >= 0.95;
   _dischargeWave = {
     x: lp.x, y: lp.y, angle: lp.angle,
@@ -17610,7 +17615,7 @@ function updateDischarge() {
           if (z.hp <= 0) continue;
           const dx = z.x - w.x, dy = z.y - w.y, d = Math.sqrt(dx * dx + dy * dy);
           if (d < 80) {
-            damageZombie(z, Math.floor(100 * (_m.specialDmgMult || 1)), d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0, true);
+            damageZombie(z, Math.floor(_modScale('singularity', 100, 15) * (_m.specialDmgMult || 1)), d > 1 ? (dx / d) * 12 : 0, d > 1 ? (dy / d) * 12 : 0, true);
             z.staggerTimer = Math.max(z.staggerTimer || 0, 40);
           }
         }
@@ -17656,8 +17661,8 @@ function updateDischarge() {
       }
       // RESIDUAL FIELD
       if (_m.residualField > 0) {
-        const _rfDur = _m.residualField >= 2 ? 180 : 120;
-        const _rfApplyElem = _m.residualField >= 2;
+        const _rfDur = Math.floor(_modScale('residual_field', 2, 0.4) * 60);
+        const _rfApplyElem = _modLevel('residual_field') >= 1;
         window._residualFields = window._residualFields || [];
         window._residualFields.push({
           x: w.x, y: w.y, angle: w.angle,
@@ -17815,10 +17820,8 @@ function updateDischarge() {
       }
       // AFTERSHOCK: double stagger duration
       let staggerDur = 25;
-      if (_m.aftershock > 0) staggerDur *= 2;
+      if (_m.aftershock > 0) staggerDur = Math.floor(staggerDur * _modScale('aftershock', 2, 0.3));
       z.staggerTimer = Math.max(z.staggerTimer || 0, staggerDur);
-      // AFTERSHOCK Lv2: mark for vulnerability
-      if (_m.aftershock >= 2) z._aftershockVuln = 120; // 2 seconds
       // Mark enemy as hit by discharge (for CASCADE)
       z._hitByDischarge = true;
       if (w.classId === 'fire') applyOverheat(z, 8, 1);
@@ -17937,7 +17940,7 @@ function releasePayload() {
   hapticSpecial();
   const _m = runMods || {};
   // RAPID PAYLOAD: cooldown reduction
-  const _rapidMult = _m.rapidPayload >= 2 ? 0.6 : (_m.rapidPayload >= 1 ? 0.75 : 1);
+  const _rapidMult = _m.rapidPayload > 0 ? Math.max(0.35, 1 - _modScale('rapid_payload', 0.30, 0.05)) : 1;
   // CARD: PAYLOAD RESERVE — 2 charges (first fire skips cooldown; second triggers it)
   if (_m.payloadReserve) {
     if ((lp._payloadReserveUsed || 0) === 0) {
@@ -18069,7 +18072,7 @@ function updatePayload() {
   // Detonate
   if (g.timer <= 0) {
     // CONCUSSIVE BLAST: increased radius
-    let radius = 90 * (1 + (_m.concussiveBlast || 0) * 0.35);
+    let radius = 90 * (1 + (_m.concussiveBlast > 0 ? _modScale('concussive_blast', 0.40, 0.07) : 0));
     // Class build scales the special up to +100% via specialDmgMult.
     const dmg = Math.floor(140 * (_m.specialDmgMult || 1));
     const gc2 = g.classId ? (_ELEM_COLOR[g.classId] || '#fa0') : '#fa0';
@@ -18095,8 +18098,7 @@ function updatePayload() {
           // ~125 extra particles per frame and caused a frame hitch.
           damageZombie(z, _finalDmg, d > 0.1 ? (dx/d)*_pushF : 0, d > 0.1 ? (dy/d)*_pushF : 0, true);
           // CONCUSSIVE BLAST Lv2: stun
-          let stag = 25;
-          if (_m.concussiveBlast >= 2) stag = 60;
+          const stag = 25 + Math.min(40, _modLevel('concussive_blast') * 7);
           z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
           if (g.classId === 'fire') applyOverheat(z, 15, 1);
           if (g.classId === 'ice') applyChill(z, 1 + Math.floor(closeness * 3));
@@ -18256,9 +18258,9 @@ function updatePayload() {
     setTimeout(() => playSound(400, 0.06, 'sine', 0.04), 100);
     // CLUSTER BOMB: 3 or 5 EQUAL explosions around the main impact
     if (_m.clusterBomb > 0) {
-      const count = _m.clusterBomb >= 2 ? 5 : 3;
+      const count = Math.min(8, _modScale('cluster_bomb', 3, 1));
       const _gx = g.x, _gy = g.y, _cRadius = radius, _cDmg = dmg, _cGc = gc2;
-      const _napLv = _m.napalmZone || 0; // capture napalm for closure
+      const _napLv = _m.napalmZone || 0;
       for (let ci = 0; ci < count; ci++) {
         const ca = (ci / count) * Math.PI * 2 + Math.random() * 0.6;
         const cd = 40 + Math.random() * 35;
@@ -18278,8 +18280,8 @@ function updatePayload() {
           decals.push({x:cx,y:cy,size:_cRadius*0.5,alpha:0.4,color:'#333'});
           // NAPALM ZONE: fire puddle at each cluster explosion too
           if (_napLv > 0) {
-            const _nR = _napLv >= 2 ? Math.floor(_cRadius*0.5) : Math.floor(_cRadius*0.4);
-            const _nL = _napLv >= 2 ? 300 : 180;
+            const _nR = Math.floor(_cRadius * (0.40 + Math.min(0.20, _modLevel('napalm_zone') * 0.02)));
+            const _nL = Math.floor(_modScale('napalm_zone', 3, 0.5) * 60);
             burnoutPuddles.push({ x: cx, y: cy, radius: _nR, life: _nL, maxLife: _nL });
           }
           screenShake.intensity = Math.max(screenShake.intensity, 10);
@@ -18289,8 +18291,8 @@ function updatePayload() {
     }
     // NAPALM ZONE: leave a fire puddle
     if (_m.napalmZone > 0) {
-      const napLife = _m.napalmZone >= 2 ? 300 : 180; // 5s or 3s
-      const napRadius = _m.napalmZone >= 2 ? Math.floor(radius * 0.5) : Math.floor(radius * 0.4);
+      const napLife = Math.floor(_modScale('napalm_zone', 3, 0.5) * 60);
+      const napRadius = Math.floor(radius * (0.40 + Math.min(0.20, _modLevel('napalm_zone') * 0.02)));
       burnoutPuddles.push({ x: g.x, y: g.y, radius: napRadius, life: napLife, maxLife: napLife });
     }
     // (Homing payload has no detonation-phase effect — tracking happens in flight)
@@ -18573,7 +18575,7 @@ function _runComboStep(p, def, step, idx) {
   // CARD: WHIRLWIND — after 3 kills in 2s, next swing is 360°
   const _wwActive = _rmCombo.whirlwind && p._whirlwindReady;
   // CARD: CLEAVE — cone +30%
-  let cone = step.cone * (_rmCombo.cleave ? 1.3 : 1);
+  let cone = step.cone * (_rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1);
   if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#4ff'); }
   const isLocal = (p === getLocalPlayer());
 
@@ -18584,7 +18586,7 @@ function _runComboStep(p, def, step, idx) {
   // both the chase range and the closing speed.
   if (idx === 0 && isLocal) {
     const _av = _meleeApproachVel(p, a, range, cone, {
-      reachMult: _rmCombo.lunge ? 1.3 : 1.0,
+      reachMult: _rmCombo.lunge ? (1 + _modScale('lunge', 0.60, 0.08) * 0.5) : 1.0,
       speedMult: _rmCombo.lunge ? 1.1 : 1.0,
     });
     if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
@@ -18810,10 +18812,10 @@ function _runComboStep(p, def, step, idx) {
   // Mirrors getScaledGun() so cards that buff the pistol also buff the blade.
   let _scaledBase = _scaleMeleeDamage(step.damage);
   // CARD: LUNGE — +25% damage on lunge strikes
-  if (_rmCombo.lunge && (step.kind === 'forwardlunge' || step.kind === 'lungestrike')) _scaledBase = Math.floor(_scaledBase * 1.25);
-  // CARD: EXECUTIONER — finisher +75% damage and auto-crit
+  if (_rmCombo.lunge && (step.kind === 'forwardlunge' || step.kind === 'lungestrike')) _scaledBase = Math.floor(_scaledBase * (1 + _modScale('lunge', 0.60, 0.08) * 0.4));
+  // CARD: EXECUTIONER — finisher bonus damage and auto-crit
   const _executionerOn = _rmCombo.executioner && step.finisher;
-  if (_executionerOn) _scaledBase = Math.floor(_scaledBase * 1.75);
+  if (_executionerOn) _scaledBase = Math.floor(_scaledBase * (1 + _modScale('executioner', 0.75, 0.10)));
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
     const dx = z.x - p.x, dy = z.y - p.y;
@@ -18826,7 +18828,7 @@ function _runComboStep(p, def, step, idx) {
     let dmg = isCrit ? Math.floor(_scaledBase * 2) : _scaledBase;
     // CARD: BLOODLETTER — crits restore 1 HP
     if (isCrit && _rmCombo.bloodletter && isLocal && p.alive) {
-      p.hp = Math.min(p.maxHp || 100, p.hp + 1);
+      p.hp = Math.min(p.maxHp || 100, p.hp + _modScale('bloodletter', 1, 1));
     }
     // Pre-damage hooks: synergy damage amps (Shatter Force / Breach Protocol) +
     // status procs that can change kb/stagger (Pulse Shot).
@@ -19276,12 +19278,12 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
   const _sf = _m.statusForce || 1;
   // SHATTER FORCE: Exposed + Frozen → 3x dmg
   if (_m.synShatterForce && z._exposed && (z._frozen || z._frozenTimer > 0)) {
-    dmg = Math.floor(dmg * 3);
+    dmg = Math.floor(dmg * (1 + _modScale('syn_shatter_force', 2.0, 0.25)));
     for(let si=0;si<8;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*4;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:16,maxLife:16,size:3+Math.random()*2,color:Math.random()>0.4?'#aef':'#cef',type:'spark'});}
   }
   // BREACH PROTOCOL: Exposed + Compromised → 2x dmg
   if (_m.synBreachProtocol && z._exposed && z._compromised) {
-    dmg = Math.floor(dmg * 2);
+    dmg = Math.floor(dmg * (1 + _modScale('syn_breach_protocol', 1.0, 0.2)));
     for(let ei=0;ei<5;ei++){const ea=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(ea)*3,vy:Math.sin(ea)*3,life:12,maxLife:12,size:3,color:Math.random()>0.5?'#a4f':'#cef',type:'spark'});}
   }
   // THERMAL ROUNDS — fire embers blast off the enemy on every melee hit
@@ -19355,7 +19357,7 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
   // PULSE SHOT
   if (_m.pulseShotLv > 0) {
     applyExposed(z);
-    const vsMult = 1 + 0.5 * (_m.vectorSnap || 0);
+    const vsMult = _m.vectorSnap > 0 ? _modScale('vector_snap', 1.5, 0.3) : 1;
     const pushF = (2 + _m.pulseShotLv) * vsMult;
     z.vx += Math.cos(attackAngle) * pushF;
     z.vy += Math.sin(attackAngle) * pushF;
@@ -19383,36 +19385,41 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   const _m = runMods || {};
   // ---- CARD: CORRUPT SPREAD — Hits on COMPROMISED spread CORRUPT in 80px ----
   if (_m.corruptSpread && z._compromised) {
-    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx2 = oz.x-z.x, dy2 = oz.y-z.y; if (dx2*dx2 + dy2*dy2 < 6400) applyCorrupt(oz, 1); }
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 80, color: '#a4f', type: 'wakering' });
+    const _csR = _modScale('corrupt_spread', 80, 10), _csR2 = _csR * _csR;
+    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx2 = oz.x-z.x, dy2 = oz.y-z.y; if (dx2*dx2 + dy2*dy2 < _csR2) applyCorrupt(oz, 1); }
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _csR, color: '#a4f', type: 'wakering' });
   }
   // ---- CARD: PULSE TRIGGER — Hits on EXPOSED → 60px KB pulse ----
   if (_m.pulseTrigger && z._exposed) {
-    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx3 = oz.x-z.x, dy3 = oz.y-z.y, d3sq = dx3*dx3+dy3*dy3; if (d3sq < 3600 && d3sq > 0.1) { const d3 = Math.sqrt(d3sq); oz.vx += (dx3/d3) * 6; oz.vy += (dy3/d3) * 6; oz.staggerTimer = Math.max(oz.staggerTimer||0, 8); } }
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 60, color: '#cef', type: 'wakering' });
+    const _ptR = _modScale('pulse_trigger', 60, 10), _ptR2 = _ptR * _ptR;
+    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx3 = oz.x-z.x, dy3 = oz.y-z.y, d3sq = dx3*dx3+dy3*dy3; if (d3sq < _ptR2 && d3sq > 0.1) { const d3 = Math.sqrt(d3sq); oz.vx += (dx3/d3) * 6; oz.vy += (dy3/d3) * 6; oz.staggerTimer = Math.max(oz.staggerTimer||0, 8); } }
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _ptR, color: '#cef', type: 'wakering' });
   }
   // ---- CARD: VULNERABILITY PULSE — Hits on EXPOSED → 90px KB pulse to ALL ----
   if (_m.vulnerabilityPulse && z._exposed) {
-    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx4 = oz.x-z.x, dy4 = oz.y-z.y, d4sq = dx4*dx4+dy4*dy4; if (d4sq < 8100 && d4sq > 0.1) { const d4 = Math.sqrt(d4sq); oz.vx += (dx4/d4) * 10; oz.vy += (dy4/d4) * 10; oz.staggerTimer = Math.max(oz.staggerTimer||0, 14); applyExposed(oz); } }
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 90, color: '#cef', type: 'wakering' });
+    const _vpR = _modScale('vulnerability_pulse', 90, 10), _vpR2 = _vpR * _vpR;
+    for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx4 = oz.x-z.x, dy4 = oz.y-z.y, d4sq = dx4*dx4+dy4*dy4; if (d4sq < _vpR2 && d4sq > 0.1) { const d4 = Math.sqrt(d4sq); oz.vx += (dx4/d4) * 10; oz.vy += (dy4/d4) * 10; oz.staggerTimer = Math.max(oz.staggerTimer||0, 14); applyExposed(oz); } }
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _vpR, color: '#cef', type: 'wakering' });
   }
   // LIVE WIRE: Overheated + Charged → arc discharge burst (AoE + 2 stray bolts)
   if (_m.synLiveWire && z._overheat > 0 && z._charged) {
-    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(dmg*0.4),0,0,true);}}
+    const _lwMult = _modScale('syn_live_wire', 0.40, 0.05);
+    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(dmg*_lwMult),0,0,true);}}
     for(let oi=0;oi<8;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*5,vy:Math.sin(oa)*5,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
-    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*0.3), range: 220, sourceZid: z.zid });
-    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*0.3), range: 220, sourceZid: z.zid });
+    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 220, sourceZid: z.zid });
+    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 220, sourceZid: z.zid });
     screenShake.intensity = Math.max(screenShake.intensity, 5);
   }
   // FLASH BOIL: Overheated + Frozen → massive AoE explosion
   if (_m.synFlashBoil && z._overheat > 0 && (z._frozen || z._frozenTimer > 0)) {
-    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<100){damageZombie(oz,Math.floor(dmg*0.6),0,0,true);}}
+    const _fbR=_modScale('syn_flash_boil',100,12),_fbR2=_fbR*_fbR;
+    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const _fdx=oz.x-z.x,_fdy=oz.y-z.y;if(_fdx*_fdx+_fdy*_fdy<_fbR2){damageZombie(oz,Math.floor(dmg*0.6),0,0,true);}}
     for(let ti=0;ti<16;ti++){const ta=Math.random()*Math.PI*2,ts=4+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(ta)*ts,vy:Math.sin(ta)*ts,life:20,maxLife:20,size:3+Math.random()*4,color:Math.random()>0.5?'#f84':'#aef',type:'explosion'});}
     screenShake.intensity = Math.max(screenShake.intensity, 8);
   }
   // PERMAFROST: Frozen + Charged → shatter nova fires 8 arc bolts radially
   if (_m.synPermafrost && (z._frozen || z._frozenTimer > 0) && z._charged) {
-    damageZombie(z, Math.floor(z.maxHp * 0.25), 0, 0);
+    damageZombie(z, Math.floor(z.maxHp * _modScale('syn_permafrost', 0.25, 0.05)), 0, 0);
     for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){applyCharged(oz);damageZombie(oz,20,0,0,true);}}
     for (let _pbi = 0; _pbi < 8; _pbi++) {
       fireArcBolt(z.x, z.y, { damage: 20, range: 240, applyCharged: true,
@@ -19423,14 +19430,16 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   }
   // STORM SURGE: Exposed + Charged → fires 3 arc bolts that apply CHARGED
   if (_m.synStormSurge && z._exposed && z._charged) {
-    for (let _ssi = 0; _ssi < 3; _ssi++) {
+    const _ssN = Math.min(7, _modScale('syn_storm_surge', 3, 1));
+    for (let _ssi = 0; _ssi < _ssN; _ssi++) {
       fireArcBolt(z.x, z.y, { damage: Math.floor(dmg * 0.3), range: 260,
         applyCharged: true, sourceZid: z.zid });
     }
   }
   // FAULT LINE: Compromised + Charged → arc pulse to nearby
   if (_m.synFaultLine && z._compromised && z._charged) {
-    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){damageZombie(oz,Math.floor(dmg*0.25),0,0,true);applyCharged(oz);}}
+    const _flR=_modScale('syn_fault_line',90,10),_flR2=_flR*_flR;
+    for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const _fldx=oz.x-z.x,_fldy=oz.y-z.y;if(_fldx*_fldx+_fldy*_fldy<_flR2){damageZombie(oz,Math.floor(dmg*0.25),0,0,true);applyCharged(oz);}}
   }
   // FROZEN CORRUPTION: Compromised + Frozen → instant shatter kill
   if (_m.synFrozenCorrupt && z._compromised && (z._frozen || z._frozenTimer > 0) && z.hp > 0) {
@@ -19463,9 +19472,10 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   if (z._charged) {
     const arcLv = _m.arcRoundsLv || 0;
     const baseBolts = Math.max(1, arcLv);
-    const bonusBolts = (_m.staticChain || 0) * 2;
+    const bonusBolts = Math.min(6, (_m.staticChain || 0) * 2);
     const _boltN = baseBolts + bonusBolts;
-    const _boltDmg = Math.max(8, Math.floor(dmg * 0.4));
+    const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
+    const _boltDmg = Math.max(8, Math.floor(dmg * 0.4) + _chainBonus);
     const _boltRange = 280 + (_m.staticChain >= 1 ? 80 : 0) + (arcLv >= 2 ? 40 : 0);
     const _boltPierce = (_m.staticChain || 0) > 0 ? 1 : 0;
     for (let _bi = 0; _bi < _boltN; _bi++) {
@@ -19735,7 +19745,7 @@ function updateDeadshot() {
   if (!lp || !lp.alive) { _deadshotCharging = false; _deadshotCharge = 0; return; }
   const _m = runMods || {};
   // QUICK DRAW: charge faster
-  const chargeSpeed = 1 + (_m.quickDraw || 0) * 0.5;
+  const chargeSpeed = 1 + (_m.quickDraw > 0 ? _modScale('quick_draw', 0.30, 0.05) : 0);
   _deadshotCharge = Math.min(DEADSHOT_MAX_CHARGE, _deadshotCharge + chargeSpeed);
   const _dsClassId = _m.beaconElement || null;
   const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#0ff') : '#0ff';
@@ -19925,11 +19935,12 @@ function _fireDeadshot(lp) {
   // TRIPLE TAP: 2 more rapid follow-up shots at full charge
   if (_m.tripleTap && chargePct >= 1.0) {
     const _ttColor = bColor, _ttA = a;
+    const _ttMult = _modScale('triple_tap', 0.70, 0.05);
     for (let ti = 1; ti <= 2; ti++) {
       setTimeout(() => {
         const _tLp = getLocalPlayer();
         if (!_tLp || !_tLp.alive) return;
-        _mkDeadshotBullet(_tLp.x, _tLp.y, 0.7);
+        _mkDeadshotBullet(_tLp.x, _tLp.y, _ttMult);
         for (let i = 0; i < 4; i++) {
           const fa2 = _ttA + (Math.random()-0.5)*0.5, fs2 = 2+Math.random()*3;
           particles.push({ x: _tLp.x+Math.cos(_ttA)*24, y: _tLp.y+Math.sin(_ttA)*24,
@@ -19949,7 +19960,7 @@ function dash() {
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
   // Charge system: Extra Charge card adds +1 max charge
-  lp._dashChargesMax = 1 + (_mods.extraCharge || 0);
+  lp._dashChargesMax = 1 + Math.min(4, (_mods.extraCharge || 0));
   if (lp._dashCharges == null) lp._dashCharges = lp._dashChargesMax;
   // Grant extra charge immediately when card is purchased (don't wait for cooldown cycle)
   if (lp.dashCooldown <= 0 && lp._dashCharges < lp._dashChargesMax) lp._dashCharges = lp._dashChargesMax;
@@ -20104,16 +20115,15 @@ function applyDashTrailEffects(lp) {
   // ---- IGNITION TRAIL (thermal): drop fire puddles BEHIND + slightly ahead ----
   if (hasBurnout && gameTime % 2 === 0) {
     const px = lp.x - ddx * 14, py = lp.y - ddy * 14; // mostly behind, slightly forward
-    const pudR = _m.burnoutWake >= 2 ? 78 : 62; // wider AoE (was 60 / 48)
-    // Spawn a burnout puddle (reuse burnoutPuddles array). Longer life so the
-    // trail's reach also extends in time (4s instead of 3s).
-    burnoutPuddles.push({ x: px, y: py, radius: pudR, life: 240, maxLife: 240 });
-    // Damage + overheat anything already standing in the puddle
+    const _bwLv = _modLevel('burnout_wake');
+    const pudR = 62 + _bwLv * 4;
+    const _bwLife = Math.floor(_modScale('burnout_wake', 3, 0.5) * 60);
+    burnoutPuddles.push({ x: px, y: py, radius: pudR, life: _bwLife, maxLife: _bwLife });
     for (const z of zombies) {
       if (z.hp <= 0 || hitSet.has(z.zid)) continue;
       if ((z.x-px)**2+(z.y-py)**2 < pudR*pudR) {
         hitSet.add(z.zid);
-        damageZombie(z, _m.burnoutWake >= 2 ? 30 : 18, 0, 0);
+        damageZombie(z, 18 + _bwLv * 4, 0, 0);
         applyOverheat(z, 12, 1);
       }
     }
@@ -20130,16 +20140,18 @@ function applyDashTrailEffects(lp) {
 
   // ---- STORM DASH (arc): lightning bolts strike enemies along the ENTIRE dash path ----
   if (hasStatic && gameTime % 2 === 0) {
-    const boltCount = _m.staticWake >= 2 ? 4 : 3;
+    const _swLv = _modLevel('static_wake');
+    const boltCount = 3 + Math.min(3, _swLv);
     const stormR = 180; // wide range — hits enemies far from the path
     let boltsLeft = boltCount;
+    const _swDmg = _modScale('static_wake', 25, 5);
     for (const z of zombies) {
       if (boltsLeft <= 0) break;
       if (z.hp <= 0 || hitSet.has(z.zid)) continue;
       const dx = z.x - lp.x, dy = z.y - lp.y;
       if (dx*dx + dy*dy > stormR*stormR) continue;
       hitSet.add(z.zid);
-      damageZombie(z, 25, 0, 0);
+      damageZombie(z, _swDmg, 0, 0);
       applyCharged(z);
       z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
       // Lightning bolt from player to enemy
@@ -20185,8 +20197,9 @@ function applyDashTrailEffects(lp) {
       const d = Math.sqrt(dx*dx+dy*dy) || 1;
       // Pulse Wake trail kb cranked: was 14 + lv*8 (22/30/38).
       // Now 28 + lv*16 (44/60/76) — they fly sideways.
-      const pushF = 28 + _m.kineticWake * 16;
-      const trailDmg = _m.kineticWake >= 3 ? 38 : _m.kineticWake >= 2 ? 28 : 18;
+      const _kwLv = _modLevel('kinetic_wake');
+      const pushF = 28 + _kwLv * 16;
+      const trailDmg = _modScale('kinetic_wake', 30, 5);
       // Push PERPENDICULAR to dash direction (to the sides)
       const perpX = -ddy, perpY = ddx;
       const side = (dx * perpX + dy * perpY) > 0 ? 1 : -1; // which side of dash path
@@ -20211,7 +20224,7 @@ function applyDashTrailEffects(lp) {
     // Lv1: +40 dmg + arc to 2 nearby. Lv2: +20 dmg, bigger radius. Lv3: chain targets also become Charged.
     if (hasOvercharge && z._charged) {
       const odLv = _m.overchargeDash;
-      const detonateDmg = 40 + (odLv - 1) * 20;
+      const detonateDmg = _modScale('overcharge_dash', 40, 7);
       damageZombie(z, detonateDmg, 0, 0);
       // Visible "OVERCHARGE!" callout — the mod was hard to see firing before.
       addFloatingText(z.x, z.y - (z.radius || 14) - 18, 'OVERCHARGE!', '#4ff');
@@ -20236,12 +20249,6 @@ function applyDashTrailEffects(lp) {
       }
       playSfx('zap', 0.25);
     }
-  }
-  // BURNOUT WAKE Lv2+: drop fire puddles along the dash path. They damage + Overheat anything
-  // that walks through them for a couple seconds after the dash ends.
-  if (hasBurnout && _m.burnoutWake >= 2 && gameTime % 3 === 0) {
-    burnoutPuddles.push({ x: lp.x, y: lp.y, radius: 40, life: 120, maxLife: 120 });
-    decals.push({ x: lp.x + (Math.random()-0.5)*8, y: lp.y + (Math.random()-0.5)*8, size: 22 + Math.random()*8, alpha: 0.4, color: '#531' });
   }
 }
 
@@ -20517,7 +20524,7 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
         pl.weapons[pl.currentWeapon]=createWeapon(p.weaponType);
         if(isLocalUI)showPickupMsg(`DISRUPTER · ${WEAPON_DEFS[p.weaponType].name} RECOMPILED`);
       }if(isLocalUI)playPickupSound();pickups.splice(i,1);}
-      else if(p.type==='health'){if(pl.hp<pl.maxHp){const _dhMult=(runMods&&runMods.darkHarvest)?1.3:1;pl.hp=Math.min(pl.maxHp,pl.hp+Math.floor(p.amount*_dhMult));if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}else if(isLocalUI&&dist(pl,p)<30&&!p._fullShown){p._fullShown=true;addFloatingText(pl.x,pl.y-30,'HEALTH FULL','#4f4');}}
+      else if(p.type==='health'){if(pl.hp<pl.maxHp){const _dhMult=(runMods&&runMods.darkHarvest)?(1+_modScale('dark_harvest',0.30,0.10)):1;pl.hp=Math.min(pl.maxHp,pl.hp+Math.floor(p.amount*_dhMult));if(isLocalUI){showPickupMsg(`+${p.amount} HP`);playHealthPickupSound();}pickups.splice(i,1);}else if(isLocalUI&&dist(pl,p)<30&&!p._fullShown){p._fullShown=true;addFloatingText(pl.x,pl.y-30,'HEALTH FULL','#4f4');}}
       else if(p.type==='bits'){
         metaShards += p.amount; runBitsEarned += p.amount;
         try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch(e){}
@@ -22220,8 +22227,8 @@ function dropZombieLoot(z) {
     // THERMAL DETONATION: Overheated enemies explode on death
     if (mods.thermalDetonation && z._overheat > 0 && !z._exploded) {
       z._exploded = true;
-      const _bR = mods.reactorSpread ? 70 : mods.reactorBloom ? 55 : 40;
-      const _bD = mods.reactorBloom >= 2 ? 50 : 30;
+      const _bR = _modScale('thermal_detonation', 80, 12);
+      const _bD = mods.reactorSpread ? Math.floor(30 * (1 + _modScale('reactor_spread', 1.0, 0.15))) : (mods.reactorBloom ? Math.floor(30 * (1 + _modScale('reactor_bloom', 0.33, 0.07))) : 30);
       createExplosion(z.x, z.y, _bR, _bD, 'player');
       for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:3+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});}
       // Lv3: explosions spread Overheat to nearby
@@ -22249,7 +22256,7 @@ function dropZombieLoot(z) {
     // kill. Distinct role from Thermal Rounds' "explode on death" (which
     // does raw AoE damage); Heat Wave sets up a follow-on instead.
     if (mods.synHeatWave && z._exposed && z._overheat > 0) {
-      const _hwR = 130;
+      const _hwR = _modScale('syn_heat_wave', 130, 12);
       const _hwR2 = _hwR * _hwR;
       if (isHost) {
         for (const oz of zombies) {
@@ -22278,7 +22285,8 @@ function dropZombieLoot(z) {
     }
     // VIRAL BURN combo: Compromised + Overheated → eruption spreads Corrupt
     if (mods.synViralBurn && z._compromised && z._overheat > 0) {
-      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<90*90){damageZombie(oz,40,0,0);applyCorrupt(oz,2);}}
+      const _vbR=_modScale('syn_viral_burn',90,10),_vbR2=_vbR*_vbR;
+      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const dx=oz.x-z.x,dy=oz.y-z.y;if(dx*dx+dy*dy<_vbR2){damageZombie(oz,40,0,0);applyCorrupt(oz,2);}}
       for(let i=0;i<18;i++){const a=Math.random()*Math.PI*2,s=3+Math.random()*6;particles.push({x:z.x,y:z.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:3+Math.random()*4,color:Math.random()>0.3?'#f64':'#a4f',type:'explosion'});}
       screenShake.intensity=Math.max(screenShake.intensity,7);
     }
@@ -22581,16 +22589,16 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // CORRUPT VULNERABILITY: each stack = +8% damage taken, caps at 5 (+40%). Applies to all sources.
   if (z._corrupt > 0) damage = Math.floor(damage * (1 + 0.08 * Math.min(z._corrupt, 5)));
   // CARD: AFTERSHOCK VULN — staggered enemies take +25% damage for 2s
-  if ((runMods||{}).aftershockVuln2 && (z._aftershockVuln > 0 || z.staggerTimer > 0)) damage = Math.floor(damage * 1.25);
-  // CARD: CONCUSSIVE VULN — stunned/staggered enemies take +100% damage
-  if ((runMods||{}).concussiveVuln && (runMods||{}).concussiveBlast > 0 && z.staggerTimer > 0) damage = Math.floor(damage * 2);
-  // CARD: EXECUTION — +50% damage vs enemies below 25% HP
-  if ((runMods||{}).execution && z.maxHp > 0 && z.hp / z.maxHp < 0.25) damage = Math.floor(damage * 1.5);
-  // CARD: MOMENTUM SHOT — first ATTACK after kill +40% damage (1s window, single-use)
+  if ((runMods||{}).aftershockVuln2 && (z._aftershockVuln > 0 || z.staggerTimer > 0)) damage = Math.floor(damage * (1 + _modScale('aftershock_vuln', 0.25, 0.05)));
+  // CARD: CONCUSSIVE VULN — stunned/staggered enemies take bonus damage
+  if ((runMods||{}).concussiveVuln && (runMods||{}).concussiveBlast > 0 && z.staggerTimer > 0) damage = Math.floor(damage * (1 + _modScale('concussive_vuln', 1.0, 0.15)));
+  // CARD: EXECUTION — bonus damage vs enemies below 25% HP
+  if ((runMods||{}).execution && z.maxHp > 0 && z.hp / z.maxHp < 0.25) damage = Math.floor(damage * (1 + _modScale('execution', 0.50, 0.08)));
+  // CARD: MOMENTUM SHOT — first ATTACK after kill bonus damage (1s window, single-use)
   {
     const _msPlr = getLocalPlayer && getLocalPlayer();
     if ((runMods||{}).momentumShot && _msPlr && (_msPlr._momentumShotTimer || 0) > 0 && !silent) {
-      damage = Math.floor(damage * 1.4);
+      damage = Math.floor(damage * (1 + _modScale('momentum_shot', 0.40, 0.06)));
       _msPlr._momentumShotTimer = 0;
     }
   }
@@ -22684,11 +22692,11 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   z.staggerTimer = z.boss ? Math.min(z.staggerTimer || 0, 2) : 5;
   // CARD: STAGGER SHOT — HEAVY CALIBER hits stagger 0.5s
   if (!z.boss && (runMods||{}).staggerShot && (runMods||{}).heavyCaliber > 0) {
-    z.staggerTimer = Math.max(z.staggerTimer, 30);
+    z.staggerTimer = Math.max(z.staggerTimer, Math.floor(_modScale('stagger_shot', 0.5, 0.1) * 60));
   }
-  // CARD: STAGGER STRIKE — all hits stagger 0.5s
+  // CARD: STAGGER STRIKE — all hits stagger
   if (!z.boss && (runMods||{}).staggerStrike) {
-    z.staggerTimer = Math.max(z.staggerTimer, 30);
+    z.staggerTimer = Math.max(z.staggerTimer, Math.floor(_modScale('stagger_strike', 0.5, 0.1) * 60));
   }
   // RAGE flinch: every hit staggers enemies harder during rage (not bosses)
   if (!z.boss && hasPowerUp('rage')) {
@@ -22738,13 +22746,13 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       const _casDepth = z._cascadeDepth || 0;
       if (_casDepth < 3) {
         const _casR = 120;
+        const _casBase = _modScale('cascade', 80, 12);
         for (const oz of zombies) {
           if (oz === z || oz.hp <= 0) continue;
           const cdx = oz.x - z.x, cdy = oz.y - z.y, cd = Math.sqrt(cdx*cdx+cdy*cdy);
           if (cd < _casR) {
             const _casClose = 1 - cd / _casR;
-            // Silent — cascade ring + sparks below provide the read.
-            damageZombie(oz, Math.floor(80 * _casClose), (cdx/(cd||1))*10, (cdy/(cd||1))*10, true);
+            damageZombie(oz, Math.floor(_casBase * _casClose), (cdx/(cd||1))*10, (cdy/(cd||1))*10, true);
             oz.staggerTimer = Math.max(oz.staggerTimer||0, 20);
             oz._hitByDischarge = true; // chain cascades
             oz._cascadeDepth = _casDepth + 1;
@@ -22757,7 +22765,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     }
     // ---- CARD: SHATTER KILL — FROZEN kills explode in a 70px ice AoE ----
     if ((runMods||{}).shatterKill && (z._frozen || z._frozenTimer > 0)) {
-      const _skR = 70;
+      const _skR = _modScale('shatter_kill', 70, 10);
       if (isHost) {
         for (const oz of zombies) {
           if (oz === z || oz.hp <= 0) continue;
@@ -22772,7 +22780,8 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     if ((runMods||{}).iceShards && (z._frozen || z._frozenTimer > 0)) {
       if (isHost) {
         const _isPicked = new Set([z.zid]);
-        for (let _isi = 0; _isi < 2; _isi++) {
+        const _isCount = Math.min(8, _modScale('ice_shards', 2, 1));
+        for (let _isi = 0; _isi < _isCount; _isi++) {
           let _bestZ = null, _bestD2 = 200*200;
           for (const oz of zombies) { if (oz.hp <= 0 || _isPicked.has(oz.zid)) continue; const _idx = oz.x - z.x, _idy = oz.y - z.y, _id2 = _idx*_idx+_idy*_idy; if (_id2 < _bestD2) { _bestD2 = _id2; _bestZ = oz; } }
           if (!_bestZ) break;
@@ -22785,23 +22794,27 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     }
     // ---- CARD: ARC BURST — CHARGED kills fire 6 arc bolts (35 dmg + CHARGED) ----
     if ((runMods||{}).arcKillBurst && z._charged) {
-      for (let _ki = 0; _ki < 6; _ki++) {
-        fireArcBolt(z.x, z.y, { damage: 35, range: 280, applyCharged: true,
-          prefAngle: (_ki / 6) * Math.PI * 2, sourceZid: z.zid });
+      const _akR = _modScale('arc_kill_burst', 120, 12);
+      const _akN = 6;
+      for (let _ki = 0; _ki < _akN; _ki++) {
+        fireArcBolt(z.x, z.y, { damage: 35, range: _akR + 160, applyCharged: true,
+          prefAngle: (_ki / _akN) * Math.PI * 2, sourceZid: z.zid });
       }
     }
     // ---- CARD: ARC DISCHARGE — CHARGED kills fire 3 arc bolts (28 dmg) ----
     else if ((runMods||{}).arcDeathDischarge && z._charged) {
+      const _adR = _modScale('arc_death_discharge', 80, 10);
       for (let _di = 0; _di < 3; _di++) {
-        fireArcBolt(z.x, z.y, { damage: 28, range: 220, applyCharged: true,
+        fireArcBolt(z.x, z.y, { damage: 28, range: _adR + 140, applyCharged: true,
           sourceZid: z.zid });
       }
     }
     // ---- CARD: OVERLOAD (surge_break) — CHARGED kills fire 4 arc bolts radially (40 dmg) ----
     if ((runMods||{}).surgeBreak > 0 && z._charged) {
       const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE makes bolts re-charge targets
+      const _sbDmg = _modScale('surge_break', 40, 7);
       for (let _oi = 0; _oi < 4; _oi++) {
-        fireArcBolt(z.x, z.y, { damage: 40, range: 260, applyCharged: _applyCh,
+        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 260, applyCharged: _applyCh,
           prefAngle: (_oi / 4) * Math.PI * 2, sourceZid: z.zid });
       }
     }
@@ -22809,7 +22822,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     {
       const _felp = getLocalPlayer && getLocalPlayer();
       if ((runMods||{}).fatalExplosion && (runMods||{}).fatalException > 0 && _felp && _felp._postDashTimer > 0 && z._compromised) {
-        const _feR = 80;
+        const _feR = _modScale('fatal_explosion', 80, 10);
         if (isHost) {
           for (const oz of zombies) {
             if (oz === z || oz.hp <= 0) continue;
@@ -22823,7 +22836,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     }
     // ---- CARD: MASS SHATTER — crit FROZEN shatters all FROZEN in 100px ----
     if ((runMods||{}).massShatter && (z._frozen || z._frozenTimer > 0) && damage >= 50) {
-      const _msR = 100;
+      const _msR = _modScale('mass_shatter', 100, 12);
       if (isHost) {
         for (const oz of zombies) {
           if (oz === z || oz.hp <= 0) continue;
@@ -22838,16 +22851,18 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     {
       const _hlp = getLocalPlayer && getLocalPlayer();
       if ((runMods||{}).healOnKill && _hlp && _hlp.alive && Math.random() < 0.05) {
-        _hlp.hp = Math.min(_hlp.maxHp || 100, _hlp.hp + 3);
-        addFloatingText(_hlp.x, _hlp.y - 30, '+3', '#4f4');
+        const _hokAmt = _modScale('heal_on_kill', 3, 1);
+        _hlp.hp = Math.min(_hlp.maxHp || 100, _hlp.hp + _hokAmt);
+        addFloatingText(_hlp.x, _hlp.y - 30, '+' + _hokAmt, '#4f4');
       }
     }
     // ---- CARD: PARASITIC KILL — COMPROMISED kill heals 15 HP ----
     {
       const _pklp = getLocalPlayer && getLocalPlayer();
       if ((runMods||{}).parasiticKill && z._compromised && _pklp && _pklp.alive) {
-        _pklp.hp = Math.min(_pklp.maxHp || 100, _pklp.hp + 15);
-        addFloatingText(_pklp.x, _pklp.y - 30, '+15', '#a4f');
+        const _pkAmt = _modScale('parasitic_kill', 15, 3);
+        _pklp.hp = Math.min(_pklp.maxHp || 100, _pklp.hp + _pkAmt);
+        addFloatingText(_pklp.x, _pklp.y - 30, '+' + _pkAmt, '#a4f');
       }
     }
     // ---- CARD: WHIRLWIND — 3 kills in 2s primes next ATTACK as 360° spin ----
@@ -22906,7 +22921,7 @@ function damagePlayerObj(p,damage,attacker) {
     p.damageFlash = 4;
     // CARD: SHIELD REFLECT — shattered shield reflects damage at attacker
     if ((runMods||{}).shieldReflect && attacker && attacker.hp > 0 && isHost) {
-      damageZombie(attacker, Math.max(damage * 2, 60), 0, 0);
+      damageZombie(attacker, Math.max(damage * _modScale('shield_reflect', 2.0, 0.3), 60), 0, 0);
       particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 2, color: '#4ff', type: 'lightning', tx: attacker.x, ty: attacker.y });
     }
     // Shatter burst — ring of cyan shards + inner flash
@@ -22939,6 +22954,7 @@ function damagePlayerObj(p,damage,attacker) {
   // CARD: DODGE INSTINCT — getting hit grants 1s +30% move speed
   if (p === getLocalPlayer() && runMods && runMods.dodgeInstinct) {
     p._dodgeBoostTimer = 60;
+    p._dodgeBoostMult = _modScale('dodge_instinct', 0.30, 0.05);
   }
   // CARD: RIPOSTE — taking damage instantly readies next ATTACK (ripper only)
   if (p === getLocalPlayer() && runMods && runMods.riposte) {
@@ -22955,18 +22971,18 @@ function damagePlayerObj(p,damage,attacker) {
   }
   // COLD BLOOD: 15% DR while any enemy is frozen
   if (p === getLocalPlayer() && runMods && runMods.coldBlood) {
-    if (zombies.some(z => z.hp > 0 && z._frozen)) damage *= 0.85;
+    if (zombies.some(z => z.hp > 0 && z._frozen)) damage *= (1 - _modScale('cold_blood', 0.15, 0.03));
   }
-  // HYPOTHERMIA: chilled attacker deals 25% less damage
+  // HYPOTHERMIA: chilled attacker deals less damage
   if (p === getLocalPlayer() && runMods && runMods.hypothermia && attacker && attacker._chill > 0) {
-    damage *= 0.75;
+    damage *= (1 - _modScale('hypothermia', 0.25, 0.04));
   }
   // VOLTAIC ARMOR: getting hit fires an arc bolt back at the attacker.
   // Bolt can miss if the attacker moves before it arrives — that's the
   // intentional tradeoff for a projectile-style retaliation.
   if (p === getLocalPlayer() && runMods && runMods.voltaicArmor && attacker && attacker.hp > 0 && isHost) {
     const _vaAng = Math.atan2(attacker.y - p.y, attacker.x - p.x);
-    fireArcBolt(p.x, p.y, { damage: 30, range: 320, applyCharged: true,
+    fireArcBolt(p.x, p.y, { damage: _modScale('voltaic_armor', 30, 6), range: 320, applyCharged: true,
       prefAngle: _vaAng });
     playSound(900 + Math.random()*300, 0.05, 'sawtooth', 0.04);
   }
@@ -23002,7 +23018,7 @@ function damagePlayerObj(p,damage,attacker) {
     if (p === getLocalPlayer() && runMods && runMods.failSafe && !p._failSafeUsed) {
       p._failSafeUsed = true;
       runMods.failSafe = false;
-      p.hp = 1; p.barrier = (p.barrier || 0) + 30; p.invincible = 1800; p.damageFlash = 30;
+      p.hp = 1; p.barrier = (p.barrier || 0) + _modScale('fail_safe', 30, 5); p.invincible = 1800; p.damageFlash = 30;
       addFloatingText(p.x, p.y - 30, 'FAIL SAFE!', '#0f0'); screenShake.intensity = 20;
       triggerGlitchSurge(0.5, 40);
       for (let k = 0; k < 40; k++) { const a = Math.random()*Math.PI*2, s = 3+Math.random()*6; particles.push({x:p.x,y:p.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:30+Math.random()*15,maxLife:45,size:3+Math.random()*4,color:Math.random()<0.5?'#0f0':'#fff',type:'spark'}); }
@@ -23208,9 +23224,9 @@ function update() {
       // MOMENTUM: +4% move speed per exposed enemy on screen
       if (lp._momentumBonus > 0) moveSpeed *= (1 + lp._momentumBonus);
       // Slipstream: speed boost after dash
-      if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + 0.2 * runMods.slipstream);
+      if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + _modScale('slipstream', 0.25, 0.05));
       // CARD: DODGE INSTINCT — +30% move speed for 1s after taking damage
-      if (lp._dodgeBoostTimer > 0) { moveSpeed *= 1.3; lp._dodgeBoostTimer--; }
+      if (lp._dodgeBoostTimer > 0) { moveSpeed *= (1 + (lp._dodgeBoostMult || 0.30)); lp._dodgeBoostTimer--; }
       // CARD: WHIRLWIND — tick down kill-streak window
       if (lp._whirlwindTimer > 0) lp._whirlwindTimer--;
       else if (lp._whirlwindKills) lp._whirlwindKills = 0;
@@ -23220,8 +23236,9 @@ function update() {
       // (A key) and mobile (on-screen shoot button) alike — same _shootHeld source.
       // CARD: MOBILE CHARGE — restore 50% speed during SPECIAL charge/aim
       const _mcActive = (runMods||{}).mobileCharge && (_deadshotCharging || _payloadAiming);
-      if (_shootHeld) moveSpeed = _mcActive ? lp.speed * 0.5 : 0;
-      if (_payloadAiming) moveSpeed = _mcActive ? lp.speed * 0.5 : 0;
+      const _mcSpd = _mcActive ? lp.speed * _modScale('mobile_charge', 0.50, 0.05) : 0;
+      if (_shootHeld) moveSpeed = _mcSpd;
+      if (_payloadAiming) moveSpeed = _mcSpd;
       const usingAnalog = isMobile || (!isMobile && leftJoystick.active) || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -23402,7 +23419,7 @@ function update() {
         // expires quietly when _sdShieldTimer hits zero. Tracked as a frame
         // counter independent of lp.barrier so nothing else gets consumed.
         if (_rm.shieldDash > 0) {
-          const _shDur = _rm.shieldDash >= 2 ? 150 : 90; // L1: 1.5s, L2: 2.5s
+          const _shDur = Math.floor(_modScale('shield_dash', 1.5, 0.3) * 60);
           lp._sdShieldTimer = _shDur;
           for(let bi=0;bi<20;bi++){const ba=(bi/20)*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*10,y:lp.y+Math.sin(ba)*10,vx:Math.cos(ba)*4,vy:Math.sin(ba)*4,life:18,maxLife:18,size:3+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
           for(let bi=0;bi<8;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(ba)*1.5,vy:Math.sin(ba)*1.5-1,life:22,maxLife:22,size:4+Math.random()*3,color:'#4ff',type:'spark'});}
@@ -23412,7 +23429,7 @@ function update() {
         }
         // ---- AFTERIMAGE: dash leaves a decoy at origin ----
         if (_rm.precisionBreach > 0 && lp._dashOriginX != null) {
-          const _decoyDur = 240; // 4s (was 2s)
+          const _decoyDur = Math.floor(_modScale('precision_breach', 2, 0.4) * 60);
           const _dx = lp._dashOriginX, _dy = lp._dashOriginY;
           window._decoys = window._decoys || [];
           window._decoys.push({ x: _dx, y: _dy, timer: _decoyDur, maxTimer: _decoyDur, lv: _rm.precisionBreach });
@@ -23428,7 +23445,7 @@ function update() {
         }
         // ---- FLASHPOINT: fire detonation at dash endpoint ----
         if (_rm.flashpoint > 0) {
-          const fpR = _rm.flashpoint >= 2 ? 90 : 60;
+          const fpR = _modScale('flashpoint', 60, 10);
           // Visible "FLASHPOINT!" callout + bigger explosion ring so the
           // mod's payoff actually reads.
           addFloatingText(lp.x, lp.y - 32, 'FLASHPOINT!', '#fa0');
@@ -23448,11 +23465,10 @@ function update() {
         if (_rm.cryoWake > 0) {
           const cfDir = lp.dashDirX !== undefined ? Math.atan2(lp.dashDirY||0, lp.dashDirX||1) : lp.angle;
           const _cfDx = Math.cos(cfDir), _cfDy = Math.sin(cfDir);
-          const cfR = _rm.cryoWake >= 2 ? 90 : 70;
-          const cfMaxTravel = _rm.cryoWake >= 2 ? 210 : 160;
-          const cfLifetime = _rm.cryoWake >= 2 ? 75 : 60;
-          // Strong launch — gas bursts forward fast, decays over distance.
-          const _cfV0 = _rm.cryoWake >= 2 ? 10.5 : 8;
+          const cfR = _modScale('cryo_wake', 70, 12);
+          const cfMaxTravel = Math.floor(cfR * 2.3);
+          const cfLifetime = 60 + Math.floor(_modLevel('cryo_wake') * 5);
+          const _cfV0 = 8 + Math.min(4, _modLevel('cryo_wake') * 0.5);
           // Spawn cloud CENTER ahead of player by ~radius so the back edge
           // sits just past the player — the gust is thrown forward, not on top.
           const _cfOff = cfR + 8;
@@ -23488,8 +23504,8 @@ function update() {
         }
         // ---- BLIGHT ZONE: corruption pool at dash ENDPOINT ----
         if (_rm.glitchWake > 0) {
-          const bzR = _rm.glitchWake >= 2 ? 120 : 95;
-          const bzDur = 240; // 4s
+          const bzR = 95 + Math.min(60, _modLevel('glitch_wake') * 8);
+          const bzDur = Math.floor(_modScale('glitch_wake', 4, 0.7) * 60);
           // Spawn a corruption pool (reuse burnoutPuddles with a corrupt flag)
           burnoutPuddles.push({ x: lp.x, y: lp.y, radius: bzR, life: bzDur, maxLife: bzDur, _corrupt: true, _glitchLv: _rm.glitchWake });
           // VFX: purple implosion → expansion
@@ -23510,10 +23526,8 @@ function update() {
         }
         // ---- SHATTER STEP: ice shatter at endpoint ----
         if (_rm.shatterStep > 0) {
-          // Always-visible ice crack burst at endpoint
           for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:16,maxLife:16,size:2.5,color:'#aef',type:'spark'});}
-          // Shatter frozen enemies
-          if (isHost) { for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*0.3); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterStep>=2 || _rm.shatterSplash) { const _ssR = _rm.shatterSplash ? 75 : 50; for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<_ssR){damageZombie(oz,Math.floor(shD*0.4),0,0,true);applyChill(oz,1);}} if (_rm.shatterSplash) particles.push({x:fz.x,y:fz.y,vx:0,vy:0,life:12,maxLife:12,size:_ssR,color:'#aef',type:'wakering'}); } } } }
+          if (isHost) { const _shFrac = _modScale('shatter_step', 0.30, 0.05); for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*_shFrac); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterSplash) { const _ssR = _modScale('shatter_splash', 75, 10); for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<_ssR){damageZombie(oz,Math.floor(shD*0.4),0,0,true);applyChill(oz,1);}} particles.push({x:fz.x,y:fz.y,vx:0,vy:0,life:12,maxLife:12,size:_ssR,color:'#aef',type:'wakering'}); } } } }
         }
         // ---- DISCHARGE BURST: arc release at endpoint ----
         if (_rm.dischargeBurst > 0) {
@@ -23522,7 +23536,7 @@ function update() {
           playSound(600, 0.1, 'square', 0.06);
           screenShake.intensity = Math.max(screenShake.intensity, 4);
           // Chain into Charged enemies
-          if (isHost) { const maxJ=(_rm.dischargeBurst>=2?4:2)+(_rm.staticChain||0); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0,true);applyCharged(bZ);if(_rm.dischargeExpose){applyExposed(bZ);bZ.staggerTimer=Math.max(bZ.staggerTimer||0,60);}particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
+          if (isHost) { const maxJ=Math.min(8,_modScale('discharge_burst',2,1)+(_rm.staticChain||0)); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); const _deStag=_rm.dischargeExpose?Math.floor(_modScale('discharge_expose',1,0.3)*60):0; for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0,true);applyCharged(bZ);if(_rm.dischargeExpose){applyExposed(bZ);bZ.staggerTimer=Math.max(bZ.staggerTimer||0,_deStag);}particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
         }
         // Kinetic Wake Lv3: enemies hit by endpoint burst become Exposed
         if (_rm.kineticWake >= 3 && isHost) {
@@ -23857,11 +23871,11 @@ function update() {
     // Spike charge recharge — max scales with the SPIKE LOOP card.
     {
       const _spMods = runMods || {};
-      const _spMax = 2 + (_spMods.spikeExtraCharge || 0);
+      const _spMax = 2 + Math.min(6, (_spMods.spikeExtraCharge || 0));
       lp._spikeChargesMax = _spMax;
       if (lp._spikeCharges < _spMax) {
         // Rapid Spike cuts recharge by 50%
-        const _decay = _spMods.spikeRapid > 0 ? 1.5 : 1;
+        const _decay = _spMods.spikeRapid > 0 ? (1 + _modScale('rapid_spike', 0.50, 0.08)) : 1;
         lp._spikeRecharge -= _decay;
         if (lp._spikeRecharge <= 0) {
           lp._spikeCharges = Math.min(_spMax, lp._spikeCharges + 1);
@@ -23980,9 +23994,10 @@ function update() {
       // SCORCHED EARTH: overheated enemies leave fire trail as they move
       // Triggers at mid-stack (≥3) so the build pays off well before MELTDOWN cap.
       if (_pm2.scorchedEarth && isHost && gameTime % 30 === 0) {
+        const _seLife = 90 + _modLevel('scorched_earth') * 20;
         for (const z of zombies) {
           if (z.hp <= 0 || (z._overheat || 0) < 3) continue;
-          burnoutPuddles.push({ x: z.x, y: z.y, radius: 14, life: 90, maxLife: 90 });
+          burnoutPuddles.push({ x: z.x, y: z.y, radius: 14, life: _seLife, maxLife: _seLife });
         }
       }
       // DEEP FREEZE: extend frozen duration based on frozen count
@@ -23990,7 +24005,8 @@ function update() {
         let frozenCount = 0;
         for (const z of zombies) { if (z.hp > 0 && z._frozen) frozenCount++; }
         if (frozenCount >= 2) {
-          const bonus = Math.floor(frozenCount * 0.5); // +0.5x per frozen enemy
+          const _dfMult = _modScale('deep_freeze', 0.50, 0.08);
+          const bonus = Math.floor(frozenCount * _dfMult);
           for (const z of zombies) { if (z._frozen && z._frozenTimer > 0) z._frozenTimer += bonus; }
         }
       }
@@ -23998,15 +24014,16 @@ function update() {
       if (_pm2.superconductor) {
         let _chCount = 0;
         for (const z of zombies) { if (z.hp > 0 && z._charged) _chCount++; }
-        window._superconductorBonus = _chCount * 0.15; // +15% per charged enemy
+        window._superconductorBonus = _chCount * _modScale('superconductor', 0.15, 0.03);
       }
       // LIGHTNING ROD: while firing, zap all charged enemies within 150px
       if (_pm2.lightningRod && lp._firing && isHost && gameTime % 30 === 0) {
+        const _lrDmg = _modScale('lightning_rod', 10, 2.5);
         for (const z of zombies) {
           if (z.hp <= 0 || !z._charged) continue;
           const ldx = z.x - lp.x, ldy = z.y - lp.y;
           if (ldx*ldx + ldy*ldy < 22500) { // 150px
-            damageZombie(z, 10, 0, 0, true);
+            damageZombie(z, _lrDmg, 0, 0, true);
             particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:14,maxLife:14,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
           }
         }
@@ -24015,12 +24032,13 @@ function update() {
       if (_pm2.momentum) {
         let _exCount = 0;
         for (const z of zombies) { if (z.hp > 0 && z._exposed) _exCount++; }
-        lp._momentumBonus = _exCount * 0.04;
+        lp._momentumBonus = _exCount * _modScale('momentum', 0.04, 0.01);
       }
     }
     // CARD: CONTAGION (kill_switch) — every 2s, CORRUPT spreads from each COMPROMISED to enemies in 60px
     if (isHost && (runMods||{}).killSwitch > 0 && gameTime % 120 === 0) {
-      const _ksR2 = 60 * 60;
+      const _ksR = _modScale('kill_switch', 60, 10);
+      const _ksR2 = _ksR * _ksR;
       for (const _ksZ of zombies) {
         if (_ksZ.hp <= 0 || !_ksZ._compromised) continue;
         for (const _ksO of zombies) {
@@ -24028,7 +24046,7 @@ function update() {
           const _ksdx = _ksO.x - _ksZ.x, _ksdy = _ksO.y - _ksZ.y;
           if (_ksdx*_ksdx + _ksdy*_ksdy < _ksR2) applyCorrupt(_ksO, 1);
         }
-        particles.push({ x: _ksZ.x, y: _ksZ.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 60, color: '#a4f', type: 'wakering' });
+        particles.push({ x: _ksZ.x, y: _ksZ.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _ksR, color: '#a4f', type: 'wakering' });
       }
     }
     // Arcade system updates
@@ -24056,9 +24074,10 @@ function update() {
         if (_dc.timer <= 0) {
           // Lv2 OR CARD: DECOY EXPLOSION — explode and apply EXPOSED on expiry
           if ((_dc.lv >= 2 || (runMods||{}).decoyExplosion) && isHost) {
+            const _deR = _modScale('decoy_explosion', 80, 10);
             for (const z of zombies) { if (z.hp <= 0) continue;
               const dd = Math.sqrt((z.x-_dc.x)**2+(z.y-_dc.y)**2);
-              if (dd < 80) { applyExposed(z); damageZombie(z, 20, 0, 0); }
+              if (dd < _deR) { applyExposed(z); damageZombie(z, 20, 0, 0); }
             }
             for (let _ei = 0; _ei < 14; _ei++) { const _ea = Math.random()*Math.PI*2, _es = 3+Math.random()*5;
               particles.push({ x: _dc.x, y: _dc.y, vx: Math.cos(_ea)*_es, vy: Math.sin(_ea)*_es,
@@ -24593,12 +24612,12 @@ function update() {
                       // (surge_break OVERLOAD + kill_switch CONTAGION now fire on kill/tick — see death block + update loop)
                       if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorRound >= 3) _critChance += 0.30;
                       // CARD: PREDATOR PIERCE — post-dash shots +30% crit chance
-                      if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorPierce) _critChance += 0.30;
+                      if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorPierce) _critChance += _modScale('predator_pierce', 0.30, 0.04);
                       if (_critChance > 0 && Math.random() < _critChance) { _dmg = Math.floor(_dmg * 2); b.crit = true; }
                     }
                     // -- POST-DASH RIDER: Predator Round damage boost --
                     if (_lp3 && _lp3._postDashTimer > 0 && _m.predatorRound > 0 && _lp3._postDashShotsLeft > 0) {
-                      _dmg = Math.floor(_dmg * (_m.predatorRound >= 2 ? 1.6 : 1.4));
+                      _dmg = Math.floor(_dmg * (1 + _modScale('predator_round', 0.40, 0.07)));
                       _lp3._postDashShotsLeft--;
                       addFloatingText(z.x, z.y - z.radius - 16, 'PREDATOR', '#f44');
                       // Red flash ring on predator hit
@@ -24606,7 +24625,7 @@ function update() {
                     }
                     // -- POST-DASH RIDER: Fatal Exception (bonus vs Compromised) --
                     if (_lp3 && _lp3._postDashTimer > 0 && _m.fatalException > 0 && z._compromised) {
-                      _dmg = Math.floor(_dmg * 1.5);
+                      _dmg = Math.floor(_dmg * (1 + _modScale('fatal_exception', 0.50, 0.08)));
                       addFloatingText(z.x, z.y - z.radius - 20, 'EXCEPTION', '#a4f');
                     }
                   }
@@ -24747,8 +24766,8 @@ function update() {
                   // 40% dmg. Lv2: 70px, 60% dmg. One blast per bullet so a
                   // pierce shot doesn't chain-detonate the whole crowd.
                   if (_m.wideSpread > 0 && !b._impactBlasted) {
-                    const _ibR = _m.wideSpread >= 2 ? 70 : 50;
-                    const _ibDmg = Math.floor(_dmg * (_m.wideSpread >= 2 ? 0.6 : 0.4));
+                    const _ibR = _modScale('wide_spread', 50, 8);
+                    const _ibDmg = Math.floor(_dmg * (0.40 + _modLevel('wide_spread') * 0.05));
                     // Visible "IMPACT!" callout above the zombie so the player
                     // can see the card firing (it was easy to miss against the
                     // surrounding hit VFX).
@@ -24790,7 +24809,8 @@ function update() {
                   }
                   // TRACER ROUND: mark enemy for gun bullet homing
                   if (b._tracerMark && b._deadshotRound && z.hp > 0) {
-                    z._tracerMarked = 240; // 4 seconds
+                    z._tracerMarked = 240;
+                    z._tracerDmgMult = 1 + _modScale('tracer_round', 0.30, 0.05);
                   }
                   // ==== EXPLOSIVE PISTOL IMPACT ====
                   // Mirrors the sword's _meleeHitVFX vocabulary so a hitscan
@@ -24954,18 +24974,21 @@ function update() {
                     }
                     // ---- CARD: CORRUPT SPREAD — Hits on COMPROMISED spread CORRUPT in 80px ----
                     if (_m.corruptSpread && z._compromised) {
-                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx2 = oz.x-z.x, dy2 = oz.y-z.y; if (dx2*dx2 + dy2*dy2 < 6400) applyCorrupt(oz, 1); }
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 80, color: '#a4f', type: 'wakering' });
+                      const _csR2x = _modScale('corrupt_spread', 80, 10), _csR22x = _csR2x * _csR2x;
+                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx2 = oz.x-z.x, dy2 = oz.y-z.y; if (dx2*dx2 + dy2*dy2 < _csR22x) applyCorrupt(oz, 1); }
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _csR2x, color: '#a4f', type: 'wakering' });
                     }
-                    // ---- CARD: PULSE TRIGGER — Hits on EXPOSED → 60px KB pulse ----
+                    // ---- CARD: PULSE TRIGGER — Hits on EXPOSED → KB pulse ----
                     if (_m.pulseTrigger && z._exposed) {
-                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx3 = oz.x-z.x, dy3 = oz.y-z.y, d3sq = dx3*dx3+dy3*dy3; if (d3sq < 3600 && d3sq > 0.1) { const d3 = Math.sqrt(d3sq); oz.vx += (dx3/d3) * 6; oz.vy += (dy3/d3) * 6; oz.staggerTimer = Math.max(oz.staggerTimer||0, 8); } }
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 60, color: '#cef', type: 'wakering' });
+                      const _ptR2x = _modScale('pulse_trigger', 60, 10), _ptR22x = _ptR2x * _ptR2x;
+                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx3 = oz.x-z.x, dy3 = oz.y-z.y, d3sq = dx3*dx3+dy3*dy3; if (d3sq < _ptR22x && d3sq > 0.1) { const d3 = Math.sqrt(d3sq); oz.vx += (dx3/d3) * 6; oz.vy += (dy3/d3) * 6; oz.staggerTimer = Math.max(oz.staggerTimer||0, 8); } }
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _ptR2x, color: '#cef', type: 'wakering' });
                     }
-                    // ---- CARD: VULNERABILITY PULSE — Hits on EXPOSED → 90px KB pulse to ALL ----
+                    // ---- CARD: VULNERABILITY PULSE — Hits on EXPOSED → KB pulse to ALL ----
                     if (_m.vulnerabilityPulse && z._exposed) {
-                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx4 = oz.x-z.x, dy4 = oz.y-z.y, d4sq = dx4*dx4+dy4*dy4; if (d4sq < 8100 && d4sq > 0.1) { const d4 = Math.sqrt(d4sq); oz.vx += (dx4/d4) * 10; oz.vy += (dy4/d4) * 10; oz.staggerTimer = Math.max(oz.staggerTimer||0, 14); applyExposed(oz); } }
-                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 90, color: '#cef', type: 'wakering' });
+                      const _vpR2x = _modScale('vulnerability_pulse', 90, 10), _vpR22x = _vpR2x * _vpR2x;
+                      for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const dx4 = oz.x-z.x, dy4 = oz.y-z.y, d4sq = dx4*dx4+dy4*dy4; if (d4sq < _vpR22x && d4sq > 0.1) { const d4 = Math.sqrt(d4sq); oz.vx += (dx4/d4) * 10; oz.vy += (dy4/d4) * 10; oz.staggerTimer = Math.max(oz.staggerTimer||0, 14); applyExposed(oz); } }
+                      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _vpR2x, color: '#cef', type: 'wakering' });
                     }
                     // ---- SYNERGY EFFECTS: passive piggybacking (in apply* functions) + COMBO payoffs ----
                     // SHATTER FORCE passive: Exposed + Frozen = 3x damage
@@ -24980,7 +25003,8 @@ function update() {
                     }
                     // LIVE WIRE combo: Overheated + Charged → arc discharge burst
                     if (_m.synLiveWire && z._overheat > 0 && z._charged) {
-                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(_dmg*0.4),0,0,true);}}
+                      const _lwMult2 = _modScale('syn_live_wire', 0.40, 0.05);
+                      for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(_dmg*_lwMult2),0,0,true);}}
                       for(let oi=0;oi<8;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*5,vy:Math.sin(oa)*5,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
                       screenShake.intensity=Math.max(screenShake.intensity,5);
                     }
@@ -25055,9 +25079,10 @@ function update() {
                   if (_isLocal && z._charged) {
                     const arcLv = _m.arcRoundsLv || 0;
                     const baseBolts = Math.max(1, arcLv);
-                    const bonusBolts = (_m.staticChain || 0) * 2;
+                    const bonusBolts = Math.min(6, (_m.staticChain || 0) * 2);
                     const _boltN = baseBolts + bonusBolts;
-                    const _boltDmg = Math.max(8, Math.floor(_dmg * 0.4));
+                    const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
+                    const _boltDmg = Math.max(8, Math.floor(_dmg * 0.4) + _chainBonus);
                     const _boltRange = 280 + (_m.staticChain >= 1 ? 80 : 0) + (arcLv >= 2 ? 40 : 0);
                     const _boltPierce = (_m.staticChain || 0) > 0 ? 1 : 0;
                     for (let _bi = 0; _bi < _boltN; _bi++) {
@@ -25102,8 +25127,8 @@ function update() {
                   if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // CHAIN KILL: deadshot kills fire bolts at nearby enemies
                   if (b._chainKill > 0 && b._deadshotRound) {
-                    const _ckMax = b._chainKill >= 2 ? 2 : 1;
-                    const _ckDmg = Math.floor(b.damage * 0.6);
+                    const _ckMax = 1 + Math.min(4, Math.floor((b._chainKill - 1) / 2));
+                    const _ckDmg = Math.floor(b.damage * _modScale('chain_kill', 0.60, 0.07));
                     const _ckHit = new Set([z.zid]);
                     let _ckLast = z;
                     for (let _ci = 0; _ci < _ckMax; _ci++) {
@@ -25324,7 +25349,7 @@ function update() {
       // OVERHEAT: each stack ticks 4 dmg every 0.5s (30 frames). Duration 3s
       // (180 frames, refreshes on application). At cap with Reactor Bloom Lv2
       // and Thermal Runaway, ticks ~46 dmg × 6 = ~280 DOT total.
-      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._thermalRunawayActive?2:1;const _rbMult=1+0.33*(runMods.reactorBloom||0);if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%6===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(6,1+z._overheat));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
+      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._thermalRunawayActive?_modScale('thermal_runaway',2,0.3):1;const _rbMult=runMods.reactorBloom>0?(1+_modScale('reactor_bloom',0.33,0.07)):1;if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%6===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(6,1+z._overheat));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
       // FROZEN: hard CC, skip AI — thaw restores speed + grants 1s chill immunity
       if(z._frozen&&z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z._frozen=false;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._chillImmune=60;z._chill=0;z._chillTimer=0;}continue;}
       // Legacy frozen compat
@@ -27133,24 +27158,27 @@ function update() {
       const _plp = getLocalPlayer();
       // PYROMANIAC: kill overheated → fire rate boost
       if (_pm.pyromaniac && dz._overheat > 0 && _plp) {
-        _plp._pyroBoost = Math.min(0.25, (_plp._pyroBoost || 0) + 0.05);
+        _plp._pyroBoost = Math.min(_modScale('pyromaniac', 0.25, 0.03), (_plp._pyroBoost || 0) + 0.05);
         _plp._pyroTimer = 180; // 3s
       }
       // SCORCHED EARTH: overheated enemies leave fire decal puddles
       if (_pm.scorchedEarth && dz._overheat > 0) {
-        burnoutPuddles.push({ x: dz.x, y: dz.y, radius: 30, life: 180, maxLife: 180 });
+        const _seR = 30, _seL = 180;
+        burnoutPuddles.push({ x: dz.x, y: dz.y, radius: _seR, life: _seL, maxLife: _seL, _seDmg: _modScale('scorched_earth', 5, 2) });
       }
       // SHOCKFRONT: exposed enemies emit knockback burst on death
       if (_pm.shockfront && dz._exposed) {
+        const _sfR = _modScale('shockfront', 60, 10);
+        const _sfR2 = _sfR * _sfR;
         for (const oz of zombies) { if (oz.hp <= 0) continue;
-          const sdx = oz.x - dz.x, sdy = oz.y - dz.y, sd = Math.sqrt(sdx*sdx+sdy*sdy);
-          if (sd < 60 && sd > 1) { oz.vx += (sdx/sd)*12; oz.vy += (sdy/sd)*12; oz.staggerTimer = Math.max(oz.staggerTimer||0, 15); }
+          const sdx = oz.x - dz.x, sdy = oz.y - dz.y, sd2 = sdx*sdx+sdy*sdy;
+          if (sd2 < _sfR2 && sd2 > 1) { const sd = Math.sqrt(sd2); oz.vx += (sdx/sd)*12; oz.vy += (sdy/sd)*12; oz.staggerTimer = Math.max(oz.staggerTimer||0, 15); }
         }
-        particles.push({x:dz.x,y:dz.y,vx:0,vy:0,life:12,maxLife:12,size:60,color:'#cef',type:'wakering'});
+        particles.push({x:dz.x,y:dz.y,vx:0,vy:0,life:12,maxLife:12,size:_sfR,color:'#cef',type:'wakering'});
       }
       // SIPHON: killing compromised drops health orb
       if (_pm.siphon && dz._compromised) {
-        pickups.push({ type: 'health', amount: 5, x: dz.x, y: dz.y, bobTimer: Math.random() * Math.PI * 2 });
+        pickups.push({ type: 'health', amount: _modScale('siphon', 5, 2), x: dz.x, y: dz.y, bobTimer: Math.random() * Math.PI * 2 });
       }
       // INFECTION VECTOR: enemy becoming compromised → spread (handled in applyCorrupt)
       zombies.splice(di,1);
