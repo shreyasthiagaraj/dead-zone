@@ -10340,32 +10340,35 @@ function generateArena(seed) {
 // blocks well-spread) keeps the action constant and dodgeable. Same theming as
 // arena (furnace) for the high-action vibe; lighter detail since the map is huge.
 function generateArcadeArena(seed) {
-  // Slightly bigger than the standard arena — still open, but small enough that
-  // the player isn't searching a desert for stragglers. Spawning is also
-  // player-centric (see spawnArcadeZombie) so the action stays close.
-  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 1.1), Math.floor(DEFAULT_ARENA_H * 1.1));
+  // Tight, action-focused arena — roughly viewport-sized so the player can see
+  // the entire fight at a glance. The whole map is the combat zone. Spawning
+  // is player-centric too (see spawnArcadeZombie) so enemies are always close.
+  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 0.6), Math.floor(DEFAULT_ARENA_H * 0.6));
   const rng = seededRandom(seed || Date.now());
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  const margin = 22;
+  // Thin border so the arena uses most of the bounds.
+  const margin = 6;
   const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
   carveRoom(arena);
   rooms.push(arena);
-  // Sparse cover — fewer blocks than survival but bigger, well-spaced. Sightlines
-  // stay long so ranged enemies and player can actually use the space.
-  const numObstacles = 14 + Math.floor(rng() * 7); // 14-20 chunky blocks
+  // Sparser cover for a smaller arena — fewer blocks but still chunky so they
+  // matter as cover. Spawn-safe center kept generous so the player can read
+  // the room on entry.
+  const numObstacles = 5 + Math.floor(rng() * 4); // 5-8 chunky blocks
   const placed = [];
   const centerX = GRID_W / 2, centerY = GRID_H / 2;
   // Each obstacle must be at least MIN_GAP cells from every other (no clusters).
-  const MIN_GAP = 6;
+  // Reduced from 6→4 for the smaller arena so placement still succeeds.
+  const MIN_GAP = 4;
   for (let att = 0; att < 400 && placed.length < numObstacles; att++) {
-    const ow = 3 + Math.floor(rng() * 4), oh = 3 + Math.floor(rng() * 4); // 3-6 cells
-    const ox = margin + 4 + Math.floor(rng() * (arena.w - ow - 8));
-    const oy = margin + 4 + Math.floor(rng() * (arena.h - oh - 8));
+    const ow = 2 + Math.floor(rng() * 3), oh = 2 + Math.floor(rng() * 3); // 2-4 cells
+    const ox = margin + 2 + Math.floor(rng() * (arena.w - ow - 4));
+    const oy = margin + 2 + Math.floor(rng() * (arena.h - oh - 4));
     const ocx = ox + ow / 2, ocy = oy + oh / 2;
-    // Spawn safe-zone (10-cell radius around center)
-    if (Math.abs(ocx - centerX) < 10 && Math.abs(ocy - centerY) < 10) continue;
+    // Spawn safe-zone (6-cell radius around center — smaller arena needs less buffer)
+    if (Math.abs(ocx - centerX) < 6 && Math.abs(ocy - centerY) < 6) continue;
     let overlap = false;
     for (const p of placed) {
       const pcx = p.x + p.w / 2, pcy = p.y + p.h / 2;
@@ -19763,15 +19766,12 @@ function spawnArcadeZombie() {
   const tk = ts[Math.floor(Math.random() * ts.length)];
   const t = ZOMBIE_TYPES[tk];
   const arena = rooms[0];
-  // Player-centric spawn: drop the enemy just past the player's fog ring so
-  // they engage within a couple seconds. Stops the "where are they?" feeling
-  // a big arena creates when spawning at the boundary. Picks a random angle
-  // and a radius in the band [SPAWN_MIN, SPAWN_MAX]; retries on walls/obstacles.
-  const SPAWN_MIN = 850;   // just past spot radius (1200) minus some — enemies appear
-                           // at the edge of visibility, then close in fast
-  const SPAWN_MAX = 1350;
+  // Player-centric spawn: tight ring around the player so enemies appear close
+  // and engage immediately. SPAWN_MIN gives a small buffer so they don't pop
+  // on top of the player; SPAWN_MAX keeps them on-screen (~viewport reach).
+  const SPAWN_MIN = 380;
+  const SPAWN_MAX = 720;
   const lp = getLocalPlayer();
-  // Average position across alive players so MP spawning still feels even.
   let cx = arena.x * CELL_SIZE + (arena.w * CELL_SIZE) / 2;
   let cy = arena.y * CELL_SIZE + (arena.h * CELL_SIZE) / 2;
   if (lp && lp.alive) {
@@ -19780,21 +19780,19 @@ function spawnArcadeZombie() {
     if (n > 0) { cx = ax / n; cy = ay / n; }
   }
   let x = cx, y = cy, found = false;
-  for (let att = 0; att < 18; att++) {
+  for (let att = 0; att < 24; att++) {
     const ang = Math.random() * Math.PI * 2;
     const rad = SPAWN_MIN + Math.random() * (SPAWN_MAX - SPAWN_MIN);
     const tx = cx + Math.cos(ang) * rad;
     const ty = cy + Math.sin(ang) * rad;
     const gx = Math.floor(tx / CELL_SIZE), gy = Math.floor(ty / CELL_SIZE);
-    // Must be in-arena and on a walkable floor cell.
     if (gx < arena.x + 1 || gx >= arena.x + arena.w - 1) continue;
     if (gy < arena.y + 1 || gy >= arena.y + arena.h - 1) continue;
     if (!dungeonGrid[gy] || !dungeonGrid[gy][gx]) continue;
     x = tx; y = ty; found = true; break;
   }
   if (!found) {
-    // Fallback: arena edge — guarantees a spawn even if the player is cornered
-    // against the boundary.
+    // Fallback: arena edge — guarantees a spawn even if the player is cornered.
     const edge = Math.floor(Math.random() * 4);
     let gx, gy;
     if (edge === 0) { gx = arena.x + 1; gy = arena.y + 1 + Math.floor(Math.random() * (arena.h - 2)); }
@@ -19808,12 +19806,20 @@ function spawnArcadeZombie() {
   const sc = 1 + (arcadeWave - 1) * 0.10;
   const hp = t.hp * sc;
   const spd = t.speed + (arcadeWave - 1) * 0.025;
-  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: 0, hp, maxHp: hp, speed: spd,
+  // Pre-point velocity at the player so the zombie advances from frame 1
+  // instead of standing still for the first tick of AI. Combined with
+  // aware:true (no aggro delay), the spawn reads as "they're already on you."
+  const _dxIv = cx - x, _dyIv = cy - y;
+  const _dIv = Math.sqrt(_dxIv * _dxIv + _dyIv * _dyIv) || 1;
+  const _ivx = (_dxIv / _dIv) * spd;
+  const _ivy = (_dyIv / _dIv) * spd;
+  zombies.push({ zid: _nextZombieId++, x, y, vx: _ivx, vy: _ivy, hp, maxHp: hp, speed: spd,
     radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk,
     attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0,
     lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0,
-    angle: 0, staggerTimer: 0, aware: true, wanderAngle: Math.random() * Math.PI * 2,
-    wanderTimer: 60, stuckTimer: 0, lastX: 0, lastY: 0 });
+    angle: Math.atan2(_dyIv, _dxIv), staggerTimer: 0, aware: true,
+    wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0,
+    stuckTimer: 0, lastX: 0, lastY: 0 });
 }
 
 function updateArcadeWaves() {
