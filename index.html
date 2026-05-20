@@ -1061,7 +1061,7 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); gapGrid = null; }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 11;
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 13.2; // +20% distance (was 11)
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -1137,6 +1137,10 @@ let arcadeZombiesTotal = 0, arcadeZombiesSpawned = 0, arcadeZombiesKilled = 0;
 let arcadeStreak = 0, arcadeStreakTimer = 0; // chain-kill multiplier
 let arcadeScoreDisplay = 0; // smoothed value the HUD lerps toward score
 let arcadeCounterPulse = 0; // 0..1, decays — drives the HUD pop on each kill
+// Mod terminal that spawns between waves. The player walks up to it during
+// the rest gap to pick an upgrade card. Cleared when the next wave begins.
+// Shape: { x, y, _entered: bool }
+let _arcadeModTerminal = null;
 
 // ============================================================
 // ARCADE ESCALATION SYSTEM
@@ -19728,11 +19732,14 @@ function resetArcadeState() {
   arcadeStreakTimer = 0;
   arcadeScoreDisplay = 0;
   arcadeCounterPulse = 0;
+  _arcadeModTerminal = null;
 }
 
 function startArcadeWave() {
   arcadeWave++;
   resetWaveKills();
+  // Clear any leftover mod terminal from the previous wave's rest gap.
+  _arcadeModTerminal = null;
   // Scale: starts gentle, ramps each wave. ~6+wave*2.2 enemies, capped to keep
   // mobile from drowning. Boss waves get fewer mooks (boss is the spectacle).
   const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
@@ -19742,14 +19749,20 @@ function startArcadeWave() {
   arcadeWaveState = 'active';
   playWaveStartSound();
   const el = document.getElementById('wave-announce');
+  // Reset any inline styles left over from a previous "WAVE COMPLETE" callout
+  // so the wave-start announcement uses the default magenta/cyan colors.
+  const _wn = document.getElementById('wave-num');
+  const _ws = document.getElementById('wave-sub');
+  if (_wn) { _wn.style.color = ''; _wn.style.textShadow = ''; }
+  if (_ws) { _ws.style.color = ''; _ws.style.textShadow = ''; }
   if (isBoss) {
-    document.getElementById('wave-num').textContent = `BOSS · WAVE ${arcadeWave}`;
-    document.getElementById('wave-sub').textContent = 'Take it down for the bonus.';
+    _wn.textContent = `BOSS · WAVE ${arcadeWave}`;
+    _ws.textContent = 'Take it down for the bonus.';
   } else {
-    document.getElementById('wave-num').textContent = `WAVE ${arcadeWave}`;
+    _wn.textContent = `WAVE ${arcadeWave}`;
     const subs = ['Stay moving.', 'Chain those kills.', 'High score time.', 'Don\'t stop.',
                   'Light it up.', 'Survive the swarm.', 'Run the score up.', 'Keep the streak alive.'];
-    document.getElementById('wave-sub').textContent = subs[(arcadeWave - 1) % subs.length];
+    _ws.textContent = subs[(arcadeWave - 1) % subs.length];
   }
   el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
   if (isBoss) spawnArcadeBoss();
@@ -19855,6 +19868,37 @@ function updateArcadeWaves() {
   }
   if (arcadeWaveState === 'rest') {
     arcadeWaveTimer--;
+    // Mod terminal proximity check: when the player walks inside the
+    // interaction radius, trigger the level-up card picker. Only fires once
+    // per wave (gated by _entered) — they pick a mod and the rest of the
+    // breather is theirs.
+    if (_arcadeModTerminal && !_arcadeModTerminal._entered) {
+      const _lp = getLocalPlayer();
+      if (_lp && _lp.alive) {
+        const _tdx = _lp.x - _arcadeModTerminal.x;
+        const _tdy = _lp.y - _arcadeModTerminal.y;
+        if (_tdx * _tdx + _tdy * _tdy < 55 * 55) {
+          _arcadeModTerminal._entered = true;
+          // Reward pulse: bright spark burst + screen shake so the trigger reads
+          for (let _ti = 0; _ti < 24; _ti++) {
+            const _ta = (_ti / 24) * Math.PI * 2;
+            const _ts = 3 + Math.random() * 3;
+            particles.push({
+              x: _arcadeModTerminal.x, y: _arcadeModTerminal.y,
+              vx: Math.cos(_ta) * _ts, vy: Math.sin(_ta) * _ts,
+              life: 22, maxLife: 22, size: 3 + Math.random() * 2,
+              color: Math.random() < 0.5 ? '#ff0' : '#fff', type: 'spark'
+            });
+          }
+          screenShake.intensity = Math.max(screenShake.intensity, 5);
+          playSfx('ui_click', 0.4) || playSound(1200, 0.08, 'sine', 0.18);
+          // Queue + fire the level-up card picker (same flow as the rare
+          // mod_unlocked barrel at line ~19505).
+          pendingLevelUps = Math.max(pendingLevelUps, 1);
+          triggerLevelUpPicker();
+        }
+      }
+    }
     if (arcadeWaveTimer <= 0) startArcadeWave();
     return;
   }
@@ -19885,13 +19929,49 @@ function updateArcadeWaves() {
     arcadeCounterPulse = 1;
     const lpx = getLocalPlayer() ? getLocalPlayer().x : 0;
     const lpy = getLocalPlayer() ? getLocalPlayer().y : 0;
-    addFloatingText(lpx, lpy - 40, `WAVE ${arcadeWave} CLEAR  +${bonus}`, '#fa0');
+    addFloatingText(lpx, lpy - 40, `+${bonus}`, '#fa0');
+    // Big "WAVE COMPLETE" announcement via the same wave-announce div used for
+    // wave starts. Gold for completion (vs cyan/magenta for wave-start cues).
+    {
+      const _wae = document.getElementById('wave-announce');
+      const _wan = document.getElementById('wave-num');
+      const _was = document.getElementById('wave-sub');
+      if (_wae && _wan && _was) {
+        _wan.textContent = `WAVE ${arcadeWave} COMPLETE`;
+        _wan.style.color = '#fa0';
+        _wan.style.textShadow = '0 0 20px rgba(255,170,0,0.7), 0 0 40px rgba(255,170,0,0.3)';
+        _was.textContent = `+${bonus} BONUS  ·  APPROACH THE TERMINAL`;
+        _was.style.color = '#ff0';
+        _was.style.textShadow = '0 0 8px rgba(255,255,0,0.5)';
+        _wae.style.opacity = '1';
+        setTimeout(() => { _wae.style.opacity = '0'; }, 2800);
+      }
+    }
+    playSfx('wave_clear', 0.4) || playSound(1100, 0.12, 'sine', 0.22);
     // Health drops are rare — only on milestone clears (every 5th wave) and bosses.
     if (isBoss || isMilestone) spawnHealthPickup();
     // Always drop one power-up to reward the player during the breather.
     const p = getRandomFloorPos();
     const pw = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pw.id, x: p.x, y: p.y, bobTimer: Math.random() * Math.PI * 2 });
+    // ---- SPAWN THE MOD TERMINAL ----
+    // Pick a floor cell that's at least 180 px from the player so they have
+    // to walk to it (sells the "reward at the end of the wave" beat).
+    const _lpForTerm = getLocalPlayer();
+    let _tx = ARENA_W / 2, _ty = ARENA_H / 2;
+    const _arena = rooms[0];
+    if (_arena) {
+      for (let _att = 0; _att < 24; _att++) {
+        const _cx = (_arena.x + 2 + Math.floor(Math.random() * (_arena.w - 4))) * CELL_SIZE;
+        const _cy = (_arena.y + 2 + Math.floor(Math.random() * (_arena.h - 4))) * CELL_SIZE;
+        if (dungeonGrid[Math.floor(_cy / CELL_SIZE)] && dungeonGrid[Math.floor(_cy / CELL_SIZE)][Math.floor(_cx / CELL_SIZE)]) {
+          if (!_lpForTerm) { _tx = _cx; _ty = _cy; break; }
+          const _dx = _cx - _lpForTerm.x, _dy = _cy - _lpForTerm.y;
+          if (_dx * _dx + _dy * _dy > 180 * 180) { _tx = _cx; _ty = _cy; break; }
+        }
+      }
+    }
+    _arcadeModTerminal = { x: _tx, y: _ty, _entered: false };
   }
 }
 
@@ -31566,6 +31646,75 @@ function render() {
 
   // ---- Shell overlays (terminals, gateway, stats) — drawn in world space before fog ----
   if (gameState === 'shell') renderShellOverlays();
+  // ---- Arcade mod terminal (between-waves upgrade picker)
+  if (gameMode === 'arcade' && _arcadeModTerminal && arcadeWaveState === 'rest') {
+    const _term = _arcadeModTerminal;
+    const _lpT = getLocalPlayer();
+    const _near = !!(_lpT && _lpT.alive && Math.hypot(_lpT.x - _term.x, _lpT.y - _term.y) < 80);
+    const _pmsT = performance.now();
+    const _pulseT = 0.5 + Math.sin(_pmsT * 0.005) * 0.4;
+    ctx.save();
+    // Wide ambient glow so the terminal pulls the eye from across the arena
+    ctx.globalAlpha = 0.10 * _pulseT + (_near ? 0.18 : 0);
+    const _outerG = ctx.createRadialGradient(_term.x, _term.y, 0, _term.x, _term.y, 120);
+    _outerG.addColorStop(0, '#ff0');
+    _outerG.addColorStop(0.5, 'rgba(255,255,0,0.25)');
+    _outerG.addColorStop(1, 'transparent');
+    ctx.fillStyle = _outerG;
+    ctx.beginPath(); ctx.arc(_term.x, _term.y, 120, 0, Math.PI * 2); ctx.fill();
+    // Vertical light beam
+    ctx.globalAlpha = (_near ? 0.32 : 0.16) * _pulseT;
+    const _beam = ctx.createLinearGradient(_term.x, _term.y - 70, _term.x, _term.y + 70);
+    _beam.addColorStop(0, 'transparent');
+    _beam.addColorStop(0.2, '#fa0');
+    _beam.addColorStop(0.5, '#fff');
+    _beam.addColorStop(0.8, '#fa0');
+    _beam.addColorStop(1, 'transparent');
+    ctx.fillStyle = _beam;
+    ctx.fillRect(_term.x - 12, _term.y - 70, 24, 140);
+    // Pulsing rings
+    for (let _ri = 0; _ri < 3; _ri++) {
+      const _rPhase = (_pmsT * 0.003 + _ri * 1.6) % (Math.PI * 2);
+      const _rSize = 18 + Math.sin(_rPhase) * 10 + _ri * 12;
+      ctx.globalAlpha = (_near ? 0.85 : 0.55) * (1 - _ri * 0.18) * _pulseT;
+      ctx.strokeStyle = _ri % 2 === 0 ? '#fa0' : '#ff0';
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur = 16;
+      ctx.lineWidth = _near ? 3 : 2;
+      ctx.beginPath(); ctx.arc(_term.x, _term.y, _rSize, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    // Bright core
+    ctx.globalAlpha = (_near ? 0.95 : 0.7) * _pulseT;
+    const _coreG = ctx.createRadialGradient(_term.x, _term.y, 0, _term.x, _term.y, 22);
+    _coreG.addColorStop(0, '#fff');
+    _coreG.addColorStop(0.3, '#ff0');
+    _coreG.addColorStop(0.7, 'rgba(255,170,0,0.3)');
+    _coreG.addColorStop(1, 'transparent');
+    ctx.fillStyle = _coreG;
+    ctx.beginPath(); ctx.arc(_term.x, _term.y, 16, 0, Math.PI * 2); ctx.fill();
+    // Wrench icon
+    ctx.globalAlpha = _near ? 1 : 0.85;
+    ctx.fillStyle = '#fff';
+    ctx.shadowColor = '#fa0'; ctx.shadowBlur = _near ? 20 : 10;
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚒', _term.x, _term.y);
+    // Label
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#fa0';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('MOD TERMINAL', _term.x, _term.y + 32);
+    // Prompt when near
+    if (_near) {
+      ctx.shadowBlur = 6;
+      ctx.globalAlpha = 0.7 + Math.sin(_pmsT * 0.006) * 0.3;
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('STEP IN TO UPGRADE', _term.x, _term.y - 36);
+    }
+    ctx.restore();
+  }
 
   ctx.restore();
 
