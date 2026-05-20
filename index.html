@@ -20550,11 +20550,12 @@ function getZombieTypesForWave(wave) {
   if (currentWaveMod && currentWaveMod.types) return currentWaveMod.types;
   const t = ['normal'];
   if (wave >= 2) t.push('fast');
-  if (wave >= 3) t.push('tank', 'splitter');
-  if (wave >= 4) t.push('spitter', 'brute');
-  if (wave >= 5) t.push('exploder');
-  if (wave >= 6) t.push('stalker');
-  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'brute', 'fast'); }
+  if (wave >= 3) t.push('tank', 'splitter', 'lancer');     // lancer = mid-range thrust melee
+  if (wave >= 4) t.push('spitter', 'brute', 'lash');       // lash = whip-arc mid-range melee
+  if (wave >= 5) t.push('exploder', 'reaper');             // reaper = 180° sweep melee
+  if (wave >= 6) t.push('stalker', 'bull');                // bull = charging mid-range
+  if (wave >= 7) t.push('lash', 'lancer');                 // double weight on the fan-favorites
+  if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'brute', 'fast', 'reaper'); }
   if (wave < 5) { t.push('normal', 'normal'); }
   return t;
 }
@@ -20591,6 +20592,9 @@ const ARCADE_WAVE_TYPES = {
   elite_guard:  { name: 'ELITE GUARD',   sub: 'Heavy hitters only — no filler.',     color: '#f44', accent: '#fa0', icon: '✦',
                   types: ['brute','splitter','exploder','reaper','lash'],
                   countMult: 0.45, hpMult: 1.00, speedMult: 1.00 },
+  blade_frenzy: { name: 'BLADE FRENZY',  sub: 'Mid-range melee storm — keep moving.', color: '#f0f', accent: '#f8c', icon: '⚔',
+                  types: ['lash','lancer','reaper','bull','lash','lancer'],
+                  countMult: 0.80, hpMult: 0.95, speedMult: 1.10 },
   bonus:        { name: '★ BONUS ROUND', sub: 'Score balloons — no damage, big points.', color: '#ff0', accent: '#fa0', icon: '★',
                   types: ['_score_balloon'],
                   countMult: 1.40, hpMult: 0.30, speedMult: 0.85, isBonus: true },
@@ -20612,9 +20616,10 @@ function getArcadeWaveType(wave) {
   if (wave === 8) return 'standard';
   if (wave === 9) return 'showdown';
   // 11+: weighted pool, picked by a wave-number hash for determinism
-  const pool = ['standard','standard','swarm','runner_storm','heavy_metal','showdown'];
+  const pool = ['standard','standard','swarm','runner_storm','heavy_metal','showdown','blade_frenzy'];
   if (wave >= 13) pool.push('elite_guard');
-  if (wave >= 16) pool.push('runner_storm','swarm'); // double weight late
+  if (wave >= 14) pool.push('blade_frenzy'); // double weight for mid-range melee variety
+  if (wave >= 16) pool.push('runner_storm','swarm');
   const idx = (wave * 7919) % pool.length;
   return pool[idx];
 }
@@ -21893,7 +21898,7 @@ function spawnZombie() {
   const _shp=t.hp*_sm.hp, _sspd=t.speed*_sm.speed;
   zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:_shp,maxHp:_shp,speed:_sspd,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
-function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter');if(lv>=4)t.push('spitter','brute');if(lv>=5)t.push('exploder');if(lv>=6)t.push('stalker');if(lv<5){t.push('normal','normal');}return t; }
+function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter','lancer');if(lv>=4)t.push('spitter','brute','lash');if(lv>=5)t.push('exploder','reaper');if(lv>=6)t.push('stalker','bull');if(lv<5){t.push('normal','normal');}return t; }
 
 // Damage props/chests in radius from any source (specials, dash, explosions).
 // Skips explosive barrels (hp===1, no _prop/_chest) — those have their own
@@ -25406,10 +25411,16 @@ function update() {
             particles.push({x:z.x,y:z.y,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:10,maxLife:10,size:4,color:z.color,type:'spark'});
             if(z._leapTimer<=0){
               z._leapState='walk';z.lastFired=_now;z.vx=0;z.vy=0;
-              // GROUND POUND on landing — big shockwave
-              for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<100)damagePlayerObj(p,30);}
-              screenShake.intensity=Math.max(screenShake.intensity,10);
-              for(let si=0;si<16;si++){const sa=si/16*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*50,y:z.y+Math.sin(sa)*50,vx:Math.cos(sa)*4,vy:Math.sin(sa)*4,life:20,maxLife:20,size:5,color:'#a85',type:'spark'});}
+              // GROUND POUND on landing — big shockwave. Radius doubled from
+              // 100 → 200 so the tank's threat range matches its silhouette;
+              // it used to be trivially out-spaced.
+              const _gpR = 200;
+              for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<_gpR)damagePlayerObj(p,30);}
+              screenShake.intensity=Math.max(screenShake.intensity,12);
+              // Bigger visual ring to match the bigger damage radius.
+              for(let si=0;si<24;si++){const sa=si/24*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*100,y:z.y+Math.sin(sa)*100,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:24,maxLife:24,size:5,color:'#a85',type:'spark'});}
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:18,maxLife:18,size:_gpR,color:'#a85',type:'wakering'});
+              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_gpR*0.6,color:'#fff',type:'wakering'});
               playExplosionSound();
             }
           }
