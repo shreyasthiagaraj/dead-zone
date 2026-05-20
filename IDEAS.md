@@ -371,3 +371,254 @@ If the premium model doesn't hit volume targets, fall back to F2P with hard curr
 
 ### What NOT to sell (same as premium model)
 - Combat stats, exclusive cards, energy systems, lootboxes, difficulty bypasses
+
+---
+
+# ARCADE MODE — POST-V1 IDEAS
+
+V1 shipped with 7 pillars (wave identity, multikill cascades, pickup variety,
+PERFECT WAVE, death/retry, leaderboard, polish). The list below is what I
+deferred or thought of during implementation. Roughly ordered by impact/effort.
+
+---
+
+## Tier S — High impact, can ship as v1.x patches
+
+### Crown Enemy
+One elite per wave wears a crown (gold rotating ring + tinted body). Killing
+it guarantees a MEGA GEM drop + a small score boost + a brief "REGICIDE!"
+callout. Adds priority targets without complex AI — pure tagging.
+- **Where:** In `spawnArcadeZombie`, after the zombie is pushed, randomly tag
+  one elite per wave (track `_arcadeCrownAssigned` per wave so only one fires).
+- **Render:** New `_crowned` flag on the zombie; render code checks and draws
+  the crown overhead.
+- **Death payout:** In `damageZombie` death moment, if `_crowned`, spawn 2-3
+  MEGA GEMS + bigger callout.
+
+### Streak Saver (revive on death with high streak)
+At the moment of death, if `arcadeStreak >= 8` (or `_arcadeBestStreak`),
+the player gets one free revive: 25% HP restored, 90-frame invuln, streak +
+multikill preserved. Once per run. The iconic "you didn't die — you rallied"
+arcade moment.
+- **Where:** Branch in `showDeathToShell` BEFORE the arcade game-over hook.
+- **State:** `_arcadeRevivesLeft = 1` (in `resetArcadeState`).
+- **Hook:** New `_attemptArcadeRevive()` — restores HP, clears damageFlash,
+  brief golden burst + camera punch, plays a chime.
+- **UX hint:** When streak crosses 8, show a one-time toast: "STREAK SAVER
+  ARMED — die once and rally."
+
+### Rampage Button (active ability via meter)
+A meter fills from kills. When full, tap → 8 seconds of:
+- Unlimited fire rate
+- 2× damage
+- Movement +20%
+- Gold screen tint + auto-aim
+- Lock-in screenshake & music intensity bump
+
+Adds a third active verb to the existing dash + special.
+- **UI risk:** Adds a button on mobile. Options:
+  - Double-tap dash when meter full → triggers rampage
+  - Long-press the special button when meter full
+  - New 5th button (crowded mobile UI)
+- **Recommended:** Long-press dash. Already 1 button, semantic fit.
+- **VFX:** Player gets a gold aura, footstep gold sparks, screen turns gold-tinted.
+
+### 3-Char Initials Entry on Personal Best
+Classic arcade prompt: type "AAA" → use joystick to cycle letters, dash to
+confirm. Save with the run entry. Display in leaderboard rows.
+- **Where:** Add an entry-flow step BETWEEN death-screen open and stat reveal
+  when the new run is rank 1 or rank N change. Or do it as an inline edit at
+  the score row.
+- **Persistence:** Add `initials` field to the leaderboard entry shape (still
+  backward compatible — show blank for entries without it).
+
+### Daily Challenge (same seed every day)
+Same seed across all runs that day. A separate leaderboard tracks "Today's
+Best." Resets at midnight local time.
+- **Why it works:** Forces optimization — players keep replaying the same
+  layout to beat each other.
+- **Implementation:** Seed the arcade arena gen + wave RNG from `new Date().toDateString()`. Separate localStorage leaderboard.
+- **UI:** "Daily Challenge" button alongside "ARCADE TOP 10". Shows today's
+  date + your best run + the top-3.
+
+---
+
+## Tier A — Worth doing but lower priority than Tier S
+
+### Adaptive Difficulty / Catch-up
+If a wave clears in <8 seconds, slightly bump next wave's count (1.1×). If
+the player dies on a wave they've cleared multiple times before, slightly
+nerf it. Keeps long runs interesting without overt rubberbanding.
+
+### Per-Wave Modifiers (Inverse of Powerups)
+Random debuffs that apply for ONE wave only:
+- **LOW GRAVITY:** zombies bounce when knocked
+- **FOG OF WAR:** spot radius cut in half
+- **GLASS CANNON:** all damage (dealt + taken) doubled
+- **NO COOLDOWNS:** dash + special infinite, fire rate ×0.6
+- **MIRRORED:** controls flipped
+
+Banner shows the modifier before the wave; player adapts.
+
+### Bonus Round Variety
+Three flavors of BONUS ROUND, rotate:
+- **GEM RAIN:** balloons drop, MEGA GEMS in tight cluster
+- **WALKER GIFTS:** weak walkers each carry a power-up
+- **LAVA FLOOR:** floor damage zones; survive longer = more score
+
+### Boss Variety
+Currently one orange generic boss. Tap into the existing `boss_firewall`,
+`boss_archivist`, `boss_watchdog` from main mode but tuned for arcade pacing
+(less HP, shorter telegraphs). Rotate per boss-wave so every 10 waves feels
+different.
+
+### "Last Stand" Final Wave
+After wave 50 (or some milestone), trigger an endless final wave that escalates
+indefinitely. Music switches to a final-stand track. Player can keep racking
+points until they die. Top of the leaderboard becomes time survived in last
+stand rather than wave reached.
+
+### Wave-Clear Choice (Risk Banking)
+Instead of forcing the mod terminal, give the player a choice between two
+gates:
+- **MOD GATE** (cyan): pick an upgrade card (current behavior)
+- **GOLD GATE** (gold): skip the mod, get +1000 score × wave instead
+
+Adds another layer of optimization. Hardcore players banking gold for the
+score-attack runs.
+
+### "Echo Wave" — Replay of a Boss Wave
+Every 5th wave after wave 20 is an ECHO WAVE: re-spawns a previous boss
+with reduced HP but you fight it during a normal wave with mooks still
+spawning. Pure chaos.
+
+---
+
+## Tier B — Nice touches
+
+### Music Intensity Layers
+Currently `COMBAT_TRACKS` plays randomly throughout arcade. Could:
+- Switch to a tense/quiet ambient track during 'rest' phase
+- Drop to a tense bass-only track at HP <25%
+- Crossfade to a boss-specific track at W10/W20/W30
+- Add a "GODLIKE-tier" override loop that plays while the multikill timer
+  is active at tier 5+
+
+Implementation: extend `playMusic` to allow blocking-mode switches + crossfades.
+
+### Damage Number Polish for Arcade
+Currently damage numbers (`_dmgNum`) appear on hit. In arcade, they could:
+- Style as crisp white numbers with thicker outline
+- Get bigger on combo hits (×streak multiplier reflected in size)
+- Show "CRIT!" tag in magenta on crits
+- Aggregate into a "+N (×M)" stack when many damage events hit one zombie in a frame
+
+### Pickup Polish
+- **Score gem chain pickup:** picking up a gem within 0.5s of another bumps a
+  small "+N CHAIN" label and stacks a tiny multiplier (1.05×). Like Geometry
+  Wars geom-chains. Decay 0.5s window.
+- **Mega gem suck-trail:** longer particle tail (8-10 sparks per frame, not 1)
+  so it reads like a comet pulling in.
+- **Bomb pickup countdown:** if the player walks near but not into the bomb,
+  show a "0.8s" countdown so they get a beat to decide to pick it up. Forces
+  a tactical "now or later" choice.
+
+### HUD Polish
+- **Streak meter bar:** below the score counter, a thin horizontal bar that
+  fills with each streak kill and decays at the streak timer rate. When full,
+  visually pulses as gold (streak >= 5).
+- **Wave timer indicator:** during 'rest', count down the seconds until next
+  wave on the wave-announce subtitle (already partial).
+- **Multikill window visualizer:** while the multikill timer is active, paint
+  a subtle ring around the player that shrinks as the window closes. Gives
+  visual urgency to keep killing.
+
+### Camera Behavior
+- **Combat zoom out:** when 10+ zombies are alive in the arena, zoom camera
+  out slightly (0.95×) so the player can see more. Returns to normal when
+  thinned.
+- **Death cam:** on player death, slow-mo (0.3× time) for 1 second + zoom in
+  on the attacker. Then the death screen.
+
+### Achievements / Toasts
+Lightweight in-run achievements that pop a small toast when earned:
+- First DOUBLE KILL
+- First MEGA GEM
+- First PERFECT WAVE
+- 100 kills in a run
+- Reach W10 / W20 / W30
+- Survive 5 minutes
+- 100k score
+- Get GODLIKE multikill
+
+Persist in localStorage as a simple flag set. No reward yet — just bragging
+rights. Sticky toast at top-right for 3 seconds.
+
+### Pause Screen Stats Preview
+While paused mid-arcade-run, show a slim version of the death-screen stats
+panel so the player can see how their current run compares to PB. Discourages
+giving up mid-good-run.
+
+---
+
+## Tier C — Speculative / experimental
+
+### Co-op Arcade
+Multiplayer arcade is already wire-synced (arcadeWave / arcadeWaveType ride in
+`game_state`). But it's untested. Worth a dedicated polish pass:
+- Shared score
+- Both players in the streak count (combined)
+- Mod terminal opens for whichever player walks in
+- Revive each other (dash through a downed player)
+
+### Endless / Score-Attack Mode Variants
+- **Time Attack:** clear N waves as fast as possible
+- **Survive 10 minutes:** straight survival with the timer prominent
+- **Score Goal:** reach 100k as fast as possible
+- **No Damage:** death on first hit, but score is 5×
+- **Tank Run:** all enemies are tanks. Survive as long as possible.
+
+Each as a selectable variant under the ARCADE button.
+
+### Mid-Wave Events
+Random events triggered during wave-active that change the moment:
+- **METEOR STRIKE:** 3 telegraphed circles, then explosions. Get out of the way.
+- **TREASURE ROOM:** a glowing chest spawns; collect for big reward but stops
+  enemy spawns briefly (so you can't safely camp).
+- **PARASITE:** one zombie spawns "infected" — kill it before it touches another
+  zombie or it spreads.
+
+### Cosmetic Unlocks via Arcade Milestones
+- Reach W10 → unlock a player tint variant
+- Reach W20 → unlock a weapon trail variant
+- 1M score → unlock a death effect
+- PERFECT 10 waves → unlock a HUD theme
+
+Pure cosmetics, no gameplay impact. Persistent across modes.
+
+### "ENDLESS" Difficulty Curve Tuning
+Once we have telemetry on actual player runs, retune:
+- Wave 20+ HP scaling (probably needs to ramp harder for top players)
+- Drop weights (gem rates likely need tuning)
+- Multikill thresholds (DOUBLE may need to be 2-in-1s not 2-in-1.5s)
+- TIME SLOW frequency (it's currently in the rotating pool — may be too common)
+
+---
+
+## Bugs / TODOs surfaced during arcade v1 implementation
+
+- Multiplayer arcade flow is wired but untested. Non-host clients receive
+  `arcadeWaveType` via `game_state` but the preview banner only fires on the
+  host's startArcadeWave. Need to plumb preview-state sync.
+- The leaderboard view shows runs from BEFORE arcade-v1 too (legacy entries
+  with `runBitsEarned` as score). They look fine but the data shape is
+  inconsistent. Could migrate or just let them age out.
+- The mod terminal can spawn inside an obstacle if all 16 retries fail (rare).
+  Fallback could be smarter (force pick a known floor cell).
+- Bomb pickup explosion can chain-detonate any explosive barrels on screen,
+  which is great but uncapped — could one-shot the player if standing next
+  to a barrel field. Player damage is already at 50% in the explosion, but
+  worth verifying caps.
+- `pendingLevelUps` from the mod terminal could overlap with XP-based level-
+  ups during gameplay if the player's XP filled mid-wave (unlikely but
+  possible). Test: maximize XP gain into a wave-clear → mod terminal entry.
