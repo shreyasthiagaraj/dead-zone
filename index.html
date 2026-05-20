@@ -17154,12 +17154,20 @@ function updatePayload() {
     const dmg = Math.floor(140 * (_m.specialDmgMult || 1));
     const gc2 = g.classId ? (_ELEM_COLOR[g.classId] || '#fa0') : '#fa0';
     if (isHost) {
+      // Payload knockback baseline cranked up — base shove is heavy on its own,
+      // PULSE PROTOCOL (which sets classId='wind') triples the close-range push
+      // so a direct hit launches enemies across the arena.
+      const _isPulsePayload = g.classId === 'wind';
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - g.x, dy = z.y - g.y, d = Math.sqrt(dx*dx+dy*dy);
         if (d < radius + z.radius) {
           const closeness = 1 - d / (radius + z.radius);
-          const _pushF = 18 + closeness * 8;
+          // Base payload kb: 28 at edge, 50 at center (was 18-26).
+          // With PULSE PROTOCOL: 60 at edge, 130 at center — they FLY.
+          const _pushF = _isPulsePayload
+            ? 60 + closeness * 70
+            : 28 + closeness * 22;
           let _finalDmg = Math.floor(dmg * closeness);
           // (sticky charge removed — replaced by bouncing payload)
           // silent=true: skip per-enemy hitflash particles. The detonation VFX
@@ -17173,7 +17181,15 @@ function updatePayload() {
           if (g.classId === 'fire') applyOverheat(z, 15, 1);
           if (g.classId === 'ice') applyChill(z, 1 + Math.floor(closeness * 3));
           if (g.classId === 'chain') { applyCharged(z); z.staggerTimer = Math.max(z.staggerTimer, 30); }
-          if (g.classId === 'wind') { applyExposed(z); z.vx += d > 0.1 ? (dx/d)*6 : 0; z.vy += d > 0.1 ? (dy/d)*6 : 0; }
+          if (g.classId === 'wind') {
+            applyExposed(z);
+            // PULSE PROTOCOL extra shove — adds a sustained velocity kick on
+            // top of the damageZombie kb so they keep sliding after the hit.
+            z.vx += d > 0.1 ? (dx/d) * 40 : 0;
+            z.vy += d > 0.1 ? (dy/d) * 40 : 0;
+            // Longer stagger so they don't immediately catch their footing.
+            z.staggerTimer = Math.max(z.staggerTimer || 0, 70);
+          }
           if (g.classId === 'corrupt') applyCorrupt(z, 3);
         }
       }
@@ -19125,12 +19141,16 @@ function applyDashTrailEffects(lp) {
       if (dx*dx + dy*dy > r2) continue;
       hitSet.add(z.zid);
       const d = Math.sqrt(dx*dx+dy*dy) || 1;
-      const pushF = 14 + _m.kineticWake * 8;
+      // Pulse Wake trail kb cranked: was 14 + lv*8 (22/30/38).
+      // Now 28 + lv*16 (44/60/76) — they fly sideways.
+      const pushF = 28 + _m.kineticWake * 16;
       const trailDmg = _m.kineticWake >= 3 ? 38 : _m.kineticWake >= 2 ? 28 : 18;
       // Push PERPENDICULAR to dash direction (to the sides)
       const perpX = -ddy, perpY = ddx;
       const side = (dx * perpX + dy * perpY) > 0 ? 1 : -1; // which side of dash path
-      damageZombie(z, trailDmg, perpX * pushF * 0.3 * side, perpY * pushF * 0.3 * side);
+      // The damageZombie kb factor was 0.3 of pushF — bump to 0.6 so the
+      // damage-tick shove matches the velocity shove.
+      damageZombie(z, trailDmg, perpX * pushF * 0.6 * side, perpY * pushF * 0.6 * side);
       z.vx += perpX * pushF * side; z.vy += perpY * pushF * side;
       z.staggerTimer = Math.max(z.staggerTimer || 0, 18 + _m.kineticWake * 6);
       applyExposed(z);
@@ -19355,7 +19375,9 @@ function triggerShockwaveDash(lp) {
     // Nerfed baseline damage — old endpoint was 100 × closeness, now 45 × closeness.
     damageZombie(z, Math.floor(45 * closeness), 0, 0);
     // Knockback scales with KINETIC WAKE level — the headline stat of the merged card.
-    const kb = 10 + 25 * closeness + 8 * _mods.kineticWake * closeness;
+    // Cranked: was 10+25*c+8*lv*c (~43 at center w/ lv1). Now 22+55*c+22*lv*c
+    // (~99 at center w/ lv1, ~143 at lv3) — enemies launch.
+    const kb = 22 + 55 * closeness + 22 * _mods.kineticWake * closeness;
     z.vx += (dx / d) * kb;
     z.vy += (dy / d) * kb;
     z.staggerTimer = Math.max(z.staggerTimer || 0, 25);
@@ -19388,7 +19410,8 @@ function triggerShockwaveDash(lp) {
       // IMPULSE WAVE ladder (55/80/105) to (45/70/95). At level 3 the hit
       // also applies EXPOSED to amplify follow-up fire.
       const kwBonusDmg = 15 + 15 * _mods.kineticWake; // Lv1=30, Lv2=45, Lv3=60
-      damageZombie(z, kwBonusDmg, (dx/d) * (10 + 3 * _mods.kineticWake), (dy/d) * (10 + 3 * _mods.kineticWake));
+      // Damage-tick kb bumped to match the headline push.
+      damageZombie(z, kwBonusDmg, (dx/d) * (28 + 10 * _mods.kineticWake), (dy/d) * (28 + 10 * _mods.kineticWake));
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30 + 10 * _mods.kineticWake);
       if (_mods.kineticWake >= 3) {
         z._exposed = true;
