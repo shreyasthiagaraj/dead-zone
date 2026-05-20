@@ -2008,8 +2008,6 @@ const UPGRADE_POOL = [
     descs:['Taking damage instantly readies your next ATTACK.'], flavor:'they hit you. you hit harder.' },
   { id:'extended_reach', name:'EXTENDED REACH', rarity:'rare', max:1, icon:'↔', color:'#4ff',
     descs:['Your ATTACK reaches 35% farther.'], flavor:'a longer blade ends it sooner.' },
-  { id:'mag_pull', name:'MAGNETIZE', rarity:'rare', max:1, icon:'🧲', color:'#4ff',
-    descs:['Each ATTACK yanks nearby enemies toward you.'], flavor:'they come to the blade.' },
   { id:'detonator', name:'DETONATOR', rarity:'epic', max:1, icon:'✸', color:'#4ff',
     descs:['Your finisher triggers a massive explosion.'], flavor:'end every combo with a bang.' },
   // ---- CROSS-WEAPON (universal) ----
@@ -2330,7 +2328,6 @@ function rebuildRunMods() {
       case 'whirlwind':          m.whirlwind = true; break;
       case 'riposte':            m.riposte = true; break;
       case 'extended_reach':     m.extendedReach = true; break;
-      case 'mag_pull':           m.magPull = true; break;
       case 'detonator':          m.detonator = true; break;
       // Cross-weapon
       case 'stagger_strike':     m.staggerStrike = true; break;
@@ -2511,7 +2508,7 @@ const _GUN_ONLY_CARDS = new Set([
 // Cards that only apply when the player has RIPPER as their primary weapon.
 const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
-  'extended_reach', 'mag_pull', 'detonator',
+  'extended_reach', 'detonator',
 ]);
 function _isMeleeEquipped() {
   const lp = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
@@ -17923,33 +17920,6 @@ function _runComboStep(p, def, step, idx) {
     _meleeHitVFX(z, isCrit, mainCol, p.x, p.y);
   }
 
-  // ---- CARD: MAGNETIZE — each attack yanks nearby enemies toward the
-  // player so the blade always has meat in range. Velocity is host-
-  // authoritative (zombie positions are synced); the inward energy
-  // streaks render on every client for feedback.
-  if (_rmCombo.magPull) {
-    const _pullR = range * 2.4;
-    for (const z of zombies) {
-      if (!z || z.hp <= 0) continue;
-      const dx = p.x - z.x, dy = p.y - z.y;
-      const d = Math.hypot(dx, dy);
-      if (d > _pullR || d < 26) continue;
-      const _nd = d || 1;
-      // Farther enemies get tugged harder so they close the gap fast,
-      // but cap it so they don't overshoot through the player.
-      const _pull = Math.min(13, 5 + (d / _pullR) * 9);
-      if (isHost) { z.vx += (dx / _nd) * _pull; z.vy += (dy / _nd) * _pull; }
-      if (isLocal && Math.random() < 0.6) {
-        particles.push({
-          x: z.x, y: z.y,
-          vx: (dx / _nd) * 6, vy: (dy / _nd) * 6,
-          life: 9, maxLife: 9, size: 2 + Math.random() * 1.5,
-          color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'spark'
-        });
-      }
-    }
-  }
-
   // ---- BARRELS / PROPS / CHESTS in the swing arc ----
   // The sword carves through the same destructibles bullets do (explosive
   // barrels, props, chests). Skip the special interactive terminals.
@@ -17982,7 +17952,9 @@ function _runComboStep(p, def, step, idx) {
   // every client so non-host players see the payoff too.
   if (step.finisher && _rmCombo.detonator) {
     const _exCol = (typeof _meleeMainColor === 'function') ? _meleeMainColor() : '#f80';
-    const _exR = range * 1.5 + 70;
+    // Tighter blast radius (was range*1.5+70 — way too wide) but a much louder
+    // visual payoff so it still reads as a climax.
+    const _exR = range * 0.85 + 40;
     const _exX = p.x + c * range * 0.55, _exY = p.y + s * range * 0.55;
     const _exDmg = _scaleMeleeDamage(48);
     if (isHost) {
@@ -17994,9 +17966,9 @@ function _runComboStep(p, def, step, idx) {
         const _nd = d || 1;
         const _close = 1 - Math.min(1, d / _exR);
         const _ed = Math.max(1, Math.floor(_exDmg * (0.55 + _close * 0.45)));
-        const _ekb = 26 + _close * 22;
+        const _ekb = 32 + _close * 28;
         damageZombie(z, _ed, (dx / _nd) * _ekb, (dy / _nd) * _ekb, true);
-        z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 55);
       }
     } else if (isLocal) {
       // Client-side hit prediction so the blast feels responsive on non-host.
@@ -18010,23 +17982,48 @@ function _runComboStep(p, def, step, idx) {
       }
     }
     if (isHost) damageBarrelsInRadius(_exX, _exY, _exR * 0.85);
-    // Blast VFX — expanding rings + radial spark fan + smoke + flash.
-    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 16, maxLife: 16, size: _exR, color: '#fff', type: 'wakering', _priority: true });
-    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 20, maxLife: 20, size: _exR * 0.78, color: _exCol, type: 'wakering', _priority: true });
-    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 24, maxLife: 24, size: _exR * 0.52, color: _exCol, type: 'wakering' });
-    for (let _ei = 0; _ei < 26; _ei++) {
-      const _ea = (_ei / 26) * Math.PI * 2 + Math.random() * 0.25;
-      const _es = 6 + Math.random() * 9;
+    // ==== FLASHIER DETONATOR BLAST ====
+    // Four stacked wakerings (was 3), all _priority so they survive crowded
+    // frames. Inner white core + outer colored haze for layered read.
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 20, maxLife: 20, size: _exR * 1.15, color: _exCol, type: 'wakering', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 14, maxLife: 14, size: _exR * 0.95, color: '#fff', type: 'wakering', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 24, maxLife: 24, size: _exR * 0.72, color: _exCol, type: 'wakering', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 18, maxLife: 18, size: _exR * 0.48, color: '#fff', type: 'wakering' });
+    // Center bright flash — quick punch
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 5, maxLife: 5, size: 36, color: '#fff', type: 'spark', _priority: true });
+    particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 8, maxLife: 8, size: 22, color: _exCol, type: 'spark' });
+    // 4-direction cross flash — gives the blast a punchy silhouette
+    for (let _ci = 0; _ci < 4; _ci++) {
+      const _ca = _ci * Math.PI / 2;
+      const _cLen = _exR * 0.85;
+      particles.push({ x: _exX, y: _exY, vx: 0, vy: 0, life: 10, maxLife: 10, size: 2, color: '#fff', type: 'lightning',
+        tx: _exX + Math.cos(_ca) * _cLen, ty: _exY + Math.sin(_ca) * _cLen, _priority: true });
+    }
+    // Radial spark fan — denser, faster, bigger
+    for (let _ei = 0; _ei < 40; _ei++) {
+      const _ea = (_ei / 40) * Math.PI * 2 + Math.random() * 0.18;
+      const _es = 8 + Math.random() * 11;
       particles.push({ x: _exX, y: _exY, vx: Math.cos(_ea) * _es, vy: Math.sin(_ea) * _es,
-        life: 14 + Math.floor(Math.random() * 8), maxLife: 22, size: 3 + Math.random() * 3,
-        color: Math.random() > 0.45 ? _exCol : '#fff', type: 'spark' });
+        life: 16 + Math.floor(Math.random() * 10), maxLife: 26, size: 3 + Math.random() * 3.5,
+        color: _ei < 10 ? '#fff' : (Math.random() > 0.4 ? _exCol : '#fa0'), type: 'spark' });
     }
-    for (let _si = 0; _si < 8; _si++) {
-      const _sa = Math.random() * Math.PI * 2, _ss = 1 + Math.random() * 2.5;
-      particles.push({ x: _exX, y: _exY, vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
-        life: 26 + Math.random() * 14, maxLife: 40, size: 7 + Math.random() * 5,
-        color: '#333', type: 'smoke', _smokeAlpha: 0.22 });
+    // Debris pixel chunks flying out
+    for (let _pi = 0; _pi < 14; _pi++) {
+      const _pa = Math.random() * Math.PI * 2, _ps = 6 + Math.random() * 8;
+      particles.push({ x: _exX, y: _exY, vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps,
+        life: 22 + Math.floor(Math.random() * 8), maxLife: 30, size: 3 + Math.random() * 2.5,
+        color: Math.random() > 0.5 ? _exCol : '#888', type: 'spark', _pixel: true });
     }
+    // Thicker smoke cloud
+    for (let _si = 0; _si < 14; _si++) {
+      const _sa = Math.random() * Math.PI * 2, _ss = 1.5 + Math.random() * 3;
+      particles.push({ x: _exX + (Math.random()-0.5)*16, y: _exY + (Math.random()-0.5)*16,
+        vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss - 0.8,
+        life: 30 + Math.random() * 16, maxLife: 46, size: 7 + Math.random() * 6,
+        color: '#222', type: 'smoke', _smokeAlpha: 0.28 });
+    }
+    // Scorch decal on the ground
+    decals.push({ type: 'scorch', x: _exX, y: _exY, size: _exR * 0.32, color: 'rgba(30,15,5,0.7)', alpha: 0.55 });
     if (isLocal) {
       screenShake.intensity = Math.max(screenShake.intensity, 14);
       if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.35, 14);
@@ -21253,15 +21250,9 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     z.attackCooldown = Math.max(z.attackCooldown || 0, 15);
   }
   z.aware=true;
-  // EXPOSED: wall collision damage — if exposed enemy was knocked hard, check for obstacle impact
-  if (z._exposed && z.hp > 0 && (kbx !== 0 || kby !== 0)) {
-    const _knockSpeed = Math.sqrt((z.vx-_preVx)*(z.vx-_preVx)+(z.vy-_preVy)*(z.vy-_preVy));
-    if (_knockSpeed > 4) {
-      // Schedule a collision check after physics moves the enemy
-      z._exposedCollisionCheck = 3; // check for 3 frames
-      z._exposedCollisionDmg = Math.floor(_knockSpeed * 3); // damage scales with knockback force
-    }
-  }
+  // (Wall-slam damage now lives in the zombie movement loop — it bounces fast
+  // enemies off walls and applies impact damage scaled by collision speed.
+  // No per-EXPOSED scheduling needed.)
   // Scale blood splatter with damage intensity
   const intensity=Math.min(3,damage/30);
   const bloodCount=Math.floor(4+intensity*4);
@@ -25285,41 +25276,75 @@ function update() {
       // pick whichever gives more movement. Triggers after just 2 stuck frames.
       const _zaH=ARENA_H;
       const _prevX = z.x, _prevY = z.y;
-      z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,_zaH-z.radius);pushOutOfObstacles(z,z.radius);
-      // EXPOSED: wall collision damage — if enemy was pushed into an obstacle, deal impact damage
-      if (z._exposedCollisionCheck > 0) {
-        z._exposedCollisionCheck--;
-        const _movedDist = Math.sqrt((z.x-_prevX)*(z.x-_prevX)+(z.y-_prevY)*(z.y-_prevY));
-        const _expectedDist = Math.sqrt(z.vx*z.vx+z.vy*z.vy);
-        if (_expectedDist > 2 && _movedDist < _expectedDist * 0.4) {
-          // Hit a wall — barely moved despite having velocity
-          const wallDmg = z._exposedCollisionDmg || 15;
-          damageZombie(z, wallDmg, 0, 0, true);
-          addFloatingText(z.x, z.y - z.radius - 8, 'IMPACT', '#cef');
-          for (let _wi = 0; _wi < 6; _wi++) { const _wa = Math.random()*Math.PI*2; particles.push({x:z.x,y:z.y,vx:Math.cos(_wa)*3,vy:Math.sin(_wa)*3,life:10,maxLife:10,size:2,color:'#cef',type:'spark'}); }
-          z._exposedCollisionCheck = 0;
-          z.vx *= 0.2; z.vy *= 0.2;
-        }
-        // IMPACT ECHO: exposed enemy colliding with others spreads exposed
-        if ((runMods||{}).impactEcho && z._exposed && Math.sqrt(z.vx*z.vx+z.vy*z.vy) > 3) {
-          for (const oz of zombies) { if (oz === z || oz.hp <= 0 || oz._exposed) continue;
-            const edx = oz.x-z.x, edy = oz.y-z.y;
-            if (edx*edx+edy*edy < (z.radius+oz.radius+4)**2) { applyExposed(oz); }
+      // ---- MOVEMENT + WALL BOUNCE ----
+      // Fast-moving enemies (typically from a pulse shove) substep against walls
+      // and bounce off them. Slow chase movement uses the plain clamp+pushOut
+      // path so normal pathing (chase-into-wall slide) still works.
+      const _mv2 = z.vx*z.vx + z.vy*z.vy;
+      const _mvSpd = Math.sqrt(_mv2);
+      let _hitWallThisFrame = false;
+      if (_mvSpd > 8) {
+        const _maxStep = 22;
+        const _steps = Math.max(1, Math.ceil(_mvSpd / _maxStep));
+        const _sx = z.vx / _steps, _sy = z.vy / _steps;
+        for (let _step = 0; _step < _steps; _step++) {
+          const _testX = z.x + _sx, _testY = z.y + _sy;
+          const _cX = clamp(_testX, z.radius, ARENA_W - z.radius);
+          const _cY = clamp(_testY, z.radius, _zaH - z.radius);
+          const _outX = _cX !== _testX;
+          const _outY = _cY !== _testY;
+          const _inObs = obstacleCollision(_cX, _cY, z.radius, false);
+          if (_outX || _outY || _inObs) {
+            z.x = _cX; z.y = _cY;
+            if (_outX) z.vx *= -0.45;
+            if (_outY) z.vy *= -0.45;
+            // Internal obstacle without axis-clamp signal — reflect both
+            if (_inObs && !_outX && !_outY) { z.vx *= -0.45; z.vy *= -0.45; }
+            _hitWallThisFrame = true;
+            break;
+          } else {
+            z.x = _cX; z.y = _cY;
           }
         }
+        pushOutOfObstacles(z, z.radius);
+      } else {
+        z.x += z.vx; z.y += z.vy;
+        z.x = clamp(z.x, z.radius, ARENA_W - z.radius);
+        z.y = clamp(z.y, z.radius, _zaH - z.radius);
+        pushOutOfObstacles(z, z.radius);
       }
-      if (z.aware && (z.vx*z.vx + z.vy*z.vy) > 0.5) {
-        const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
-        const _wanted2 = z.vx * z.vx + z.vy * z.vy;
-        // PULSE SLAM: Exposed enemies take damage when knocked into walls at speed.
-        // Trigger when movement was blocked and the enemy was moving fast (knockback, not idle).
-        if (isHost && z._exposed && !z._slamCooldown && _wanted2 > 9 && _moved2 < _wanted2 * 0.5) {
-          const slamDmg = 12 + (runMods?.vectorSnap || 0) * 8;
-          damageZombie(z, slamDmg, 0, 0);
-          addFloatingText(z.x, z.y - z.radius - 8, 'SLAM', '#cef');
-          for (let si=0;si<6;si++){const sa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*3+(Math.random()-0.5)*2,vy:Math.sin(sa)*3+(Math.random()-0.5)*2,life:12,maxLife:12,size:2+Math.random()*2,color:'#cef',type:'spark'});}
-          z._slamCooldown = 20;
+      // ---- WALL SLAM ----
+      // Fires ONLY when the bounce path detected an actual wall/obstacle/
+      // arena-boundary collision — never when the enemy was just blocked by
+      // another zombie. Damage scales with impact speed (capped) so a
+      // routine shove doesn't one-shot a boss.
+      if (_hitWallThisFrame && isHost && !z._slamCooldown) {
+        const _slamDmg = Math.min(50, 8 + Math.floor(_mvSpd * 1.5));
+        damageZombie(z, _slamDmg, 0, 0, true);
+        addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
+        for (let _wi = 0; _wi < 10; _wi++) {
+          const _wa = Math.random() * Math.PI * 2;
+          const _ws = 2 + Math.random() * 4;
+          particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws,
+            life: 14, maxLife: 14, size: 2 + Math.random()*2,
+            color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
         }
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+          size: z.radius + 18, color: '#cef', type: 'wakering' });
+        screenShake.intensity = Math.max(screenShake.intensity, Math.min(7, _mvSpd * 0.1));
+        z._slamCooldown = 22;
+      }
+      // IMPACT ECHO card — exposed enemies moving at speed spread EXPOSED on bump
+      if ((runMods||{}).impactEcho && z._exposed && _mvSpd > 3) {
+        for (const oz of zombies) {
+          if (oz === z || oz.hp <= 0 || oz._exposed) continue;
+          const edx = oz.x-z.x, edy = oz.y-z.y;
+          if (edx*edx + edy*edy < (z.radius + oz.radius + 4)**2) { applyExposed(oz); }
+        }
+      }
+      if (z.aware && _mv2 > 0.5 && !_hitWallThisFrame) {
+        const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
+        const _wanted2 = _mv2;
         if (_moved2 < _wanted2 * 0.04) {
           z._wallStuck = (z._wallStuck || 0) + 1;
           if (z._wallStuck > 2) {
