@@ -2647,11 +2647,24 @@ function _getCardGlossaryTerms(u, owned) {
 // Pick the description text for the level the player is about to earn.
 // If owned = 0, show LEVEL 1 text; if owned = 1, show LEVEL 2 text; etc.
 function _cardDescForLevel(u, owned) {
+  let base = '';
   if (u.descs && u.descs.length > 0) {
     const idx = Math.min(owned || 0, u.descs.length - 1);
-    return u.descs[idx];
+    base = u.descs[idx];
+  } else {
+    base = u.desc || '';
   }
-  return u.desc || '';
+  // If the card is OWNED and has been reforged above level 0, append the
+  // current effective key-stat value. Pre-pickup (owned=0) shows the base
+  // desc unchanged so the player gets the canonical card text.
+  const ks = (typeof getCardKeyStat === 'function') ? getCardKeyStat(u.id) : null;
+  if (!ks || !(runUpgrades && runUpgrades[u.id] > 0)) return base;
+  const lv = (typeof _modLevel === 'function') ? _modLevel(u.id) : 0;
+  if (lv <= 0) return base;
+  const cur = ks.base + lv * ks.step;
+  const _fmt = (v) => (Math.abs(v) < 1 && ks.step < 1) ? v.toFixed(1) : (Math.round(v * 10) / 10).toString();
+  const _sign = (ks.unit === '%' || ks.unit === ' dmg' || ks.unit === ' HP' || ks.unit === ' shield') ? '+' : '';
+  return base + ` (Lv ${lv}: ${_sign}${_fmt(cur)}${ks.unit})`;
 }
 
 function rebuildRunMods() {
@@ -4265,7 +4278,7 @@ function generateDataLinkChoice() {
 
   // Reforge (power-up): available when player has cards to power up
   if (lastChoice !== 'reforge' && ownedCount >= 2) {
-    const hasUpgradeable = Object.keys(runUpgrades).some(id => runUpgrades[id] > 0 && (runUpgradePower[id] || 0) < 2);
+    const hasUpgradeable = Object.keys(runUpgrades).some(id => runUpgrades[id] > 0 && !!getCardKeyStat(id));
     if (hasUpgradeable && roll < 0.25) return ['reforge'];
     if (hasUpgradeable) roll = (roll - 0.25) / 0.75;
   }
@@ -4442,84 +4455,43 @@ function openShopDirect() {
   }, 1900);
 }
 
-// --- REFORGE UI ---
+// ---- REFORGE UI ----
+// Side-scrolling list of every owned mod. Card body shows the upgrade
+// preview (current stat → next stat) instead of the base description.
+// Player taps a card to SELECT it, then CONFIRM commits a single +1 level
+// upgrade and closes the screen. One upgrade per reforge event.
+let _reforgeSelectedId = null;
 function openPowerUp() {
   gameState = 'reforge';
   _resetJoysticks();
+  _reforgeSelectedId = null;
   const container = document.getElementById('reforge-cards');
   if (!container) { gameState = 'playing'; return; }
-  container.innerHTML = '';
-
-  const ownedIds = Object.keys(runUpgrades).filter(id => runUpgrades[id] > 0);
+  // Pull the list of upgradable mods. A card is upgradable if it has a
+  // keyStat declared (no keyStat = pure toggle, no continuous scale).
+  const ownedIds = Object.keys(runUpgrades)
+    .filter(id => runUpgrades[id] > 0)
+    .filter(id => !!getCardKeyStat(id));
   if (ownedIds.length === 0) {
     gameState = 'playing';
     openShopDirect();
     return;
   }
-
-  // Title update
+  // Title
   const titleEl = document.querySelector('#reforge-screen .reforge-title');
-  if (titleEl) titleEl.textContent = '★ POWER UP';
-
-  for (const id of ownedIds) {
-    const u = UPGRADE_POOL.find(c => c.id === id);
-    if (!u) continue;
-    const curPower = runUpgradePower[id] || 0;
-    const isMaxed = curPower >= 2;
-    const cost = isMaxed ? 0 : POWER_COST[curPower];
-    const canAfford = !isMaxed && metaShards >= cost;
-    const stars = '★'.repeat(curPower + 1) + '☆'.repeat(2 - curPower);
-    const card = document.createElement('div');
-    card.className = 'reforge-card' + (isMaxed ? ' maxed' : '');
-    card.style.borderColor = isMaxed ? '#4f4' : (canAfford ? '#fc0' : 'rgba(255,255,255,0.1)');
-    if (canAfford) card.style.boxShadow = `0 0 10px rgba(255,200,0,0.3)`;
-
-    card.innerHTML = `
-      <div class="rf-icon">${u.icon}</div>
-      <div class="rf-name" style="color:${u.color}">${u.name}</div>
-      <div style="font-size:14px;color:#fc0;letter-spacing:2px;margin:4px 0">${stars}</div>
-      ${isMaxed ? '<div class="rf-next" style="color:#4f4">MAX POWER</div>' :
-        `<div class="rf-next" style="color:${canAfford?'#fc0':'#555'}">◆ ${cost} BITS → ${stars.replace('☆','★')}</div>`}
-    `;
-
-    if (canAfford) {
-      const _id = id, _cost = cost;
-      const handler = (ev) => {
-        ev.preventDefault(); ev.stopPropagation();
-        if (metaShards < _cost) return;
-        metaShards -= _cost;
-        runUpgradePower[_id] = (runUpgradePower[_id] || 0) + 1;
-        rebuildRunMods();
-        const lp = getLocalPlayer();
-        if (lp) {
-          addFloatingText(lp.x, lp.y - 40, `★ ${u.name} POWERED UP`, '#fc0');
-          for (let i = 0; i < 16; i++) {
-            const a = Math.random()*Math.PI*2, s = 2+Math.random()*3;
-            particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:22,maxLife:22,size:2.5,color:'#fc0',type:'spark'});
-          }
-        }
-        playSfx('level_up', 0.3) || playSound(900, 0.1, 'sine', 0.15);
-        triggerGlitchSurge(0.35, 20);
-        openPowerUp(); // refresh
-      };
-      card.addEventListener('click', handler);
-      card.addEventListener('touchend', handler, { passive: false });
-    }
-    container.appendChild(card);
-  }
-  // Keep old openReforge as alias
-  function openReforge() { openPowerUp(); }
-
-  // Skip button handler
+  if (titleEl) titleEl.textContent = 'REFORGE';
+  _renderReforgeCards(ownedIds);
+  // Skip button
   const skipBtn = document.getElementById('btn-reforge-skip');
-  if (skipBtn) {
-    const _skipHandler = (ev) => {
-      ev.preventDefault();
-      closeReforge();
-    };
-    skipBtn.onclick = _skipHandler;
+  if (skipBtn) skipBtn.onclick = (ev) => { ev.preventDefault(); closeReforge(); };
+  // Confirm button — disabled until a card is selected.
+  const confirmBtn = document.getElementById('btn-reforge-confirm');
+  if (confirmBtn) {
+    confirmBtn.textContent = 'UPGRADE MOD';
+    confirmBtn.style.opacity = '0.3';
+    confirmBtn.style.pointerEvents = 'none';
+    confirmBtn.onclick = (ev) => { ev.preventDefault(); _commitReforge(); };
   }
-
   // Show overlay
   const el = document.getElementById('reforge-screen');
   if (el) {
@@ -4529,6 +4501,105 @@ function openPowerUp() {
   }
   triggerGlitchSurge(0.3, 20);
   playSfx('ui_click', 0.15) || playSound(600, 0.06, 'sine', 0.1);
+}
+
+function _renderReforgeCards(ownedIds) {
+  const container = document.getElementById('reforge-cards');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const id of ownedIds) {
+    const u = UPGRADE_POOL.find(c => c.id === id); if (!u) continue;
+    const ks = getCardKeyStat(id); if (!ks) continue;
+    const lv = _modLevel(id);
+    const cur = _modScale(id, ks.base, ks.step);
+    const nxt = cur + ks.step;
+    const cost = _modCost(lv);
+    const canAfford = metaShards >= cost;
+    const isSelected = _reforgeSelectedId === id;
+    const _border = isSelected ? '#fc0' : (canAfford ? '#fa0a' : 'rgba(255,255,255,0.12)');
+    const _bg = isSelected ? 'rgba(40,24,4,0.95)' : 'rgba(8,8,16,0.95)';
+    const _shadow = isSelected ? '0 0 20px rgba(255,200,0,0.45), inset 0 0 16px rgba(255,180,0,0.10)'
+                                : '0 0 6px rgba(255,160,0,0.10)';
+    const wrap = document.createElement('div');
+    wrap.className = 'shop-card-wrap card-in';
+    wrap.style.flex = '0 0 auto';
+    wrap.style.scrollSnapAlign = 'start';
+    const card = document.createElement('button');
+    card.dataset.cardId = id;
+    card.style.cssText = `
+      width:220px; min-height:200px; padding:14px;
+      border:2px solid ${_border}; border-radius:10px;
+      background:${_bg}; box-shadow:${_shadow};
+      display:flex; flex-direction:column; gap:6px;
+      font-family:'Courier New',monospace; color:#fff;
+      cursor:${canAfford ? 'pointer' : 'not-allowed'};
+      -webkit-tap-highlight-color:transparent;
+      opacity:${canAfford ? '1' : '0.45'};
+      transition: border-color 0.15s, box-shadow 0.2s, background 0.15s;
+    `;
+    const _fmt = (v) => (Math.abs(v) < 1 && ks.step < 1) ? v.toFixed(1) : (Math.round(v * 10) / 10).toString();
+    const _sign = (ks.unit === '%' || ks.unit === ' dmg' || ks.unit === ' HP' || ks.unit === ' shield') ? '+' : '';
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:9px;letter-spacing:1px;color:#889">LV ${lv}</span>
+        <span style="font-size:9px;letter-spacing:1px;color:#fa0">→ LV ${lv + 1}</span>
+      </div>
+      <div style="text-align:center;margin:2px 0">
+        <div style="font-size:26px;line-height:1;color:${u.color};text-shadow:0 0 10px ${u.color}">${u.icon}</div>
+      </div>
+      <div style="font-size:12px;font-weight:bold;letter-spacing:2px;color:${u.color};text-shadow:0 0 6px ${u.color};text-align:center">${u.name}</div>
+      <div style="flex:1;text-align:center;font-size:11px;line-height:1.5;color:#cef;padding:4px 2px">
+        ${ks.label.toUpperCase()}<br>
+        <span style="color:#aab;font-size:14px">${_sign}${_fmt(cur)}${ks.unit}</span>
+        <span style="color:#fa0;font-size:14px">  →  </span>
+        <span style="color:#fc0;font-weight:bold;font-size:15px;text-shadow:0 0 6px rgba(255,200,0,0.5)">${_sign}${_fmt(nxt)}${ks.unit}</span>
+      </div>
+      <div style="padding-top:6px;border-top:1px solid rgba(255,160,0,0.2);text-align:center">
+        <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
+      </div>
+    `;
+    const _handler = (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!canAfford) return;
+      _reforgeSelectedId = id;
+      _renderReforgeCards(ownedIds);
+      const confirmBtn = document.getElementById('btn-reforge-confirm');
+      if (confirmBtn) {
+        confirmBtn.textContent = `UPGRADE  ◆ ${cost}`;
+        confirmBtn.style.opacity = '1';
+        confirmBtn.style.pointerEvents = 'auto';
+      }
+      playSfx('ui_click', 0.12) || playSound(800, 0.04, 'sine', 0.06);
+    };
+    card.addEventListener('click', _handler);
+    card.addEventListener('touchend', _handler, { passive: false });
+    wrap.appendChild(card);
+    container.appendChild(wrap);
+  }
+}
+
+// Commit the selected reforge: spend bits, +1 level, celebrate, close.
+function _commitReforge() {
+  const id = _reforgeSelectedId;
+  if (!id) return;
+  const u = UPGRADE_POOL.find(c => c.id === id); if (!u) return;
+  const lv = _modLevel(id);
+  const cost = _modCost(lv);
+  if (metaShards < cost) return;
+  metaShards -= cost;
+  runUpgradePower[id] = lv + 1;
+  rebuildRunMods();
+  const lp = getLocalPlayer();
+  if (lp) {
+    addFloatingText(lp.x, lp.y - 40, `★ ${u.name} → Lv ${lv + 1}`, u.color);
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random()*Math.PI*2, s = 2.5+Math.random()*3.5;
+      particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:24,maxLife:24,size:2.5,color:Math.random()>0.5?u.color:'#fc0',type:'spark'});
+    }
+  }
+  playSfx('level_up', 0.3) || playSound(1100, 0.12, 'sine', 0.18);
+  triggerGlitchSurge(0.4, 22);
+  closeReforge();
 }
 
 // --- Apply a reforge upgrade ---
@@ -12434,29 +12505,38 @@ function _openPowerUpScreen() {
   for (const id of ownedIds) {
     const u = UPGRADE_POOL.find(c => c.id === id);
     if (!u) continue;
-    const curPower = runUpgradePower[id] || 0;
-    const isMaxed = curPower >= 2;
-    const cost = isMaxed ? 0 : POWER_COST[curPower];
-    const canAfford = !isMaxed && metaShards >= cost;
-    const stars = '★'.repeat(curPower + 1) + '☆'.repeat(2 - curPower);
+    const ks = getCardKeyStat(id);
+    if (!ks) continue; // pure toggles aren't upgradable
+    const lv = _modLevel(id);
+    const cost = _modCost(lv);
+    const canAfford = metaShards >= cost;
+    const cur = _modScale(id, ks.base, ks.step);
+    const nxt = cur + ks.step;
+    const _fmt = (v) => (Math.abs(v) < 1 && ks.step < 1) ? v.toFixed(1) : (Math.round(v * 10) / 10).toString();
+    const _sign = (ks.unit === '%' || ks.unit === ' dmg' || ks.unit === ' HP' || ks.unit === ' shield') ? '+' : '';
     const card = document.createElement('button');
-    card.style.cssText = `width:180px;min-height:100px;padding:10px;border:2px solid ${isMaxed?'#4f4':canAfford?'#fc0':'#333'};border-radius:10px;background:rgba(6,8,16,0.96);display:flex;flex-direction:column;gap:4px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:${canAfford?'pointer':'default'};opacity:${isMaxed?'0.5':'1'};`;
+    card.style.cssText = `width:200px;min-height:130px;padding:10px;border:2px solid ${canAfford?'#fc0':'#333'};border-radius:10px;background:rgba(6,8,16,0.96);display:flex;flex-direction:column;gap:4px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:${canAfford?'pointer':'default'};opacity:${canAfford?'1':'0.5'};`;
     card.innerHTML = `
       <div style="font-size:20px">${u.icon}</div>
       <div style="font-size:10px;font-weight:bold;letter-spacing:2px;color:${u.color}">${u.name}</div>
-      <div style="font-size:14px;color:#fc0;letter-spacing:2px">${stars}</div>
-      ${isMaxed ? '<div style="font-size:9px;color:#4f4;letter-spacing:1px">MAX POWER</div>' :
-        `<div style="font-size:11px;color:${canAfford?'#fc0':'#555'}">◆ ${cost} BITS</div>`}
+      <div style="font-size:9px;color:#889;letter-spacing:1px">LV ${lv} → ${lv + 1}</div>
+      <div style="font-size:10px;color:#cef;text-align:center;line-height:1.4">
+        ${ks.label.toUpperCase()}<br>
+        <span style="color:#aab">${_sign}${_fmt(cur)}${ks.unit}</span>
+        <span style="color:#fa0"> → </span>
+        <span style="color:#fc0;font-weight:bold">${_sign}${_fmt(nxt)}${ks.unit}</span>
+      </div>
+      <div style="font-size:11px;color:${canAfford?'#fc0':'#555'};margin-top:2px">◆ ${cost} BITS</div>
     `;
     if (canAfford) {
       const _id = id, _cost = cost;
       const handler = (ev) => { ev.preventDefault(); ev.stopPropagation();
         if (metaShards < _cost) return;
         metaShards -= _cost;
-        runUpgradePower[_id] = (runUpgradePower[_id] || 0) + 1;
+        runUpgradePower[_id] = _modLevel(_id) + 1;
         rebuildRunMods();
         const lp = getLocalPlayer();
-        if (lp) addFloatingText(lp.x, lp.y - 30, '★ POWERED UP', '#fc0');
+        if (lp) addFloatingText(lp.x, lp.y - 30, `★ Lv ${_modLevel(_id)}`, u.color);
         playSfx('level_up', 0.3) || playSound(900, 0.1, 'sine', 0.15);
         _openPowerUpScreen(); // refresh
         _updateShopBitsDisplay();
