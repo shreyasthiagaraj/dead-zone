@@ -20669,13 +20669,41 @@ function updateArcadeWaves() {
     // Bonus on wave clear — bigger every 5 waves, bigger still on boss waves.
     const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
     const isMilestone = arcadeWave % 5 === 0;
-    const bonus = isBoss ? 5000 * Math.floor(arcadeWave / ARCADE_BOSS_INTERVAL)
+    let bonus = isBoss ? 5000 * Math.floor(arcadeWave / ARCADE_BOSS_INTERVAL)
                 : isMilestone ? 1000 * arcadeWave : 300 * arcadeWave;
+    // ---- PERFECT WAVE: 2x bonus when no damage taken during the active phase ----
+    const isPerfect = !_arcadeWaveDamageTaken;
+    if (isPerfect) {
+      bonus *= 2;
+      _arcadePerfectWaves++;
+    }
     score += bonus;
     arcadeCounterPulse = 1;
     const lpx = getLocalPlayer() ? getLocalPlayer().x : 0;
     const lpy = getLocalPlayer() ? getLocalPlayer().y : 0;
-    addFloatingText(lpx, lpy - 40, `+${bonus}`, '#fa0');
+    addFloatingText(lpx, lpy - 40, `+${bonus}`, isPerfect ? '#f0f' : '#fa0');
+    // PERFECT WAVE callout — big magenta text above the player, bigger pulse,
+    // separate from the WAVE COMPLETE banner so it reads as its own win.
+    if (isPerfect) {
+      floatingTexts.push({
+        x: lpx, y: lpy - 80,
+        text: 'FLAWLESS!', color: '#f0f',
+        vx: 0, vy: -0.9,
+        life: 110, maxLife: 110,
+        _arcadeBigCallout: true, _tier: 5, _pulse: 16,
+      });
+      // Magenta burst + extra screen shake to mark the moment
+      for (let _pi = 0; _pi < 26; _pi++) {
+        const _pa = (_pi / 26) * Math.PI * 2 + Math.random() * 0.2;
+        const _ps = 3 + Math.random() * 3;
+        particles.push({ x: lpx, y: lpy, vx: Math.cos(_pa)*_ps, vy: Math.sin(_pa)*_ps,
+          life: 36, maxLife: 36, size: 3 + Math.random()*2,
+          color: Math.random() > 0.4 ? '#f0f' : '#fff', type: 'spark' });
+      }
+      screenShake.intensity = Math.max(screenShake.intensity, 7);
+      playSfx('headshot', 0.5) || playSound(1500, 0.16, 'sine', 0.18);
+      playSound(2000, 0.10, 'sine', 0.12);
+    }
     // Big "WAVE COMPLETE" announcement via the same wave-announce div used for
     // wave starts. Gold for completion (vs cyan/magenta for wave-start cues).
     {
@@ -20683,9 +20711,11 @@ function updateArcadeWaves() {
       const _wan = document.getElementById('wave-num');
       const _was = document.getElementById('wave-sub');
       if (_wae && _wan && _was) {
-        _wan.textContent = `WAVE ${arcadeWave} COMPLETE`;
-        _wan.style.color = '#fa0';
-        _wan.style.textShadow = '0 0 20px rgba(255,170,0,0.7), 0 0 40px rgba(255,170,0,0.3)';
+        _wan.textContent = isPerfect ? `★ PERFECT WAVE ${arcadeWave} ★` : `WAVE ${arcadeWave} COMPLETE`;
+        _wan.style.color = isPerfect ? '#f0f' : '#fa0';
+        _wan.style.textShadow = isPerfect
+          ? '0 0 24px rgba(255,0,255,0.8), 0 0 48px rgba(255,0,255,0.4)'
+          : '0 0 20px rgba(255,170,0,0.7), 0 0 40px rgba(255,170,0,0.3)';
         _was.textContent = `+${bonus} BONUS  ·  APPROACH THE TERMINAL`;
         _was.style.color = '#ff0';
         _was.style.textShadow = '0 0 8px rgba(255,255,0,0.5)';
@@ -20697,9 +20727,17 @@ function updateArcadeWaves() {
     // Health drops are rare — only on milestone clears (every 5th wave) and bosses.
     if (isBoss || isMilestone) spawnHealthPickup();
     // Always drop one power-up to reward the player during the breather.
+    // PERFECT WAVE: drop a bonus second pickup right next to the player.
     const p = getRandomFloorPos();
     const pw = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
     pickups.push({ type: 'powerup', powerupId: pw.id, x: p.x, y: p.y, bobTimer: Math.random() * Math.PI * 2 });
+    if (isPerfect) {
+      // Extra power-up perk for flawless play
+      const _pw2 = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+      pickups.push({ type: 'powerup', powerupId: _pw2.id,
+        x: lpx + (Math.random()-0.5)*40, y: lpy + (Math.random()-0.5)*40,
+        bobTimer: Math.random() * Math.PI * 2 });
+    }
     // ---- SPAWN THE MOD TERMINAL ----
     // Drop it right next to the player — they should see it pop in next to
     // them at wave-end. Tries a few angles around the player to find a
@@ -22121,6 +22159,12 @@ function damagePlayerObj(p,damage,attacker) {
     damage -= p.barrier; p.barrier = 0;
   }
   p.hp-=damage;p.damageFlash=15;p.invincible=6; // brief flash only, no real i-frames
+  // ARCADE: mark the wave's "perfect" flag dirty so the wave-clear check
+  // knows the player took damage. Only fires once per wave clear; reset
+  // happens in startArcadeWave for the next wave.
+  if (gameMode === 'arcade' && p === getLocalPlayer() && arcadeWaveState === 'active') {
+    _arcadeWaveDamageTaken = true;
+  }
   // Player damage label (red, follows player)
   if (damage >= 1) { p.radius = p.radius || PLAYER_RADIUS; addDamageNumber(p, damage, false); if (p._dmgLabel) p._dmgLabel.color = '#f44'; }
   if(p===getLocalPlayer()){
