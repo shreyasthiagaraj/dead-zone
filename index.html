@@ -4710,6 +4710,15 @@ const SECTION_THEMES = {
                layoutPool: ['maze','dungeon_rooms','dungeon_snake','fortress','hub_3way'] },
   NIGHTMARE: { compPool: ['ANCHOR_TRAP','APEX_HUNT','NIGHTMARE','BEAM_GRID','WATCHDOG_PAIR','LEAPER_STORM'],
                layoutPool: ['wide_arena','grand_hall','hub_3way','large_complex'] },
+  // EXPEDITION — huge multi-room sections, one per domain (locals 5/15/25/35).
+  // Spawns all enemies dormant + scattered across the full interior so each
+  // sub-room feels like its own discovery. Comp pool spans tiers — the
+  // minSection filter naturally picks archetypes that fit the current domain.
+  EXPEDITION: { compPool: ['PATROL_SCOUTS','SCOUT_LINE','AMBUSH_LITE','GUNLINE',
+                           'SIEGE_PROBE','CASTING_CIRCLE','AMBUSH_DEN','TANK_PAIR',
+                           'SNIPER_NEST','LANCER_LINE','SHIELD_WALL','APEX_HUNT'],
+               layoutPool: ['large_complex','hub_3way'],
+               isExpedition: true },
 };
 // Per-domain theme weights. Themes pick from archetypes — any archetype not
 // yet unlocked at the section index is filtered out at draft time.
@@ -4725,8 +4734,13 @@ const DOMAIN_THEMES = [
 ];
 // Pick a section theme: weighted by domain, with availability filter so the
 // chosen theme has at least one archetype that's unlocked at this section.
+// Local index 5 in each domain is reserved for an EXPEDITION — a huge
+// multi-room section that pre-spawns dormant enemies across all its
+// sub-rooms. Gives the run a "dungeon crawl" beat between arena fights.
 function _pickSectionTheme(sectionIdx, isBoss) {
   if (isBoss) return null; // bosses skip the theme system
+  // Reserve expedition slots once per domain (sections 5/15/25/35).
+  if (sectionIdx > 0 && sectionIdx % 10 === 5 && sectionIdx <= 35) return 'EXPEDITION';
   const domainIdx = Math.min(3, Math.floor(sectionIdx / 10));
   const pool = DOMAIN_THEMES[domainIdx] || DOMAIN_THEMES[0];
   // Filter to themes that have at least one valid archetype at this section
@@ -5616,7 +5630,9 @@ function initTrenchSections() {
     // "event" (single tank, beam pair, etc).
     let waveCount = 1;
     const r = Math.random();
+    const _isExpedition = !isBoss && _sectionThemes[i] === 'EXPEDITION';
     if (isBoss) { waveCount = 1; }
+    else if (_isExpedition) { waveCount = 3; }                                   // EXPEDITION: 3 sub-room beats
     else if (domainIdx === 0) { waveCount = i < 2 ? 2 : (r < 0.45 ? 3 : 2); } // D1: 2-3
     else if (domainIdx === 1) { waveCount = r < 0.35 ? 3 : 2; }                 // D2: 2-3
     else if (domainIdx === 2) { waveCount = r < 0.60 ? 2 : 1; }                 // D3: 1-2
@@ -5720,6 +5736,8 @@ function initTrenchSections() {
       modifier,
       domain,
       _isDungeon: !!(TRENCH_TEMPLATES[_sectionTemplateNames[i]] && TRENCH_TEMPLATES[_sectionTemplateNames[i]]._dungeon),
+      _isExpedition: !isBoss && _sectionThemes[i] === 'EXPEDITION',
+      _theme: _sectionThemes[i] || null,
     });
   }
 }
@@ -5806,8 +5824,11 @@ function spawnTrenchWave(idx, waveIdx) {
     // Arena layouts: cluster enemies in the right half as before
     let ex, ey, _spawnAttempts = 0;
     const _isDung = sec._isDungeon;
-    const _spreadMin = _isDung ? 0.25 : 0.5;  // dungeons start enemies at 25% across
-    const _spreadMax = _isDung ? 0.85 : 0.9;   // dungeons go to 85%
+    const _isExp  = sec._isExpedition;
+    // EXPEDITION: spread across the FULL interior so each sub-room has its
+    // own dormant inhabitants. Dungeons: 25%-85%. Arenas: 50%-90%.
+    const _spreadMin = _isExp ? 0.10 : (_isDung ? 0.25 : 0.5);
+    const _spreadMax = _isExp ? 0.95 : (_isDung ? 0.85 : 0.9);
     do {
       ex = sec.x + (_spreadMin + Math.random() * (_spreadMax - _spreadMin)) * TW;
       ey = (sec.y || 0) + (2 + Math.random() * (_secH(trenchSection) - 4)) * CELL_SIZE;
@@ -5828,18 +5849,24 @@ function spawnTrenchWave(idx, waveIdx) {
     // _tier 0 = base (domain 1), 1 = domain 2-3, 2 = domain 4-5
     const _tier = idx < 10 ? 0 : idx < 30 ? 1 : 2;
     const _radiusScale = 1 + _tier * 0.12; // +12% per tier
-    // Dormant enemies: dungeon enemies always start unaware. In non-dungeon
-    // sections, 30% of enemies start dormant for ambush variety.
-    const _dungeonAware = _isDung ? false : (Math.random() > 0.3);
-    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale * _earlyHp, maxHp: t.hp * hpScale * _earlyHp, speed: Math.max(0.8, t.speed + speedBoost + _earlySpd), radius: Math.round(t.radius * _radiusScale), color: t.color, damage: Math.round(t.damage * dmgScale * _earlyHp), score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: _dungeonAware, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: _isDung ? 0 : 30, _spawnAnimMax: _isDung ? 0 : 30, _spawnIdle: (_isDung || !_dungeonAware) ? 0 : _spIdle, _armor: _lateGameArmor, _tier, _dungeonAmbush: !_dungeonAware });
-    // Spawn-in burst: pink/cyan sparks + a brief vertical lightning crackle
-    for (let pi = 0; pi < 18; pi++) {
-      const ang = Math.random() * Math.PI * 2;
-      const sp = 1 + Math.random() * 4;
-      particles.push({ x: ex, y: ey, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 24 + Math.random() * 14, maxLife: 38, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#f0f' : '#0ff', type: 'spark' });
+    // Dormant enemies: dungeon enemies always start unaware. Expedition
+    // enemies also always start dormant (they're inhabitants of sub-rooms,
+    // not summoned ambushers). Non-dungeon/non-expedition: 30% dormant.
+    const _dungeonAware = (_isDung || _isExp) ? false : (Math.random() > 0.3);
+    const _suppressSpawnFx = _isDung || _isExp;
+    zombies.push({ zid: _nextZombieId++, x: ex, y: ey, vx: 0, vy: 0, hp: t.hp * hpScale * _earlyHp, maxHp: t.hp * hpScale * _earlyHp, speed: Math.max(0.8, t.speed + speedBoost + _earlySpd), radius: Math.round(t.radius * _radiusScale), color: t.color, damage: Math.round(t.damage * dmgScale * _earlyHp), score: t.score, type: tk, attackCooldown: 0, hitFlash: 0, ranged: t.ranged||false, fireRate: t.fireRate||0, lastFired: 0, explodeOnDeath: t.explodeOnDeath||false, explosionRadius: t.explosionRadius||0, angle: 0, staggerTimer: 0, aware: _dungeonAware, wanderAngle: Math.random()*Math.PI*2, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, charger: t.charger||false, groundPound: t.groundPound||false, spreadShot: t.spreadShot||false, bomber: t.bomber||false, shielded: t.shielded||false, sniper: t.sniper||false, summoner: t.summoner||false, _spawnAnim: _suppressSpawnFx ? 0 : 30, _spawnAnimMax: _suppressSpawnFx ? 0 : 30, _spawnIdle: (_suppressSpawnFx || !_dungeonAware) ? 0 : _spIdle, _armor: _lateGameArmor, _tier, _dungeonAmbush: !_dungeonAware });
+    // Spawn-in burst: pink/cyan sparks + a brief vertical lightning crackle.
+    // Skipped for expedition/dungeon enemies — they were "already there",
+    // not summoned, so a teleport-in flash would break the discovery beat.
+    if (!_suppressSpawnFx) {
+      for (let pi = 0; pi < 18; pi++) {
+        const ang = Math.random() * Math.PI * 2;
+        const sp = 1 + Math.random() * 4;
+        particles.push({ x: ex, y: ey, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 24 + Math.random() * 14, maxLife: 38, size: 2 + Math.random() * 2.5, color: Math.random() < 0.5 ? '#f0f' : '#0ff', type: 'spark' });
+      }
+      particles.push({ x: ex, y: ey + 28, tx: ex, ty: ey - 28, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#fff', type: 'lightning' });
+      particles.push({ x: ex - 18, y: ey, tx: ex + 18, ty: ey, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#f0f', type: 'lightning' });
     }
-    particles.push({ x: ex, y: ey + 28, tx: ex, ty: ey - 28, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#fff', type: 'lightning' });
-    particles.push({ x: ex - 18, y: ey, tx: ex + 18, ty: ey, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2, color: '#f0f', type: 'lightning' });
   }
 }
 
@@ -5864,6 +5891,14 @@ function spawnTrenchSection(idx) {
   }
   // First wave
   spawnTrenchWave(idx, 0);
+  // EXPEDITION sections: pre-populate ALL waves immediately so every sub-room
+  // has its dormant inhabitants from the moment the player enters. Otherwise
+  // late waves would teleport in mid-exploration and break the "already there"
+  // feel. The wave-advance timer logic later in updateTrench just skips ahead.
+  if (sec._isExpedition && sec.waves && sec.waves.length > 1) {
+    for (let _w = 1; _w < sec.waves.length; _w++) spawnTrenchWave(idx, _w);
+    sec.currentWave = sec.waves.length - 1;
+  }
   // ---- CORRUPTION HAZARD ZONES ----
   // From domain 2 onward (section 10+), chance-based spawn of magenta static
   // puddles that tick damage when stood on. Forces rotation instead of camping
