@@ -3593,26 +3593,9 @@ function buyShopCard(upgradeId) {
     const prevSpent = parseInt(localStorage.getItem('necrowave_bits_spent') || '0', 10);
     localStorage.setItem('necrowave_bits_spent', String(prevSpent + cost));
   } catch (e) {}
-  // Apply the upgrade. Dash trail mods are mutually exclusive — buying one replaces the other.
-  const _dashTrailIds = ['burnout_wake', 'cryo_wake', 'static_wake', 'glitch_wake', 'kinetic_wake'];
-  if (_dashTrailIds.includes(upgradeId)) {
-    for (const tid of _dashTrailIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
-  }
-  // Elemental rounds are mutually exclusive — buying one replaces the other
-  const _roundsIds = ['thermal_rounds', 'cryo_rounds', 'arc_rounds', 'pulse_shot', 'viral_payload'];
-  if (_roundsIds.includes(upgradeId)) {
-    for (const rid of _roundsIds) { if (rid !== upgradeId) delete runUpgrades[rid]; }
-  }
-  // Beacon element cards are mutually exclusive
-  const _beaconElemIds = ['beacon_thermal', 'beacon_cryo', 'beacon_arc', 'beacon_corrupt'];
-  if (_beaconElemIds.includes(upgradeId)) {
-    for (const tid of _beaconElemIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
-  }
-  // Spike class cards are mutually exclusive — picking one swaps the equipped flavor
-  const _spikeClassIds = ['thermal_spike', 'arc_spike', 'pulse_spike', 'corrupt_spike', 'eruption_ring', 'cryo_dome', 'discharge_ring', 'impact_ring', 'plague_ring'];
-  if (_spikeClassIds.includes(upgradeId)) {
-    for (const tid of _spikeClassIds) { if (tid !== upgradeId) delete runUpgrades[tid]; }
-  }
+  // Apply the upgrade — strip mutex group conflicts via the shared helper
+  // so the level-up picker and the shop stay consistent.
+  if (typeof _applyMutexCleanup === 'function') _applyMutexCleanup(upgradeId);
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
   _checkClassMilestone(upgradeId);
@@ -12740,10 +12723,29 @@ function selectUpgradeCard(upgradeId) {
   playSfx('ui_hover', 0.2) || playSound(900, 0.04, 'sine', 0.12);
 }
 
+// Mutex cleanup: when a player picks a card that belongs to a mutex group,
+// any other card from the same group must be REMOVED from runUpgrades. Used
+// to be duplicated in buyShopCard but missing from confirmUpgradeCard, which
+// caused stacking bugs (e.g. thermal_rounds + pulse_shot both active —
+// damage from both, sidearm color stuck on the older flavor).
+function _applyMutexCleanup(upgradeId) {
+  for (const group of _MUTEX_GROUPS) {
+    if (!group.includes(upgradeId)) continue;
+    for (const other of group) {
+      if (other !== upgradeId && (runUpgrades[other] || 0) > 0) {
+        delete runUpgrades[other];
+      }
+    }
+  }
+}
+
 // Apply the currently-selected card
 function confirmUpgradeCard() {
   if (!levelUpChoices || !_levelupSelectedId) return;
   const upgradeId = _levelupSelectedId;
+  // Mutex enforcement — strip out conflicting mods from the same group
+  // BEFORE incrementing this card's count. Mirrors buyShopCard cleanup.
+  _applyMutexCleanup(upgradeId);
   runUpgrades[upgradeId] = (runUpgrades[upgradeId] || 0) + 1;
   rebuildRunMods();
   _checkClassMilestone(upgradeId);
@@ -19738,8 +19740,13 @@ function applyDashTrailEffects(lp) {
       const odLv = _m.overchargeDash;
       const detonateDmg = 40 + (odLv - 1) * 20;
       damageZombie(z, detonateDmg, 0, 0);
+      // Visible "OVERCHARGE!" callout — the mod was hard to see firing before.
+      addFloatingText(z.x, z.y - (z.radius || 14) - 18, 'OVERCHARGE!', '#4ff');
+      // Bigger ring so the detonation reads as a moment.
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 56, color: '#4ff', type: 'wakering' });
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 34, color: '#fff', type: 'wakering' });
       for (let di = 0; di < 5; di++) { const da = Math.random() * Math.PI * 2, ds = 3 + Math.random() * 4; particles.push({x:z.x,y:z.y,vx:Math.cos(da)*ds,vy:Math.sin(da)*ds,life:12,maxLife:12,size:3+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'}); }
-      screenShake.intensity = Math.max(screenShake.intensity, 3);
+      screenShake.intensity = Math.max(screenShake.intensity, 5);
       const detChainCount = 2 + (odLv >= 3 ? 1 : 0);
       const detChainR2 = odLv >= 2 ? 40000 : 25000; // 200px / 158px
       let lastZ = z; const detHit = new Set([z.zid]);
@@ -22949,6 +22956,11 @@ function update() {
         // ---- FLASHPOINT: fire detonation at dash endpoint ----
         if (_rm.flashpoint > 0) {
           const fpR = _rm.flashpoint >= 2 ? 90 : 60;
+          // Visible "FLASHPOINT!" callout + bigger explosion ring so the
+          // mod's payoff actually reads.
+          addFloatingText(lp.x, lp.y - 32, 'FLASHPOINT!', '#fa0');
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: fpR * 1.4, color: '#f80', type: 'wakering' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: fpR * 0.8, color: '#fa0', type: 'wakering' });
           // Always-visible fire burst at endpoint
           for(let i=0;i<20;i++){const a=(i/20)*Math.PI*2,s=5+Math.random()*3;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:4+Math.random()*3,color:['#f80','#fa0','#ff0'][Math.floor(Math.random()*3)],type:'explosion'});}
           decals.push({x:lp.x,y:lp.y,size:fpR*0.7,alpha:0.3,color:'#420'});
@@ -24211,10 +24223,16 @@ function update() {
                       }
                     }
                   }
-                  // IMPACT BLAST: each hit creates a mini explosion
+                  // IMPACT BLAST: each hit creates a mini explosion. Lv1: 50px,
+                  // 40% dmg. Lv2: 70px, 60% dmg. One blast per bullet so a
+                  // pierce shot doesn't chain-detonate the whole crowd.
                   if (_m.wideSpread > 0 && !b._impactBlasted) {
                     const _ibR = _m.wideSpread >= 2 ? 70 : 50;
                     const _ibDmg = Math.floor(_dmg * (_m.wideSpread >= 2 ? 0.6 : 0.4));
+                    // Visible "IMPACT!" callout above the zombie so the player
+                    // can see the card firing (it was easy to miss against the
+                    // surrounding hit VFX).
+                    if (_isLocal) addFloatingText(z.x, z.y - (z.radius || 14) - 22, 'IMPACT!', '#ff0');
                     if (isHost) {
                       for (const oz of zombies) {
                         if (oz === z || oz.hp <= 0) continue;
