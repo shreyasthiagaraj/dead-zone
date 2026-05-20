@@ -20840,6 +20840,9 @@ function spawnArcadeBoss() {
     wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0, stuckTimer: 0,
     lastX: 0, lastY: 0, boss: true });
   showGlitchCallout('boss');
+  // Boss-entry camera punch — small zoom-in for 400ms reads the moment.
+  triggerCameraZoom(1.04, 400);
+  screenShake.intensity = Math.max(screenShake.intensity, 9);
 }
 
 function spawnArcadeZombie() {
@@ -21056,6 +21059,9 @@ function updateArcadeWaves() {
       }
     }
     playSfx('wave_clear', 0.4) || playSound(1100, 0.12, 'sine', 0.22);
+    // Wave-clear hit-stop + camera punch — the moment lands harder.
+    triggerHitStop(80);
+    triggerCameraZoom(1.03, 280);
     // Health drops are rare — only on milestone clears (every 5th wave) and bosses.
     if (isBoss || isMilestone) spawnHealthPickup();
     // Always drop one power-up to reward the player during the breather.
@@ -33411,6 +33417,39 @@ function render() {
   const lp2=getLocalPlayer();
   if(lp2){
     const hpRatio=lp2.hp/lp2.maxHp;
+    // ---- ARCADE: streak escalation vignette ----
+    // At streak >= 3, paint a gold edge glow that intensifies with the tier.
+    // Reads as "you're on fire" without competing with the action.
+    if (gameMode === 'arcade' && arcadeStreak >= 3) {
+      const _stmult = arcadeStreak >= 30 ? 5 : arcadeStreak >= 15 ? 4 : arcadeStreak >= 5 ? 3 : 2;
+      const _stAlpha = 0.08 + (_stmult - 2) * 0.06; // 0.14 → 0.26 across tiers
+      const _stColor = _stmult >= 4 ? '#f0f' : _stmult >= 3 ? '#f80' : '#fa0';
+      const _stPulse = 0.7 + Math.sin(performance.now() * 0.008) * 0.3;
+      const _stG = ctx.createRadialGradient(
+        canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height) * 0.3,
+        canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height) * 0.75
+      );
+      _stG.addColorStop(0, 'rgba(0,0,0,0)');
+      _stG.addColorStop(1, _stColor);
+      ctx.globalAlpha = _stAlpha * _stPulse;
+      ctx.fillStyle = _stG;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.globalAlpha = 1;
+    }
+    // ---- ARCADE: crisis tint when HP <= 25% ----
+    if (gameMode === 'arcade' && hpRatio > 0 && hpRatio <= 0.25) {
+      const _crPulse = 0.6 + Math.sin(performance.now() * 0.012) * 0.4;
+      const _crG = ctx.createRadialGradient(
+        canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height) * 0.25,
+        canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height) * 0.7
+      );
+      _crG.addColorStop(0, 'rgba(0,0,0,0)');
+      _crG.addColorStop(1, 'rgba(255,30,30,0.65)');
+      ctx.globalAlpha = 0.45 * _crPulse;
+      ctx.fillStyle = _crG;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.globalAlpha = 1;
+    }
     // Damage flash — red overlay on hit
     if(lp2.damageFlash>0){
       const flashAlpha=lp2.damageFlash/15*0.4;
