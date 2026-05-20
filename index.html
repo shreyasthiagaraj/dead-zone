@@ -93,7 +93,19 @@ body.mobile #mobile-buttons { display: block; }
 .mobile-btn.repair-btn.disabled svg { filter: none; }
 .mobile-btn.repair-btn.repairing { background: #0ff; color: #030308; box-shadow: 0 0 24px rgba(0,255,255,0.8); }
 
-#minimap { display: none; }
+#minimap {
+  display: none;
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+  z-index: 24;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-radius: 4px;
+  box-shadow: 0 0 12px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(0,0,0,0.4);
+  background: rgba(0,0,0,0.65);
+  image-rendering: pixelated;
+  pointer-events: none;
+}
 
 /* ---- Screen overlays ---- */
 .screen-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; padding: 10px; touch-action: manipulation; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; overflow-y: auto; }
@@ -10340,10 +10352,10 @@ function generateArena(seed) {
 // blocks well-spread) keeps the action constant and dodgeable. Same theming as
 // arena (furnace) for the high-action vibe; lighter detail since the map is huge.
 function generateArcadeArena(seed) {
-  // Tight, action-focused arena — roughly viewport-sized so the player can see
-  // the entire fight at a glance. The whole map is the combat zone. Spawning
-  // is player-centric too (see spawnArcadeZombie) so enemies are always close.
-  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 0.6), Math.floor(DEFAULT_ARENA_H * 0.6));
+  // Tight, action-focused arena — the whole map fits in a single screen.
+  // Spawning is player-centric too (see spawnArcadeZombie) so enemies are
+  // always close. No more searching empty corners for a straggler.
+  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 0.3), Math.floor(DEFAULT_ARENA_H * 0.3));
   const rng = seededRandom(seed || Date.now());
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -10353,10 +10365,8 @@ function generateArcadeArena(seed) {
   const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
   carveRoom(arena);
   rooms.push(arena);
-  // Sparser cover for a smaller arena — fewer blocks but still chunky so they
-  // matter as cover. Spawn-safe center kept generous so the player can read
-  // the room on entry.
-  const numObstacles = 5 + Math.floor(rng() * 4); // 5-8 chunky blocks
+  // Minimal cover for the tight arena — just enough to break sightlines.
+  const numObstacles = 3 + Math.floor(rng() * 3); // 3-5 blocks
   const placed = [];
   const centerX = GRID_W / 2, centerY = GRID_H / 2;
   // Each obstacle must be at least MIN_GAP cells from every other (no clusters).
@@ -19767,10 +19777,10 @@ function spawnArcadeZombie() {
   const t = ZOMBIE_TYPES[tk];
   const arena = rooms[0];
   // Player-centric spawn: tight ring around the player so enemies appear close
-  // and engage immediately. SPAWN_MIN gives a small buffer so they don't pop
-  // on top of the player; SPAWN_MAX keeps them on-screen (~viewport reach).
-  const SPAWN_MIN = 380;
-  const SPAWN_MAX = 720;
+  // and engage immediately. SPAWN_MIN is a small buffer so they don't pop on
+  // top of the player; SPAWN_MAX is well inside the compact arena.
+  const SPAWN_MIN = 240;
+  const SPAWN_MAX = 460;
   const lp = getLocalPlayer();
   let cx = arena.x * CELL_SIZE + (arena.w * CELL_SIZE) / 2;
   let cy = arena.y * CELL_SIZE + (arena.h * CELL_SIZE) / 2;
@@ -25091,8 +25101,16 @@ function update() {
     // Elemental death sweep — kill zombies reduced to 0 HP by burn/freeze/lightning
     // Also catches NaN hp zombies (invincibility bug from simultaneous damage sources)
     for(let di=zombies.length-1;di>=0;di--){const dz=zombies[di];if(isNaN(dz.hp))dz.hp=0;if(dz.hp<1){
-      // Arcade already awarded score+kills via _arcadeAwardKill in damageZombie.
-      if(!dz._arcadeScored){score+=dz.score;kills++;}
+      // Arcade: if this zombie was killed by a path that bypassed damageZombie
+      // (e.g. the NUKE power-up at line 8361 / 19290 zeroing hp directly, or
+      // the NaN-hp safety guard above), _arcadeAwardKill never fired and the
+      // wave counter would never tick. Run it here as the last-resort kill hook.
+      if (gameMode === 'arcade' && !dz._arcadeScored) {
+        dz._arcadeScored = true;
+        _arcadeAwardKill(dz);
+      } else if (!dz._arcadeScored) {
+        score += dz.score; kills++;
+      }
       if(gameMode==='survival'){survivalZombiesKilled++;}
       // Combo tracking — 2.5s window between kills extends the streak
       const _prevCombo = _comboCount;
@@ -32211,14 +32229,20 @@ function renderMinimap(){
     }
   }}
   // Zombies intentionally NOT shown on minimap — except in arcade mode, where
-  // the wide-open arena makes it hard to find stragglers without help. Bosses
-  // get a bigger dot so the player can locate them at a glance.
+  // the player needs at-a-glance positioning info. Bigger dots + a pulse on
+  // bosses so they stand out clearly even on the small minimap canvas.
   if (gameMode === 'arcade') {
+    const _pulse = 0.7 + Math.sin(gameTime * 0.18) * 0.3;
     for (const z of zombies) {
       if (z.hp <= 0) continue;
-      const _zr = z.boss ? 3 : 2;
-      minimapCtx.fillStyle = z.boss ? '#f0f' : '#f44';
-      minimapCtx.fillRect(z.x * sx - _zr / 2, z.y * sy - _zr / 2, _zr, _zr);
+      const _zr = z.boss ? 6 : 4;
+      const _mx = z.x * sx, _my = z.y * sy;
+      // Faint outer glow so dots are easy to track against the dark map.
+      minimapCtx.fillStyle = z.boss ? 'rgba(255,0,255,0.35)' : 'rgba(255,68,68,0.35)';
+      minimapCtx.fillRect(_mx - _zr, _my - _zr, _zr * 2, _zr * 2);
+      // Solid core dot.
+      minimapCtx.fillStyle = z.boss ? `rgba(255,80,255,${0.6 + _pulse * 0.4})` : '#f55';
+      minimapCtx.fillRect(_mx - _zr / 2, _my - _zr / 2, _zr, _zr);
     }
   }
   for(const pk of pickups){
