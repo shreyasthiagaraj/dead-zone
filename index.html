@@ -1306,6 +1306,7 @@ let waveSummaryActive = false, waveSummaryTimer = 0;
 // Distinct from survival: no shop, no perk picks; bigger map; longer rest gaps;
 // every kill spawns a flashy +X points label and bumps a top-of-screen counter.
 let arcadeWave = 0, arcadeWaveState = 'countdown', arcadeWaveTimer = 0;
+let arcadeWaveType = 'standard'; // current wave's identity (key into ARCADE_WAVE_TYPES)
 let arcadeZombiesTotal = 0, arcadeZombiesSpawned = 0, arcadeZombiesKilled = 0;
 let arcadeStreak = 0, arcadeStreakTimer = 0; // chain-kill multiplier
 let arcadeScoreDisplay = 0; // smoothed value the HUD lerps toward score
@@ -20257,11 +20258,63 @@ function getZombieTypesForWave(wave) {
 // every kill spawns a "+points" label and bumps a top-of-screen counter.
 // ============================================================
 const ARCADE_REST_FRAMES = 600;            // 10s breather between waves
+const ARCADE_PREVIEW_FRAMES = 95;          // ~1.6s preview banner before each wave
 const ARCADE_STREAK_WINDOW = 180;          // 3s to chain kills for combo
 const ARCADE_BOSS_INTERVAL = 10;           // boss every 10th wave
+const ARCADE_BONUS_INTERVAL = 7;           // bonus round every 7 waves (skipped on boss waves)
+
+// Wave identity table — each type defines name, palette, zombie pool, tuning
+// multipliers. `types: null` falls back to the wave-progression pool used by
+// survival (getZombieTypesForWave) so STANDARD waves still ramp naturally.
+const ARCADE_WAVE_TYPES = {
+  standard:     { name: 'WAVE',          sub: 'Stay moving.',                        color: '#f0f', accent: '#0ff', icon: '',
+                  types: null, countMult: 1.00, hpMult: 1.00, speedMult: 1.00 },
+  swarm:        { name: 'SWARM',         sub: 'Drones inbound — mow them down.',     color: '#ff0', accent: '#0ff', icon: '∷',
+                  types: ['drone','drone','drone','normal'],
+                  countMult: 1.80, hpMult: 0.55, speedMult: 1.10 },
+  runner_storm: { name: 'RUNNER STORM',  sub: 'Sprinters from every angle.',         color: '#cef', accent: '#fff', icon: '»',
+                  types: ['fast','fast','prowler','fast','normal'],
+                  countMult: 1.30, hpMult: 0.85, speedMult: 1.20 },
+  heavy_metal:  { name: 'HEAVY METAL',   sub: 'Tanks rolling in — hit and run.',     color: '#fa0', accent: '#f44', icon: '⚙',
+                  types: ['tank','brute','tank','bull','normal'],
+                  countMult: 0.55, hpMult: 1.15, speedMult: 0.85 },
+  showdown:     { name: 'SHOWDOWN',      sub: 'Snipers + spitters — break lines.',   color: '#a4f', accent: '#f0f', icon: '⌖',
+                  types: ['mini','spitter','strafe','spitter','normal'],
+                  countMult: 0.80, hpMult: 0.90, speedMult: 1.00 },
+  elite_guard:  { name: 'ELITE GUARD',   sub: 'Heavy hitters only — no filler.',     color: '#f44', accent: '#fa0', icon: '✦',
+                  types: ['brute','splitter','exploder','reaper','lash'],
+                  countMult: 0.45, hpMult: 1.00, speedMult: 1.00 },
+  bonus:        { name: '★ BONUS ROUND', sub: 'Score balloons — no damage, big points.', color: '#ff0', accent: '#fa0', icon: '★',
+                  types: ['_score_balloon'],
+                  countMult: 1.40, hpMult: 0.30, speedMult: 0.85, isBonus: true },
+  boss:         { name: 'BOSS · WAVE',   sub: 'Take it down for the bonus.',         color: '#f44', accent: '#fa0', icon: '☠',
+                  types: null, countMult: 0.40, hpMult: 1.00, speedMult: 1.00, isBoss: true },
+};
+
+// Wave schedule — deterministic for W1-W10 so first runs feel curated, then a
+// per-wave deterministic pseudo-random pool from W11+ so each run is varied
+// but reproducible (and stays in sync for multiplayer).
+function getArcadeWaveType(wave) {
+  if (wave % ARCADE_BOSS_INTERVAL === 0) return 'boss';
+  if (wave % ARCADE_BONUS_INTERVAL === 0) return 'bonus';
+  if (wave <= 2) return 'standard';
+  if (wave === 3) return 'swarm';
+  if (wave === 4) return 'standard';
+  if (wave === 5) return 'heavy_metal';
+  if (wave === 6) return 'runner_storm';
+  if (wave === 8) return 'standard';
+  if (wave === 9) return 'showdown';
+  // 11+: weighted pool, picked by a wave-number hash for determinism
+  const pool = ['standard','standard','swarm','runner_storm','heavy_metal','showdown'];
+  if (wave >= 13) pool.push('elite_guard');
+  if (wave >= 16) pool.push('runner_storm','swarm'); // double weight late
+  const idx = (wave * 7919) % pool.length;
+  return pool[idx];
+}
 
 function resetArcadeState() {
   arcadeWave = 0;
+  arcadeWaveType = 'standard';
   arcadeWaveState = 'countdown';
   arcadeWaveTimer = 180; // 3s pre-game countdown
   arcadeZombiesTotal = 0;
@@ -20278,39 +20331,90 @@ function resetArcadeState() {
   _arcadeModTerminal = null;
 }
 
+// Start a wave's PREVIEW phase. Computes wave-type, sizes the spawn quota,
+// shows the big preview banner, and queues the actual active phase via the
+// 'preview' state branch in updateArcadeWaves.
 function startArcadeWave() {
   arcadeWave++;
   resetWaveKills();
   // Clear any leftover mod terminal from the previous wave's rest gap.
   _arcadeModTerminal = null;
-  // Scale: starts gentle, ramps each wave. ~6+wave*2.2 enemies, capped to keep
-  // mobile from drowning. Boss waves get fewer mooks (boss is the spectacle).
-  const isBoss = arcadeWave % ARCADE_BOSS_INTERVAL === 0;
-  arcadeZombiesTotal = isBoss ? Math.floor(8 + arcadeWave * 1.2) : Math.floor(6 + arcadeWave * 2.2);
+  // Per-wave damage flag — set to true if player takes any damage during the
+  // active phase. Wave-clear without damage = FLAWLESS bonus (Pillar 4).
+  _arcadeWaveDamageTaken = false;
+  // Pick the wave's identity.
+  const typeId = getArcadeWaveType(arcadeWave);
+  arcadeWaveType = typeId;
+  const wt = ARCADE_WAVE_TYPES[typeId] || ARCADE_WAVE_TYPES.standard;
+  // Size the wave. Boss waves get fewer mooks (boss is the spectacle), bonus
+  // waves get a chunky balloon count, others scale around the base curve.
+  const baseCount = wt.isBoss
+    ? Math.floor(8 + arcadeWave * 1.2)
+    : Math.floor(6 + arcadeWave * 2.2);
+  arcadeZombiesTotal = Math.max(2, Math.floor(baseCount * wt.countMult));
   arcadeZombiesSpawned = 0;
   arcadeZombiesKilled = 0;
-  arcadeWaveState = 'active';
-  playWaveStartSound();
+  // Enter PREVIEW state — no spawning yet, just the banner.
+  arcadeWaveState = 'preview';
+  arcadeWaveTimer = ARCADE_PREVIEW_FRAMES;
+  // Show the preview banner via the existing #wave-announce div, themed to
+  // the wave-type palette so each type reads at a glance.
   const el = document.getElementById('wave-announce');
-  // Reset any inline styles left over from a previous "WAVE COMPLETE" callout
-  // so the wave-start announcement uses the default magenta/cyan colors.
   const _wn = document.getElementById('wave-num');
   const _ws = document.getElementById('wave-sub');
-  if (_wn) { _wn.style.color = ''; _wn.style.textShadow = ''; }
-  if (_ws) { _ws.style.color = ''; _ws.style.textShadow = ''; }
-  if (isBoss) {
-    _wn.textContent = `BOSS · WAVE ${arcadeWave}`;
-    _ws.textContent = 'Take it down for the bonus.';
-  } else {
-    _wn.textContent = `WAVE ${arcadeWave}`;
-    const subs = ['Stay moving.', 'Chain those kills.', 'High score time.', 'Don\'t stop.',
-                  'Light it up.', 'Survive the swarm.', 'Run the score up.', 'Keep the streak alive.'];
-    _ws.textContent = subs[(arcadeWave - 1) % subs.length];
+  if (_wn) {
+    _wn.style.color = wt.color;
+    _wn.style.textShadow = `0 0 22px ${wt.color}, 0 0 44px ${wt.color}55`;
+    _wn.textContent = wt.isBoss
+      ? `BOSS · WAVE ${arcadeWave}`
+      : (wt.isBonus
+          ? `${wt.icon} BONUS ROUND ${wt.icon}`
+          : `WAVE ${arcadeWave}: ${wt.icon ? wt.icon + ' ' : ''}${wt.name}`);
   }
-  el.style.opacity = '1'; setTimeout(() => el.style.opacity = '0', 2500);
-  if (isBoss) spawnArcadeBoss();
-  // Replenish barrels each wave for cover variety
-  spawnBarrels(arcadeWave === 1 ? 8 : 2 + Math.floor(Math.random() * 3));
+  if (_ws) {
+    _ws.style.color = wt.accent;
+    _ws.style.textShadow = `0 0 10px ${wt.accent}`;
+    _ws.textContent = wt.sub;
+  }
+  el.style.opacity = '1';
+  // Preview sting on banner appearance.
+  playSfx('wave_start', 0.45) || playSound(800, 0.1, 'sine', 0.18);
+}
+
+// Transition from PREVIEW to ACTIVE: hide banner, spawn boss / barrels,
+// play full wave-start sound, fire any wave-type intro VFX.
+function _beginArcadeWaveActive() {
+  arcadeWaveState = 'active';
+  const wt = ARCADE_WAVE_TYPES[arcadeWaveType] || ARCADE_WAVE_TYPES.standard;
+  playWaveStartSound();
+  if (wt.isBoss) spawnArcadeBoss();
+  // Replenish barrels each wave for cover variety (skip on bonus — uncluttered).
+  if (!wt.isBonus) spawnBarrels(arcadeWave === 1 ? 8 : 2 + Math.floor(Math.random() * 3));
+  // Bonus round entrance — gold confetti + glitch surge.
+  if (wt.isBonus) {
+    triggerGlitchSurge(0.25, 14);
+    screenShake.intensity = Math.max(screenShake.intensity, 5);
+    const lp = getLocalPlayer();
+    if (lp) {
+      for (let i = 0; i < 36; i++) {
+        const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 5;
+        particles.push({
+          x: lp.x, y: lp.y,
+          vx: Math.cos(a) * s, vy: Math.sin(a) * s - 2,
+          life: 60 + Math.random() * 30, maxLife: 90,
+          size: 2 + Math.random() * 2,
+          color: ['#fa0','#ff0','#fff','#f80'][Math.floor(Math.random() * 4)],
+          type: 'spark', gravity: 0.08,
+        });
+      }
+    }
+    playSound(1400, 0.18, 'sine', 0.18);
+    playSound(1800, 0.12, 'sine', 0.12);
+  }
+  // Fade the wave-announce out shortly after active begins (banner had ~1.5s
+  // during preview; give it a tail in active for visibility).
+  const el = document.getElementById('wave-announce');
+  if (el) setTimeout(() => { el.style.opacity = '0'; }, 1100);
 }
 
 function spawnArcadeBoss() {
@@ -20337,9 +20441,13 @@ function spawnArcadeBoss() {
 }
 
 function spawnArcadeZombie() {
-  const ts = getZombieTypesForWave(arcadeWave);
-  const tk = ts[Math.floor(Math.random() * ts.length)];
-  const t = ZOMBIE_TYPES[tk];
+  const wt = ARCADE_WAVE_TYPES[arcadeWaveType] || ARCADE_WAVE_TYPES.standard;
+  const ts = wt.types || getZombieTypesForWave(arcadeWave);
+  const tkRaw = ts[Math.floor(Math.random() * ts.length)];
+  // Bonus-round score balloons: render as drones but with damage=0 + big score.
+  const isBalloon = tkRaw === '_score_balloon';
+  const tk = isBalloon ? 'drone' : tkRaw;
+  const t = ZOMBIE_TYPES[tk] || ZOMBIE_TYPES.normal;
   const arena = rooms[0];
   // Player-centric spawn: tight ring around the player so enemies appear close
   // and engage immediately. SPAWN_MIN is a small buffer so they don't pop on
@@ -20376,25 +20484,31 @@ function spawnArcadeZombie() {
     else { gx = arena.x + 1 + Math.floor(Math.random() * (arena.w - 2)); gy = arena.y + arena.h - 2; }
     x = gx * CELL_SIZE; y = gy * CELL_SIZE;
   }
-  // Slightly gentler HP scaling than survival — arcade leans on volume + variety,
-  // not on bullet-sponge enemies. The fun is mowing them down.
-  const sc = 1 + (arcadeWave - 1) * 0.10;
-  const hp = t.hp * sc;
-  const spd = t.speed + (arcadeWave - 1) * 0.025;
-  // Pre-point velocity at the player so the zombie advances from frame 1
-  // instead of standing still for the first tick of AI. Combined with
-  // aware:true (no aggro delay), the spawn reads as "they're already on you."
+  // HP / speed scale with wave AND wave-type multipliers. Arcade leans on
+  // volume + variety, not bullet-sponge enemies — base ramp is gentle.
+  const sc = (1 + (arcadeWave - 1) * 0.10) * (wt.hpMult || 1);
+  const hp = Math.max(1, Math.floor(t.hp * sc));
+  const spd = (t.speed + (arcadeWave - 1) * 0.025) * (wt.speedMult || 1);
+  // Pre-point velocity at the player so the zombie advances from frame 1.
   const _dxIv = cx - x, _dyIv = cy - y;
   const _dIv = Math.sqrt(_dxIv * _dxIv + _dyIv * _dyIv) || 1;
   const _ivx = (_dxIv / _dIv) * spd;
   const _ivy = (_dyIv / _dIv) * spd;
+  // Score balloons: drones with damage=0, score=500, neutral cyan/gold tint.
+  // _scoreBalloon flag lets other code (render, drops) treat them differently.
+  const finalDamage = isBalloon ? 0 : t.damage;
+  const finalScore  = isBalloon ? 500 : t.score;
+  const finalColor  = isBalloon ? '#ff0' : t.color;
   zombies.push({ zid: _nextZombieId++, x, y, vx: _ivx, vy: _ivy, hp, maxHp: hp, speed: spd,
-    radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk,
-    attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0,
-    lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0,
+    radius: t.radius, color: finalColor, damage: finalDamage, score: finalScore, type: tk,
+    attackCooldown: 0, hitFlash: 0, ranged: !isBalloon && (t.ranged || false),
+    fireRate: isBalloon ? 0 : (t.fireRate || 0),
+    lastFired: 0, explodeOnDeath: !isBalloon && (t.explodeOnDeath || false),
+    explosionRadius: t.explosionRadius || 0,
     angle: Math.atan2(_dyIv, _dxIv), staggerTimer: 0, aware: true,
     wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0,
-    stuckTimer: 0, lastX: 0, lastY: 0 });
+    stuckTimer: 0, lastX: 0, lastY: 0,
+    _scoreBalloon: isBalloon });
 }
 
 function updateArcadeWaves() {
@@ -20407,6 +20521,11 @@ function updateArcadeWaves() {
   if (arcadeWaveState === 'countdown') {
     arcadeWaveTimer--;
     if (arcadeWaveTimer <= 0) startArcadeWave();
+    return;
+  }
+  if (arcadeWaveState === 'preview') {
+    arcadeWaveTimer--;
+    if (arcadeWaveTimer <= 0) _beginArcadeWaveActive();
     return;
   }
   if (arcadeWaveState === 'rest') {
