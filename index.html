@@ -19198,6 +19198,14 @@ function _emitMeleeClassFlourish(p, wAng, bodyRoot, bodyTip) {
 // sync, wall collision, hit dedup all work for free.
 function fireArcBolt(srcX, srcY, opts) {
   if (typeof srcX !== 'number' || typeof srcY !== 'number') return;
+  // Safety cap on active arc bolts — any spawn beyond this is silently
+  // dropped so a cascade can't blow up the bullet array. Recursion is
+  // already gated upstream (arc bolts skip class procs + universal chain)
+  // so this is belt-and-suspenders.
+  let _activeBolts = 0;
+  for (let _i = 0; _i < bullets.length; _i++) {
+    if (bullets[_i]._arcBolt) { _activeBolts++; if (_activeBolts >= 40) return; }
+  }
   opts = opts || {};
   const _ownerId = opts.ownerId || (getLocalPlayer() && getLocalPlayer().id) || null;
   const _color = opts.color || '#4ff';
@@ -24952,8 +24960,11 @@ function update() {
                     else if (_bc === 'chain') applyCharged(z);
                     else if (_bc === 'corrupt') applyCorrupt(z, 1);
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
-                  } else if (_isLocal) {
+                  } else if (_isLocal && !b._arcBolt) {
                     // ---- CLASS PROCS ----
+                    // (Arc bolts skip this whole block: they're already an
+                    // arc effect, and re-procing Arc Rounds → CHARGED → more
+                    // bolts → infinite cascade caused a frame-stall freeze.)
                     const _sf = _m.statusForce || 1;
                     // THERMAL ROUNDS: each hit adds 1 OVERHEAT stack.
                     // Stack-based DoT means a low-damage SMG and a high-damage
@@ -25067,8 +25078,10 @@ function update() {
                     }
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
                   }
-                  // LIGHTNING ROD: bonus arc from nearby planted rod on any bullet hit
-                  if (_isLocal) {
+                  // LIGHTNING ROD: bonus arc from nearby planted rod on any bullet hit.
+                  // !b._arcBolt: skip for arc bolts so a bolt landing near a rod
+                  // doesn't spawn another bolt and cascade.
+                  if (_isLocal && !b._arcBolt) {
                     const _rodR2 = 200 * 200;
                     for (const _sp of spikes) {
                       if (!_sp._orb || _sp.phase !== 'planted') continue;
@@ -25100,9 +25113,11 @@ function update() {
                   // UNIVERSAL CHAIN: any bullet hitting a Charged enemy fires
                   // arc bolt projectiles. Each bolt travels and seeks the next
                   // target (or random direction if none in range). CONDUCTOR
-                  // adds extra bolts + pierce; arc Lv2 makes bolts re-apply
-                  // CHARGED on hit so the chain self-perpetuates.
-                  if (_isLocal && z._charged) {
+                  // adds extra bolts + pierce.
+                  // !b._arcBolt: bolts themselves NEVER trigger more bolts,
+                  // otherwise a single shot cascades into exponentially many
+                  // bolts and the bullet loop blocks the renderer.
+                  if (_isLocal && z._charged && !b._arcBolt) {
                     const arcLv = _m.arcRoundsLv || 0;
                     const baseBolts = Math.max(1, arcLv);
                     const bonusBolts = Math.min(6, (_m.staticChain || 0) * 2);
