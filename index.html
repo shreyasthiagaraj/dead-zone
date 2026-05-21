@@ -31503,27 +31503,22 @@ function render() {
     ctx.lineTo(b.x,b.y);ctx.stroke();ctx.shadowBlur=0;
     ctx.fillStyle='#fff';ctx.globalAlpha=0.8;ctx.beginPath();ctx.arc(b.x,b.y,b.size+2,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;
     }else if(b._arcBolt){
-      // Arc bolt — big glowing orb head with a long crackling lightning tail
-      // that forks. Reads as a slow-moving ball of electricity trailing
-      // jagged arcs behind it. Stacked fake-glow (no shadowBlur, perf-safe).
+      // Arc bolt — pure electric arc shape (no orb head). Reads as a strip of
+      // lightning travelling through the air. Modest bright cyan tip mirrors
+      // the arc rounds bullet so it feels like the same family of effect.
       const _abC = b._arcColor || '#4ff';
       const _abAng = Math.atan2(b.vy, b.vx);
       const _perpX = -Math.sin(_abAng), _perpY = Math.cos(_abAng);
       const _seed = b._arcSegSeed || 0;
-      // ---- TAIL — long jagged main arc + 2 shorter forking offshoots ----
-      // Use a fixed pixel tail length so it's clearly visible despite the
-      // slower speed (was scaled with velocity, which made slow bolts look
-      // like tiny streaks).
-      const _tailLen = 80;
-      const _segN = 10;
-      const _wobAmp = 6; // bigger wobble = more "lightning" feel
-      // Main jagged tail
+      // Long jagged main arc (fixed pixel length so the bolt reads at any speed)
+      const _tailLen = 90;
+      const _segN = 11;
+      const _wobAmp = 6;
       const _pts = [];
       for (let _si = 0; _si <= _segN; _si++) {
         const _t = _si / _segN;
         const _cx = b.x - Math.cos(_abAng) * _tailLen * (1 - _t);
         const _cy = b.y - Math.sin(_abAng) * _tailLen * (1 - _t);
-        // Wobble fades to zero at both endpoints so the line connects cleanly
         const _edgeFade = Math.sin(Math.PI * _t);
         const _wobble = _edgeFade * (
           Math.sin(_seed + _si * 5.7 + gameTime * 0.9) * _wobAmp +
@@ -31531,52 +31526,41 @@ function render() {
         );
         _pts.push({ x: _cx + _perpX * _wobble, y: _cy + _perpY * _wobble });
       }
-      // Wide ambient halo on the tail (dim + thick)
-      ctx.globalAlpha = 0.22; ctx.strokeStyle = _abC; ctx.lineWidth = 11;
+      // Outer dim cyan halo (gives the arc a soft glow without a hard head)
+      ctx.globalAlpha = 0.22; ctx.strokeStyle = _abC; ctx.lineWidth = 9;
       ctx.beginPath(); ctx.moveTo(_pts[0].x, _pts[0].y);
       for (let _si = 1; _si < _pts.length; _si++) ctx.lineTo(_pts[_si].x, _pts[_si].y);
       ctx.stroke();
-      // Mid-glow cyan
-      ctx.globalAlpha = 0.65; ctx.lineWidth = 5;
+      // Mid cyan stroke
+      ctx.globalAlpha = 0.70; ctx.lineWidth = 4;
       ctx.beginPath(); ctx.moveTo(_pts[0].x, _pts[0].y);
       for (let _si = 1; _si < _pts.length; _si++) ctx.lineTo(_pts[_si].x, _pts[_si].y);
       ctx.stroke();
-      // White-hot core
-      ctx.globalAlpha = 0.95; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      // White-hot core stroke
+      ctx.globalAlpha = 1; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(_pts[0].x, _pts[0].y);
       for (let _si = 1; _si < _pts.length; _si++) ctx.lineTo(_pts[_si].x, _pts[_si].y);
       ctx.stroke();
-      // 2 forking offshoots branching off random mid-tail points
+      // 2 forking offshoots — what gives the arc its electricity feel
       for (let _fi = 0; _fi < 2; _fi++) {
-        // Pick a mid-tail anchor based on seed + time so forks visibly crackle
         const _fIdx = 2 + Math.floor(((Math.sin(_seed * 0.7 + _fi * 2.3 + gameTime * 0.4) + 1) * 0.5) * (_segN - 3));
         const _anchor = _pts[_fIdx];
         const _fAngBase = _abAng + (_fi === 0 ? Math.PI * 0.5 : -Math.PI * 0.5);
         const _fAng = _fAngBase + Math.sin(_seed * 2 + _fi * 4 + gameTime * 0.6) * 0.6;
-        const _fLen = 16 + Math.abs(Math.sin(_seed + _fi * 3 + gameTime * 0.5)) * 14;
+        const _fLen = 14 + Math.abs(Math.sin(_seed + _fi * 3 + gameTime * 0.5)) * 12;
         const _ftx = _anchor.x + Math.cos(_fAng) * _fLen;
         const _fty = _anchor.y + Math.sin(_fAng) * _fLen;
-        // Forks: thin glow + bright core
-        ctx.globalAlpha = 0.55; ctx.strokeStyle = _abC; ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.5; ctx.strokeStyle = _abC; ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.moveTo(_anchor.x, _anchor.y); ctx.lineTo(_ftx, _fty); ctx.stroke();
-        ctx.globalAlpha = 0.9; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.85; ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.8;
         ctx.beginPath(); ctx.moveTo(_anchor.x, _anchor.y); ctx.lineTo(_ftx, _fty); ctx.stroke();
       }
-      // ---- HEAD — large pulsing electricity orb ----
-      // Pulse modulated by gameTime so the orb visibly throbs.
-      const _pulse = 0.85 + 0.15 * Math.sin(gameTime * 0.5 + _seed);
-      // Outermost dim halo
-      ctx.globalAlpha = 0.20 * _pulse; ctx.fillStyle = _abC;
-      ctx.beginPath(); ctx.arc(b.x, b.y, 18 * _pulse, 0, Math.PI*2); ctx.fill();
-      // Wider cyan glow
-      ctx.globalAlpha = 0.40 * _pulse;
-      ctx.beginPath(); ctx.arc(b.x, b.y, 12, 0, Math.PI*2); ctx.fill();
-      // Bright cyan body
-      ctx.globalAlpha = 0.75 * _pulse;
-      ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI*2); ctx.fill();
-      // White-hot core
-      ctx.fillStyle = '#fff'; ctx.globalAlpha = 1;
+      // Modest tip — matches the arc rounds bullet (small bright cyan dot
+      // with a tight white core). No big orb.
+      ctx.globalAlpha = 0.6; ctx.fillStyle = _abC;
       ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI*2); ctx.fill();
       ctx.globalAlpha = 1;
     }else if(b._deadshotRound){
     const _dsA = Math.atan2(b.vy, b.vx);
