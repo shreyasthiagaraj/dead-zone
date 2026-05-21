@@ -33041,12 +33041,15 @@ function render() {
       const segs=6;
       const _lw = Math.max(1, p.size * 1.5); // outer width scales with particle size
       // _noBlur flag (e.g., set on arc bolt trail particles) skips shadowBlur,
-      // the #1 Canvas2D perf killer. Compensated with a wider dim outer stroke
-      // for a fake-glow read.
+      // the #1 Canvas2D perf killer. CRITICAL: explicitly set shadowBlur=0 at
+      // entry to the fake-glow path; otherwise leftover state from a previous
+      // particle that DID use shadowBlur compounds with the extra stroke and
+      // makes fake-glow MORE expensive than the original (a real bug we hit).
       const _useBlur = !p._noBlur;
       if (_useBlur) {
         ctx.strokeStyle=p.color||'#4ff';ctx.lineWidth=_lw;ctx.shadowColor=p.color||'#4ff';ctx.shadowBlur=10;
       } else {
+        ctx.shadowBlur=0; // <-- must clear before fake-glow draws
         // Fake-glow: extra wide dim outer stroke first
         ctx.strokeStyle=p.color||'#4ff';ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.lineWidth=_lw*2.5;
         ctx.beginPath();ctx.moveTo(p.x,p.y);
@@ -33059,7 +33062,7 @@ function render() {
       ctx.stroke();
       ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(0.5,_lw*0.4);ctx.beginPath();ctx.moveTo(p.x,p.y);
       for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter*0.5,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter*0.5);}
-      ctx.stroke();if(_useBlur)ctx.shadowBlur=0;
+      ctx.stroke();ctx.shadowBlur=0; // always clear so we don't leak shadowBlur=10 into other particle renders
     } else {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
       // Neon feel: widen the glow gate so almost every particle emits light —
