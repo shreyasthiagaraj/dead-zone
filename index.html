@@ -19203,10 +19203,11 @@ let _arcBoltDepth = 0;
 function fireArcBolt(srcX, srcY, opts) {
   if (typeof srcX !== 'number' || typeof srcY !== 'number') return;
   // Safety cap on active arc bolts — any spawn beyond this is silently
-  // dropped so a cascade can't blow up the bullet array.
+  // dropped. Cascade paths are gated upstream so normal play stays well
+  // under this; the cap is purely defensive against future bugs.
   let _activeBolts = 0;
   for (let _i = 0; _i < bullets.length; _i++) {
-    if (bullets[_i]._arcBolt) { _activeBolts++; if (_activeBolts >= 40) return; }
+    if (bullets[_i]._arcBolt) { _activeBolts++; if (_activeBolts >= 20) return; }
   }
   opts = opts || {};
   const _ownerId = opts.ownerId || (getLocalPlayer() && getLocalPlayer().id) || null;
@@ -24444,21 +24445,21 @@ function update() {
       // Railgun: denser trailing streaks + parallel energy wisps
       if(b._railgun){const _ra=Math.atan2(b.vy,b.vx),_rPerp=_ra+Math.PI/2;for(let _ri=0;_ri<2;_ri++){const _ro=(Math.random()-0.5)*8;particles.push({x:b.x-b.vx*0.5+Math.cos(_rPerp)*_ro,y:b.y-b.vy*0.5+Math.sin(_rPerp)*_ro,vx:-b.vx*0.04+(Math.random()-0.5)*0.5,vy:-b.vy*0.04+(Math.random()-0.5)*0.5,life:18+Math.random()*4,maxLife:22,size:1.5+Math.random()*1.5,color:_dc,type:'spark'});}}
     }
-    // Arc bolt trail — mirrors the CHAIN BOLT spike's visual but throttled.
-    // The 'lightning' particle uses shadowBlur which is the #1 Canvas2D perf
-    // killer; with several bolts in flight + their 12-frame particle life,
-    // hundreds of shadowBlur strokes per frame can stall the renderer.
-    // Emit every 2nd frame and halve the particle life so steady-state count
-    // stays well under 100 even at the 40-bolt cap.
-    if (b._arcBolt && gameTime % 2 === 0) {
+    // Arc bolt trail — full CHAIN BOLT spike visual: lightning particle every
+    // frame from prev → current position, plus crackling sparks every other
+    // frame. Cascade paths upstream are gated so bolt count stays bounded;
+    // see the active-bolt cap in fireArcBolt as a defensive backstop.
+    if (b._arcBolt) {
       const _abC = b._arcColor || '#4ff';
-      particles.push({ x: _bpx, y: _bpy, vx: 0, vy: 0, life: 6, maxLife: 6,
+      particles.push({ x: _bpx, y: _bpy, vx: 0, vy: 0, life: 12, maxLife: 12,
         size: 2, color: _abC, type: 'lightning', tx: b.x, ty: b.y });
-      const _ta = Math.random() * Math.PI * 2;
-      particles.push({ x: b.x + Math.cos(_ta)*4, y: b.y + Math.sin(_ta)*4,
-        vx: Math.cos(_ta)*2, vy: Math.sin(_ta)*2,
-        life: 8, maxLife: 8, size: 2,
-        color: Math.random() > 0.4 ? _abC : '#fff', type: 'spark' });
+      if (gameTime % 2 === 0) {
+        const _ta = Math.random() * Math.PI * 2;
+        particles.push({ x: b.x + Math.cos(_ta)*4, y: b.y + Math.sin(_ta)*4,
+          vx: Math.cos(_ta)*2, vy: Math.sin(_ta)*2,
+          life: 8 + Math.random()*4, maxLife: 12, size: 2 + Math.random(),
+          color: Math.random() > 0.4 ? _abC : '#fff', type: 'spark' });
+      }
     }
     if(b._element==='fire'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1.5,vy:-1-Math.random(),life:12,maxLife:12,size:3+Math.random()*3,color:Math.random()>0.5?'#f80':'#fa0',type:'explosion'});
     if(b._element==='ice'&&gameTime%3===0)particles.push({x:b.x+(Math.random()-0.5)*4,y:b.y+(Math.random()-0.5)*4,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:10,maxLife:10,size:2+Math.random()*2,color:'#cef',type:'spark'});
