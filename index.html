@@ -19196,12 +19196,14 @@ function _emitMeleeClassFlourish(p, wAng, bodyRoot, bodyTip) {
 // Voltaic Armor, Lightning Rod, and the Storm Surge / Permafrost / Live Wire
 // synergy combos. Cheap — lives in the regular bullets[] array so multiplayer
 // sync, wall collision, hit dedup all work for free.
+// Recursion guard for arc bolts. Set while an arc bolt is being processed
+// (damage + death effects) so death-effect cards don't re-fire more bolts
+// off a bolt-caused kill, which would cascade exponentially.
+let _arcBoltDepth = 0;
 function fireArcBolt(srcX, srcY, opts) {
   if (typeof srcX !== 'number' || typeof srcY !== 'number') return;
   // Safety cap on active arc bolts — any spawn beyond this is silently
-  // dropped so a cascade can't blow up the bullet array. Recursion is
-  // already gated upstream (arc bolts skip class procs + universal chain)
-  // so this is belt-and-suspenders.
+  // dropped so a cascade can't blow up the bullet array.
   let _activeBolts = 0;
   for (let _i = 0; _i < bullets.length; _i++) {
     if (bullets[_i]._arcBolt) { _activeBolts++; if (_activeBolts >= 40) return; }
@@ -22820,7 +22822,9 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       }
     }
     // ---- CARD: ARC BURST — CHARGED kills fire 6 arc bolts (35 dmg + CHARGED) ----
-    if ((runMods||{}).arcKillBurst && z._charged) {
+    // _arcBoltDepth gate: skip if the kill was caused by another arc bolt,
+    // otherwise bolt → kill → 6 bolts → 6 kills → 36 bolts → freeze.
+    if ((runMods||{}).arcKillBurst && z._charged && _arcBoltDepth === 0) {
       const _akR = _modScale('arc_kill_burst', 120, 12);
       const _akN = 6;
       for (let _ki = 0; _ki < _akN; _ki++) {
@@ -22829,7 +22833,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       }
     }
     // ---- CARD: ARC DISCHARGE — CHARGED kills fire 3 arc bolts (28 dmg) ----
-    else if ((runMods||{}).arcDeathDischarge && z._charged) {
+    else if ((runMods||{}).arcDeathDischarge && z._charged && _arcBoltDepth === 0) {
       const _adR = _modScale('arc_death_discharge', 80, 10);
       for (let _di = 0; _di < 3; _di++) {
         fireArcBolt(z.x, z.y, { damage: 28, range: _adR + 140, applyCharged: true,
@@ -22837,7 +22841,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       }
     }
     // ---- CARD: OVERLOAD (surge_break) — CHARGED kills fire 4 arc bolts radially (40 dmg) ----
-    if ((runMods||{}).surgeBreak > 0 && z._charged) {
+    if ((runMods||{}).surgeBreak > 0 && z._charged && _arcBoltDepth === 0) {
       const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE makes bolts re-charge targets
       const _sbDmg = _modScale('surge_break', 40, 7);
       for (let _oi = 0; _oi < 4; _oi++) {
@@ -24669,7 +24673,12 @@ function update() {
                     _savedArmor = z._armor; _savedShield = z._shielded_aura;
                     z._armor = 1; z._shielded_aura = 0;
                   }
+                  // Wrap damage with the arc-bolt recursion guard so death
+                  // effects can detect they were triggered by a bolt and skip
+                  // firing more bolts (otherwise: cascade → frame freeze).
+                  if (b._arcBolt) _arcBoltDepth++;
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
+                  if (b._arcBolt) _arcBoltDepth--;
                   if (b._armorPierce && b._deadshotRound) {
                     if (_savedArmor !== undefined) z._armor = _savedArmor;
                     if (_savedShield !== undefined) z._shielded_aura = _savedShield;
