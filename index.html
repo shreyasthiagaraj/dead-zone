@@ -19310,6 +19310,26 @@ function fireArcBolt(srcX, srcY, opts) {
   } else {
     _ang = Math.random() * Math.PI * 2;
   }
+  // Safety: avoid firing toward any live player. A bolt rocketing back at
+  // the shooter feels bad. If the chosen angle points within ~70° of a
+  // live player, mirror it across the player vector (effectively fire to
+  // the OTHER side). Skipped when we have a real enemy target — that case
+  // is intentional and players aren't enemies anyway.
+  if (!_tgt) {
+    for (const _pp of players) {
+      if (!_pp || !_pp.alive) continue;
+      const _ppdx = _pp.x - srcX, _ppdy = _pp.y - srcY;
+      if (_ppdx*_ppdx + _ppdy*_ppdy < 4) continue; // bolt source is on the player; skip
+      const _pAng = Math.atan2(_ppdy, _ppdx);
+      let _aDiff = _ang - _pAng;
+      while (_aDiff > Math.PI) _aDiff -= Math.PI*2;
+      while (_aDiff < -Math.PI) _aDiff += Math.PI*2;
+      if (Math.abs(_aDiff) < 1.22) { // ~70°
+        // Flip 180° + small jitter so it heads to the opposite side
+        _ang = _pAng + Math.PI + (Math.random()-0.5) * 0.6;
+      }
+    }
+  }
   // Spawn the bolt OUTSIDE the source zombie's hitbox so the first-frame hit
   // check doesn't snag the source. Also pre-seed _hitSet with sourceZid.
   const _spawnOff = 22;
