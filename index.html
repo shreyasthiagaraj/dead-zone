@@ -19229,8 +19229,16 @@ function fireArcBolt(srcX, srcY, opts) {
   } else {
     _ang = Math.random() * Math.PI * 2;
   }
+  // Spawn the bolt OUTSIDE the source zombie's hitbox so the swept-line hit
+  // detection on the first frame doesn't snag the source. We also pre-seed
+  // _hitZombies with sourceZid so the per-bullet dedup explicitly skips it.
+  const _spawnOff = 22; // push the spawn point ahead of the source by this much
+  const _sx = srcX + Math.cos(_ang) * _spawnOff;
+  const _sy = srcY + Math.sin(_ang) * _spawnOff;
+  const _hz = new Set();
+  if (_ignoreZid != null) _hz.add(_ignoreZid);
   bullets.push({
-    x: srcX, y: srcY,
+    x: _sx, y: _sy,
     vx: Math.cos(_ang) * _speed, vy: Math.sin(_ang) * _speed,
     damage: _dmg, color: _color, size: 4, knockback: 2,
     pierce: _pierce, pierced: 0,
@@ -19243,6 +19251,7 @@ function fireArcBolt(srcX, srcY, opts) {
     _arcBolt: true, _arcColor: _color, _arcApplyCharged: _applyCh,
     _arcSourceZid: _ignoreZid || null,
     _arcSegSeed: Math.random() * 1000,
+    _hitZombies: _hz,
   });
   // Origin flash — punchy launch burst so even a random-direction bolt is
   // obviously fired. Wakering + 8 radial sparks + bright core flash + 1
@@ -25095,10 +25104,6 @@ function update() {
                     const _boltDmg = Math.max(8, Math.floor(_dmg * 0.4) + _chainBonus);
                     const _boltRange = 280 + (_m.staticChain >= 1 ? 80 : 0) + (arcLv >= 2 ? 40 : 0);
                     const _boltPierce = (_m.staticChain || 0) > 0 ? 1 : 0;
-                    // Diagnostic: floating CHAIN label on hit so the player can
-                    // visually confirm the chain block fired. Remove once we
-                    // verify bolts are visible end-to-end.
-                    addFloatingText(z.x, z.y - z.radius - 26, 'CHAIN', '#4ff');
                     for (let _bi = 0; _bi < _boltN; _bi++) {
                       fireArcBolt(z.x, z.y, {
                         damage: _boltDmg, range: _boltRange, pierce: _boltPierce,
