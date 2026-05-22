@@ -2245,8 +2245,8 @@ const UPGRADE_POOL = [
   { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:1, icon:'⚯', color:'#0ff',
     descs:['DEADSHOT kills fire a follow-up bolt at the nearest enemy (60% dmg).'], flavor:'execution protocol — one kill leads to another' },
   { id:'triple_tap', name:'TRIPLE TAP', rarity:'epic', max:1, icon:'⫶', color:'#0ff',
-    descs:['DEADSHOT at full charge fires 3 rapid shots (70% dmg each).'],
-    flavor:'three-round burst — no survivors' },
+    descs:['DEADSHOT at full charge fires 3 shots in a wide spread (60% dmg each).'],
+    flavor:'three-shot spread — wider net, no second look' },
   // ---- UTILITY ----
   { id:'swift', name:'SWIFT BOOTS', rarity:'common', max:1, icon:'»', color:'#0ff',
     descs:['+12% move speed.'], flavor:'motor daemons unclipped' },
@@ -2274,7 +2274,7 @@ const UPGRADE_POOL = [
   { id:'arc_death_discharge', name:'ARC DISCHARGE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['On CHARGED kill: fire 3 arc bolts (28 dmg, +CHARGED, 220px).'], flavor:'they die electric.', prereqs:['arc_rounds'] },
   { id:'arc_kill_burst', name:'ARC BURST', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['On CHARGED kill: fire 6 arc bolts radially (35 dmg, +CHARGED, 280px).'], flavor:'the node explodes.', prereqs:['static_chain'] },
+    descs:['On CHARGED kill: fire 6 arc bolts radially (35 dmg, +CHARGED, 220px).'], flavor:'the node explodes.', prereqs:['static_chain'] },
   { id:'overcharge_chain', name:'OVERCHARGE CHAIN', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['Detonated enemies become CHARGED.'], flavor:'the current never stops.', prereqs:['overcharge_dash'] },
   { id:'discharge_expose', name:'DISCHARGE EXPOSE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
@@ -2601,7 +2601,7 @@ const _TERM_GLOSSARY = {
   CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   CHARGED:      { color: '#4ff', desc: 'Arc conduit mark. Arc procs chain through Charged enemies at longer range.' },
-  EXPOSED:      { color: '#cef', desc: 'Pulse vulnerability. +20% damage taken, 2x knockback, wall collision damage, +15% crit chance.' },
+  EXPOSED:      { color: '#cef', desc: 'Pulse vulnerability. +20% damage taken, 3.2x knockback, wall collision damage, +15% crit chance.' },
   COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes +50% damage. Enemies deal 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking poison (0-5). At threshold, becomes COMPROMISED for 5 seconds.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
@@ -18248,11 +18248,12 @@ function updatePayload() {
         const dx = z.x - g.x, dy = z.y - g.y, d = Math.sqrt(dx*dx+dy*dy);
         if (d < radius + z.radius) {
           const closeness = 1 - d / (radius + z.radius);
-          // Base payload kb: 28 at edge, 50 at center (was 18-26).
-          // With PULSE PROTOCOL: 60 at edge, 130 at center — they FLY.
+          // Base payload kb: 55 at edge, 110 at center — payload should
+          // physically shove enemies, not just damage them. PULSE PROTOCOL
+          // doubles that into launch territory.
           const _pushF = _isPulsePayload
-            ? 60 + closeness * 70
-            : 28 + closeness * 22;
+            ? 100 + closeness * 110
+            : 55 + closeness * 55;
           let _finalDmg = Math.floor(dmg * closeness);
           // (sticky charge removed — replaced by bouncing payload)
           // silent=true: skip per-enemy hitflash particles. The detonation VFX
@@ -18430,7 +18431,7 @@ function updatePayload() {
         setTimeout(() => {
           if (isHost) {
             for (const z of zombies) { if (z.hp <= 0) continue; const ddx=z.x-cx,ddy=z.y-cy,dd=Math.sqrt(ddx*ddx+ddy*ddy);
-              if (dd < _cRadius + z.radius) { const _cl=1-dd/(_cRadius+z.radius); damageZombie(z, Math.floor(_cDmg*_cl), dd>1?(ddx/dd)*10:0, dd>1?(ddy/dd)*10:0, true); } }
+              if (dd < _cRadius + z.radius) { const _cl=1-dd/(_cRadius+z.radius); const _ckb=30+_cl*30; damageZombie(z, Math.floor(_cDmg*_cl), dd>1?(ddx/dd)*_ckb:0, dd>1?(ddy/dd)*_ckb:0, true); } }
           }
           // FULL explosion per cluster hit — same intensity as main
           particles.push({x:cx,y:cy,vx:0,vy:0,life:12,maxLife:12,size:_cRadius*1.5,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
@@ -19377,7 +19378,7 @@ function fireArcBolt(srcX, srcY, opts) {
   const _ownerId = opts.ownerId || (getLocalPlayer() && getLocalPlayer().id) || null;
   const _color = opts.color || '#4ff';
   const _dmg = Math.max(1, Math.floor(opts.damage != null ? opts.damage : 25));
-  const _range = opts.range || 320;
+  const _range = opts.range || 220;
   const _speed = opts.speed || 14;
   const _life = Math.max(8, Math.floor(_range / _speed)); // frames; range / speed
   const _applyCh = opts.applyCharged !== false; // default: re-mark CHARGED on hit
@@ -19385,6 +19386,13 @@ function fireArcBolt(srcX, srcY, opts) {
   const _ignoreZid = opts.sourceZid; // skip this zombie when picking a target
   // Target-pick: prefer nearest CHARGED enemy (creates obvious chains), else
   // nearest enemy of any kind, else a random direction.
+  //
+  // When prefAngle is provided (radial burst patterns like ARC BURST), restrict
+  // the search to a cone around the requested angle so all 6 bolts don't
+  // converge onto the single nearest enemy. Falls back to the raw prefAngle
+  // if nothing is in the cone.
+  const _hasPref = (typeof opts.prefAngle === 'number');
+  const _coneHalf = _hasPref ? 0.7 : Math.PI; // ~40° cone when pref-angle scoped
   let _bestZ = null, _bestD2 = _range * _range;
   let _chargedZ = null, _chargedD2 = _range * _range;
   for (const z of zombies) {
@@ -19392,6 +19400,14 @@ function fireArcBolt(srcX, srcY, opts) {
     if (_ignoreZid && z.zid === _ignoreZid) continue;
     const _dx = z.x - srcX, _dy = z.y - srcY;
     const _d2 = _dx*_dx + _dy*_dy;
+    if (_d2 > _bestD2 && _d2 > _chargedD2) continue;
+    if (_hasPref) {
+      const _zAng = Math.atan2(_dy, _dx);
+      let _aDelta = _zAng - opts.prefAngle;
+      while (_aDelta > Math.PI) _aDelta -= Math.PI*2;
+      while (_aDelta < -Math.PI) _aDelta += Math.PI*2;
+      if (Math.abs(_aDelta) > _coneHalf) continue;
+    }
     if (_d2 < _bestD2) { _bestD2 = _d2; _bestZ = z; }
     if (z._charged && _d2 < _chargedD2) { _chargedD2 = _d2; _chargedZ = z; }
   }
@@ -19399,7 +19415,7 @@ function fireArcBolt(srcX, srcY, opts) {
   let _ang;
   if (_tgt) {
     _ang = Math.atan2(_tgt.y - srcY, _tgt.x - srcX);
-  } else if (opts.prefAngle != null) {
+  } else if (_hasPref) {
     _ang = opts.prefAngle + (Math.random()-0.5) * 0.6;
   } else {
     _ang = Math.random() * Math.PI * 2;
@@ -19615,8 +19631,8 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
     const _lwMult = _modScale('syn_live_wire', 0.40, 0.05);
     for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<80){damageZombie(oz,Math.floor(dmg*_lwMult),0,0,true);}}
     for(let oi=0;oi<8;oi++){const oa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(oa)*5,vy:Math.sin(oa)*5,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f80':'#4ff',type:'spark'});}
-    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 220, sourceZid: z.zid });
-    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 220, sourceZid: z.zid });
+    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 160, sourceZid: z.zid });
+    fireArcBolt(z.x, z.y, { damage: Math.floor(dmg*_lwMult*0.75), range: 160, sourceZid: z.zid });
     screenShake.intensity = Math.max(screenShake.intensity, 5);
   }
   // FLASH BOIL: Overheated + Frozen → massive AoE explosion
@@ -19631,7 +19647,7 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
     damageZombie(z, Math.floor(z.maxHp * _modScale('syn_permafrost', 0.25, 0.05)), 0, 0);
     for(const oz of zombies){if(oz===z||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2);if(sd<90){applyCharged(oz);damageZombie(oz,20,0,0,true);}}
     for (let _pbi = 0; _pbi < 8; _pbi++) {
-      fireArcBolt(z.x, z.y, { damage: 20, range: 240, applyCharged: true,
+      fireArcBolt(z.x, z.y, { damage: 20, range: 170, applyCharged: true,
         prefAngle: (_pbi / 8) * Math.PI * 2, sourceZid: z.zid });
     }
     z._frozen = false; z._frozenTimer = 0;
@@ -19641,7 +19657,7 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   if (_m.synStormSurge && z._exposed && z._charged) {
     const _ssN = Math.min(7, _modScale('syn_storm_surge', 3, 1));
     for (let _ssi = 0; _ssi < _ssN; _ssi++) {
-      fireArcBolt(z.x, z.y, { damage: Math.floor(dmg * 0.3), range: 260,
+      fireArcBolt(z.x, z.y, { damage: Math.floor(dmg * 0.3), range: 180,
         applyCharged: true, sourceZid: z.zid });
     }
   }
@@ -19668,7 +19684,7 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
         // beyond the rod's detection radius so the bolt can reach if the target
         // moves a bit while the bolt travels.
         const _rodA = Math.atan2(_rdy, _rdx);
-        fireArcBolt(_sp.x, _sp.y, { damage: _rodDmg, range: 240,
+        fireArcBolt(_sp.x, _sp.y, { damage: _rodDmg, range: 170,
           applyCharged: true, prefAngle: _rodA });
         break;
       }
@@ -19685,7 +19701,7 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
     const _boltN = baseBolts + bonusBolts;
     const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
     const _boltDmg = Math.max(8, Math.floor(dmg * 0.4) + _chainBonus);
-    const _boltRange = 280 + (_m.staticChain >= 1 ? 80 : 0) + (arcLv >= 2 ? 40 : 0);
+    const _boltRange = 200 + (_m.staticChain >= 1 ? 50 : 0) + (arcLv >= 2 ? 25 : 0);
     const _boltPierce = (_m.staticChain || 0) > 0 ? 1 : 0;
     for (let _bi = 0; _bi < _boltN; _bi++) {
       fireArcBolt(z.x, z.y, {
@@ -20047,10 +20063,11 @@ function _fireDeadshot(lp) {
   // Heavy knockback always — even tap should send enemies flying.
   const knockback = 12 + chargePct * 18; // 12-30 (was 4-10)
   // Fire the shot — arrow-shaped projectile with trail
-  const _mkDeadshotBullet = (ox, oy, dmgMult) => {
+  const _mkDeadshotBullet = (ox, oy, dmgMult, angOverride) => {
+    const _ba = (typeof angOverride === 'number') ? angOverride : a;
     bullets.push({
-      x: ox + Math.cos(a)*24, y: oy + Math.sin(a)*24,
-      vx: Math.cos(a)*speed, vy: Math.sin(a)*speed,
+      x: ox + Math.cos(_ba)*24, y: oy + Math.sin(_ba)*24,
+      vx: Math.cos(_ba)*speed, vy: Math.sin(_ba)*speed,
       damage: Math.floor(baseDmg * dmgMult), color: bColor, size: bulletSize, knockback: knockback,
       pierce: pierce, pierced: 0, life: bulletLife, maxLife: bulletLife,
       flame: false, explosive: false, explosionRadius: 0,
@@ -20144,25 +20161,33 @@ function _fireDeadshot(lp) {
     playSound(1200, 0.04, 'square', 0.08);
     triggerGlitchSurge(0.4, 14);
   }
-  // TRIPLE TAP: 2 more rapid follow-up shots at full charge
+  // TRIPLE TAP: fires 3 shots in a WIDE spread simultaneously at full charge.
+  // (Was 3 rapid sequential shots on the same angle — they all hit the same
+  // target = ~210% damage to one enemy = OP. Spread shifts the value from
+  // single-target nuke to crowd sweep, scaled down to 60% each.)
   if (_m.tripleTap && chargePct >= 1.0) {
-    const _ttColor = bColor, _ttA = a;
-    const _ttMult = _modScale('triple_tap', 0.70, 0.05);
-    for (let ti = 1; ti <= 2; ti++) {
-      setTimeout(() => {
-        const _tLp = getLocalPlayer();
-        if (!_tLp || !_tLp.alive) return;
-        _mkDeadshotBullet(_tLp.x, _tLp.y, _ttMult);
-        for (let i = 0; i < 4; i++) {
-          const fa2 = _ttA + (Math.random()-0.5)*0.5, fs2 = 2+Math.random()*3;
-          particles.push({ x: _tLp.x+Math.cos(_ttA)*24, y: _tLp.y+Math.sin(_ttA)*24,
-            vx: Math.cos(fa2)*fs2, vy: Math.sin(fa2)*fs2,
-            life: 6, maxLife: 6, size: 2+Math.random(), color: _ttColor, type: 'spark' });
-        }
-        screenShake.intensity = Math.max(screenShake.intensity, 5);
-        playSound(120, 0.08, 'square', 0.06);
-      }, ti * 80);
+    const _ttColor = bColor;
+    const _ttMult = _modScale('triple_tap', 0.60, 0.04);
+    // Reduce the center shot to the spread damage (don't stack triple-tap on
+    // top of the full-power original) so the card's behavior matches the copy.
+    // bullets[bullets.length-1] is the just-fired center round.
+    const _last = bullets[bullets.length - 1];
+    if (_last && _last._deadshotRound) {
+      _last.damage = Math.floor((_last.damage / 1) * _ttMult);
     }
+    const _spread = 0.32; // ~18° on each side
+    [-_spread, _spread].forEach(_off => {
+      _mkDeadshotBullet(lp.x, lp.y, _ttMult, a + _off);
+    });
+    // Brief radial flare to sell the spread shot
+    for (let i = 0; i < 10; i++) {
+      const _fa = a + (Math.random()-0.5) * (_spread * 2.5);
+      const _fs = 2 + Math.random() * 3;
+      particles.push({ x: lp.x + Math.cos(a)*24, y: lp.y + Math.sin(a)*24,
+        vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs,
+        life: 8, maxLife: 8, size: 2+Math.random(), color: _ttColor, type: 'spark' });
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
   }
 }
 
@@ -20364,7 +20389,9 @@ function applyDashTrailEffects(lp) {
       if (dx*dx + dy*dy > stormR*stormR) continue;
       hitSet.add(z.zid);
       damageZombie(z, _swDmg, 0, 0);
-      applyCharged(z);
+      // Storm dash no longer applies CHARGED — it was indirectly firing the
+      // universal-chain bolt swarm on every dashed enemy, swamping the
+      // screen and gating the dash's identity behind arc rounds.
       z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
       // Lightning bolt from player to enemy
       particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
@@ -20377,7 +20404,7 @@ function applyDashTrailEffects(lp) {
       if (_m.staticWake >= 2) {
         let bestD = 10000, bestZ = null;
         for (const oz of zombies) { if (oz === z || oz.hp <= 0 || hitSet.has(oz.zid)) continue; const d2 = (oz.x-z.x)**2+(oz.y-z.y)**2; if (d2 < bestD && d2 < 22500) { bestD = d2; bestZ = oz; } }
-        if (bestZ) { damageZombie(bestZ, 15, 0, 0); applyCharged(bestZ); hitSet.add(bestZ.zid);
+        if (bestZ) { damageZombie(bestZ, 15, 0, 0); hitSet.add(bestZ.zid);
           particles.push({x:z.x,y:z.y,vx:0,vy:0,life:18,maxLife:18,size:1.5,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
           for (let si=0;si<4;si++){const sa=Math.random()*Math.PI*2;particles.push({x:bestZ.x,y:bestZ.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#fff',type:'spark'});}
         }
@@ -21277,8 +21304,8 @@ const ARCADE_WAVE_TYPES = {
   heavy_metal:  { name: 'HEAVY METAL',   sub: 'Tanks rolling in — hit and run.',     color: '#fa0', accent: '#f44', icon: '⚙',
                   types: ['tank','brute','tank','bull','normal'],
                   countMult: 0.55, hpMult: 1.15, speedMult: 0.85 },
-  showdown:     { name: 'SHOWDOWN',      sub: 'Snipers + spitters — break lines.',   color: '#a4f', accent: '#f0f', icon: '⌖',
-                  types: ['mini','spitter','strafe','spitter','normal'],
+  showdown:     { name: 'SHOWDOWN',      sub: 'Spitters break the line — close them out.', color: '#a4f', accent: '#f0f', icon: '⌖',
+                  types: ['mini','spitter','mini','spitter','normal'],
                   countMult: 0.80, hpMult: 0.90, speedMult: 1.00 },
   elite_guard:  { name: 'ELITE GUARD',   sub: 'Heavy hitters only — no filler.',     color: '#f44', accent: '#fa0', icon: '✦',
                   types: ['brute','splitter','exploder','reaper','lash'],
@@ -22864,8 +22891,10 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const prevHp=z.hp;
   // Knockback scales inversely with size — bigger/heavier zombies resist more.
   const kbScale = Math.pow(13 / (z.radius || 13), 2);
-  // EXPOSED: 2x knockback + track pre-knockback speed for wall collision damage
-  const _exposedKbMult = z._exposed ? 2.0 : 1.0;
+  // EXPOSED: 3.2x knockback + track pre-knockback speed for wall collision
+  // damage. Heavier than the old 2x so the status reads as "they go FLYING"
+  // — supports the "wall slam = bonus damage" loop the card promises.
+  const _exposedKbMult = z._exposed ? 3.2 : 1.0;
   const _preVx = z.vx, _preVy = z.vy;
   // Stronger hitFlash on crits so the 1-2 frame white flash actually reads.
   const _critHit = damage >= 50;
@@ -23054,7 +23083,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       const _akR = _modScale('arc_kill_burst', 120, 12);
       const _akN = 6;
       for (let _ki = 0; _ki < _akN; _ki++) {
-        fireArcBolt(z.x, z.y, { damage: 35, range: _akR + 160, applyCharged: true,
+        fireArcBolt(z.x, z.y, { damage: 35, range: _akR + 100, applyCharged: true,
           prefAngle: (_ki / _akN) * Math.PI * 2, sourceZid: z.zid });
       }
     }
@@ -23062,7 +23091,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     else if ((runMods||{}).arcDeathDischarge && z._charged && _arcBoltDepth === 0) {
       const _adR = _modScale('arc_death_discharge', 80, 10);
       for (let _di = 0; _di < 3; _di++) {
-        fireArcBolt(z.x, z.y, { damage: 28, range: _adR + 140, applyCharged: true,
+        fireArcBolt(z.x, z.y, { damage: 28, range: _adR + 80, applyCharged: true,
           sourceZid: z.zid });
       }
     }
@@ -23071,7 +23100,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE makes bolts re-charge targets
       const _sbDmg = _modScale('surge_break', 40, 7);
       for (let _oi = 0; _oi < 4; _oi++) {
-        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 260, applyCharged: _applyCh,
+        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 180, applyCharged: _applyCh,
           prefAngle: (_oi / 4) * Math.PI * 2, sourceZid: z.zid });
       }
     }
@@ -23239,7 +23268,7 @@ function damagePlayerObj(p,damage,attacker) {
   // intentional tradeoff for a projectile-style retaliation.
   if (p === getLocalPlayer() && runMods && runMods.voltaicArmor && attacker && attacker.hp > 0 && isHost) {
     const _vaAng = Math.atan2(attacker.y - p.y, attacker.x - p.x);
-    fireArcBolt(p.x, p.y, { damage: _modScale('voltaic_armor', 30, 6), range: 320, applyCharged: true,
+    fireArcBolt(p.x, p.y, { damage: _modScale('voltaic_armor', 30, 6), range: 220, applyCharged: true,
       prefAngle: _vaAng });
     playSound(900 + Math.random()*300, 0.05, 'sawtooth', 0.04);
   }
@@ -25298,7 +25327,7 @@ function update() {
                     const _boltN = baseBolts + bonusBolts;
                     const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
                     const _boltDmg = Math.max(8, Math.floor(_dmg * 0.4) + _chainBonus);
-                    const _boltRange = 280 + (_m.staticChain >= 1 ? 80 : 0) + (arcLv >= 2 ? 40 : 0);
+                    const _boltRange = 200 + (_m.staticChain >= 1 ? 50 : 0) + (arcLv >= 2 ? 25 : 0);
                     const _boltPierce = (_m.staticChain || 0) > 0 ? 1 : 0;
                     for (let _bi = 0; _bi < _boltN; _bi++) {
                       fireArcBolt(z.x, z.y, {
