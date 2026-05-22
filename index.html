@@ -2600,7 +2600,7 @@ const _TERM_GLOSSARY = {
   CHILL:        { color: '#8ef', desc: 'Cryo slow. Each stack reduces enemy speed by 20%. At max stacks, enemy freezes.' },
   CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
-  CHARGED:      { color: '#4ff', desc: 'Arc conduit mark. Arc procs chain through Charged enemies at longer range.' },
+  CHARGED:      { color: '#ff4', desc: 'Arc conduit mark. Arc procs chain through Charged enemies at longer range.' },
   EXPOSED:      { color: '#cef', desc: 'Pulse vulnerability. +20% damage taken, 3.2x knockback, wall collision damage, +15% crit chance.' },
   COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes +50% damage. Enemies deal 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking poison (0-5). At threshold, becomes COMPROMISED for 5 seconds.' },
@@ -15708,19 +15708,40 @@ function throwSpike() {
 
     if (_classId === 'eruption') {
       // ======== THERMAL MINE — deploy armed mine at player feet ========
+      // Wider blast radius so the payoff feels worth the deploy beat.
+      const _erR = 130 * _radW;
       spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'eruption',
-        phase: 'armed', _ring: true, _ringR: 90 * _radW, _erDmg: _modScale('eruption_ring', 100, 15),
+        phase: 'armed', _ring: true, _ringR: _erR, _erDmg: _modScale('eruption_ring', 100, 15),
         lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
-      // Deploy VFX — subtle fire puff + placement sound
-      for (let i = 0; i < 8; i++) {
-        const ba = Math.random()*Math.PI*2, bs = 1+Math.random()*2;
+      // Deploy VFX — readable "MINE ARMED" beat: ring + radial sparks + ember
+      // cloud + ground scorch + audible clack-and-prime.
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 16, maxLife: 16,
+        size: 70, color: '#f80', type: 'wakering' });
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 10, maxLife: 10,
+        size: 36, color: '#fa0', type: 'wakering' });
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 6, maxLife: 6,
+        size: 14, color: '#fff', type: 'spark' });
+      for (let i = 0; i < 22; i++) {
+        const ba = (i / 22) * Math.PI * 2 + Math.random() * 0.3;
+        const bs = 2.5 + Math.random() * 4;
         particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 12, maxLife: 12, size: 2+Math.random()*2,
-          color: ['#f80','#fa0'][Math.floor(Math.random()*2)], type: 'spark' });
+          life: 14 + Math.random()*6, maxLife: 20, size: 2+Math.random()*2.5,
+          color: ['#f80','#fa0','#ff4','#fff'][Math.floor(Math.random()*4)], type: 'spark' });
       }
-      decals.push({ type: 'scorch', x: px, y: py, size: 8, color: 'rgba(255,120,0,0.3)', alpha: 0.3 });
-      playSound(400, 0.05, 'sine', 0.08);
-      playSound(200, 0.04, 'square', 0.04);
+      // Rising ember mist so the armed mine has lingering presence
+      for (let i = 0; i < 6; i++) {
+        const ea = Math.random()*Math.PI*2;
+        particles.push({ x: px + Math.cos(ea)*8, y: py + Math.sin(ea)*8,
+          vx: (Math.random()-0.5)*0.6, vy: -1 - Math.random()*1.2,
+          life: 26 + Math.random()*10, maxLife: 36, size: 5+Math.random()*4,
+          color: '#420', type: 'smoke', _smokeAlpha: 0.32 + Math.random()*0.12 });
+      }
+      decals.push({ type: 'scorch', x: px, y: py, size: 24, color: 'rgba(255,120,0,0.5)', alpha: 0.5 });
+      decals.push({ type: 'scorch', x: px, y: py, size: 40, color: 'rgba(60,20,0,0.3)', alpha: 0.3 });
+      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      playSound(380, 0.06, 'square', 0.10);
+      playSound(180, 0.05, 'sawtooth', 0.06);
+      setTimeout(() => playSound(700, 0.05, 'sine', 0.05), 80);
 
     } else if (_classId === 'cryodome') {
       // ======== CRYO BLAST — gas cloud forward then ice wall at end ========
@@ -16533,13 +16554,20 @@ function _updateRingZone(sp, _radBoost) {
       }
       // Remote detonation flag
       if (sp._detonate) { _detonateMine(sp); return; }
-      // Armed idle VFX — pulsing glow + occasional ember
-      if (sp._pulseTimer % 4 === 0) {
+      // Armed idle VFX — louder pulsing ring + embers so the mine reads as
+      // "there is a thing on the ground". Pulse cadence matches a heartbeat.
+      if (sp._pulseTimer % 30 === 0) {
+        // Slow pulsing red ring — clearly visible from a distance
+        particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 22, maxLife: 22,
+          size: 26, color: '#f40', type: 'wakering' });
+        playSound(420, 0.025, 'sine', 0.025);
+      }
+      if (sp._pulseTimer % 2 === 0) {
         const fa = Math.random()*Math.PI*2;
-        particles.push({ x: sp.x+Math.cos(fa)*6, y: sp.y+Math.sin(fa)*6,
-          vx: Math.cos(fa)*0.5, vy: -1-Math.random()*0.8,
-          life: 12, maxLife: 12, size: 1.5+Math.random(),
-          color: ['#f80','#fa0'][Math.floor(Math.random()*2)], type: 'spark' });
+        particles.push({ x: sp.x+Math.cos(fa)*8, y: sp.y+Math.sin(fa)*8,
+          vx: Math.cos(fa)*0.6, vy: -1.2-Math.random()*0.9,
+          life: 14, maxLife: 14, size: 2+Math.random()*1.4,
+          color: ['#f80','#fa0','#ff4'][Math.floor(Math.random()*3)], type: 'spark' });
       }
       sp.lifetime--;
     }
@@ -17917,31 +17945,34 @@ function updateDischarge() {
       // fall through — damage logic below still runs at the boundary
     }
   }
-  // ---- WISPY INTERIOR SMOKE ----
-  // Soft cloud puffs drifting upward inside the wave's borders. Emits during
-  // BOTH expansion and linger so the interior stays alive as the rim thins
-  // down to a hairline. These are bigger and longer-lived than the dust trail.
+  // ---- WISPY INTERIOR SMOKE / GAS ----
+  // The wave reads as a thick rolling gas cloud — interior gets MORE puffs,
+  // bigger size, and longer life so the cloud body is clearly visible (the
+  // old emit was too sparse to read against dark backgrounds).
   {
-    const _wCount = 2 + Math.floor((w.chargePct || 0.5) * 2);
+    const _wCount = 5 + Math.floor((w.chargePct || 0.5) * 4); // was 2 + …*2
     for (let _wi = 0; _wi < _wCount; _wi++) {
       const _wa = Math.random() * Math.PI * 2;
-      const _wr = w.radius * (0.05 + Math.random() * 0.75);
+      const _wr = w.radius * (0.05 + Math.random() * 0.85);
       particles.push({ x: w.x + Math.cos(_wa) * _wr, y: w.y + Math.sin(_wa) * _wr,
-        vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.6,
-        life: 30 + Math.random() * 18, maxLife: 48,
-        size: 6 + Math.random() * 5,
+        vx: (Math.random() - 0.5) * 0.5, vy: -0.25 - Math.random() * 0.7,
+        life: 42 + Math.random() * 22, maxLife: 64,
+        size: 9 + Math.random() * 7,
         color: Math.random() > 0.55 ? '#bbb' : '#888', type: 'smoke',
-        _smokeAlpha: 0.16 + Math.random() * 0.10 });
+        _smokeAlpha: 0.24 + Math.random() * 0.14 });
     }
-    // A few class-tinted wisps for color identity
-    if (gameTime % 2 === 0) {
-      const _ca = Math.random() * Math.PI * 2;
-      const _cr = w.radius * (0.1 + Math.random() * 0.7);
-      particles.push({ x: w.x + Math.cos(_ca) * _cr, y: w.y + Math.sin(_ca) * _cr,
-        vx: (Math.random() - 0.5) * 0.3, vy: -0.3 - Math.random() * 0.4,
-        life: 26 + Math.random() * 12, maxLife: 38,
-        size: 5 + Math.random() * 4,
-        color: w.color, type: 'smoke', _smokeAlpha: 0.12 });
+    // Class-tinted wisps — denser + brighter so the discharge's color reads.
+    {
+      const _ctCount = 2 + Math.floor((w.chargePct || 0.5) * 2);
+      for (let _ti = 0; _ti < _ctCount; _ti++) {
+        const _ca = Math.random() * Math.PI * 2;
+        const _cr = w.radius * (0.1 + Math.random() * 0.8);
+        particles.push({ x: w.x + Math.cos(_ca) * _cr, y: w.y + Math.sin(_ca) * _cr,
+          vx: (Math.random() - 0.5) * 0.4, vy: -0.35 - Math.random() * 0.5,
+          life: 36 + Math.random() * 18, maxLife: 54,
+          size: 7 + Math.random() * 6,
+          color: w.color, type: 'smoke', _smokeAlpha: 0.22 + Math.random() * 0.12 });
+      }
     }
   }
   const halfAngle = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
@@ -19588,6 +19619,34 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
     z.vy += Math.sin(attackAngle) * pushF;
     const stag = 10 + (_m.vectorSnap || 0) * 10;
     z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
+    // Pulse-y VFX (not electric): concentric shockwave rings + white air-pressure
+    // puffs along the strike vector. Reads as compressed air slamming into the
+    // target — NO lightning bolts, NO bright cyan sparks.
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+      size: 26 + _m.pulseShotLv * 4, color: '#cef', type: 'wakering' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+      size: 16 + _m.pulseShotLv * 3, color: '#fff', type: 'wakering' });
+    // White air-pressure puffs cone forward in the strike direction
+    for (let _pi = 0; _pi < 5; _pi++) {
+      const _pa = attackAngle + (Math.random()-0.5) * 0.9;
+      const _ps = 1.2 + Math.random() * 1.6;
+      particles.push({
+        x: z.x + Math.cos(_pa) * 4, y: z.y + Math.sin(_pa) * 4,
+        vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps,
+        life: 18 + Math.floor(Math.random() * 6), maxLife: 24,
+        size: 5 + Math.random() * 3,
+        color: Math.random() > 0.5 ? '#eef' : '#cdf',
+        type: 'smoke', _smokeAlpha: 0.28 + Math.random() * 0.10,
+      });
+    }
+    // Two small forward dust streaks — visible push direction, no electricity
+    for (let _di = 0; _di < 2; _di++) {
+      const _da = attackAngle + (_di === 0 ? -0.25 : 0.25);
+      particles.push({ x: z.x, y: z.y,
+        vx: Math.cos(_da) * 3.2, vy: Math.sin(_da) * 3.2,
+        life: 12, maxLife: 12, size: 2 + Math.random(),
+        color: '#fff', type: 'spark' });
+    }
   }
   // VIRAL PAYLOAD
   if (_m.viralPayloadLv > 0) {
@@ -19697,7 +19756,9 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
   if (z._charged) {
     const arcLv = _m.arcRoundsLv || 0;
     const baseBolts = Math.max(1, arcLv);
-    const bonusBolts = Math.min(6, (_m.staticChain || 0) * 2);
+    // Chain lightning rarity dialed back — was up to 6 bonus bolts per hit
+    // which flooded the screen. Now 1:1 with static_chain stacks, capped at 3.
+    const bonusBolts = Math.min(3, (_m.staticChain || 0));
     const _boltN = baseBolts + bonusBolts;
     const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
     const _boltDmg = Math.max(8, Math.floor(dmg * 0.4) + _chainBonus);
@@ -25323,7 +25384,7 @@ function update() {
                   if (_isLocal && z._charged) {
                     const arcLv = _m.arcRoundsLv || 0;
                     const baseBolts = Math.max(1, arcLv);
-                    const bonusBolts = Math.min(6, (_m.staticChain || 0) * 2);
+                    const bonusBolts = Math.min(3, (_m.staticChain || 0));
                     const _boltN = baseBolts + bonusBolts;
                     const _chainBonus = _m.staticChain > 0 ? _modScale('static_chain', 30, 7) : 0;
                     const _boltDmg = Math.max(8, Math.floor(_dmg * 0.4) + _chainBonus);
@@ -25608,7 +25669,7 @@ function update() {
       // Legacy slow compat
       else if(z._slowTimer>0){z._slowTimer--;z.speed=ZOMBIE_TYPES[z.type]?(ZOMBIE_TYPES[z.type].speed*0.3):0.5;if(z._slowTimer<=0)z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}
       // CHARGED: tick down conduit mark (spark spawn halved from every 4 to every 8 frames)
-      if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(((gameTime+z.zid)%8===0)&&_statusParticleBudget>0){_statusParticleBudget--;const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#4ff',type:'spark'});}}
+      if(z._charged&&z._chargedTimer>0){z._chargedTimer--;if(z._chargedTimer<=0)z._charged=false;if(((gameTime+z.zid)%8===0)&&_statusParticleBudget>0){_statusParticleBudget--;const sa=Math.random()*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*(z.radius+4),y:z.y+Math.sin(sa)*(z.radius+4),vx:Math.cos(sa)*2,vy:Math.sin(sa)*2,life:6,maxLife:6,size:1.5+Math.random(),color:'#ff4',type:'spark'});}}
       if(z._shockImmune>0)z._shockImmune--;
       // EXPOSED: tick down vulnerability mark
       if(z._exposed&&z._exposedTimer>0){z._exposedTimer--;if(z._exposedTimer<=0)z._exposed=false;}
@@ -31176,35 +31237,52 @@ function render() {
         }
         ctx.save(); ctx.translate(sp.x, sp.y);
       } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
-        // MINE: circular body with blinking red light
-        const _blink = Math.sin(_spt * 0.008) > 0.3;
-        const _mR = 10;
-        // Dark body
-        ctx.fillStyle = '#1a0a00';
+        // MINE: chunkier body + bigger blinking red light + faint danger ring
+        // around the blast radius so the player can see the threat area at a
+        // glance (was nearly invisible in dark stages).
+        const _blink = Math.sin(_spt * 0.012) > 0.0;
+        const _mR = 14;
+        // Faint pulsing danger ring at the blast radius (very subtle)
+        if (sp._ringR) {
+          ctx.globalAlpha = 0.10 + 0.06 * Math.max(0, Math.sin(_spt * 0.008));
+          ctx.strokeStyle = '#f60';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, sp._ringR * 0.55, 0, Math.PI*2);
+          ctx.stroke();
+        }
+        // Outer dark glow (fake-glow: bigger dim disk behind the body)
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = '#420';
+        ctx.beginPath(); ctx.arc(0, 0, _mR + 6, 0, Math.PI*2); ctx.fill();
+        // Body
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#220a00';
         ctx.beginPath(); ctx.arc(0, 0, _mR, 0, Math.PI*2); ctx.fill();
-        // Orange rim
-        ctx.strokeStyle = '#f80'; ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.7;
+        // Bright orange rim — thicker so it stands out
+        ctx.strokeStyle = '#fa0'; ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.95;
         ctx.beginPath(); ctx.arc(0, 0, _mR, 0, Math.PI*2); ctx.stroke();
-        // Inner segments (mine look)
-        ctx.strokeStyle = '#a50'; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
-        for (let i = 0; i < 4; i++) {
-          const sa = (i/4)*Math.PI*2;
+        // Inner segments — mine plate look
+        ctx.strokeStyle = '#c60'; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.7;
+        for (let i = 0; i < 6; i++) {
+          const sa = (i/6)*Math.PI*2;
           ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(sa)*_mR, Math.sin(sa)*_mR); ctx.stroke();
         }
-        // Blinking red LED
+        // Blinking red LED (bigger + faster + larger glow)
         if (_blink) {
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = '#f22';
-          ctx.beginPath(); ctx.arc(0, -1, 3, 0, Math.PI*2); ctx.fill();
-          // LED glow
-          ctx.globalAlpha = 0.4;
+          ctx.globalAlpha = 0.5; // fake-glow halo
           ctx.fillStyle = '#f44';
-          ctx.beginPath(); ctx.arc(0, -1, 7, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(0, -1, 12, 0, Math.PI*2); ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#f44';
+          ctx.beginPath(); ctx.arc(0, -1, 5, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(0, -1, 2, 0, Math.PI*2); ctx.fill();
         } else {
-          ctx.globalAlpha = 0.4;
-          ctx.fillStyle = '#600';
-          ctx.beginPath(); ctx.arc(0, -1, 2.5, 0, Math.PI*2); ctx.fill();
+          ctx.globalAlpha = 0.6;
+          ctx.fillStyle = '#a00';
+          ctx.beginPath(); ctx.arc(0, -1, 4, 0, Math.PI*2); ctx.fill();
         }
         ctx.globalAlpha = 1;
       }
@@ -32347,7 +32425,7 @@ function render() {
       ctx.globalAlpha=1;
     }
     // Charged: electrical arcs across body + cyan flicker
-    if(z._charged){ctx.globalAlpha=0.6;ctx.shadowColor='#4ff';ctx.shadowBlur=10;for(let ci=0;ci<4;ci++){const a1=Math.random()*Math.PI*2,a2=a1+Math.random()*1.5;ctx.strokeStyle=Math.random()>0.3?'#4ff':'#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(Math.cos(a1)*z.radius*0.5,Math.sin(a1)*z.radius*0.5);const mx=Math.cos((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6,my=Math.sin((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6;ctx.lineTo(mx,my);ctx.lineTo(Math.cos(a2)*z.radius*0.5,Math.sin(a2)*z.radius*0.5);ctx.stroke();}ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    if(z._charged){ctx.globalAlpha=0.6;for(let ci=0;ci<4;ci++){const a1=Math.random()*Math.PI*2,a2=a1+Math.random()*1.5;ctx.strokeStyle=Math.random()>0.3?'#ff4':'#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(Math.cos(a1)*z.radius*0.5,Math.sin(a1)*z.radius*0.5);const mx=Math.cos((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6,my=Math.sin((a1+a2)/2)*(z.radius*0.8)+(Math.random()-0.5)*6;ctx.lineTo(mx,my);ctx.lineTo(Math.cos(a2)*z.radius*0.5,Math.sin(a2)*z.radius*0.5);ctx.stroke();}ctx.globalAlpha=1;}
     // Exposed: pulsing target reticle + vulnerability shimmer
     if(z._exposed){const _ep=0.4+Math.sin(performance.now()*0.008)*0.3;ctx.globalAlpha=_ep;ctx.strokeStyle='#cef';ctx.lineWidth=2;ctx.shadowColor='#cef';ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,z.radius+6,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(0,-z.radius-10);ctx.lineTo(0,-z.radius-4);ctx.moveTo(0,z.radius+4);ctx.lineTo(0,z.radius+10);ctx.moveTo(-z.radius-10,0);ctx.lineTo(-z.radius-4,0);ctx.moveTo(z.radius+4,0);ctx.lineTo(z.radius+10,0);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
     // Tracer mark: pulsing red diamond reticle
@@ -32414,7 +32492,7 @@ function render() {
         // Pick rim color: status > element > default red
         let _rimColor = '#f55';
         if (z._frozen || (z._chill || 0) >= 3) _rimColor = '#cff';
-        else if (z._charged || (z._shocked || 0) > 0) _rimColor = '#4ff';
+        else if (z._charged || (z._shocked || 0) > 0) _rimColor = '#ff4';
         else if (z._compromised || (z._corrupt || 0) > 0) _rimColor = '#f0f';
         else if (z._overheat > 0) _rimColor = z._overheat >= 4 ? '#fc4' : '#fa0';
         ctx.strokeStyle = _rimColor;
