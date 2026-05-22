@@ -10983,7 +10983,7 @@ function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawto
 function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } hapticPickup(); }
 function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); hapticDash(); }
 function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); hapticHurt(); }
-function playExplosionSound() { if (!playSfx('explosion', 0.7)) { playSound(60,0.3,'sawtooth',0.25); playSound(40,0.4,'square',0.15); } hapticExplosion(); }
+function playExplosionSound() { if (!playSfx('explosion', 0.4)) { playSound(60,0.25,'sawtooth',0.14); playSound(40,0.3,'square',0.08); } hapticExplosion(); }
 function playIgniteSound() { if (!playSfx('ignite', 0.25)) { playSound(200,0.12,'sawtooth',0.08); playSound(120,0.18,'square',0.05); } haptic(10, 100); }
 function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
 function playRepairSound() {
@@ -15710,9 +15710,15 @@ function throwSpike() {
       // ======== THERMAL MINE — deploy armed mine at player feet ========
       // Wider blast radius so the payoff feels worth the deploy beat.
       const _erR = 130 * _radW;
-      spikes.push({ x: px, y: py, ownerId: lp.id, classId: 'eruption',
-        phase: 'armed', _ring: true, _ringR: _erR, _erDmg: _modScale('eruption_ring', 100, 15),
-        lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
+      const _placeMine = (ox, oy) => {
+        spikes.push({ x: ox, y: oy, ownerId: lp.id, classId: 'eruption',
+          phase: 'armed', _ring: true, _ringR: _erR, _erDmg: _modScale('eruption_ring', 100, 15),
+          lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
+      };
+      _placeMine(px, py);
+      // TWIN SPIKE: drop a second mine 40px ahead so the player can frame
+      // a kill funnel (one at feet for fallback, one ahead as the trigger).
+      if (_twin) _placeMine(px + Math.cos(a) * 40, py + Math.sin(a) * 40);
       // Deploy VFX — readable "MINE ARMED" beat: ring + radial sparks + ember
       // cloud + ground scorch + audible clack-and-prime.
       particles.push({ x: px, y: py, vx: 0, vy: 0, life: 16, maxLife: 16,
@@ -15786,12 +15792,17 @@ function throwSpike() {
 
     } else if (_classId === 'discharge') {
       // ======== CHAIN BOLT — bouncing electric projectile that chains through uncharged enemies ========
-      spikes.push({ x: sx, y: sy, ownerId: lp.id, classId: 'discharge',
-        phase: 'flying', _ring: true,
-        vx: Math.cos(a) * 14, vy: Math.sin(a) * 14,
-        travel: 0, _bounces: 0, _maxBounces: 6,
-        _chainedSet: new Set(), // zids already chained — skip charged
-        lifetime: Math.floor(180 * _persist), maxLife: 180, _pulseTimer: 0 });
+      const _spawnChainBolt = (offsetA) => {
+        const _aA = a + offsetA;
+        spikes.push({ x: sx, y: sy, ownerId: lp.id, classId: 'discharge',
+          phase: 'flying', _ring: true,
+          vx: Math.cos(_aA) * 14, vy: Math.sin(_aA) * 14,
+          travel: 0, _bounces: 0, _maxBounces: 6,
+          _chainedSet: new Set(), // zids already chained — skip charged
+          lifetime: Math.floor(180 * _persist), maxLife: 180, _pulseTimer: 0 });
+      };
+      _spawnChainBolt(0);
+      if (_twin) _spawnChainBolt(0.18);
       // Launch VFX
       for (let i = 0; i < 10; i++) {
         const pa = a + (Math.random()-0.5)*0.6, ps = 3+Math.random()*5;
@@ -15805,7 +15816,10 @@ function throwSpike() {
 
     } else if (_classId === 'impact') {
       // ======== KINETIC NOVA — MASSIVE 360° pulse wave, enemies SLIDE across the room ========
-      const _r = _modScale('impact_ring', 200, 25) * 0.8 * _radW;
+      // TWIN SPIKE: +28% radius. (Firing two stacked novas at the same point
+      // would just double-damage; a bigger blast reads as the actual upgrade.)
+      const _twinR = _twin ? 1.28 : 1;
+      const _r = _modScale('impact_ring', 200, 25) * 0.8 * _radW * _twinR;
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - px, dy = z.y - py;
@@ -18445,11 +18459,13 @@ function updatePayload() {
     }
     screenShake.intensity = Math.max(screenShake.intensity, 16);
     triggerGlitchSurge(0.4, 16);
-    playSound(20, 0.45, 'sawtooth', 0.22);
-    playSound(50, 0.35, 'square', 0.16);
-    playSound(100, 0.2, 'square', 0.1);
-    setTimeout(() => playSound(150, 0.12, 'sawtooth', 0.08), 50);
-    setTimeout(() => playSound(400, 0.06, 'sine', 0.04), 100);
+    // Bomb detonation audio — overall ~45% quieter (was overwhelming on
+    // mobile speakers, especially with cluster bomb's secondary layers).
+    playSound(20, 0.40, 'sawtooth', 0.12);
+    playSound(50, 0.30, 'square', 0.09);
+    playSound(100, 0.18, 'square', 0.06);
+    setTimeout(() => playSound(150, 0.10, 'sawtooth', 0.05), 50);
+    setTimeout(() => playSound(400, 0.05, 'sine', 0.03), 100);
     // CLUSTER BOMB: 3 or 5 EQUAL explosions around the main impact
     if (_m.clusterBomb > 0) {
       const count = Math.min(8, _modScale('cluster_bomb', 3, 1));
@@ -18479,7 +18495,7 @@ function updatePayload() {
             burnoutPuddles.push({ x: cx, y: cy, radius: _nR, life: _nL, maxLife: _nL });
           }
           screenShake.intensity = Math.max(screenShake.intensity, 10);
-          playSound(40, 0.2, 'sawtooth', 0.1); playSound(80, 0.15, 'square', 0.08);
+          playSound(40, 0.18, 'sawtooth', 0.06); playSound(80, 0.12, 'square', 0.05);
         }, 80 + ci * 60);
       }
     }
@@ -24795,6 +24811,41 @@ function update() {
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
+    // ---- DEADSHOT EXCEPTION: deadshot bullets ARE fast (speed 30) but should
+    // still respect walls. Sweep this frame's path in 5px substeps and stop
+    // at the first obstacle so they can't tunnel through.
+    if (b._deadshotRound && !b.grenade) {
+      const _dStepSize = 5;
+      const _dDist = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
+      const _dSteps = Math.max(1, Math.ceil(_dDist / _dStepSize));
+      const _dxs = b.vx / _dSteps, _dys = b.vy / _dSteps;
+      let _dHit = false, _dHx = b.x, _dHy = b.y;
+      // Sweep from this frame's START position forward; b.x/b.y already
+      // include the full step from line 24802. Walk back to _bpx then check.
+      let _scanX = _bpx, _scanY = _bpy;
+      for (let _ds = 0; _ds < _dSteps; _ds++) {
+        _scanX += _dxs; _scanY += _dys;
+        if (obstacleCollision(_scanX, _scanY, b.size, true)) {
+          _dHit = true; _dHx = _scanX; _dHy = _scanY; break;
+        }
+      }
+      if (_dHit) {
+        b.x = _dHx; b.y = _dHy;
+        // Wall splash — bright sparks back along the trajectory
+        const _wBack = Math.atan2(-b.vy, -b.vx);
+        const _wCol = b.color || '#0ff';
+        for (let _ws = 0; _ws < 10; _ws++) {
+          const _wsa = _wBack + (Math.random() - 0.5) * 1.6;
+          const _wss = 2 + Math.random() * 4;
+          particles.push({ x: b.x, y: b.y, vx: Math.cos(_wsa) * _wss, vy: Math.sin(_wsa) * _wss,
+            life: 12 + Math.random() * 8, maxLife: 22, size: 2 + Math.random() * 2,
+            color: Math.random() > 0.5 ? _wCol : '#fff', type: 'spark' });
+        }
+        particles.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 6, color: '#fff', type: 'spark' });
+        bullets[i] = bullets[bullets.length-1]; bullets.pop();
+        continue;
+      }
+    }
     if(!_bfast&&!b.grenade&&obstacleCollision(b.x,b.y,b.size,true)){
       if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);
       // Wall splash — sparks bounce back along the incoming trajectory
