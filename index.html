@@ -16969,17 +16969,56 @@ function _updateArcBoltSpike(sp) {
       damageZombie(z, sp._damage, sp.vx * 0.2, sp.vy * 0.2);
       _arcBoltDepth--;
       if (sp._applyCh && typeof applyCharged === 'function') applyCharged(z);
-      // Impact VFX — small flash + sparks + ring + zap sfx
-      for (let _hi = 0; _hi < 6; _hi++) {
+      // ---- BOLT IMPACT: thick electric shock border ----
+      // Three nested rings (white core → color mid → color outer) read as a
+      // pulsing electric cage on the struck enemy. A ring of short jagged
+      // arcs hugs the silhouette, and 4 long radial bolts star outward.
+      const _zR = z.radius || 12;
+      // Bright center flash
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5,
+        size: _zR * 0.9, color: '#fff', type: 'spark' });
+      // Three nested expanding rings — the "shock border"
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8,
+        size: _zR * 1.2, color: '#fff', type: 'wakering' });
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+        size: _zR * 1.8, color: sp._color, type: 'wakering' });
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20,
+        size: _zR * 2.4, color: sp._color, type: 'wakering' });
+      // Cage of short jagged arcs hugging the enemy circumference — 8 segments
+      // around the body, each a short chord that reads as "electricity wrapping
+      // the target". Per-particle stable jitter keeps it crackly, not static.
+      const _cageN = 8;
+      for (let _ci = 0; _ci < _cageN; _ci++) {
+        const _a1 = (_ci / _cageN) * Math.PI * 2 + Math.random() * 0.25;
+        const _a2 = _a1 + (Math.PI * 2 / _cageN) * 0.85 + Math.random() * 0.2;
+        const _rA = _zR + 2 + Math.random() * 2;
+        particles.push({
+          x: z.x + Math.cos(_a1) * _rA, y: z.y + Math.sin(_a1) * _rA,
+          vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 3), maxLife: 12,
+          size: 1.5, color: _ci % 2 === 0 ? sp._color : '#fff', type: 'lightning',
+          tx: z.x + Math.cos(_a2) * _rA, ty: z.y + Math.sin(_a2) * _rA,
+        });
+      }
+      // 4 long radial bolts starring outward from the impact center
+      for (let _ri = 0; _ri < 4; _ri++) {
+        const _ra = (_ri / 4) * Math.PI * 2 + Math.random() * 0.4;
+        const _rL = _zR * 2.5 + Math.random() * 12;
+        particles.push({
+          x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.8,
+          color: '#fff', type: 'lightning',
+          tx: z.x + Math.cos(_ra) * _rL, ty: z.y + Math.sin(_ra) * _rL,
+        });
+      }
+      // Radial spark spray — denser than before (12 vs 6)
+      for (let _hi = 0; _hi < 12; _hi++) {
         const _ha = Math.random() * Math.PI * 2;
-        const _hs = 3 + Math.random() * 3;
+        const _hs = 3 + Math.random() * 4;
         particles.push({ x: z.x, y: z.y, vx: Math.cos(_ha)*_hs, vy: Math.sin(_ha)*_hs,
-          life: 10, maxLife: 10, size: 2 + Math.random() * 1.5,
+          life: 12 + Math.floor(Math.random() * 4), maxLife: 16,
+          size: 2 + Math.random() * 1.8,
           color: Math.random() > 0.5 ? sp._color : '#fff', type: 'spark' });
       }
-      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
-        size: (z.radius || 12) * 1.6, color: sp._color, type: 'wakering' });
-      if (typeof playSfx === 'function') playSfx('zap', 0.08);
+      if (typeof playSfx === 'function') playSfx('zap', 0.12);
       sp._piercedCount++;
       if (sp._piercedCount > sp._pierce) { sp.lifetime = 0; return; }
     }
@@ -18606,7 +18645,12 @@ function _swingMelee(p, def) {
   p._rSwingLunge = step.kind === 'lungestrike';
   p._rSwingFinisher = !!step.finisher;
   p._rSwingFirstBig = !!step.firstBig;
-  p._rSwingRange = step.range * (((runMods||{}).extendedReach) ? 1.35 : 1);
+  // COMBO REACH BONUS: each consecutive combo step extends the sword's
+  // range by 10% (1.0x / 1.1x / 1.2x / 1.3x / 1.4x across the 5-step combo).
+  // Resets to 1.0x when the combo window expires or the combo finishes
+  // (idx wraps back to 0). Incentivizes keeping the chain going.
+  const _comboReachBonus = 1 + 0.1 * Math.max(0, idx);
+  p._rSwingRange = step.range * (((runMods||{}).extendedReach) ? 1.35 : 1) * _comboReachBonus;
   // Capture explicit start/end angles for the swing animation. The renderer
   // interpolates between these with no lerp catch-up — clean, decisive
   // motion that lingers at the END angle when the swing finishes.
@@ -18793,7 +18837,12 @@ function _runComboStep(p, def, step, idx) {
   const mainCol = _domClsCol || step.color;
   const _rmCombo = runMods || {};
   // CARD: EXTENDED REACH — the blade strikes 35% farther.
-  const range = step.range * (_rmCombo.extendedReach ? 1.35 : 1);
+  // COMBO REACH BONUS: +10% range per combo step (1.0x at idx 0 → 1.4x at
+  // idx 4). Mirrors p._rSwingRange in _swingMelee so hit detection lines up
+  // with the visual swing length. Dash-strike (idx -1) and jab (idx -2)
+  // don't get the bonus — they're standalone strikes, not combo steps.
+  const _comboReachBonus = 1 + 0.1 * Math.max(0, idx);
+  const range = step.range * (_rmCombo.extendedReach ? 1.35 : 1) * _comboReachBonus;
   // CARD: WHIRLWIND — after 3 kills in 2s, next swing is 360°
   const _wwActive = _rmCombo.whirlwind && p._whirlwindReady;
   // CARD: CLEAVE — cone +30%
@@ -23969,27 +24018,94 @@ function update() {
           decals.push({x:lp.x,y:lp.y,size:bzR*0.6,alpha:0.25,color:'#324'});
           playSound(200, 0.08, 'sine', 0.1); playSound(100, 0.06, 'sawtooth', 0.08);
         }
-        // ---- OVERCHARGE DASH: arc boost feedback ----
+        // ---- OVERCHARGE DASH: arc boost feedback — LIGHTNING STRIKE ----
+        // The player's action triggered a bolt → make it impossible to miss.
+        // Layered: white core flash + 3 nested rings + 8 long radiating bolts
+        // + cage of short arcs hugging player + dense spark spray + heavier
+        // shake + louder zap.
         if (_rm.overchargeDash > 0) {
-          addFloatingText(lp.x, lp.y - 28, 'ARC OVERCHARGED', '#4ff');
-          // Electric burst
-          for(let i=0;i<12;i++){const a=Math.random()*Math.PI*2,r=8+Math.random()*20;particles.push({x:lp.x+Math.cos(a)*r,y:lp.y+Math.sin(a)*r,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:14,maxLife:14,size:2.5+Math.random()*2,color:Math.random()>0.3?'#4ff':'#fff',type:'spark'});}
-          // Lightning arcs radiating
-          for(let i=0;i<4;i++){const a=Math.random()*Math.PI*2,r=30+Math.random()*30;particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#4ff',type:'lightning',tx:lp.x+Math.cos(a)*r,ty:lp.y+Math.sin(a)*r});}
-          playSound(1000, 0.1, 'sine', 0.06);
-          screenShake.intensity = Math.max(screenShake.intensity, 3);
+          addFloatingText(lp.x, lp.y - 32, '⚡ ARC OVERCHARGED ⚡', '#4ff');
+          // Bright white core flash + 3 expanding rings (white → cyan → cyan)
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 24, color: '#fff', type: 'spark' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 50, color: '#fff', type: 'wakering' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: 88, color: '#4ff', type: 'wakering' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: 130, color: '#4ff', type: 'wakering' });
+          // 8 long radial lightning bolts shooting outward — clear visual hit
+          for (let _li = 0; _li < 8; _li++) {
+            const _la = (_li / 8) * Math.PI * 2;
+            const _lL = 50 + Math.random() * 30;
+            // Double-stroke each bolt (white core inside cyan outer)
+            particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 2.5,
+              color: '#4ff', type: 'lightning',
+              tx: lp.x + Math.cos(_la) * _lL, ty: lp.y + Math.sin(_la) * _lL });
+            particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: 1.2,
+              color: '#fff', type: 'lightning',
+              tx: lp.x + Math.cos(_la) * _lL, ty: lp.y + Math.sin(_la) * _lL });
+          }
+          // Cage of short crackle arcs hugging the player's silhouette
+          const _cageN = 10;
+          for (let _ci = 0; _ci < _cageN; _ci++) {
+            const _ca1 = (_ci / _cageN) * Math.PI * 2 + Math.random() * 0.3;
+            const _ca2 = _ca1 + (Math.PI * 2 / _cageN) * 0.9 + Math.random() * 0.25;
+            const _cR = PLAYER_RADIUS + 4 + Math.random() * 3;
+            particles.push({
+              x: lp.x + Math.cos(_ca1) * _cR, y: lp.y + Math.sin(_ca1) * _cR,
+              vx: 0, vy: 0, life: 9, maxLife: 9, size: 1.5,
+              color: _ci % 2 === 0 ? '#4ff' : '#fff', type: 'lightning',
+              tx: lp.x + Math.cos(_ca2) * _cR, ty: lp.y + Math.sin(_ca2) * _cR,
+            });
+          }
+          // Dense spark burst (24 vs old 12)
+          for (let i = 0; i < 24; i++) {
+            const a = Math.random() * Math.PI * 2;
+            const s = 3 + Math.random() * 5;
+            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+              life: 14 + Math.random()*6, maxLife: 20, size: 2.5 + Math.random()*2,
+              color: Math.random() > 0.3 ? '#4ff' : '#fff', type: 'spark' });
+          }
+          playSound(1400, 0.10, 'sawtooth', 0.10);
+          playSound(900, 0.06, 'sine', 0.07);
+          screenShake.intensity = Math.max(screenShake.intensity, 6);
+          triggerGlitchSurge(0.25, 10);
         }
         // ---- SHATTER STEP: ice shatter at endpoint ----
         if (_rm.shatterStep > 0) {
           for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:16,maxLife:16,size:2.5,color:'#aef',type:'spark'});}
           if (isHost) { const _shFrac = _modScale('shatter_step', 0.30, 0.05); for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*_shFrac); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterSplash) { const _ssR = _modScale('shatter_splash', 75, 10); for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<_ssR){damageZombie(oz,Math.floor(shD*0.4),0,0,true);applyChill(oz,1);}} particles.push({x:fz.x,y:fz.y,vx:0,vy:0,life:12,maxLife:12,size:_ssR,color:'#aef',type:'wakering'}); } } } }
         }
-        // ---- DISCHARGE BURST: arc release at endpoint ----
+        // ---- DISCHARGE BURST: arc release at endpoint — LIGHTNING STRIKE ----
+        // Origin burst is now loud enough to clearly read as a lightning event
+        // at the player. Chained bolts to Charged enemies stay double-stroked
+        // (from the previous arc-dash polish pass).
         if (_rm.dischargeBurst > 0) {
-          // Always-visible arc burst
-          for(let i=0;i<16;i++){const a=(i/16)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:14,maxLife:14,size:2.5,color:Math.random()>0.4?'#4ff':'#fff',type:'spark'});}
-          playSound(600, 0.1, 'square', 0.06);
-          screenShake.intensity = Math.max(screenShake.intensity, 4);
+          // White core flash + 2 nested rings
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 5, maxLife: 5, size: 20, color: '#fff', type: 'spark' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 50, color: '#fff', type: 'wakering' });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: 90, color: '#4ff', type: 'wakering' });
+          // Cage of crackle arcs hugging the player
+          const _dbCage = 8;
+          for (let _ci = 0; _ci < _dbCage; _ci++) {
+            const _ca1 = (_ci / _dbCage) * Math.PI * 2 + Math.random() * 0.3;
+            const _ca2 = _ca1 + (Math.PI * 2 / _dbCage) * 0.85 + Math.random() * 0.25;
+            const _cR = PLAYER_RADIUS + 3 + Math.random() * 3;
+            particles.push({
+              x: lp.x + Math.cos(_ca1) * _cR, y: lp.y + Math.sin(_ca1) * _cR,
+              vx: 0, vy: 0, life: 8, maxLife: 8, size: 1.4,
+              color: _ci % 2 === 0 ? '#4ff' : '#fff', type: 'lightning',
+              tx: lp.x + Math.cos(_ca2) * _cR, ty: lp.y + Math.sin(_ca2) * _cR,
+            });
+          }
+          // Dense spark spray (20 vs old 16)
+          for (let i = 0; i < 20; i++) {
+            const a = (i/20)*Math.PI*2 + Math.random() * 0.2;
+            const s = 4 + Math.random() * 4;
+            particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+              life: 14, maxLife: 14, size: 2.5 + Math.random()*1.5,
+              color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+          }
+          playSound(800, 0.10, 'sawtooth', 0.10);
+          playSound(600, 0.10, 'square', 0.06);
+          screenShake.intensity = Math.max(screenShake.intensity, 5);
           // Chain into Charged enemies
           if (isHost) {
             const maxJ = Math.min(8, _modScale('discharge_burst', 2, 1) + (_rm.staticChain || 0));
