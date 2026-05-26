@@ -21906,22 +21906,29 @@ function updateArcadeWaves() {
   if (arcadeWaveState === 'rest') {
     arcadeWaveTimer--;
     // Mod terminal proximity check: when the player walks inside the
-    // interaction radius, trigger the level-up card picker. Only fires once
-    // per wave (gated by _entered) — they pick a mod and the rest of the
-    // breather is theirs.
+    // interaction radius, trigger the level-up card picker AND consume
+    // the terminal so it disappears from the world (it was hanging
+    // around through the rest of the breather, suggesting it could be
+    // re-used). The picker is already open by this point, so the
+    // terminal has served its purpose.
     if (_arcadeModTerminal && !_arcadeModTerminal._entered) {
       const _lp = getLocalPlayer();
       if (_lp && _lp.alive) {
         const _tdx = _lp.x - _arcadeModTerminal.x;
         const _tdy = _lp.y - _arcadeModTerminal.y;
         if (_tdx * _tdx + _tdy * _tdy < 55 * 55) {
-          _arcadeModTerminal._entered = true;
+          // Capture terminal position before clearing — the trigger VFX
+          // still spawns at the terminal's location.
+          const _termX = _arcadeModTerminal.x;
+          const _termY = _arcadeModTerminal.y;
+          _arcadeModTerminal._entered = true; // belt-and-suspenders; reference is about to drop
+          _arcadeModTerminal = null;          // remove visual immediately
           // Reward pulse: bright spark burst + screen shake so the trigger reads
           for (let _ti = 0; _ti < 24; _ti++) {
             const _ta = (_ti / 24) * Math.PI * 2;
             const _ts = 3 + Math.random() * 3;
             particles.push({
-              x: _arcadeModTerminal.x, y: _arcadeModTerminal.y,
+              x: _termX, y: _termY,
               vx: Math.cos(_ta) * _ts, vy: Math.sin(_ta) * _ts,
               life: 22, maxLife: 22, size: 3 + Math.random() * 2,
               color: Math.random() < 0.5 ? '#ff0' : '#fff', type: 'spark'
