@@ -2008,7 +2008,7 @@ const UPGRADE_POOL = [
   { id:'cryo_wake', name:'COLD FRONT', rarity:'common', max:1, icon:'🧊', color:'#8ef',
     descs:['Dash endpoint releases a cold gas burst. Applies CHILL.'], flavor:'the cold arrives before you do.' },
   { id:'shatter_step', name:'SHATTER STEP', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
-    descs:['+100% damage vs FROZEN near dash endpoint.'], flavor:'walk through ice. it breaks.', prereqs:['cryo_rounds|cryo_wake'] },
+    descs:['FROZEN enemies near dash endpoint take 60 dmg + heavy knockback.'], flavor:'walk through ice. it breaks.', prereqs:['cryo_rounds|cryo_wake'] },
   // ---- DASH: ARC ----
   { id:'static_wake', name:'STORM DASH', rarity:'common', max:1, icon:'⚡', color:'#4ff',
     descs:['Dash strikes 2 random nearby enemies (25 dmg + CHARGED).'], flavor:'you become the lightning.' },
@@ -23316,6 +23316,33 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // CARD: STAGGER STRIKE — all hits stagger
   if (!z.boss && (runMods||{}).staggerStrike) {
     z.staggerTimer = Math.max(z.staggerTimer, Math.floor(_modScale('stagger_strike', 0.5, 0.1) * 60));
+    // VFX: "dazed" sparkle ring above the enemy's head. Rate-limited so
+    // sword combos / SMG bursts don't pile up dozens of particles per
+    // enemy per second.
+    if (!z._lastStaggerFx || (gameTime - z._lastStaggerFx) > 14) {
+      z._lastStaggerFx = gameTime;
+      const _hy = z.y - (z.radius || 14) - 4;
+      // Bright white core flash overlay (renderer also reads z.hitFlash —
+      // bump that briefly so the body whitens for a frame.)
+      z.hitFlash = Math.max(z.hitFlash || 0, 6);
+      // Compact "dazed" ring above the head
+      particles.push({ x: z.x, y: _hy, vx: 0, vy: 0,
+        life: 8, maxLife: 8, size: 14, color: '#fff', type: 'wakering' });
+      // 5 small sparkle stars circling the ring, rising slowly
+      const _starN = 5;
+      for (let _si = 0; _si < _starN; _si++) {
+        const _sa = (_si / _starN) * Math.PI * 2 + Math.random() * 0.4;
+        const _sr = 10 + Math.random() * 3;
+        particles.push({
+          x: z.x + Math.cos(_sa) * _sr,
+          y: _hy + Math.sin(_sa) * _sr * 0.5, // squashed for orbital look
+          vx: -Math.sin(_sa) * 0.7,
+          vy: Math.cos(_sa) * 0.4 - 0.4, // gentle upward drift
+          life: 16, maxLife: 16, size: 1.6 + Math.random() * 0.6,
+          color: Math.random() > 0.5 ? '#fff' : '#ffd', type: 'spark',
+        });
+      }
+    }
   }
   // RAGE flinch: every hit staggers enemies harder during rage (not bosses)
   if (!z.boss && hasPowerUp('rage')) {
@@ -24189,7 +24216,52 @@ function update() {
         // ---- SHATTER STEP: ice shatter at endpoint ----
         if (_rm.shatterStep > 0) {
           for(let i=0;i<10;i++){const a=(i/10)*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:16,maxLife:16,size:2.5,color:'#aef',type:'spark'});}
-          if (isHost) { const _shFrac = _modScale('shatter_step', 0.30, 0.05); for (const fz of zombies) { if (fz.hp<=0||!fz._frozen) continue; const fd=Math.sqrt((fz.x-lp.x)**2+(fz.y-lp.y)**2); if (fd<60) { const shD=Math.floor(fz.maxHp*_shFrac); damageZombie(fz,shD,0,0); fz._frozen=false; fz._frozenTimer=0; addFloatingText(fz.x,fz.y-fz.radius-12,'SHATTER','#aef'); for(let si=0;si<24;si++){const sa=Math.random()*Math.PI*2,sv=3+Math.random()*6;particles.push({x:fz.x+Math.cos(sa)*6,y:fz.y+Math.sin(sa)*6,vx:Math.cos(sa)*sv,vy:Math.sin(sa)*sv,life:20,maxLife:26,size:3+Math.random()*4,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});} screenShake.intensity=Math.max(screenShake.intensity,8); if (_rm.shatterSplash) { const _ssR = _modScale('shatter_splash', 75, 10); for(const oz of zombies){if(oz===fz||oz.hp<=0)continue;const sd=Math.sqrt((oz.x-fz.x)**2+(oz.y-fz.y)**2);if(sd<_ssR){damageZombie(oz,Math.floor(shD*0.4),0,0,true);applyChill(oz,1);}} particles.push({x:fz.x,y:fz.y,vx:0,vy:0,life:12,maxLife:12,size:_ssR,color:'#aef',type:'wakering'}); } } } }
+          if (isHost) {
+            // SHATTER STEP — flat 60 dmg + knockback away from dash endpoint
+            // on every FROZEN enemy within 60px. SHATTER SPLASH (Lv2) still
+            // chains 40% to nearby enemies with a CHILL stack.
+            const _shDmg = 60;
+            for (const fz of zombies) {
+              if (fz.hp <= 0 || !fz._frozen) continue;
+              const _fdx = fz.x - lp.x, _fdy = fz.y - lp.y;
+              const _fd = Math.sqrt(_fdx*_fdx + _fdy*_fdy);
+              if (_fd < 60) {
+                // Knockback radiates outward from the player's position; cap
+                // direction with d>0.1 to handle the rare "frozen enemy at
+                // your exact position" case.
+                const _kbMag = 38; // heavy shove
+                const _kbx = _fd > 0.1 ? (_fdx / _fd) * _kbMag : 0;
+                const _kby = _fd > 0.1 ? (_fdy / _fd) * _kbMag : 0;
+                damageZombie(fz, _shDmg, _kbx, _kby);
+                fz._frozen = false;
+                fz._frozenTimer = 0;
+                fz.staggerTimer = Math.max(fz.staggerTimer || 0, 30);
+                addFloatingText(fz.x, fz.y - fz.radius - 12, 'SHATTER', '#aef');
+                for (let si = 0; si < 24; si++) {
+                  const sa = Math.random() * Math.PI * 2;
+                  const sv = 3 + Math.random() * 6;
+                  particles.push({ x: fz.x + Math.cos(sa)*6, y: fz.y + Math.sin(sa)*6,
+                    vx: Math.cos(sa)*sv, vy: Math.sin(sa)*sv,
+                    life: 20, maxLife: 26, size: 3 + Math.random()*4,
+                    color: Math.random() > 0.3 ? '#aef' : '#cff', type: 'spark' });
+                }
+                screenShake.intensity = Math.max(screenShake.intensity, 8);
+                if (_rm.shatterSplash) {
+                  const _ssR = _modScale('shatter_splash', 75, 10);
+                  for (const oz of zombies) {
+                    if (oz === fz || oz.hp <= 0) continue;
+                    const sd = Math.sqrt((oz.x-fz.x)**2 + (oz.y-fz.y)**2);
+                    if (sd < _ssR) {
+                      damageZombie(oz, Math.floor(_shDmg * 0.4), 0, 0, true);
+                      applyChill(oz, 1);
+                    }
+                  }
+                  particles.push({ x: fz.x, y: fz.y, vx: 0, vy: 0,
+                    life: 12, maxLife: 12, size: _ssR, color: '#aef', type: 'wakering' });
+                }
+              }
+            }
+          }
         }
         // ---- DISCHARGE BURST: arc release at endpoint — LIGHTNING STRIKE ----
         // Origin burst is now loud enough to clearly read as a lightning event
