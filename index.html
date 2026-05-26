@@ -20197,6 +20197,15 @@ let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charge
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
 let _deadshotMaxFlashed = false; // max-charge ready cue fired once per charge
+let _deadshotPressFrame = 0;     // frame the button went down — drives tap vs hold
+// Tap window: release within this many frames of pressing = tap (snap-to-nearest).
+// Anything longer = hold (free-aim). 10 frames ≈ 167ms — generous enough for a
+// natural quick tap, short enough that anyone deliberately charging is over it.
+const _DEADSHOT_TAP_FRAMES = 10;
+// Auto-aim lock range on tap. Deadshot bullets travel up to ~1800px in life;
+// 520 is enough to reliably grab a nearby threat without snapping across the
+// whole arena.
+const _DEADSHOT_TAP_LOCK_RANGE = 520;
 
 // Deadshot: hold button to charge + aim, release to fire. Tap = quick shot.
 function activateDeadshot() {
@@ -20205,6 +20214,7 @@ function activateDeadshot() {
   if (_deadshotCharging) return; // already charging
   _deadshotCharging = true;
   _deadshotCharge = 0;
+  _deadshotPressFrame = gameTime;
   playSound(400, 0.08, 'sine', 0.1);
 }
 
@@ -20308,7 +20318,31 @@ function _fireDeadshot(lp) {
   // everything in line — that's the payoff for the hold.
   const isRailgun = _m.railgun && chargePct >= 1.0;
   const pierce = isFullCharge ? 99 : 0;
-  const a = lp.angle;
+  // ---- TAP vs HOLD AIM ----
+  // TAP (released within _DEADSHOT_TAP_FRAMES of press): snap to nearest
+  // enemy within _DEADSHOT_TAP_LOCK_RANGE — quick reactive shots don't
+  // demand precise aim. HOLD (anything longer): use the player's actual
+  // facing direction (lp.angle) — they had time to aim, no auto-assist.
+  const _holdFrames = gameTime - (_deadshotPressFrame || gameTime);
+  const _isTap = _holdFrames < _DEADSHOT_TAP_FRAMES;
+  let a = lp.angle;
+  if (_isTap) {
+    const _r2 = _DEADSHOT_TAP_LOCK_RANGE * _DEADSHOT_TAP_LOCK_RANGE;
+    let _bestZ = null, _bestD2 = _r2;
+    for (const z of zombies) {
+      if (!z || z.hp <= 0) continue;
+      const _zdx = z.x - lp.x, _zdy = z.y - lp.y;
+      const _zd2 = _zdx * _zdx + _zdy * _zdy;
+      if (_zd2 < _bestD2) { _bestD2 = _zd2; _bestZ = z; }
+    }
+    if (_bestZ) {
+      a = Math.atan2(_bestZ.y - lp.y, _bestZ.x - lp.x);
+      // Quick visual cue at the locked target so the snap reads.
+      particles.push({ x: _bestZ.x, y: _bestZ.y, vx: 0, vy: 0,
+        life: 10, maxLife: 10, size: (_bestZ.radius || 14) + 8,
+        color: '#0ff', type: 'wakering' });
+    }
+  }
   const speed = 30;
   // Bullet size is FIXED — never grows with charge. Charge only changes
   // damage / knockback / pierce / VFX intensity.
