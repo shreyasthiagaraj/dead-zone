@@ -18506,24 +18506,32 @@ function updatePayload() {
 // enemy at once — positioning matters. No lunge. Per-step cooldowns are tight
 // so held attacks flow continuously; sweep directions alternate (dir +/-) so
 // the blade visually arcs side-to-side rather than snapping back each hit.
+// Damage cone is capped to a NARROW forward sector regardless of swing
+// arc — visually the blade still sweeps wide, but only enemies within
+// MELEE_DAMAGE_HALF_CONE of the player's facing actually take a hit.
+// Stops the sweep strikes from cleaving enemies to the player's side or
+// back, and works with the blade-snap-to-forward fix below.
+const MELEE_DAMAGE_HALF_CONE = Math.PI / 4; // ±45° = 90° damage arc
 const RIPPER_COMBO = [
   // 1. SLASH — quick light L->R cut opens the combo (no initial lunge;
   //    the dash-strike is the only way to start with a forward thrust).
-  { kind:'arcswipe',     range: 100, cone: Math.PI * 0.7,    damage: 12, knockback: 35, stagger: 26, cooldown:  95, color:'#4ff', tone: 820, dir:  1, label:'SLASH',
+  // Range -30% across all steps so the sword fights at melee distance
+  // instead of out-reaching guns.
+  { kind:'arcswipe',     range:  70, cone: Math.PI * 0.7,    damage: 12, knockback: 35, stagger: 26, cooldown:  95, color:'#4ff', tone: 820, dir:  1, label:'SLASH',
     swingDelta: Math.PI * 0.7,  swingFollowPrev: true },
   // 3. 180 deg ARC SWIPE — the big half-circle middle of the combo
-  { kind:'arcswipe',     range: 120, cone: Math.PI,          damage: 18, knockback: 55, stagger: 42, cooldown: 125, color:'#4ff', tone: 720, dir: -1, label:'ARC',
+  { kind:'arcswipe',     range:  85, cone: Math.PI,          damage: 18, knockback: 55, stagger: 42, cooldown: 125, color:'#4ff', tone: 720, dir: -1, label:'ARC',
     swingDelta: Math.PI,       swingFollowPrev: true },
   // 4. CROSS — quick R->L counter slash (mirror of strike 2)
-  { kind:'arcswipe',     range: 105, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 32, cooldown:  95, color:'#4ff', tone: 680, dir:  1, label:'CROSS',
+  { kind:'arcswipe',     range:  75, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 32, cooldown:  95, color:'#4ff', tone: 680, dir:  1, label:'CROSS',
     swingDelta: Math.PI * 0.75, swingFollowPrev: true },
   // 5. 270 deg SPIN — three-quarter revolution windup, continues out of the
   //    previous strike's end angle. Flows straight into the finisher lunge.
-  { kind:'arcswipe',     range: 130, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 130, color:'#4ff', tone: 480, dir: -1, label:'270 SPIN',
+  { kind:'arcswipe',     range:  90, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 130, color:'#4ff', tone: 480, dir: -1, label:'270 SPIN',
     swingDelta: Math.PI * 1.5, swingFollowPrev: true },
   // 6. FINISHER LUNGE — the climax: a committed forward thrust that drives
   //    through whatever the spin opened up. Big damage + knockback.
-  { kind:'forwardlunge', range: 210, cone: Math.PI * 34/180, damage: 42, knockback: 115, stagger: 85, cooldown: 165, color:'#f80', tone: 540, dir:  0, label:'FINISHER!',
+  { kind:'forwardlunge', range: 150, cone: Math.PI * 34/180, damage: 42, knockback: 115, stagger: 85, cooldown: 165, color:'#f80', tone: 540, dir:  0, label:'FINISHER!',
     lungeDistance: 72, finisher: true },
 ];
 // Brief delay between one combo finishing and the next combo's first strike.
@@ -18604,16 +18612,34 @@ function _swingMelee(p, def) {
   // interpolates between these with no lerp catch-up — clean, decisive
   // motion that lingers at the END angle when the swing finishes.
   if (step.kind === 'forwardlunge' || step.kind === 'jab' || step.kind === 'lungestrike') {
-    // Thrust strikes — start from current pose, end pointing straight forward
-    p._rSwingStartAngle = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.62;
+    // Thrust strikes — start from current pose, end pointing straight forward.
+    // Clamp the start so thrust doesn't visibly windup from behind the player
+    // if the previous swing left the blade off-axis.
+    let _thrustStart = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.62;
+    while (_thrustStart > Math.PI) _thrustStart -= Math.PI * 2;
+    while (_thrustStart < -Math.PI) _thrustStart += Math.PI * 2;
+    if (Math.abs(_thrustStart) > Math.PI * 0.5) _thrustStart = -Math.PI * 0.62;
+    p._rSwingStartAngle = _thrustStart;
     p._rSwingEndAngle = 0;
   } else if (step.swingFollowPrev) {
     // Sweep strike that follows from the previous attack's end position
-    // (continuous flow, no symmetric snap).
+    // (continuous flow). BUT: if the player turned and the blade is now
+    // pointing more than 45° off forward, drop the history and snap to a
+    // symmetric start. Otherwise the next swing visibly starts behind /
+    // to the side of the player — the "sword attacks behind user" bug.
     const _sign = (step.dir >= 0 ? 1 : -1);
     const _delta = step.swingDelta || Math.PI;
-    p._rSwingStartAngle = (p._rBladeAngle !== undefined) ? p._rBladeAngle : 0;
-    p._rSwingEndAngle = p._rSwingStartAngle + _delta * _sign;
+    let _start = (p._rBladeAngle !== undefined) ? p._rBladeAngle : 0;
+    // Normalize to (-π, π] so the magnitude check is direction-agnostic.
+    while (_start > Math.PI) _start -= Math.PI * 2;
+    while (_start < -Math.PI) _start += Math.PI * 2;
+    if (Math.abs(_start) > Math.PI * 0.25) {
+      // Blade is off forward by more than 45° — reset to symmetric so the
+      // swing starts in front of the player and arcs forward.
+      _start = -(_delta * 0.5) * _sign;
+    }
+    p._rSwingStartAngle = _start;
+    p._rSwingEndAngle = _start + _delta * _sign;
   } else {
     // Sweep strikes — symmetric around forward so the swept area covers the
     // step's swingDelta in front of the player. Forced regardless of where
@@ -18651,7 +18677,7 @@ function _swingMelee(p, def) {
 // a full finisher.
 const _DASH_STRIKE_STEP = {
   kind: 'lungestrike',
-  range: 180, cone: Math.PI * 55/180,
+  range: 125, cone: Math.PI * 55/180,
   damage: 22, knockback: 90, stagger: 55, cooldown: 240,
   color: '#fff', tone: 1100, dir: 0,
   label: 'DASH-STRIKE!', lungeDistance: 60,
@@ -18723,7 +18749,7 @@ function _meleeApproachVel(p, a, range, cone, opts) {
 const _JAB_COOLDOWN = 120; // ms between jabs — rapid but readable
 const _JAB_STEP = {
   kind: 'jab',
-  range: 95, cone: Math.PI * 26 / 180,
+  range: 65, cone: Math.PI * 26 / 180,
   damage: 15, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
   color: '#4ff', tone: 980, dir: 0, label: '',
 };
@@ -18774,6 +18800,10 @@ function _runComboStep(p, def, step, idx) {
   // CARD: CLEAVE — cone +30%
   let cone = step.cone * (_rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1);
   if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#4ff'); }
+  // Damage / approach cone — narrower than the visual swing arc.
+  // Approach uses this so the auto-lunge only chases enemies the strike
+  // will actually hit.
+  const damageCone = Math.min(cone, MELEE_DAMAGE_HALF_CONE * 2);
   const isLocal = (p === getLocalPlayer());
 
   // ---- AUTO-LUNGE on the opening strike ----
@@ -18782,7 +18812,7 @@ function _runComboStep(p, def, step, idx) {
   // player stays put (no walking into the enemy). LUNGE card extends
   // both the chase range and the closing speed.
   if (idx === 0 && isLocal) {
-    const _av = _meleeApproachVel(p, a, range, cone, {
+    const _av = _meleeApproachVel(p, a, range, damageCone, {
       reachMult: _rmCombo.lunge ? (1 + _modScale('lunge', 0.60, 0.08) * 0.5) : 1.0,
       speedMult: _rmCombo.lunge ? 1.1 : 1.0,
     });
@@ -18907,7 +18937,7 @@ function _runComboStep(p, def, step, idx) {
     // The FINISHER lunge isn't idx 0, so close its gap here — still only
     // toward an out-of-reach in-cone enemy, never gliding into a body.
     if (isLocal && _fl && step.finisher) {
-      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.4, speedMult: 1.1 });
+      const _av = _meleeApproachVel(p, a, range, damageCone, { reachMult: 1.4, speedMult: 1.1 });
       if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
     }
     if (isLocal && _fl) triggerCameraZoom(1.03, 150);
@@ -18995,7 +19025,7 @@ function _runComboStep(p, def, step, idx) {
     // dash-strike never glides the player into an enemy's body. A
     // dash-strike is a gap-closer by nature, so it chases a bit farther.
     if (isLocal) {
-      const _av = _meleeApproachVel(p, a, range, cone, { reachMult: 1.3, speedMult: 1.1 });
+      const _av = _meleeApproachVel(p, a, range, damageCone, { reachMult: 1.3, speedMult: 1.1 });
       if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
       screenShake.intensity = Math.max(screenShake.intensity, 10);
       triggerCameraZoom(1.03, 150);
@@ -19003,7 +19033,13 @@ function _runComboStep(p, def, step, idx) {
   }
 
   // ---- HIT DETECTION + DAMAGE ----
-  const halfCone = cone / 2;
+  // Visual swing arc (`cone`) can be wide — up to 270° for the SPIN — but
+  // damage only registers within a NARROW forward sector (see
+  // MELEE_DAMAGE_HALF_CONE). This keeps the strike feel responsive (the
+  // blade visually carves around the player) without the sword cleaving
+  // enemies to the side or behind. Thrust strikes already have narrower
+  // cones than the cap, so they're unaffected.
+  const halfCone = Math.min(cone / 2, MELEE_DAMAGE_HALF_CONE);
   const _critChance = 0.18;
   // Damage scale from run-wide mods: damageMult + adrenaline + meta power.
   // Mirrors getScaledGun() so cards that buff the pistol also buff the blade.
