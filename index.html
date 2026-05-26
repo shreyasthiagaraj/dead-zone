@@ -2039,7 +2039,7 @@ const UPGRADE_POOL = [
   { id:'meltdown', name:'HEAT TRANSFER', rarity:'rare', max:1, icon:'🔥', color:'#f80',
     descs:['MELTDOWN spreads 3 OVERHEAT stacks. +25% crit vs OVERHEATED.'], flavor:'thermal runaway. the fire spreads.', prereqs:['thermal_rounds|burnout_wake'] },
   { id:'surge_break', name:'OVERLOAD', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['On CHARGED kill: 4 arc bolts fire in radial directions (40 dmg each, 260px).'], flavor:'overloaded circuits cascade.', prereqs:['arc_rounds|static_wake'] },
+    descs:['On CHARGED kill: 3 arc bolts fire in radial directions (40 dmg, 200px).'], flavor:'overloaded circuits cascade.', prereqs:['arc_rounds|static_wake'] },
   { id:'kill_switch', name:'CONTAGION', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['CORRUPT spreads to enemies in 60px every 2s.'], flavor:'corruption is contagious.', prereqs:['viral_payload|glitch_wake'] },
   { id:'parasitic_link', name:'PARASITIC LINK', rarity:'rare', max:1, icon:'☣', color:'#a4f',
@@ -2269,10 +2269,7 @@ const UPGRADE_POOL = [
   { id:'mass_shatter', name:'MASS SHATTER', rarity:'epic', max:1, icon:'💎', color:'#8ef',
     descs:['Crit on FROZEN shatters all FROZEN enemies within 100px.'], flavor:'one crack breaks them all.', prereqs:['shatterpoint'] },
   // ---- EXTRACTED Lv2 — Arc ----
-  { id:'arc_death_discharge', name:'ARC DISCHARGE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['On CHARGED kill: fire 3 arc bolts (28 dmg, +CHARGED, 220px).'], flavor:'they die electric.', prereqs:['arc_rounds'] },
-  { id:'arc_kill_burst', name:'ARC BURST', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
-    descs:['On CHARGED kill: fire 6 arc bolts radially (35 dmg, +CHARGED, 220px).'], flavor:'the node explodes.', prereqs:['static_chain'] },
+  // (arc_death_discharge + arc_kill_burst removed — consolidated into OVERLOAD)
   { id:'overcharge_chain', name:'OVERCHARGE CHAIN', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['Detonated enemies become CHARGED.'], flavor:'the current never stops.', prereqs:['overcharge_dash'] },
   { id:'discharge_expose', name:'DISCHARGE EXPOSE', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
@@ -2517,8 +2514,6 @@ const _KEY_STATS = {
   shatter_splash: { label:'splash radius', base:75, step:10, unit:'px' },
   mass_shatter:   { label:'shatter radius', base:100, step:12, unit:'px' },
   // ---- Extracted Lv2 — arc ----
-  arc_death_discharge:{label:'zap radius', base:80, step:10, unit:'px' },
-  arc_kill_burst: { label:'burst radius', base:120, step:12, unit:'px' },
   overcharge_chain:null, // toggle
   discharge_expose:{label:'stagger duration', base:1, step:0.3, unit:'s' },
   arc_cascade:    null, // toggle
@@ -2865,8 +2860,6 @@ function rebuildRunMods() {
       case 'ice_shards':         m.iceShards = true; break;
       case 'shatter_splash':     m.shatterSplash = true; break;
       case 'mass_shatter':       m.massShatter = true; break;
-      case 'arc_death_discharge': m.arcDeathDischarge = true; break;
-      case 'arc_kill_burst':     m.arcKillBurst = true; break;
       case 'overcharge_chain':   m.overchargeChain = true; break;
       case 'discharge_expose':   m.dischargeExpose = true; break;
       case 'arc_cascade':        m.arcCascade = true; break;
@@ -16970,7 +16963,7 @@ function _updateArcBoltSpike(sp) {
     const _dx = z.x - sp.x, _dy = z.y - sp.y;
     if (_dx*_dx + _dy*_dy < (z.radius + 6) ** 2) {
       sp._hitSet.add(z.zid);
-      // Recursion guard so CHARGED-kill death cards (ARC BURST etc.) don't
+      // Recursion guard so CHARGED-kill death cards (OVERLOAD) don't
       // re-fire bolts off a bolt-caused kill → exponential cascade.
       _arcBoltDepth++;
       damageZombie(z, sp._damage, sp.vx * 0.2, sp.vy * 0.2);
@@ -19401,8 +19394,8 @@ function _emitMeleeClassFlourish(p, wAng, bodyRoot, bodyTip) {
 // synergy combos. Cheap — lives in the regular bullets[] array so multiplayer
 // sync, wall collision, hit dedup all work for free.
 // Recursion guard for arc bolts. Incremented around the spike's damageZombie
-// call so CHARGED-kill death cards (ARC BURST / ARC DISCHARGE / OVERLOAD)
-// don't fire MORE bolts off a bolt-caused kill, which would cascade.
+// call so the CHARGED-kill death card (OVERLOAD) doesn't fire MORE bolts off
+// a bolt-caused kill, which would cascade.
 let _arcBoltDepth = 0;
 // Arc bolt is implemented as a SPIKE entity (not a bullet) so it has its
 // own self-contained update loop and CANNOT cascade through the bullet hit
@@ -19428,8 +19421,8 @@ function fireArcBolt(srcX, srcY, opts) {
   // Target-pick: prefer nearest CHARGED enemy (creates obvious chains), else
   // nearest enemy of any kind, else a random direction.
   //
-  // When prefAngle is provided (radial burst patterns like ARC BURST), restrict
-  // the search to a cone around the requested angle so all 6 bolts don't
+  // When prefAngle is provided (radial burst patterns like OVERLOAD), restrict
+  // the search to a cone around the requested angle so all bolts don't
   // converge onto the single nearest enemy. Falls back to the raw prefAngle
   // if nothing is in the cone.
   const _hasPref = (typeof opts.prefAngle === 'number');
@@ -23221,32 +23214,18 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
         }
       }
     }
-    // ---- CARD: ARC BURST — CHARGED kills fire 6 arc bolts (35 dmg + CHARGED) ----
-    // _arcBoltDepth gate: skip if the kill was caused by another arc bolt,
-    // otherwise bolt → kill → 6 bolts → 6 kills → 36 bolts → freeze.
-    if ((runMods||{}).arcKillBurst && z._charged && _arcBoltDepth === 0) {
-      const _akR = _modScale('arc_kill_burst', 120, 12);
-      const _akN = 6;
-      for (let _ki = 0; _ki < _akN; _ki++) {
-        fireArcBolt(z.x, z.y, { damage: 35, range: _akR + 100, applyCharged: true,
-          prefAngle: (_ki / _akN) * Math.PI * 2, sourceZid: z.zid });
-      }
-    }
-    // ---- CARD: ARC DISCHARGE — CHARGED kills fire 3 arc bolts (28 dmg) ----
-    else if ((runMods||{}).arcDeathDischarge && z._charged && _arcBoltDepth === 0) {
-      const _adR = _modScale('arc_death_discharge', 80, 10);
-      for (let _di = 0; _di < 3; _di++) {
-        fireArcBolt(z.x, z.y, { damage: 28, range: _adR + 80, applyCharged: true,
-          sourceZid: z.zid });
-      }
-    }
-    // ---- CARD: OVERLOAD (surge_break) — CHARGED kills fire 4 arc bolts radially (40 dmg) ----
+    // ---- CARD: OVERLOAD (surge_break) — CHARGED kills fire 3 arc bolts radially (40 dmg, 200px) ----
+    // Consolidated death-bolt card. Replaces ARC DISCHARGE + ARC BURST, which
+    // all triggered on CHARGED kill and just spawned radial bolts with
+    // different counts. _arcBoltDepth gate prevents cascade (bolt-kill →
+    // bolts → bolt-kills → bolts → freeze).
     if ((runMods||{}).surgeBreak > 0 && z._charged && _arcBoltDepth === 0) {
-      const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE makes bolts re-charge targets
+      const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE re-charges targets
       const _sbDmg = _modScale('surge_break', 40, 7);
-      for (let _oi = 0; _oi < 4; _oi++) {
-        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 180, applyCharged: _applyCh,
-          prefAngle: (_oi / 4) * Math.PI * 2, sourceZid: z.zid });
+      const _sbN = 3;
+      for (let _oi = 0; _oi < _sbN; _oi++) {
+        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 200, applyCharged: _applyCh,
+          prefAngle: (_oi / _sbN) * Math.PI * 2, sourceZid: z.zid });
       }
     }
     // ---- CARD: FATAL EXPLOSION — COMPROMISED kill explodes in 80px ----
