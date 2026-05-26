@@ -19983,10 +19983,19 @@ function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
       _priority: true
     });
   }
-  // ---- 4) 12-point starburst lines (was 8-10) — bigger reach
+  // ---- 4) FORWARD FAN of streaks — when we have a strike direction,
+  //         the silhouette spreads across ±60° of the cleave vector so
+  //         the impact reads as "force punched through this way." Falls
+  //         back to a radial starburst when there's no direction.
   const _starN = isCrit ? 14 : 12;
   for (let _ci = 0; _ci < _starN; _ci++) {
-    const _ca = (_ci/_starN)*Math.PI*2;
+    let _ca;
+    if (_hasDir) {
+      const _t = (_starN === 1) ? 0.5 : _ci / (_starN - 1);
+      _ca = _dirA + (_t - 0.5) * (Math.PI * 2/3); // ±60°
+    } else {
+      _ca = (_ci/_starN) * Math.PI * 2;
+    }
     const _cl = isCrit ? 36 : 28;
     particles.push({
       x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 2,
@@ -19994,10 +20003,15 @@ function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
       tx: z.x + Math.cos(_ca)*_cl, ty: z.y + Math.sin(_ca)*_cl
     });
   }
-  // ---- 5) RADIAL spark burst — full 360 explosion of sparks
+  // ---- 5) FORWARD SPARK BLAST — the bulk of the spray flies along the
+  //         strike direction (was a 360 explosion). ±77° spread keeps it
+  //         visually full while clearly biased forward.
   const _scount = isCrit ? 60 : 44;
   for (let _si = 0; _si < _scount; _si++) {
-    const _sa = Math.random() * Math.PI * 2, _ss = 3 + Math.random()*7;
+    const _sa = _hasDir
+      ? (_dirA + (Math.random() - 0.5) * (Math.PI * 0.85))
+      : (Math.random() * Math.PI * 2);
+    const _ss = 3 + Math.random()*7;
     particles.push({
       x: z.x, y: z.y, vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss,
       life: 10 + Math.floor(Math.random()*7), maxLife: 17,
@@ -25371,32 +25385,36 @@ function update() {
                       // Two concentric rings
                       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 30, color: '#fff', type: 'wakering' });
                       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: 54, color: _impC, type: 'wakering' });
-                      // 4-directional cross lightning (cheap, high-impact)
+                      // FORWARD FAN of streaks — the bullet's force fans out
+                      // ±50° in the direction of travel (was a 4-spoke cross).
                       for (let ci = 0; ci < 4; ci++) {
-                        const ca = _impA + ci * Math.PI/2, cLen = 36 + Math.random()*16;
+                        const _t = ci / 3;
+                        const ca = _impA + (_t - 0.5) * (Math.PI * 5/9); // ±50°
+                        const cLen = 38 + Math.random()*18;
                         particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.5, color: '#fff', type: 'lightning',
                           tx: z.x+Math.cos(ca)*cLen, ty: z.y+Math.sin(ca)*cLen });
                       }
-                      // 6 radial impact streaks (was 12)
+                      // FORWARD impact streaks — wider spread (±77°) so the
+                      // burst still feels full but clearly travels forward.
                       for (let _si = 0; _si < 6; _si++) {
-                        const _sa = (_si / 6) * Math.PI * 2 + Math.random() * 0.3;
-                        const _sv = 7 + Math.random() * 4;
+                        const _sa = _impA + (Math.random() - 0.5) * (Math.PI * 0.85);
+                        const _sv = 7 + Math.random() * 5;
                         particles.push({ x: z.x, y: z.y, vx: Math.cos(_sa)*_sv, vy: Math.sin(_sa)*_sv,
                           life: 14, maxLife: 14, size: 3 + Math.random() * 2,
                           color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                       }
-                      // 6 punch-through sparks (was 14)
+                      // Tight forward punch-through cone (already directional)
                       for (let pi = 0; pi < 6; pi++) {
-                        const pa = _impA + (Math.random()-0.5)*0.6, ps = 5+Math.random()*7;
+                        const pa = _impA + (Math.random()-0.5)*0.6, ps = 6+Math.random()*7;
                         particles.push({ x: z.x, y: z.y, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
                           life: 16+Math.random()*8, maxLife: 24, size: 2.5+Math.random()*2.5,
                           color: Math.random()>0.4?_impC:'#fff', type: 'spark' });
                       }
-                      // 2 smoke puffs (was 6)
+                      // Smoke puffs trailing forward off the impact
                       for (let _smi = 0; _smi < 2; _smi++) {
-                        const _sma = Math.random() * Math.PI * 2;
+                        const _sma = _impA + (Math.random() - 0.5) * 1.0;
                         particles.push({ x: z.x + Math.cos(_sma)*4, y: z.y + Math.sin(_sma)*4,
-                          vx: Math.cos(_sma)*0.6, vy: -1 - Math.random() * 1.2,
+                          vx: Math.cos(_sma)*1.4, vy: Math.sin(_sma)*1.4 - 0.5,
                           life: 24 + Math.random() * 10, maxLife: 34,
                           size: 5 + Math.random() * 3, color: '#433',
                           type: 'smoke', _smokeAlpha: 0.22 });
@@ -25408,15 +25426,19 @@ function update() {
                       if (b._deadshotFullCharge) {
                         particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 12, maxLife: 12, size: 40, color: '#fff', type: 'explosion' });
                         particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 20, maxLife: 20, size: 72, color: _impC, type: 'wakering' });
+                        // Full-charge blowout — heavy forward fan
                         for (let _bsi = 0; _bsi < 6; _bsi++) {
-                          const _bsa = (_bsi / 6) * Math.PI * 2 + Math.random() * 0.3;
-                          const _bsv = 8 + Math.random() * 4;
+                          const _t = _bsi / 5;
+                          const _bsa = _impA + (_t - 0.5) * (Math.PI * 2/3); // ±60°
+                          const _bsv = 9 + Math.random() * 5;
                           particles.push({ x: z.x, y: z.y, vx: Math.cos(_bsa)*_bsv, vy: Math.sin(_bsa)*_bsv,
                             life: 18, maxLife: 18, size: 3 + Math.random() * 2,
                             color: Math.random() > 0.5 ? '#fff' : _impC, type: 'spark' });
                         }
+                        // Wider drifting embers — still biased forward but
+                        // wider spread (±100°) so the blowout fills the scene.
                         for (let _eri = 0; _eri < 6; _eri++) {
-                          const _era = Math.random() * Math.PI * 2;
+                          const _era = _impA + (Math.random() - 0.5) * (Math.PI * 10/9);
                           const _erv = 2 + Math.random() * 4;
                           particles.push({ x: z.x, y: z.y,
                             vx: Math.cos(_era)*_erv, vy: Math.sin(_era)*_erv - 1,
@@ -25522,21 +25544,26 @@ function update() {
                     particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
                       life: 6, maxLife: 6,
                       size: _crit ? 30 : 22, color: '#fff', type: 'wakering' });
-                    // 3) 8-point starburst lines for the "punch" silhouette
+                    // 3) FORWARD FAN of streaks — silhouette of the bullet
+                    //    punching through the enemy. Spans ±60° of the bullet's
+                    //    travel direction so the "force passed through here"
+                    //    reads at a glance.
                     const _starN = _crit ? 10 : 8;
                     for (let _ci = 0; _ci < _starN; _ci++) {
-                      const _ca = (_ci/_starN) * Math.PI * 2;
-                      const _cl = _crit ? 30 : 22;
+                      const _t = (_starN === 1) ? 0.5 : _ci / (_starN - 1);
+                      const _ca = a + (_t - 0.5) * (Math.PI * 2/3); // ±60°
+                      const _cl = _crit ? 32 : 24;
                       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
                         life: 5, maxLife: 5, size: 2,
                         color: _crit ? '#f0f' : '#fff', type: 'lightning',
                         tx: z.x + Math.cos(_ca) * _cl, ty: z.y + Math.sin(_ca) * _cl });
                     }
-                    // 4) Radial 360 spark explosion
+                    // 4) FORWARD spark blast — the bulk of the spray flies the
+                    //    way the bullet was traveling (was a 360° radial burst).
                     const _radN = _crit ? 28 : 20;
                     for (let _si = 0; _si < _radN; _si++) {
-                      const _sa = Math.random() * Math.PI * 2;
-                      const _ss = 3 + Math.random() * 6;
+                      const _sa = a + (Math.random() - 0.5) * (Math.PI * 0.85); // ±77°
+                      const _ss = 4 + Math.random() * 7;
                       particles.push({ x: z.x, y: z.y,
                         vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
                         life: 8 + Math.floor(Math.random() * 5), maxLife: 13,
@@ -25544,11 +25571,12 @@ function update() {
                         color: Math.random() > 0.4 ? '#fff' : (_crit ? '#f0f' : _hCol),
                         type: 'spark' });
                     }
-                    // 5) Forward spark cone — force carrying through the target
+                    // 5) Tight forward spark cone — bright core fast-streaking
+                    //    along the exact shot vector (force-through feel).
                     const _coneN = _crit ? 12 : 9;
                     for (let _di = 0; _di < _coneN; _di++) {
-                      const _da = a + (Math.random() - 0.5) * 0.9;
-                      const _ds = 5 + Math.random() * 6;
+                      const _da = a + (Math.random() - 0.5) * 0.7; // ±20°
+                      const _ds = 6 + Math.random() * 7;
                       particles.push({ x: z.x, y: z.y,
                         vx: Math.cos(_da) * _ds, vy: Math.sin(_da) * _ds,
                         life: 9 + Math.floor(Math.random() * 4), maxLife: 13,
