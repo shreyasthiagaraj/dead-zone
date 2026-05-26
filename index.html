@@ -17985,34 +17985,120 @@ function updateDischarge() {
       // fall through — damage logic below still runs at the boundary
     }
   }
-  // ---- WISPY INTERIOR SMOKE / GAS ----
-  // The wave reads as a thick rolling gas cloud — interior gets MORE puffs,
-  // bigger size, and longer life so the cloud body is clearly visible (the
-  // old emit was too sparse to read against dark backgrounds).
+  // ---- INTERIOR PARTICLES ----
+  // Helper: pick a random position inside the wave's swept area (arc cone
+  // from origin out to current radius). Uniform-ish density across the area.
+  const _wHalf = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
+  const _wPickInside = () => {
+    const _a = w.angle + (Math.random() - 0.5) * 2 * _wHalf;
+    const _r = w.radius * Math.sqrt(Math.random()); // sqrt for uniform density
+    return { x: w.x + Math.cos(_a) * _r, y: w.y + Math.sin(_a) * _r, a: _a };
+  };
+  // Base sparkle pass — runs ALWAYS, even without a class. Tiny bright
+  // motes scattered inside the wave so the interior never looks empty.
   {
-    const _wCount = 5 + Math.floor((w.chargePct || 0.5) * 4); // was 2 + …*2
-    for (let _wi = 0; _wi < _wCount; _wi++) {
-      const _wa = Math.random() * Math.PI * 2;
-      const _wr = w.radius * (0.05 + Math.random() * 0.85);
-      particles.push({ x: w.x + Math.cos(_wa) * _wr, y: w.y + Math.sin(_wa) * _wr,
-        vx: (Math.random() - 0.5) * 0.5, vy: -0.25 - Math.random() * 0.7,
-        life: 42 + Math.random() * 22, maxLife: 64,
-        size: 9 + Math.random() * 7,
-        color: Math.random() > 0.55 ? '#bbb' : '#888', type: 'smoke',
-        _smokeAlpha: 0.24 + Math.random() * 0.14 });
+    const _sN = 6 + Math.floor((w.chargePct || 0.5) * 4);
+    for (let _si = 0; _si < _sN; _si++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y,
+        vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.5,
+        life: 10 + Math.floor(Math.random() * 8), maxLife: 18,
+        size: 1.2 + Math.random() * 1.2,
+        color: Math.random() > 0.5 ? w.color : '#fff', type: 'spark' });
     }
-    // Class-tinted wisps — denser + brighter so the discharge's color reads.
-    {
-      const _ctCount = 2 + Math.floor((w.chargePct || 0.5) * 2);
-      for (let _ti = 0; _ti < _ctCount; _ti++) {
-        const _ca = Math.random() * Math.PI * 2;
-        const _cr = w.radius * (0.1 + Math.random() * 0.8);
-        particles.push({ x: w.x + Math.cos(_ca) * _cr, y: w.y + Math.sin(_ca) * _cr,
-          vx: (Math.random() - 0.5) * 0.4, vy: -0.35 - Math.random() * 0.5,
-          life: 36 + Math.random() * 18, maxLife: 54,
-          size: 7 + Math.random() * 6,
-          color: w.color, type: 'smoke', _smokeAlpha: 0.22 + Math.random() * 0.12 });
-      }
+  }
+  // ---- CLASS-THEMED INTERIOR VFX ----
+  // Each class layers its own identity on top of the base sparkles.
+  if (w.classId === 'fire') {
+    // FIRE — rising flame embers + hot sparks
+    for (let _fi = 0; _fi < 5; _fi++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y,
+        vx: (Math.random() - 0.5) * 0.8, vy: -1.4 - Math.random() * 1.4,
+        life: 18 + Math.floor(Math.random() * 8), maxLife: 26,
+        size: 2.5 + Math.random() * 2,
+        color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)],
+        type: 'explosion' });
+    }
+    for (let _fi = 0; _fi < 3; _fi++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: (Math.random()-0.5)*1.5, vy: -0.5 - Math.random()*1.5,
+        life: 8, maxLife: 8, size: 1.5, color: '#fff', type: 'spark' });
+    }
+  } else if (w.classId === 'ice') {
+    // ICE — sparkly gaseous fine dust (tiny drifting frost crystals)
+    for (let _ii = 0; _ii < 8; _ii++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y,
+        vx: (Math.random()-0.5) * 0.7, vy: (Math.random()-0.5) * 0.6,
+        life: 22 + Math.floor(Math.random() * 10), maxLife: 32,
+        size: 0.8 + Math.random() * 0.9,
+        color: Math.random() > 0.5 ? '#8ef' : '#cff', type: 'spark' });
+    }
+    // Bright pin-prick glitter every other frame
+    if (gameTime % 2 === 0) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: 0, vy: -0.3,
+        life: 6, maxLife: 6, size: 1.4, color: '#fff', type: 'spark', _pixel: true });
+    }
+  } else if (w.classId === 'chain') {
+    // ARC — short crackle lightning arcs + bright sparks
+    for (let _ai = 0; _ai < 3; _ai++) {
+      const _p = _wPickInside();
+      const _arcLen = 8 + Math.random() * 14;
+      const _arcA = Math.random() * Math.PI * 2;
+      particles.push({ x: _p.x, y: _p.y, vx: 0, vy: 0,
+        life: 5 + Math.floor(Math.random() * 3), maxLife: 8, size: 1.2,
+        color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'lightning',
+        tx: _p.x + Math.cos(_arcA) * _arcLen, ty: _p.y + Math.sin(_arcA) * _arcLen });
+    }
+    for (let _ai = 0; _ai < 4; _ai++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: (Math.random()-0.5)*1.6, vy: (Math.random()-0.5)*1.6,
+        life: 8, maxLife: 8, size: 1.5 + Math.random()*0.8,
+        color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+    }
+  } else if (w.classId === 'wind') {
+    // PULSE — small expanding shockwave rings scattered across the interior
+    if (gameTime % 3 === 0) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: 0, vy: 0,
+        life: 10, maxLife: 10, size: 16 + Math.random() * 10,
+        color: '#cef', type: 'wakering' });
+    }
+    if (gameTime % 5 === 0) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: 0, vy: 0,
+        life: 8, maxLife: 8, size: 10 + Math.random() * 6,
+        color: '#fff', type: 'wakering' });
+    }
+    // White directional streaks along the wave's forward direction
+    for (let _wi2 = 0; _wi2 < 4; _wi2++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y,
+        vx: Math.cos(w.angle) * 2.5 + (Math.random()-0.5) * 0.6,
+        vy: Math.sin(w.angle) * 2.5 + (Math.random()-0.5) * 0.6,
+        life: 8, maxLife: 8, size: 1.4 + Math.random() * 0.8,
+        color: Math.random() > 0.5 ? '#cef' : '#fff', type: 'spark' });
+    }
+  } else if (w.classId === 'corrupt') {
+    // CORRUPT — floating glitch glyphs + purple sparks + dark wisps
+    const _gChars = '█░▓▒╳☣⚠';
+    if (gameTime % 2 === 0) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y,
+        vx: (Math.random()-0.5) * 0.5, vy: -0.8 - Math.random() * 0.8,
+        life: 16 + Math.floor(Math.random() * 8), maxLife: 24,
+        size: 9 + Math.random() * 4,
+        color: Math.random() > 0.5 ? '#a4f' : '#f0f',
+        type: 'glitchtext',
+        text: _gChars[Math.floor(Math.random() * _gChars.length)] });
+    }
+    for (let _ci2 = 0; _ci2 < 4; _ci2++) {
+      const _p = _wPickInside();
+      particles.push({ x: _p.x, y: _p.y, vx: (Math.random()-0.5)*1.2, vy: (Math.random()-0.5)*1.2,
+        life: 12, maxLife: 12, size: 1.5 + Math.random()*1,
+        color: Math.random() > 0.4 ? '#a4f' : '#f0f', type: 'spark' });
     }
   }
   const halfAngle = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
