@@ -1474,9 +1474,7 @@ let _arcadeMultikillCount = 0;
 let _arcadeMultikillTimer = 0;
 const ARCADE_MULTIKILL_WINDOW = 90; // 1.5s
 // Live time-slow scale — 1.0 normally, 0.35 when TIME SLOW pickup is active.
-// Applied to zombie velocity in the movement step so enemies crawl while the
-// player moves and fires at full speed. Recomputed each frame in updateHUD.
-let _arcadeTimeScale = 1.0;
+// (slow-bomb / time_slow powerup removed — _arcadeTimeScale is no longer used)
 // Mod terminal that spawns between waves. The player walks up to it during
 // the rest gap to pick an upgrade card. Cleared when the next wave begins.
 // Shape: { x, y, _entered: bool }
@@ -4976,7 +4974,7 @@ function maybeDropPickup(zombie) {
 // (their delivery vehicle is the dedicated 'bomb_pickup' type now) — drops
 // from this pool are timed buffs the player can plan around.
 function _pickArcadePowerupId() {
-  const pool = ['rage', 'shield', 'time_slow', 'rage', 'time_slow']; // weighted
+  const pool = ['rage', 'shield', 'rage']; // weighted
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -8984,7 +8982,6 @@ const POWERUP_TYPES = [
   { id: 'freeze', name: 'FREEZE', color: '#aef', icon: '🧊', duration: 600, desc: 'All zombies slowed 70%' },
   { id: 'frenzy', name: 'FRENZY', color: '#f80', icon: '💀', duration: 600, desc: '2x speed, 3x damage, half HP' },
   { id: 'sunbeam', name: 'SUNBEAM', color: '#ffa', icon: '☀', duration: 600, desc: 'Flashlight burns zombies' },
-  { id: 'timebomb', name: 'TIME BOMB', color: '#a8f', icon: '⏳', duration: 1, desc: 'Slows zombies in area for 8s' },
   { id: 'firebomb', name: 'FIRE BOMB', color: '#f60', icon: '🔥', duration: 1, desc: 'Drops fire that burns zombies' },
   { id: 'drone', name: 'DRONE', color: '#a8f', icon: '🤖', duration: 600, desc: 'A drone follows you and shoots' },
 ];
@@ -9193,9 +9190,6 @@ DEAD CODE END */
 const POWERUP_TYPES = [
   { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 600, desc: 'Double damage + faster fire for 10s' },
   { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 600, desc: 'Invincible force field' },
-  // Arcade buff: zombie velocity multiplied by 0.35 for 8s — enemies crawl
-  // while the player moves and fires at full speed.
-  { id: 'time_slow', name: 'TIME SLOW', color: '#a8f', icon: '⏳', duration: 480, desc: 'Enemies move 65% slower for 8s' },
   // Class bombs — instant AoE that inflicts heavy status on all enemies in a wide radius
   { id: 'thermalbomb', name: 'THERMAL BOMB', color: '#f80', icon: '🔥', duration: 1, desc: 'Massive fire blast — heavy Overheat to all nearby' },
   { id: 'cryobomb', name: 'CRYO BOMB', color: '#8ef', icon: '🧊', duration: 1, desc: 'Flash freeze blast — Chill + Freeze to all nearby' },
@@ -20097,7 +20091,7 @@ function updateDeadshot() {
       for (let _ri = 0; _ri < 14; _ri++) { const _ra = (_ri/14)*Math.PI*2; particles.push({ x: mx, y: my, vx: Math.cos(_ra)*5, vy: Math.sin(_ra)*5, life: 11, maxLife: 11, size: 2.5, color: '#fff', type: 'spark' }); }
       addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 18, 'RELEASE!', '#fff');
       playSound(1500, 0.06, 'sine', 0.1);
-      screenShake.intensity = Math.max(screenShake.intensity, 4);
+      // (deadshot no longer triggers screen shake — kept visual + audio cue only)
     }
     // Steady ready pulse at the muzzle while held at max
     if (gameTime % 14 === 0) {
@@ -20199,9 +20193,8 @@ function _fireDeadshot(lp) {
     const _beamEnd = 24 + 12*60;
     particles.push({ x: lp.x+Math.cos(a)*24, y: lp.y+Math.sin(a)*24, vx:0, vy:0, life:40, maxLife:40, size:2, color:bColor, type:'lightning', tx:lp.x+Math.cos(a)*_beamEnd, ty:lp.y+Math.sin(a)*_beamEnd });
     particles.push({ x: lp.x+Math.cos(a)*24, y: lp.y+Math.sin(a)*24, vx:0, vy:0, life:50, maxLife:50, size:1, color:'#fff', type:'lightning', tx:lp.x+Math.cos(a)*_beamEnd, ty:lp.y+Math.sin(a)*_beamEnd });
-    screenShake.intensity = Math.max(screenShake.intensity, 12);
-  } else {
-    screenShake.intensity = Math.max(screenShake.intensity, 6 + chargePct*8);
+    // (deadshot fire no longer shakes the screen — the muzzle flash, ring,
+    // and sound carry the impact instead)
   }
   playSound(100, 0.12, 'square', 0.1); playSound(60, 0.1, 'sine', 0.06);
   if (chargePct >= 0.8) triggerGlitchSurge(0.3, 12);
@@ -20233,8 +20226,8 @@ function _fireDeadshot(lp) {
         life: 14 + Math.random() * 6, maxLife: 20, size: 3 + Math.random() * 2.5,
         color: ['#fff','#ffe',bColor,bColor][Math.floor(Math.random()*4)], type: 'spark' });
     }
-    // Heavier kick + an extra crack on top of the existing thump
-    screenShake.intensity = Math.max(screenShake.intensity, 14);
+    // (no extra screen shake — the multi-layer flash + glitch surge already
+    // sell the full-charge launch on their own)
     playSound(1200, 0.04, 'square', 0.08);
     triggerGlitchSurge(0.4, 14);
   }
@@ -20264,7 +20257,7 @@ function _fireDeadshot(lp) {
         vx: Math.cos(_fa)*_fs, vy: Math.sin(_fa)*_fs,
         life: 8, maxLife: 8, size: 2+Math.random(), color: _ttColor, type: 'spark' });
     }
-    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    // (no shake — deadshot is shake-free)
   }
 }
 
@@ -20452,45 +20445,122 @@ function applyDashTrailEffects(lp) {
     particles.push({x:fx+(Math.random()-0.5)*20,y:fy+(Math.random()-0.5)*20,vx:ddx*2,vy:ddy*2,life:10,maxLife:10,size:2+Math.random(),color:Math.random()<0.5?'#8ef':'#cef',type:'spark'});
   }
 
-  // ---- STORM DASH (arc): lightning bolts strike enemies along the ENTIRE dash path ----
-  if (hasStatic && gameTime % 2 === 0) {
-    const _swLv = _modLevel('static_wake');
-    const boltCount = 3 + Math.min(3, _swLv);
-    const stormR = 180; // wide range — hits enemies far from the path
-    let boltsLeft = boltCount;
-    const _swDmg = _modScale('static_wake', 25, 5);
-    for (const z of zombies) {
-      if (boltsLeft <= 0) break;
-      if (z.hp <= 0 || hitSet.has(z.zid)) continue;
-      const dx = z.x - lp.x, dy = z.y - lp.y;
-      if (dx*dx + dy*dy > stormR*stormR) continue;
-      hitSet.add(z.zid);
-      damageZombie(z, _swDmg, 0, 0);
-      // Storm dash no longer applies CHARGED — it was indirectly firing the
-      // universal-chain bolt swarm on every dashed enemy, swamping the
-      // screen and gating the dash's identity behind arc rounds.
-      z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
-      // Lightning bolt from player to enemy
-      particles.push({x:lp.x,y:lp.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:z.x,ty:z.y});
-      playSound(800 + Math.random()*400, 0.04, 'sawtooth', 0.04); // electric zap
-      // Bright spark burst at impact point
-      for (let si = 0; si < 8; si++) { const sa = Math.random()*Math.PI*2, ss=2+Math.random()*4; particles.push({x:z.x,y:z.y,vx:Math.cos(sa)*ss,vy:Math.sin(sa)*ss,life:16,maxLife:16,size:2.5+Math.random(),color:Math.random()>0.4?'#4ff':'#fff',type:'spark'}); }
-      // Flash ring at struck enemy
-      particles.push({x:z.x,y:z.y,vx:0,vy:0,life:10,maxLife:10,size:z.radius+15,color:'#4ff',type:'wakering'});
-      // Lv2: each bolt chains to 1 nearby
-      if (_m.staticWake >= 2) {
-        let bestD = 10000, bestZ = null;
-        for (const oz of zombies) { if (oz === z || oz.hp <= 0 || hitSet.has(oz.zid)) continue; const d2 = (oz.x-z.x)**2+(oz.y-z.y)**2; if (d2 < bestD && d2 < 22500) { bestD = d2; bestZ = oz; } }
-        if (bestZ) { damageZombie(bestZ, 15, 0, 0); hitSet.add(bestZ.zid);
-          particles.push({x:z.x,y:z.y,vx:0,vy:0,life:18,maxLife:18,size:1.5,color:'#4ff',type:'lightning',tx:bestZ.x,ty:bestZ.y});
-          for (let si=0;si<4;si++){const sa=Math.random()*Math.PI*2;particles.push({x:bestZ.x,y:bestZ.y,vx:Math.cos(sa)*3,vy:Math.sin(sa)*3,life:12,maxLife:12,size:2,color:'#fff',type:'spark'});}
-        }
+  // ---- STORM DASH (arc): muted envelope + bright zap arcs to nearby enemies ----
+  if (hasStatic) {
+    // (A) PER-FRAME PLAYER ENVELOPE — the player IS the electrified node.
+    //     A circulating ring of sparks + tiny crackle arcs hugging the body.
+    {
+      const _envCount = 4;
+      const _envBaseR = PLAYER_RADIUS + 2;
+      for (let _ei = 0; _ei < _envCount; _ei++) {
+        // Stable rotation offset per particle so the ring "spins" instead of
+        // strobing randomly. gameTime drives the rotation.
+        const _ea = (gameTime * 0.16 + (_ei / _envCount) * Math.PI * 2) % (Math.PI * 2);
+        const _eR = _envBaseR + (Math.random() - 0.5) * 3;
+        particles.push({ x: lp.x + Math.cos(_ea) * _eR, y: lp.y + Math.sin(_ea) * _eR,
+          vx: -Math.sin(_ea) * 0.6, vy: Math.cos(_ea) * 0.6,
+          life: 5, maxLife: 5, size: 1.5 + Math.random() * 0.6,
+          color: Math.random() > 0.35 ? '#4ff' : '#fff', type: 'spark' });
       }
-      boltsLeft--;
+      // Two short crackle arcs hugging the silhouette. Bolts are deliberately
+      // SHORT (just chord segments around the body) — muted, not screen-spanning.
+      const _bolts = (gameTime % 2 === 0) ? 2 : 1;
+      for (let _bi = 0; _bi < _bolts; _bi++) {
+        const _a1 = Math.random() * Math.PI * 2;
+        const _a2 = _a1 + (Math.PI * 0.55) + Math.random() * 0.5;
+        const _r = _envBaseR + Math.random() * 2;
+        particles.push({ x: lp.x + Math.cos(_a1) * _r, y: lp.y + Math.sin(_a1) * _r,
+          vx: 0, vy: 0, life: 4, maxLife: 4, size: 1,
+          color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'lightning',
+          tx: lp.x + Math.cos(_a2) * _r, ty: lp.y + Math.sin(_a2) * _r });
+      }
     }
-    // Ambient electric crackle VFX around player
-    if (boltsLeft === boltCount) { // no targets hit — still show sparks
-      for (let si = 0; si < 2; si++) { const sa = Math.random()*Math.PI*2, sr = 15+Math.random()*30; particles.push({x:lp.x+Math.cos(sa)*sr,y:lp.y+Math.sin(sa)*sr,vx:0,vy:0,life:6,maxLife:6,size:2,color:'#4ff',type:'spark'}); }
+    // (B) ELECTRIC TAIL — short streaks behind the player along -dash direction.
+    //     Per-frame so the tail reads as continuous, not a flicker.
+    {
+      const _tBack = Math.atan2(-ddy, -ddx);
+      const _tHeadX = lp.x - ddx * 6;
+      const _tHeadY = lp.y - ddy * 6;
+      // 2 jagged lightning streaks per frame — different lengths so the tail
+      // has a frayed, flickering feel rather than a clean straight line.
+      for (let _ti = 0; _ti < 2; _ti++) {
+        const _tLen = 22 + Math.random() * 16;
+        const _tJit = 6;
+        const _tex = _tHeadX - ddx * _tLen + (Math.random() - 0.5) * _tJit;
+        const _tey = _tHeadY - ddy * _tLen + (Math.random() - 0.5) * _tJit;
+        particles.push({ x: _tHeadX + (Math.random() - 0.5) * 3, y: _tHeadY + (Math.random() - 0.5) * 3,
+          vx: 0, vy: 0, life: 7, maxLife: 7, size: _ti === 0 ? 1.2 : 0.8,
+          color: _ti === 0 ? '#4ff' : '#fff', type: 'lightning',
+          tx: _tex, ty: _tey });
+      }
+      // Trailing ember sparks fanning back
+      for (let _si = 0; _si < 3; _si++) {
+        const _sa = _tBack + (Math.random() - 0.5) * 0.7;
+        const _ss = 1.4 + Math.random() * 1.6;
+        particles.push({ x: _tHeadX, y: _tHeadY,
+          vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+          life: 13 + Math.floor(Math.random() * 5), maxLife: 18,
+          size: 1.3 + Math.random() * 0.8,
+          color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+      }
+    }
+    // (C) ZAP STRIKES — every 2nd frame, pick up to N nearby enemies and draw a
+    //     CLEAR BRIGHT arc from the player to each. Range cut 180 → 130 so the
+    //     bolts stay punchy instead of streaking across the screen.
+    if (gameTime % 2 === 0) {
+      const _swLv = _modLevel('static_wake');
+      const boltCount = 3 + Math.min(3, _swLv);
+      const stormR = 130;
+      let boltsLeft = boltCount;
+      const _swDmg = _modScale('static_wake', 25, 5);
+      for (const z of zombies) {
+        if (boltsLeft <= 0) break;
+        if (z.hp <= 0 || hitSet.has(z.zid)) continue;
+        const dx = z.x - lp.x, dy = z.y - lp.y;
+        if (dx * dx + dy * dy > stormR * stormR) continue;
+        hitSet.add(z.zid);
+        damageZombie(z, _swDmg, 0, 0);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 12);
+        // CLEAR BRIGHT ARC from player to enemy — double-stroked (cyan outer +
+        // white core), longer life, thicker size so it reads as a solid bolt.
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
+          size: 2.6, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 11, maxLife: 11,
+          size: 1.3, color: '#fff', type: 'lightning', tx: z.x, ty: z.y });
+        playSound(800 + Math.random() * 400, 0.04, 'sawtooth', 0.04);
+        // Impact burst — fewer/shorter so it doesn't blur the bright bolt line.
+        for (let si = 0; si < 6; si++) {
+          const sa = Math.random() * Math.PI * 2, ss = 2 + Math.random() * 3.5;
+          particles.push({ x: z.x, y: z.y, vx: Math.cos(sa) * ss, vy: Math.sin(sa) * ss,
+            life: 12, maxLife: 12, size: 2 + Math.random(),
+            color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+        }
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 9, maxLife: 9,
+          size: z.radius + 12, color: '#4ff', type: 'wakering' });
+        // Lv2 chain — short bright arc from struck enemy to one nearby
+        if (_m.staticWake >= 2) {
+          let bestD = 10000, bestZ = null;
+          for (const oz of zombies) {
+            if (oz === z || oz.hp <= 0 || hitSet.has(oz.zid)) continue;
+            const d2 = (oz.x - z.x) ** 2 + (oz.y - z.y) ** 2;
+            if (d2 < bestD && d2 < 14400) { bestD = d2; bestZ = oz; } // ~120px
+          }
+          if (bestZ) {
+            damageZombie(bestZ, 15, 0, 0);
+            hitSet.add(bestZ.zid);
+            particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12,
+              size: 2.2, color: '#4ff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
+            particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+              size: 1.1, color: '#fff', type: 'lightning', tx: bestZ.x, ty: bestZ.y });
+            for (let si = 0; si < 4; si++) {
+              const sa = Math.random() * Math.PI * 2;
+              particles.push({ x: bestZ.x, y: bestZ.y, vx: Math.cos(sa) * 3, vy: Math.sin(sa) * 3,
+                life: 10, maxLife: 10, size: 1.8, color: '#fff', type: 'spark' });
+            }
+          }
+        }
+        boltsLeft--;
+      }
     }
   }
 
@@ -21730,9 +21800,6 @@ function spawnArcadeZombie() {
 
 function updateArcadeWaves() {
   if (gameMode !== 'arcade') return;
-  // Compute the live time-slow scale every frame from active powerups so the
-  // zombie movement code can read a single global. Runs on host AND client.
-  _arcadeTimeScale = (typeof hasPowerUp === 'function' && hasPowerUp('time_slow')) ? 0.35 : 1.0;
   if (!isHost) return;
   // Streak timer ticks down every frame regardless of state
   if (arcadeStreakTimer > 0) {
@@ -23899,7 +23966,35 @@ function update() {
           playSound(600, 0.1, 'square', 0.06);
           screenShake.intensity = Math.max(screenShake.intensity, 4);
           // Chain into Charged enemies
-          if (isHost) { const maxJ=Math.min(8,_modScale('discharge_burst',2,1)+(_rm.staticChain||0)); const _dbR2=28900+(_rm.staticChain>=2?14000:0); let lastP={x:lp.x,y:lp.y}; const hitS=new Set(); const _deStag=_rm.dischargeExpose?Math.floor(_modScale('discharge_expose',1,0.3)*60):0; for(let j=0;j<maxJ;j++){let bD2=_dbR2,bZ=null;for(const cz of zombies){if(cz.hp<=0||!cz._charged||hitS.has(cz.zid))continue;const d2=(cz.x-lastP.x)**2+(cz.y-lastP.y)**2;if(d2<bD2){bD2=d2;bZ=cz;}}if(!bZ)break;damageZombie(bZ,25,0,0,true);applyCharged(bZ);if(_rm.dischargeExpose){applyExposed(bZ);bZ.staggerTimer=Math.max(bZ.staggerTimer||0,_deStag);}particles.push({x:lastP.x,y:lastP.y,vx:0,vy:0,life:16,maxLife:16,size:1,color:'#4ff',type:'lightning',tx:bZ.x,ty:bZ.y});hitS.add(bZ.zid);lastP=bZ;} }
+          if (isHost) {
+            const maxJ = Math.min(8, _modScale('discharge_burst', 2, 1) + (_rm.staticChain || 0));
+            const _dbR2 = 28900 + (_rm.staticChain >= 2 ? 14000 : 0);
+            let lastP = { x: lp.x, y: lp.y };
+            const hitS = new Set();
+            const _deStag = _rm.dischargeExpose ? Math.floor(_modScale('discharge_expose', 1, 0.3) * 60) : 0;
+            for (let j = 0; j < maxJ; j++) {
+              let bD2 = _dbR2, bZ = null;
+              for (const cz of zombies) {
+                if (cz.hp <= 0 || !cz._charged || hitS.has(cz.zid)) continue;
+                const d2 = (cz.x - lastP.x) ** 2 + (cz.y - lastP.y) ** 2;
+                if (d2 < bD2) { bD2 = d2; bZ = cz; }
+              }
+              if (!bZ) break;
+              damageZombie(bZ, 25, 0, 0, true);
+              applyCharged(bZ);
+              if (_rm.dischargeExpose) { applyExposed(bZ); bZ.staggerTimer = Math.max(bZ.staggerTimer || 0, _deStag); }
+              // Bright DOUBLE-STROKE arc — cyan outer + white core — so the
+              // jump from player → enemy reads as a solid bolt, not a faint line.
+              particles.push({ x: lastP.x, y: lastP.y, vx: 0, vy: 0,
+                life: 16, maxLife: 16, size: 2.4, color: '#4ff',
+                type: 'lightning', tx: bZ.x, ty: bZ.y });
+              particles.push({ x: lastP.x, y: lastP.y, vx: 0, vy: 0,
+                life: 13, maxLife: 13, size: 1.2, color: '#fff',
+                type: 'lightning', tx: bZ.x, ty: bZ.y });
+              hitS.add(bZ.zid);
+              lastP = bZ;
+            }
+          }
         }
         // Kinetic Wake Lv3: enemies hit by endpoint burst become Exposed
         if (_rm.kineticWake >= 3 && isHost) {
@@ -27122,13 +27217,7 @@ function update() {
       // and bounce off them. Slow chase movement uses the plain clamp+pushOut
       // path so normal pathing (chase-into-wall slide) still works.
       // ARCADE TIME SLOW: scale zombie velocity by the active time scale so
-      // enemies crawl while the player operates at full speed. Applied here
-      // (just before the move step) so the bounce/substep code consistently
-      // sees the slowed values.
-      if (gameMode === 'arcade' && _arcadeTimeScale !== 1.0) {
-        z.vx *= _arcadeTimeScale;
-        z.vy *= _arcadeTimeScale;
-      }
+      // (slow-bomb removed — no time-scale multiplier applied to zombie velocity)
       const _mv2 = z.vx*z.vx + z.vy*z.vy;
       const _mvSpd = Math.sqrt(_mv2);
       let _hitWallThisFrame = false;
