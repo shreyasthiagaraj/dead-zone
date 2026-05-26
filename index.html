@@ -23215,17 +23215,27 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       }
     }
     // ---- CARD: OVERLOAD (surge_break) — CHARGED kills fire 3 arc bolts radially (40 dmg, 200px) ----
-    // Consolidated death-bolt card. Replaces ARC DISCHARGE + ARC BURST, which
-    // all triggered on CHARGED kill and just spawned radial bolts with
-    // different counts. _arcBoltDepth gate prevents cascade (bolt-kill →
-    // bolts → bolt-kills → bolts → freeze).
+    // Consolidated death-bolt card. Replaces ARC DISCHARGE + ARC BURST.
+    // Bolts release with a 0.15s gap between them so they don't merge into a
+    // single visual blob when they hit the same target. _arcBoltDepth gate
+    // prevents cascade (bolt-kill → bolts → bolt-kills → bolts → freeze).
     if ((runMods||{}).surgeBreak > 0 && z._charged && _arcBoltDepth === 0) {
       const _applyCh = !!(runMods||{}).arcCascade; // ARC CASCADE re-charges targets
       const _sbDmg = _modScale('surge_break', 40, 7);
       const _sbN = 3;
+      // Capture death position + zid up front — z is about to be cleaned up
+      // (or moved by knockback), and the staggered bolts need a stable origin.
+      const _sbX = z.x, _sbY = z.y, _sbZid = z.zid;
       for (let _oi = 0; _oi < _sbN; _oi++) {
-        fireArcBolt(z.x, z.y, { damage: _sbDmg, range: 200, applyCharged: _applyCh,
-          prefAngle: (_oi / _sbN) * Math.PI * 2, sourceZid: z.zid });
+        const _ang = (_oi / _sbN) * Math.PI * 2;
+        const _fire = () => {
+          fireArcBolt(_sbX, _sbY, {
+            damage: _sbDmg, range: 200, applyCharged: _applyCh,
+            prefAngle: _ang, sourceZid: _sbZid,
+          });
+        };
+        if (_oi === 0) _fire();
+        else setTimeout(_fire, _oi * 150); // 0.15s gap between releases
       }
     }
     // ---- CARD: FATAL EXPLOSION — COMPROMISED kill explodes in 80px ----
