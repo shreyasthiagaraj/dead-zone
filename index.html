@@ -21361,6 +21361,7 @@ function tryPickupForPlayer(pl, isLocalUI, manual) {
           screenShake.intensity = Math.max(screenShake.intensity, 14);
           triggerGlitchSurge(0.3, 18);
           playSfx('explosion', 0.55) || playExplosionSound();
+          _arcadeFadeOldCallouts();
           floatingTexts.push({
             x: pl.x, y: pl.y - 60, text: 'BOMB!', color: '#fa0',
             vx: 0, vy: -1.0, life: 80, maxLife: 80,
@@ -21904,6 +21905,25 @@ function _updateArcadeGemMagnet() {
   }
 }
 
+// Fast-fade any existing arcade big-callout floating texts so the new one
+// replaces them without piling up on top. Sets life to a small value
+// instead of removing outright — gives a quick fade instead of a hard pop.
+function _arcadeFadeOldCallouts() {
+  if (!floatingTexts || !floatingTexts.length) return;
+  for (let i = 0; i < floatingTexts.length; i++) {
+    const t = floatingTexts[i];
+    if (!t) continue;
+    if (t._arcadeBigCallout && t.life > 5) {
+      t.life = 5; t.maxLife = Math.max(t.maxLife, 5);
+    }
+    // Also fade the "+X" bonus labels so stacks of them don't pile on the
+    // new callout. (Skip ones already fading.)
+    if (t._arcadePoints && t.life > 5) {
+      t.life = 5; t.maxLife = Math.max(t.maxLife, 5);
+    }
+  }
+}
+
 // Fire the multikill callout for a tier crossing. Center the text on the
 // player so it's always in view, scale visuals + sound + shake with tier.
 function _spawnArcadeMultikillCallout(tier) {
@@ -21915,6 +21935,9 @@ function _spawnArcadeMultikillCallout(tier) {
   const label = _ARCADE_MULTIKILL_LABELS[tier];
   score += bonus;
   arcadeCounterPulse = Math.min(1, arcadeCounterPulse + 0.4);
+  // Clear any in-flight big callout / bonus label so this one replaces it
+  // instead of stacking on top. Old ones fast-fade (5-frame ~83ms).
+  _arcadeFadeOldCallouts();
   // Big callout above the player
   floatingTexts.push({
     x: lp.x, y: lp.y - 70,
@@ -22256,6 +22279,7 @@ function updateArcadeWaves() {
     // PERFECT WAVE callout — big magenta text above the player, bigger pulse,
     // separate from the WAVE COMPLETE banner so it reads as its own win.
     if (isPerfect) {
+      _arcadeFadeOldCallouts();
       floatingTexts.push({
         x: lpx, y: lpy - 80,
         text: 'FLAWLESS!', color: '#f0f',
