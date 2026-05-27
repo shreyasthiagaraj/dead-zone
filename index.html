@@ -1526,7 +1526,14 @@ const GUN_MAG_SIZE = 15;          // shots before reload
 const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 2;       // life=2, speed=300: frame 1 sweeps 0-300px (full range), frame 2 cleans up
 const GUN_EFFECTIVE_RANGE = 210;   // base hitscan range in px
-function _getGunRange() { const _lr = (runMods && runMods.longReach) || 0; return GUN_EFFECTIVE_RANGE * (1 + (_lr > 0 ? _modScale('long_reach', 0.40, 0.08) : 0)); }
+function _getGunRange() {
+  const _rm = runMods || {};
+  const _lr = _rm.longReach || 0;
+  const _longBonus = _lr > 0 ? _modScale('long_reach', 0.40, 0.08) : 0;
+  // PULSE INFUSION: +15% sidearm range (kinetic shot reaches farther).
+  const _pulseBonus = _rm.pulseShotLv > 0 ? 0.15 : 0;
+  return GUN_EFFECTIVE_RANGE * (1 + _longBonus + _pulseBonus);
+}
 const GUN_AUTO_RELOAD_DELAY = 50;  // frames (~0.8s) of not firing before cooldown starts
 let _gunAmmo = GUN_MAG_SIZE;
 // Tracks the last completed reload segment so we only fire the click/spark VFX
@@ -1959,10 +1966,11 @@ function getScaledGun() {
     bulletSpeed: BASE_GUN.bulletSpeed,
     spread: BASE_GUN.spread + (wideSpreadExtra > 0 ? 0.15 : 0),
     bulletSize: m.heavyCaliber > 0 ? 5 : BASE_GUN.bulletSize,
-    // PULSE SHOT: heavy knockback bump on every bullet — was +3 at lv1
-    // (barely noticeable). Now +16 at lv1, scaling +2 per stack. Pulse is
-    // the "push" class, so a basic shot should clearly shove enemies.
-    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 14 + m.pulseShotLv * 2 : 0),
+    // PULSE INFUSION: heavy knockback bump on every bullet. Pulse is the
+    // "push" class — a basic shot should clearly shove enemies a real
+    // distance. +26 at lv1 (more than 3x base) so the kinetic identity
+    // is unmistakable; +3 per additional stack.
+    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 24 + m.pulseShotLv * 3 : 0),
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
     _pierceRangeBoost: (m.pierceAdd || 0) > 0,
     bounceCount: 0,
@@ -19876,11 +19884,13 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
         tx: z.x + Math.cos(_la) * _ll, ty: z.y + Math.sin(_la) * _ll });
     }
   }
-  // PULSE SHOT
+  // PULSE INFUSION (melee path) — heavy outward shove on every sword hit
+  // to match the gun's pulse knockback identity. Base 14 (was 3), +4 per
+  // additional stack. VECTOR SNAP still multiplies.
   if (_m.pulseShotLv > 0) {
     applyExposed(z);
     const vsMult = _m.vectorSnap > 0 ? _modScale('vector_snap', 1.5, 0.3) : 1;
-    const pushF = (2 + _m.pulseShotLv) * vsMult;
+    const pushF = (10 + _m.pulseShotLv * 4) * vsMult;
     z.vx += Math.cos(attackAngle) * pushF;
     z.vy += Math.sin(attackAngle) * pushF;
     const stag = 10 + (_m.vectorSnap || 0) * 10;
