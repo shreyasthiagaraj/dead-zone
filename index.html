@@ -20786,14 +20786,16 @@ function applyDashTrailEffects(lp) {
         if (dx * dx + dy * dy > stormR * stormR) continue;
         hitSet.add(z.zid);
         damageZombie(z, _swDmg, 0, 0);
-        z.staggerTimer = Math.max(z.staggerTimer || 0, 18);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 22);
         z.hitFlash = Math.max(z.hitFlash || 0, 14);
-        // ---- SHOCKED HIT — flashy, powerful, "they got struck by lightning" ----
-        // (1) Main bolt — thick double-stroke, longer life so it lingers a beat.
-        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 18, maxLife: 18,
-          size: 4.5, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
-        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 15, maxLife: 15,
-          size: 2.4, color: '#fff', type: 'lightning', tx: z.x, ty: z.y });
+        // Live shock outline lingers on the enemy via z._shocked timer
+        // (rendered by the zombie's _shocked render block — animated cage).
+        z._shocked = Math.max(z._shocked || 0, 36);
+        // ---- SHOCKED HIT — main bolt lingers a beat for prominence ----
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 30, maxLife: 30,
+          size: 4.8, color: '#4ff', type: 'lightning', tx: z.x, ty: z.y });
+        particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 26, maxLife: 26,
+          size: 2.6, color: '#fff', type: 'lightning', tx: z.x, ty: z.y });
         // (2) Fork bolts — branch off the main line at random points so the
         //     bolt has a jagged, forked tree-of-lightning silhouette.
         {
@@ -20856,8 +20858,8 @@ function applyDashTrailEffects(lp) {
             size: 1.8, color: _ri % 2 === 0 ? '#fff' : '#4ff', type: 'lightning',
             tx: z.x + Math.cos(_ra) * _rL, ty: z.y + Math.sin(_ra) * _rL });
         }
-        // (7) "SHOCKED" label + screen shake — it's a real hit
-        addFloatingText(z.x, z.y - (z.radius || 14) - 16, 'SHOCKED', '#4ff');
+        // (7) Screen shake — it's a real hit (label removed; the live
+        // electric outline on the enemy carries the "shocked" read).
         screenShake.intensity = Math.max(screenShake.intensity, 4);
         // Lv2 chain — short bright arc from struck enemy to one nearby
         if (_m.staticWake >= 2) {
@@ -20882,6 +20884,29 @@ function applyDashTrailEffects(lp) {
           }
         }
         boltsLeft--;
+      }
+      // MISS BOLTS — if nothing was zapped this pass (boltsLeft is still
+      // boltCount), fire a couple of harmless lightning streaks outward
+      // into empty space so the dash still crackles even without targets.
+      // Throttled to every other frame (we're already inside gameTime%2)
+      // and to 2 bolts so they aren't loud.
+      if (boltsLeft === boltCount && (gameTime % 4 === 0)) {
+        for (let _mi = 0; _mi < 2; _mi++) {
+          const _ma = Math.random() * Math.PI * 2;
+          const _mL = 70 + Math.random() * 50;
+          const _tx = lp.x + Math.cos(_ma) * _mL;
+          const _ty = lp.y + Math.sin(_ma) * _mL;
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+            life: 14, maxLife: 14, size: 2.6,
+            color: '#4ff', type: 'lightning', tx: _tx, ty: _ty });
+          particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+            life: 11, maxLife: 11, size: 1.2,
+            color: '#fff', type: 'lightning', tx: _tx, ty: _ty });
+          // A faint dissipating spark at the endpoint so the bolt has
+          // somewhere to "ground" visually.
+          particles.push({ x: _tx, y: _ty, vx: 0, vy: 0,
+            life: 8, maxLife: 8, size: 2, color: '#4ff', type: 'spark' });
+        }
       }
     }
   }
@@ -25483,18 +25508,38 @@ function update() {
     // the sidearm's smoke puffs). Throttled spawns so a long-life pierce
     // shot doesn't pile up trail particles.
     if(b._deadshotRound){const _dc=b._deadshotColor||b.color;
-      // Body streak (every other frame — was every frame, was the heaviest cost)
-      if (gameTime % 2 === 0) {
-        particles.push({x:b.x-(b.vx*0.3)+(Math.random()-0.5)*3,y:b.y-(b.vy*0.3)+(Math.random()-0.5)*3,vx:-b.vx*0.08+(Math.random()-0.5)*0.6,vy:-b.vy*0.08+(Math.random()-0.5)*0.6,life:24+Math.random()*8,maxLife:32,size:2.5+Math.random()*1.5,color:_dc,type:'spark'});
+      // Body embers — chunky cyan sparks spawning every frame in the wake
+      // (was every other frame). Two per frame so the trail reads as a
+      // dense glowing stream behind the round bullet body.
+      for (let _di = 0; _di < 2; _di++) {
+        particles.push({
+          x: b.x - b.vx*0.3 + (Math.random()-0.5)*4,
+          y: b.y - b.vy*0.3 + (Math.random()-0.5)*4,
+          vx: -b.vx*0.08 + (Math.random()-0.5)*0.7,
+          vy: -b.vy*0.08 + (Math.random()-0.5)*0.7,
+          life: 26 + Math.random()*8, maxLife: 34,
+          size: 3 + Math.random()*1.6,
+          color: _dc, type: 'spark',
+        });
       }
-      // Bright white-cyan core ember every frame — keeps the line-of-light read
-      particles.push({x:b.x-(b.vx*0.15)+(Math.random()-0.5)*2,y:b.y-(b.vy*0.15)+(Math.random()-0.5)*2,vx:-b.vx*0.04+(Math.random()-0.5)*0.4,vy:-b.vy*0.04+(Math.random()-0.5)*0.4,life:12+Math.random()*4,maxLife:16,size:1.4+Math.random()*1,color:Math.random()>0.4?'#fff':'#cff',type:'spark'});
-      // Wispy black smoke puffs — same look as the sidearm muzzle smoke.
-      // Two puffs per spawn frame for a denser wispy wake.
+      // Bright white-cyan core embers every frame — the bright spine of the
+      // wake. Two per frame for thickness.
+      for (let _ci = 0; _ci < 2; _ci++) {
+        particles.push({
+          x: b.x - b.vx*0.15 + (Math.random()-0.5)*2.5,
+          y: b.y - b.vy*0.15 + (Math.random()-0.5)*2.5,
+          vx: -b.vx*0.04 + (Math.random()-0.5)*0.5,
+          vy: -b.vy*0.04 + (Math.random()-0.5)*0.5,
+          life: 14 + Math.random()*5, maxLife: 19,
+          size: 1.6 + Math.random()*1.1,
+          color: Math.random() > 0.4 ? '#fff' : '#cff', type: 'spark',
+        });
+      }
+      // Wispy black smoke puffs — dense wispy wake.
       if(gameTime%2===0){
         const _sa=Math.atan2(b.vy,b.vx)+Math.PI;
-        for (let _si = 0; _si < 2; _si++) {
-          particles.push({x:b.x+(Math.random()-0.5)*5,y:b.y+(Math.random()-0.5)*5,vx:Math.cos(_sa)*(0.8+Math.random()*1.4)+(Math.random()-0.5)*0.6,vy:Math.sin(_sa)*(0.8+Math.random()*1.4)+(Math.random()-0.5)*0.6 - 0.2,life:18+Math.floor(Math.random()*12),maxLife:30,size:4+Math.random()*5,color:'#000',type:'smoke',_smokeAlpha:0.2+Math.random()*0.3});
+        for (let _si = 0; _si < 3; _si++) {
+          particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:Math.cos(_sa)*(0.8+Math.random()*1.6)+(Math.random()-0.5)*0.7,vy:Math.sin(_sa)*(0.8+Math.random()*1.6)+(Math.random()-0.5)*0.7 - 0.2,life:20+Math.floor(Math.random()*14),maxLife:34,size:5+Math.random()*5,color:'#000',type:'smoke',_smokeAlpha:0.22+Math.random()*0.3});
         }
       }
       // Railgun: denser trailing streaks + parallel energy wisps
@@ -32571,30 +32616,9 @@ function render() {
       _bSizeMult = 0.02 + 0.98 * _shrinkEased;
       _bAlphaMult = 0.02 + 0.98 * _shrinkEased;
     }
-    // Deadshot trail — prominent multi-layer cyan/white streak through the
-    // bullet's recent positions. Fake-glow (no shadowBlur per perf rules):
-    // three stacked strokes (wide outer, medium mid, thin white core) read
-    // as a bright line of light trailing the projectile. Drawn BEFORE the
-    // bullet body so the projectile sits at the head of the streak.
-    if(b._deadshotRound&&b.trail.length>1){
-      const _dc=b._deadshotColor||b.color||'#0ff';
-      // Outer glow (wide + dim)
-      ctx.strokeStyle=_dc; ctx.lineWidth=8; ctx.globalAlpha=0.25;
-      ctx.beginPath(); ctx.moveTo(b.trail[0].x,b.trail[0].y);
-      for(let j=1;j<b.trail.length;j++) ctx.lineTo(b.trail[j].x,b.trail[j].y);
-      ctx.lineTo(b.x,b.y); ctx.stroke();
-      // Mid band (saturated color)
-      ctx.lineWidth=4; ctx.globalAlpha=0.7;
-      ctx.beginPath(); ctx.moveTo(b.trail[0].x,b.trail[0].y);
-      for(let j=1;j<b.trail.length;j++) ctx.lineTo(b.trail[j].x,b.trail[j].y);
-      ctx.lineTo(b.x,b.y); ctx.stroke();
-      // Bright white core (thin + opaque) — the bolt of the streak
-      ctx.strokeStyle='#fff'; ctx.lineWidth=1.8; ctx.globalAlpha=1;
-      ctx.beginPath(); ctx.moveTo(b.trail[0].x,b.trail[0].y);
-      for(let j=1;j<b.trail.length;j++) ctx.lineTo(b.trail[j].x,b.trail[j].y);
-      ctx.lineTo(b.x,b.y); ctx.stroke();
-      ctx.globalAlpha=1;
-    }
+    // (Deadshot keeps its round-bullet body — the prominent trail comes
+    // from particle embers spawned each frame in the bullet update loop,
+    // not from a stroked line through b.trail.)
     if(b.tracer&&b.trail.length>1){
     // Laser glow: intense neon beam with wide glow
     if(b.laserGlow){
@@ -33199,8 +33223,60 @@ function render() {
         ctx.globalAlpha = 1;
       }
     }
-    // Shocked effect — sparks around body
-    if(z._shocked>0){ctx.globalAlpha=0.8;ctx.shadowColor='#4ff';ctx.shadowBlur=6;for(let si=0;si<5;si++){const sa=Math.random()*Math.PI*2,sr=z.radius+Math.random()*8;ctx.fillStyle=Math.random()>0.4?'#4ff':'#fff';ctx.beginPath();ctx.arc(Math.cos(sa)*sr,Math.sin(sa)*sr,1.5+Math.random()*1.5,0,Math.PI*2);ctx.fill();}if(Math.random()>0.5){const la=Math.random()*Math.PI*2,lr=z.radius*0.6;ctx.strokeStyle='#4ff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,0);const mx=Math.cos(la)*lr+(Math.random()-0.5)*4,my=Math.sin(la)*lr+(Math.random()-0.5)*4;ctx.lineTo(mx,my);ctx.lineTo(mx+Math.cos(la)*lr*0.5+(Math.random()-0.5)*6,my+Math.sin(la)*lr*0.5+(Math.random()-0.5)*6);ctx.stroke();}ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    // Shocked effect — LIVE ELECTRIC OUTLINE.
+    // Enemies hit by storm dash / chain bolts get an animated cage of
+    // jagged arcs hugging their body, an outer ring fake-glow, and a
+    // dancing field of sparks. Per-frame randomness gives the "live"
+    // crackle feel without needing shadowBlur.
+    if(z._shocked>0){
+      const _sR = z.radius;
+      // (1) Outer fake-glow ring — bright at high _shocked, dims as it ticks down
+      const _shA = Math.min(1, z._shocked / 24);
+      ctx.globalAlpha = 0.18 * _shA;
+      ctx.fillStyle = '#4ff';
+      ctx.beginPath(); ctx.arc(0, 0, _sR + 6, 0, Math.PI*2); ctx.fill();
+      // (2) Jagged cage of arcs hugging the silhouette — 6 short chord
+      //     segments around the perimeter. Per-frame randomness = crackle.
+      ctx.globalAlpha = 0.95;
+      const _cageN = 6;
+      for (let _ci = 0; _ci < _cageN; _ci++) {
+        const _a1 = (_ci / _cageN) * Math.PI * 2 + Math.random() * 0.35;
+        const _a2 = _a1 + (Math.PI * 2 / _cageN) * 0.85 + Math.random() * 0.25;
+        const _r1 = _sR + 1 + Math.random() * 2;
+        const _r2 = _sR + 1 + Math.random() * 2;
+        const _mx = (Math.cos(_a1)*_r1 + Math.cos(_a2)*_r2) * 0.5 + (Math.random()-0.5)*5;
+        const _my = (Math.sin(_a1)*_r1 + Math.sin(_a2)*_r2) * 0.5 + (Math.random()-0.5)*5;
+        ctx.strokeStyle = _ci % 2 === 0 ? '#4ff' : '#fff';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(_a1)*_r1, Math.sin(_a1)*_r1);
+        ctx.lineTo(_mx, _my);
+        ctx.lineTo(Math.cos(_a2)*_r2, Math.sin(_a2)*_r2);
+        ctx.stroke();
+      }
+      // (3) Bright dancing motes around the perimeter
+      for (let _si = 0; _si < 6; _si++) {
+        const _sa = Math.random() * Math.PI * 2;
+        const _sr = _sR + Math.random() * 5;
+        ctx.fillStyle = Math.random() > 0.4 ? '#4ff' : '#fff';
+        ctx.beginPath();
+        ctx.arc(Math.cos(_sa)*_sr, Math.sin(_sa)*_sr, 1.4 + Math.random()*1.4, 0, Math.PI*2);
+        ctx.fill();
+      }
+      // (4) Occasional internal jolt — a jagged bolt from center to edge
+      if (Math.random() > 0.5) {
+        const _la = Math.random() * Math.PI * 2;
+        const _lr = _sR * 0.95;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        const _mid = (Math.random()-0.5)*6;
+        ctx.lineTo(Math.cos(_la)*_lr*0.55 + _mid, Math.sin(_la)*_lr*0.55 + _mid);
+        ctx.lineTo(Math.cos(_la)*_lr, Math.sin(_la)*_lr);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
     // Chill effect — scales dramatically with stacks. Frozen = full ice shell.
     const _chillStacks = z._chill || 0;
     const _isFrozen = z._frozen || z._frozenTimer > 0;
