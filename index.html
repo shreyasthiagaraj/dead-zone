@@ -24077,7 +24077,11 @@ function update() {
       } else {
         _autoAimAngle = _desiredAngle;
       }
-      lp.angle = _autoAimAngle;
+      // Suppress auto-aim from steering the player while charging deadshot —
+      // the HOLD contract is "totally freehand". The left-joystick override
+      // below (mirrors payload aim) takes over for explicit aim input;
+      // otherwise lp.angle stays where it was when the charge started.
+      if (!_deadshotCharging) lp.angle = _autoAimAngle;
     }
     // Gamepad left stick — additive with keyboard
     if(gamepad.connected&&(gamepad.lx!==0||gamepad.ly!==0)){
@@ -24107,6 +24111,11 @@ function update() {
       const _mcSpd = _mcActive ? lp.speed * _modScale('mobile_charge', 0.50, 0.05) : 0;
       if (_shootHeld) moveSpeed = _mcSpd;
       if (_payloadAiming) moveSpeed = _mcSpd;
+      // Charging deadshot also freezes movement (mirrors payload). Without
+      // this the player could walk while charging, with the awkward side
+      // effect that lp.angle would track movement direction instead of
+      // staying on the aim the player chose.
+      if (_deadshotCharging) moveSpeed = _mcSpd;
       const usingAnalog = isMobile || (!isMobile && leftJoystick.active) || (gamepad.connected && (gamepad.lx !== 0 || gamepad.ly !== 0));
       if(usingAnalog&&(dx!==0||dy!==0)){
         const mag=Math.sqrt(dx*dx+dy*dy);
@@ -24118,10 +24127,12 @@ function update() {
         if(mag>0.01){dx/=mag;dy/=mag;}
       } else if(dx!==0&&dy!==0){const l=Math.sqrt(dx*dx+dy*dy);dx/=l;dy/=l;}
       lp.vx=dx*moveSpeed;lp.vy=dy*moveSpeed;
-      // Payload: left joystick aims instead of moves while aiming a grenade.
-      // Deadshot (now a primary weapon) uses the right joystick for aim + fire,
-      // so the left stick stays as movement (auto-frozen by _shootHeld above).
+      // Payload + deadshot: left joystick aims instead of moves while
+      // charging/aiming. Same pattern — overrides whatever auto-aim wanted
+      // to do so the player has explicit control. (Movement is already
+      // frozen above for both states.)
       if (_payloadAiming && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
+      if (_deadshotCharging && (dx !== 0 || dy !== 0)) { lp.angle = Math.atan2(dy, dx); _autoAimAngle = lp.angle; }
     }
     // ---- DASH OVERRIDE ----
     // When the dash is active, slam velocity to the dash direction × dash speed and spawn
