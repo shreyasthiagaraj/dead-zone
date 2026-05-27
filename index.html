@@ -23502,6 +23502,11 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // damage. Heavier than the old 2x so the status reads as "they go FLYING"
   // — supports the "wall slam = bonus damage" loop the card promises.
   const _exposedKbMult = z._exposed ? 3.2 : 1.0;
+  // FROZEN: ice block resists knockback. Without this, a pulse-shoved
+  // enemy that froze mid-flight (or one shot while frozen) would slide
+  // for many frames since the frozen movement path has no chase override
+  // to zero out their velocity.
+  const _frozenKbMult = (z._frozen || z._frozenTimer > 0) ? 0.25 : 1.0;
   const _preVx = z.vx, _preVy = z.vy;
   // Stronger hitFlash on crits so the 1-2 frame white flash actually reads.
   const _critHit = damage >= 50;
@@ -23514,7 +23519,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   }
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
-  z.vx+=kbx*kbScale*_exposedKbMult;z.vy+=kby*kbScale*_exposedKbMult;
+  z.vx+=kbx*kbScale*_exposedKbMult*_frozenKbMult;z.vy+=kby*kbScale*_exposedKbMult*_frozenKbMult;
   // Arcade mode: every death (bullet, DoT, AoE, explosion) routes through here
   // so we award points + spawn the flashy "+X" label exactly once per kill.
   // _arcadeScored flag dedupes against the bullet-block score path below.
@@ -26544,10 +26549,14 @@ function update() {
       // (180 frames, refreshes on application). At cap with Reactor Bloom Lv2
       // and Thermal Runaway, ticks ~46 dmg × 6 = ~280 DOT total.
       if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._thermalRunawayActive?_modScale('thermal_runaway',2,0.3):1;const _rbMult=runMods.reactorBloom>0?(1+_modScale('reactor_bloom',0.33,0.07)):1;if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%6===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(6,1+z._overheat));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f80','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
-      // FROZEN: hard CC, skip AI — thaw restores speed + grants 1s chill immunity
-      if(z._frozen&&z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z._frozen=false;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._chillImmune=60;z._chill=0;z._chillTimer=0;}continue;}
-      // Legacy frozen compat
-      else if(z._frozenTimer>0){z._frozenTimer--;z.vx*=0.85;z.vy*=0.85;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}continue;}
+      // FROZEN: hard CC, skip AI. The frozen enemy is a block of ice — it
+      // should NOT slide around the room. Heavy friction (0.55, was 0.85)
+      // brings inherited knockback velocity to near zero within ~3 frames,
+      // so even a pulse-shoved enemy that freezes mid-flight stops quickly.
+      // Thaw restores speed + grants 1s chill immunity.
+      if(z._frozen&&z._frozenTimer>0){z._frozenTimer--;z.vx*=0.55;z.vy*=0.55;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z._frozen=false;z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z._chillImmune=60;z._chill=0;z._chillTimer=0;}continue;}
+      // Legacy frozen compat — same heavy friction.
+      else if(z._frozenTimer>0){z._frozenTimer--;z.vx*=0.55;z.vy*=0.55;z.x+=z.vx;z.y+=z.vy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._frozenTimer<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;}continue;}
       // Chill immunity countdown after freeze thaw
       if(z._chillImmune>0)z._chillImmune--;
       // CHILL: slow movement (-20%/stack) + slow attack rate (+30%/stack) — restore on expiry
