@@ -1423,8 +1423,42 @@ const PRIMARY_WEAPON_OPTIONS = {
   ripper: { id:'ripper', name:'RIPPER',  icon:'⚔', color:'#4ff', desc:'Close-quarters cone slash + forward lunge — cleaves multiple targets' },
   deadshot: { id:'deadshot', name:'DEADSHOT', icon:'◈', color:'#0ff', desc:'Hold to charge, release to fire — high damage, heavy knockback. Full charge pierces everything.' },
 };
+// ---- BUNDLED LOADOUT PAIRS ----
+// Each primary weapon ships with a specific special. The player selects the
+// PRIMARY in any UI; the SPECIAL is forced to its paired value. This keeps
+// loadouts thematic (gun + beacon turret, sword + discharge wave, charged
+// shot + thrown grenade) and removes one selection step.
+const _PRIMARY_SPECIAL_PAIR = {
+  pistol:   'beacon',
+  ripper:   'discharge',
+  deadshot: 'payload',
+};
+function _setPrimaryBundle(primaryId, opts) {
+  if (!PRIMARY_WEAPON_OPTIONS[primaryId]) primaryId = 'pistol';
+  const _specialId = _PRIMARY_SPECIAL_PAIR[primaryId] || 'beacon';
+  selectedPrimary = primaryId;
+  selectedSpecial = _specialId;
+  try {
+    localStorage.setItem('necrowave_primary', primaryId);
+    localStorage.setItem('necrowave_special', _specialId);
+  } catch (e) {}
+  // Swap the local player's primary weapon immediately if a game's in
+  // progress (skip when opts.swapWeapon === false — load-time / safety
+  // calls don't need to mutate inventory).
+  if (!opts || opts.swapWeapon !== false) {
+    const _lp = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
+    if (_lp && _lp.weapons && _lp.weapons.length > 0 && typeof createWeapon === 'function') {
+      _lp.weapons[0] = createWeapon(primaryId);
+      if (_lp.currentWeapon >= _lp.weapons.length) _lp.currentWeapon = 0;
+    }
+  }
+}
 let selectedPrimary = localStorage.getItem('necrowave_primary') || 'pistol';
 if (!PRIMARY_WEAPON_OPTIONS[selectedPrimary]) selectedPrimary = 'pistol';
+// Enforce the bundle at load so a stale localStorage doesn't end up with a
+// mismatched primary/special pair (e.g. RIPPER saved with BEACON).
+selectedSpecial = _PRIMARY_SPECIAL_PAIR[selectedPrimary] || 'beacon';
+try { localStorage.setItem('necrowave_special', selectedSpecial); } catch (e) {}
 
 let _shellNearTerminal = null;
 let _shellTransitioning = false;
@@ -9835,7 +9869,8 @@ function saveCheckpoint() {
     dlSinceChoice: _dlSectionsSinceChoice,
     dlModDrought: _dlModDrought,
     dlFirstChoice: _dlFirstChoice,
-    // Special weapon
+    // Loadout — primary is the source of truth; special is bundled to it.
+    selectedPrimary: selectedPrimary,
     selectedSpecial: selectedSpecial,
     // Research focus
     researchFocus: _researchFocus,
@@ -9929,8 +9964,10 @@ function resumeFromCheckpoint() {
   _dlTrialActive = false;
   _dlTrialBonusPending = false;
 
-  // Restore special weapon
-  if (cp.selectedSpecial) selectedSpecial = cp.selectedSpecial;
+  // Restore loadout — special is bundled to the primary, so just use
+  // _setPrimaryBundle to enforce the pair. cp.selectedSpecial is legacy.
+  const _cpPrimary = (cp.selectedPrimary && PRIMARY_WEAPON_OPTIONS[cp.selectedPrimary]) ? cp.selectedPrimary : selectedPrimary;
+  _setPrimaryBundle(_cpPrimary, { swapWeapon: false });
 
   // Restore research focus
   _researchFocus = cp.researchFocus || null;
@@ -10058,6 +10095,7 @@ function saveMidRunSession() {
     dlSinceChoice: _dlSectionsSinceChoice,
     dlModDrought: _dlModDrought,
     dlFirstChoice: _dlFirstChoice,
+    selectedPrimary,
     selectedSpecial,
     researchFocus: _researchFocus,
     continues: _checkpointContinues,
@@ -10110,7 +10148,10 @@ function resumeMidRunSession() {
   _dlChoicePending = false;
   _dlTrialActive = false;
   _dlTrialBonusPending = false;
-  if (sess.selectedSpecial) selectedSpecial = sess.selectedSpecial;
+  // Loadout is bundled (primary → paired special). selectedSpecial saved
+  // separately is legacy; trust the primary and re-pair.
+  const _sessPrimary = (sess.selectedPrimary && PRIMARY_WEAPON_OPTIONS[sess.selectedPrimary]) ? sess.selectedPrimary : selectedPrimary;
+  _setPrimaryBundle(_sessPrimary, { swapWeapon: false });
   _researchFocus = sess.researchFocus || null;
   _checkpointContinues = sess.continues != null ? sess.continues : 2;
   gameState = 'playing';
@@ -12201,8 +12242,7 @@ function _openArcadeWeaponPicker() {
     `;
     const _pick = (e) => {
       if (e) { e.preventDefault(); e.stopPropagation(); }
-      selectedPrimary = pk;
-      try { localStorage.setItem('necrowave_primary', pk); } catch(e){}
+      _setPrimaryBundle(pk);
       playSfx('ui_click', 0.25) || playSound(900, 0.05, 'sine', 0.12);
       el.style.display = 'none';
       _beginArcadeRun();
@@ -12307,57 +12347,20 @@ function openArmory() {
   }
   el.style.display = 'flex';
   el.innerHTML = '';
-  // Header
+  // Header — armory now picks a BUNDLED loadout (primary + paired special).
   const hdr = document.createElement('div');
   hdr.style.cssText = 'width:100%;max-width:640px;margin:0 auto;text-align:center;padding-top:10px';
   hdr.innerHTML = `<h1 style="font-size:clamp(22px,5vw,32px);margin-bottom:4px;color:#f80;text-shadow:0 0 20px rgba(255,136,0,0.6)">ARMORY</h1>
-    <div style="color:#666;font-size:10px;letter-spacing:2px;margin-bottom:14px">SELECT YOUR SPECIAL</div>`;
+    <div style="color:#666;font-size:10px;letter-spacing:2px;margin-bottom:14px">SELECT YOUR LOADOUT</div>`;
   el.appendChild(hdr);
-  // Cards grid
-  const grid = document.createElement('div');
-  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;width:100%;max-width:640px;padding:0 0 40px 0';
-  for (const key in SPECIAL_DEFS) {
-    const s = SPECIAL_DEFS[key];
-    const isSelected = selectedSpecial === key;
-    const card = document.createElement('button');
-    card.style.cssText = `
-      padding:14px 10px;border:2px solid ${isSelected ? s.color : '#333'};border-radius:10px;
-      background:${isSelected ? 'rgba('+parseInt(s.color.slice(1,3)||'0',16)+','+parseInt(s.color.slice(3,5)||'0',16)+','+parseInt(s.color.slice(5,7)||'0',16)+',0.12)' : 'rgba(3,3,12,0.7)'};
-      box-shadow:${isSelected ? '0 0 20px '+s.color+'55,inset 0 0 12px '+s.color+'22' : 'none'};
-      color:#fff;font-family:'Courier New',monospace;cursor:pointer;text-align:center;
-      display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.2s;
-    `;
-    card.innerHTML = `
-      <div style="font-size:28px;text-shadow:0 0 12px ${s.color}">${s.icon}</div>
-      <div style="font-size:13px;font-weight:bold;color:${s.color};letter-spacing:2px">${s.name}</div>
-      <div style="font-size:9px;color:#888;line-height:1.3">${s.desc}</div>
-      ${isSelected ? '<div style="font-size:9px;color:#0f0;letter-spacing:2px;margin-top:4px">EQUIPPED</div>' : ''}
-    `;
-    const _selectAndClose = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      selectedSpecial = key;
-      try { localStorage.setItem('necrowave_special', key); } catch(e){}
-      playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1);
-      closeArmory();
-      // Show selected weapon label in the shell
-      const lp = getLocalPlayer();
-      if (lp) addFloatingText(lp.x, lp.y - 40, `${s.icon} ${s.name} EQUIPPED`, s.color);
-    };
-    card.addEventListener('click', _selectAndClose);
-    card.addEventListener('touchend', _selectAndClose, { passive: false });
-    grid.appendChild(card);
-  }
-  el.appendChild(grid);
-  // ---- PRIMARY WEAPON SECTION ----
-  const pHdr = document.createElement('div');
-  pHdr.style.cssText = 'width:100%;max-width:640px;margin:14px auto 0;text-align:center';
-  pHdr.innerHTML = '<div style="color:#666;font-size:10px;letter-spacing:2px;margin-bottom:10px;border-top:1px solid #333;padding-top:14px">PRIMARY WEAPON</div>';
-  el.appendChild(pHdr);
+  // ---- LOADOUT CARDS (primary + paired special, picked as a set) ----
   const pGrid = document.createElement('div');
-  pGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;width:100%;max-width:640px;padding:0 0 40px 0';
+  pGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;width:100%;max-width:640px;padding:0 0 40px 0';
   for (const pk in PRIMARY_WEAPON_OPTIONS) {
     const pw = PRIMARY_WEAPON_OPTIONS[pk];
     const isP = selectedPrimary === pk;
+    const _pairedKey = _PRIMARY_SPECIAL_PAIR[pk] || 'beacon';
+    const _pairedDef = SPECIAL_DEFS[_pairedKey];
     const pCard = document.createElement('button');
     pCard.style.cssText = `
       padding:14px 10px;border:2px solid ${isP ? pw.color : '#333'};border-radius:10px;
@@ -12370,22 +12373,23 @@ function openArmory() {
       <div style="font-size:28px;text-shadow:0 0 12px ${pw.color}">${pw.icon}</div>
       <div style="font-size:13px;font-weight:bold;color:${pw.color};letter-spacing:2px">${pw.name}</div>
       <div style="font-size:9px;color:#888;line-height:1.3">${pw.desc}</div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #2228;width:80%;display:flex;align-items:center;justify-content:center;gap:6px">
+        <span style="font-size:18px;text-shadow:0 0 8px ${_pairedDef.color}">${_pairedDef.icon}</span>
+        <span style="font-size:10px;color:${_pairedDef.color};letter-spacing:2px;font-weight:bold">+ ${_pairedDef.name}</span>
+      </div>
+      <div style="font-size:8px;color:#666;line-height:1.3;padding:0 4px">${_pairedDef.desc}</div>
       ${isP ? '<div style="font-size:9px;color:#0f0;letter-spacing:2px;margin-top:4px">EQUIPPED</div>' : ''}
     `;
     const _selectPrim = (e) => {
       e.preventDefault(); e.stopPropagation();
-      selectedPrimary = pk;
-      try { localStorage.setItem('necrowave_primary', pk); } catch(e){}
-      // Swap the current player's first weapon immediately so the choice takes effect
-      // without requiring a restart — sized to existing inventory.
-      const lp = getLocalPlayer();
-      if (lp && lp.weapons && lp.weapons.length > 0) {
-        lp.weapons[0] = createWeapon(pk);
-        if (lp.currentWeapon >= lp.weapons.length) lp.currentWeapon = 0;
-      }
+      _setPrimaryBundle(pk);
       playSfx('ui_click',0.2)||playSound(900,0.04,'sine',0.1);
       closeArmory();
-      if (lp) addFloatingText(lp.x, lp.y - 40, `${pw.icon} ${pw.name} EQUIPPED`, pw.color);
+      const lp = getLocalPlayer();
+      if (lp) {
+        addFloatingText(lp.x, lp.y - 40, `${pw.icon} ${pw.name} EQUIPPED`, pw.color);
+        addFloatingText(lp.x, lp.y - 60, `+ ${_pairedDef.icon} ${_pairedDef.name}`, _pairedDef.color);
+      }
     };
     pCard.addEventListener('click', _selectPrim);
     pCard.addEventListener('touchend', _selectPrim, { passive: false });
