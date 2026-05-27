@@ -1966,10 +1966,13 @@ function getScaledGun() {
     bulletSpeed: BASE_GUN.bulletSpeed,
     spread: BASE_GUN.spread + (wideSpreadExtra > 0 ? 0.15 : 0),
     bulletSize: m.heavyCaliber > 0 ? 5 : BASE_GUN.bulletSize,
-    // PULSE INFUSION: massive knockback bump on every bullet. Pulse is the
-    // "push" class — basic shots throw enemies across the room so they
-    // hit walls. +48 over base 12 at lv1 (5x base); +6 per stack.
-    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 48 + m.pulseShotLv * 6 : 0),
+    // PULSE INFUSION: meaningful knockback bump on every bullet. Pulse is
+    // the "push" class but the initial impulse stays manageable — enemies
+    // get a clear shove + slide rather than teleporting. +20 over base 12
+    // at lv1 (~2.6x base); +3 per stack. The slide-out comes from a
+    // per-zombie low-friction "pulse slide" window applied in the bullet
+    // hit handler, not from a giant initial push.
+    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 20 + m.pulseShotLv * 3 : 0),
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
     _pierceRangeBoost: (m.pierceAdd || 0) > 0,
     bounceCount: 0,
@@ -19925,17 +19928,18 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
         tx: z.x + Math.cos(_la) * _ll, ty: z.y + Math.sin(_la) * _ll });
     }
   }
-  // PULSE INFUSION (melee path) — heavy outward shove on every sword hit
-  // to match the gun's pulse knockback identity. +20% over previous,
-  // so 17 base (was 14) + 5 per stack (was 4). VECTOR SNAP still multiplies.
+  // PULSE INFUSION (melee path) — gentler initial push but a long slide
+  // window via z._pulseSlide. Matches the gun's pulse feel.
   if (_m.pulseShotLv > 0) {
     applyExposed(z);
     const vsMult = _m.vectorSnap > 0 ? _modScale('vector_snap', 1.5, 0.3) : 1;
-    const pushF = (12 + _m.pulseShotLv * 5) * vsMult;
+    const pushF = (8 + _m.pulseShotLv * 3) * vsMult;
     z.vx += Math.cos(attackAngle) * pushF;
     z.vy += Math.sin(attackAngle) * pushF;
-    const stag = 10 + (_m.vectorSnap || 0) * 10;
+    const stag = 32 + (_m.vectorSnap || 0) * 10;
     z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
+    // Pulse slide window — light friction during the staggered movement.
+    z._pulseSlide = stag;
     // Pulse-y VFX (not electric): concentric shockwave rings + white air-pressure
     // puffs along the strike vector. Reads as compressed air slamming into the
     // target — NO lightning bolts, NO bright cyan sparks.
@@ -26135,18 +26139,23 @@ function update() {
                     // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
                     // Vector Snap rare card scales knockback force + stagger (no damage amp).
                     if (_m.pulseShotLv > 0) {
-                      // Apply EXPOSED FIRST so the next-frame knockback
-                      // gets the 3.2x EXPOSED multiplier in damageZombie.
-                      // Then add a heavy secondary push DIRECTLY to z.vx —
-                      // this bypasses kbScale, so even tanks/bosses
-                      // (whose kbScale shrinks gun knockback to almost
-                      // nothing) get a real launch.
+                      // Apply EXPOSED FIRST so the next-frame damageZombie
+                      // hit benefits from the EXPOSED kb mult. Secondary
+                      // push is now gentler — the spectacle comes from
+                      // a longer slide (z._pulseSlide flag, lighter
+                      // friction in the stagger movement path) rather
+                      // than a big initial vx that visibly teleports.
                       applyExposed(z);
                       const vsMult = 1 + 0.5 * (_m.vectorSnap || 0); // Lv1=+50%, Lv2=+100% knockback
-                      const pushF = (22 + _m.pulseShotLv * 6) * vsMult;
+                      const pushF = (10 + _m.pulseShotLv * 3) * vsMult;
                       z.vx += Math.cos(a) * pushF; z.vy += Math.sin(a) * pushF;
-                      const stag = 14 + (_m.vectorSnap || 0) * 10;
+                      // Stagger long enough for the slide to play out.
+                      const stag = 32 + (_m.vectorSnap || 0) * 10;
                       z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
+                      // Pulse slide window — stagger movement path will
+                      // use lighter friction (0.92 instead of 0.7) so the
+                      // enemy keeps gliding for the full window.
+                      z._pulseSlide = stag;
                       // Lv3: hits on Exposed create mini impact pulse
                       if (_m.pulseShotLv >= 3 && z._exposed) {
                         // silent=true on AOE — the spark ring below is the visual
@@ -26586,7 +26595,13 @@ function update() {
       // PULSE SLIDE: smooth knockback that decays over time (like ice physics)
       if(z._slideTimer>0){z._slideTimer--;z._slideVx*=0.92;z._slideVy*=0.92;z.x+=z._slideVx;z.y+=z._slideVy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._slideTimer<=0){z._slideVx=0;z._slideVy=0;}if(Math.abs(z._slideVx)+Math.abs(z._slideVy)>2)continue;}
       if(z.staggerTimer>0){
-        z.staggerTimer--;z.vx*=0.7;z.vy*=0.7;
+        z.staggerTimer--;
+        // PULSE SLIDE: when pulse infusion pushed this enemy, use much
+        // lighter friction (0.92 vs 0.7) so the slide reads as a glide
+        // rather than a sudden stop. Window ticks down with stagger.
+        const _pulseFric = (z._pulseSlide && z._pulseSlide > 0) ? 0.92 : 0.7;
+        if (z._pulseSlide && z._pulseSlide > 0) z._pulseSlide--;
+        z.vx*=_pulseFric;z.vy*=_pulseFric;
         // Slam check for EXPOSED staggered enemies — without this, pulse
         // infusion (which sets staggerTimer + heavy kb) never triggers
         // wall slam because the stagger gate bypasses the normal movement
