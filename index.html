@@ -4935,8 +4935,8 @@ function maybeDropPickup(zombie) {
     const roll = Math.random();
     if      (roll < 0.28) pickups.push({ type: 'score_gem', amount: 200, x, y, bobTimer: Math.random()*Math.PI*2 });
     else if (roll < 0.35) pickups.push({ type: 'powerup', powerupId: _pickArcadePowerupId(), x, y, bobTimer: Math.random()*Math.PI*2 });
-    else if (roll < 0.385) pickups.push({ type: 'bomb_pickup', x, y, bobTimer: Math.random()*Math.PI*2 });
-    else if (roll < 0.395) pickups.push({ type: 'health', amount: 30, x, y, bobTimer: Math.random()*Math.PI*2 });
+    else if (roll < 0.36) pickups.push({ type: 'bomb_pickup', x, y, bobTimer: Math.random()*Math.PI*2 });
+    else if (roll < 0.37) pickups.push({ type: 'health', amount: 30, x, y, bobTimer: Math.random()*Math.PI*2 });
     // (remaining ~60% of kills: no drop — score gems on elite/boss are the
     // consistent reward; per-kill roll is the cherry on top.)
     return;
@@ -8859,7 +8859,7 @@ function fireModifiedWeapon(p) {
   // Fire rate (use player perks for lead storm etc)
   let effectiveFireRate = w.fireRate / (1 + getPlayerPerkCount(p, 'lead_storm') * 0.2);
   if (playerHasPowerUp(p, 'overcharge')) effectiveFireRate /= 3;
-  else if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.5;
+  else if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.3;
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
   _weaponMuzzleFlash = 6;
@@ -8871,7 +8871,7 @@ function fireModifiedWeapon(p) {
     const sp = (Math.random() - 0.5) * w.spread * 2 * spreadMult;
     const a = p.angle + sp, c = Math.cos(a), s = Math.sin(a);
     let dmg = w.damage;
-    if (playerHasPowerUp(p, 'rage')) dmg *= 2;
+    if (playerHasPowerUp(p, 'rage')) dmg *= 1.3;
     if (playerHasPowerUp(p, 'frenzy')) dmg *= 3;
     if (playerHasPerk(p, 'berserker') && p.hp < p.maxHp * 0.3) dmg *= 1 + getPlayerPerkCount(p, 'berserker') * 0.4;
     let isCrit = false;
@@ -9184,7 +9184,7 @@ DEAD CODE END */
 // Power-ups — this redeclaration is the ACTIVE one (overrides the earlier definition)
 // Keep in sync with the primary POWERUP_TYPES above.
 const POWERUP_TYPES = [
-  { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 600, desc: 'Double damage + faster fire for 10s' },
+  { id: 'rage', name: 'RAGE', color: '#f44', icon: '🔥', duration: 600, desc: '+30% damage, +30% attack speed, +30% move speed for 10s' },
   { id: 'shield', name: 'SHIELD', color: '#4ff', icon: '🛡', duration: 600, desc: 'Invincible force field' },
   // Class bombs — instant AoE that inflicts heavy status on all enemies in a wide radius
   { id: 'thermalbomb', name: 'THERMAL BOMB', color: '#f80', icon: '🔥', duration: 1, desc: 'Massive fire blast — heavy Overheat to all nearby' },
@@ -9230,6 +9230,10 @@ function activatePowerUp(id) {
   else { activePowerUps.push({ id, timer: def.duration }); }
   activePowerUp = activePowerUps[0] || null;
   addFloatingText(lp.x, lp.y-40, def.name+'!', def.color);
+  // RAGE: extra label clarifying what got buffed (+SPEED · +ATTACK).
+  if (id === 'rage' && lp) {
+    addFloatingText(lp.x, lp.y - 60, '+SPEED · +ATTACK', '#fff');
+  }
   // (frenzy, drone, giant power-ups removed)
 }
 function hasPowerUp(id) { return activePowerUps.some(p => p.id === id); }
@@ -14995,7 +14999,7 @@ function fireWeaponForPlayer(p) {
   }
   // Fire rate check
   let effectiveFireRate = gun.fireRate;
-  if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.5;
+  if (playerHasPowerUp(p, 'rage')) effectiveFireRate /= 1.3;
   if (p._pyroBoost > 0) effectiveFireRate *= (1 - p._pyroBoost);
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
@@ -15429,7 +15433,7 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
   for(let i=0;i<pellets;i++){const sp=(Math.random()-0.5)*d.spread*2*spreadMult,a=p.angle+sp,c=Math.cos(a),s=Math.sin(a);
     let dmg=d.damage, isCrit=false;
     // Power-up damage boosts
-    if(playerHasPowerUp(p,'rage')) dmg*=2;
+    if(playerHasPowerUp(p,'rage')) dmg*=1.3;
     if(playerHasPowerUp(p,'frenzy')) dmg*=3;
     if(playerHasPerk(p,'berserker')&&p.hp<p.maxHp*0.3) dmg*=1+getPlayerPerkCount(p,'berserker')*0.4;
     // Base 5% crit chance + 15% per crit perk stack
@@ -18719,6 +18723,8 @@ function _swingMelee(p, def) {
   if (p._rComboIdx === undefined) p._rComboIdx = 0;
   if (now > (p._rComboWindow || 0)) { p._rComboIdx = 0; p._rOpened = false; p._rJabCount = 0; }
   const idx = p._rComboIdx;
+  // RAGE power-up: sword swings 30% faster (cooldown thresholds shrink by 1/1.3).
+  const _rageCdMult = (p === getLocalPlayer() && playerHasPowerUp(p, 'rage')) ? (1 / 1.3) : 1;
   // ---- HOLD-vs-TAP BRANCH ----
   // The opening LUNGE (idx 0) or a dash-strike starts the combo. After
   // that: HOLDING the button continuously runs a rapid forward jab
@@ -18726,7 +18732,7 @@ function _swingMelee(p, def) {
   // → cross → 270 spin), one step per tap, skipping the spent lunge.
   const _freshPress = !!p._rFreshPress;
   if (p._rOpened && !_freshPress) {
-    if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN) return;
+    if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN * _rageCdMult) return;
     // The flurry is capped at 6 jabs. Once spent, take a short beat and
     // close the combo — the next press re-opens with a fresh LUNGE (or a
     // tap runs the standard combo).
@@ -18746,8 +18752,8 @@ function _swingMelee(p, def) {
   p._rFreshPress = false;
   p._rJabCount = 0; // a combo step / opening resets the flurry budget
   const step = RIPPER_COMBO[idx];
-  // Per-step cooldown gate
-  if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown) return;
+  // Per-step cooldown gate (RAGE shortens this 30%)
+  if (p._rLastSwing && (now - p._rLastSwing) < step.cooldown * _rageCdMult) return;
   // Materialize the sword if it isn't already summoned
   if (!p._rSwordOn && p === getLocalPlayer()) _emitSwordMaterialize(p);
   p._rSwordOn = true;
@@ -19725,9 +19731,10 @@ function _scaleMeleeDamage(baseDmg) {
   const _adrenActive = _lpAdr && _lpAdr.hp > 0 && (_lpAdr.hp / _lpAdr.maxHp) < 0.30;
   const _adrenMult = _adrenActive ? (1 + _modScale('adrenaline', 0.25, 0.05)) : 1;
   const _metaPow = (typeof getMetaBonus === 'function') ? getMetaBonus('power') : 0;
-  // RAGE power-up: 2x damage (matches gun + deadshot behaviour).
+  // RAGE power-up: +30% damage (matches gun + deadshot behaviour). Also
+  // shortens sword cooldowns (see _swingMelee) and bumps move speed.
   const _lpRage = getLocalPlayer();
-  const _rageMult = _lpRage && playerHasPowerUp(_lpRage, 'rage') ? 2 : 1;
+  const _rageMult = _lpRage && playerHasPowerUp(_lpRage, 'rage') ? 1.3 : 1;
   const dmgMult = (1 + (m.damageMult || 0)) * (1 + _metaPow) * _adrenMult * _rageMult;
   return Math.max(1, Math.floor(baseDmg * dmgMult));
 }
@@ -20298,9 +20305,9 @@ function updateDeadshot() {
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) { _deadshotCharging = false; _deadshotCharge = 0; return; }
   const _m = runMods || {};
-  // QUICK DRAW: charge faster. RAGE: 1.5× charge speed (matches gun fireRate boost).
+  // QUICK DRAW: charge faster. RAGE: 1.3× charge speed (matches gun fireRate boost).
   let chargeSpeed = 1 + (_m.quickDraw > 0 ? _modScale('quick_draw', 0.30, 0.05) : 0);
-  if (playerHasPowerUp(lp, 'rage')) chargeSpeed *= 1.5;
+  if (playerHasPowerUp(lp, 'rage')) chargeSpeed *= 1.3;
   _deadshotCharge = Math.min(DEADSHOT_MAX_CHARGE, _deadshotCharge + chargeSpeed);
   const _dsClassId = _m.beaconElement || null;
   const bColor = _dsClassId ? (_ELEM_COLOR[_dsClassId] || '#0ff') : '#0ff';
@@ -20375,8 +20382,8 @@ function _fireDeadshot(lp) {
   const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
   // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
   // Class build scales the special up to +100% via specialDmgMult.
-  // RAGE power-up doubles damage (matches gun/melee behaviour).
-  const _rageMult = playerHasPowerUp(lp, 'rage') ? 2 : 1;
+  // RAGE power-up: +30% damage (matches gun/melee behaviour).
+  const _rageMult = playerHasPowerUp(lp, 'rage') ? 1.3 : 1;
   const baseDmg = Math.floor((30 + chargePct * 90) * (_m.specialDmgMult || 1) * _rageMult);
   const isFullCharge = chargePct >= 0.95;
   // Single-target on tap or partial charge. Full charge punches through
@@ -24004,6 +24011,8 @@ function update() {
       if (lp._anchorSlow > 0) { moveSpeed *= (1 - lp._anchorSlow); lp._anchorSlow = Math.max(0, lp._anchorSlow - 0.04); }
       // MOMENTUM: +4% move speed per exposed enemy on screen
       if (lp._momentumBonus > 0) moveSpeed *= (1 + lp._momentumBonus);
+      // RAGE power-up: +30% move speed in addition to attack speed / damage.
+      if (playerHasPowerUp(lp, 'rage')) moveSpeed *= 1.3;
       // Slipstream: speed boost after dash
       if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + _modScale('slipstream', 0.25, 0.05));
       // CARD: DODGE INSTINCT — +30% move speed for 1s after taking damage
