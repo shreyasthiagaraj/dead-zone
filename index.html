@@ -1966,11 +1966,10 @@ function getScaledGun() {
     bulletSpeed: BASE_GUN.bulletSpeed,
     spread: BASE_GUN.spread + (wideSpreadExtra > 0 ? 0.15 : 0),
     bulletSize: m.heavyCaliber > 0 ? 5 : BASE_GUN.bulletSize,
-    // PULSE INFUSION: heavy knockback bump on every bullet. Pulse is the
-    // "push" class — a basic shot should clearly shove enemies a real
-    // distance. +29 at lv1 (over 3.4x base); +4 per additional stack.
-    // (+20% over the previous values.)
-    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 29 + m.pulseShotLv * 4 : 0),
+    // PULSE INFUSION: massive knockback bump on every bullet. Pulse is the
+    // "push" class — basic shots throw enemies across the room so they
+    // hit walls. +48 over base 12 at lv1 (5x base); +6 per stack.
+    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 48 + m.pulseShotLv * 6 : 0),
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
     _pierceRangeBoost: (m.pierceAdd || 0) > 0,
     bounceCount: 0,
@@ -2010,7 +2009,7 @@ const UPGRADE_POOL = [
   { id:'arc_rounds', name:'ARC INFUSION', rarity:'common', max:1, icon:'⚡', color:'#4ff',
     descs:['Your ATTACK applies CHARGED. +22% damage.'], flavor:'shared-bus signal jumps between nodes' },
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
-    descs:['Your ATTACK applies EXPOSED with heavy knockback. +12% damage.'], flavor:'kinetic payload. impact registered.' },
+    descs:['Your ATTACK applies EXPOSED with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
     descs:['Your ATTACK applies CORRUPT. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 1) ----
@@ -2417,7 +2416,7 @@ const _KEY_STATS = {
   thermal_rounds: { label:'damage', base:22, step:5, unit:'%' },
   cryo_rounds:    { label:'damage', base:22, step:5, unit:'%' },
   arc_rounds:     { label:'damage', base:22, step:5, unit:'%' },
-  pulse_shot:     { label:'damage', base:12, step:3, unit:'%' },
+  pulse_shot:     { label:'knockback', base:50, step:10, unit:'%' },
   viral_payload:  { label:'damage', base:22, step:5, unit:'%' },
   // ---- Class enhancement ----
   reactor_bloom:  { label:'DoT damage', base:33, step:7, unit:'%' },
@@ -2958,7 +2957,10 @@ function rebuildRunMods() {
   if (m.thermalRoundsLv > 0) m.damageMult += _modScale('thermal_rounds', 0.22, 0.05);
   if (m.cryoRoundsLv > 0)    m.damageMult += _modScale('cryo_rounds',    0.22, 0.05);
   if (m.arcRoundsLv > 0)     m.damageMult += _modScale('arc_rounds',     0.22, 0.05);
-  if (m.pulseShotLv > 0)     m.damageMult += _modScale('pulse_shot',     0.12, 0.03);
+  // Pulse infusion deals no extra direct damage — its identity is pure
+  // KNOCKBACK + EXPOSED apply. Damage comes from EXPOSED's +20% vulnerability
+  // and from wall-slam damage when pulse-shoved enemies hit obstacles.
+  // (was +12% damage mult; removed to keep pulse "the push class".)
   if (m.viralPayloadLv > 0)  m.damageMult += _modScale('viral_payload',  0.22, 0.05);
   // ADRENALINE damage bonus scales with its level (kept here so it joins the
   // base mult before the special-mult amplification below).
@@ -26128,11 +26130,17 @@ function update() {
                     // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
                     // Vector Snap rare card scales knockback force + stagger (no damage amp).
                     if (_m.pulseShotLv > 0) {
+                      // Apply EXPOSED FIRST so the next-frame knockback
+                      // gets the 3.2x EXPOSED multiplier in damageZombie.
+                      // Then add a heavy secondary push DIRECTLY to z.vx —
+                      // this bypasses kbScale, so even tanks/bosses
+                      // (whose kbScale shrinks gun knockback to almost
+                      // nothing) get a real launch.
                       applyExposed(z);
                       const vsMult = 1 + 0.5 * (_m.vectorSnap || 0); // Lv1=+50%, Lv2=+100% knockback
-                      const pushF = (2 + _m.pulseShotLv) * vsMult;
+                      const pushF = (22 + _m.pulseShotLv * 6) * vsMult;
                       z.vx += Math.cos(a) * pushF; z.vy += Math.sin(a) * pushF;
-                      const stag = 10 + (_m.vectorSnap || 0) * 10;
+                      const stag = 14 + (_m.vectorSnap || 0) * 10;
                       z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
                       // Lv3: hits on Exposed create mini impact pulse
                       if (_m.pulseShotLv >= 3 && z._exposed) {
@@ -27993,10 +28001,20 @@ function update() {
         }
         pushOutOfObstacles(z, z.radius);
       } else {
-        z.x += z.vx; z.y += z.vy;
-        z.x = clamp(z.x, z.radius, ARENA_W - z.radius);
-        z.y = clamp(z.y, z.radius, _zaH - z.radius);
+        const _preX = z.x + z.vx, _preY = z.y + z.vy;
+        z.x = clamp(_preX, z.radius, ARENA_W - z.radius);
+        z.y = clamp(_preY, z.radius, _zaH - z.radius);
+        // EXPOSED + hit a wall (clamp shifted the position OR pushOut moved
+        // it out of an obstacle) → still counts as a slam. Without this,
+        // pulse-shoved enemies that don't quite hit the fast-path threshold
+        // would silently stop at the wall with no damage.
+        const _wasClamped = (_preX !== z.x) || (_preY !== z.y);
+        const _beforePushX = z.x, _beforePushY = z.y;
         pushOutOfObstacles(z, z.radius);
+        const _wasPushedFromObs = (z.x !== _beforePushX) || (z.y !== _beforePushY);
+        if (z._exposed && (_wasClamped || _wasPushedFromObs)) {
+          _hitWallThisFrame = true;
+        }
       }
       // ---- WALL SLAM ----
       // Fires ONLY when the bounce path detected an actual wall/obstacle/
