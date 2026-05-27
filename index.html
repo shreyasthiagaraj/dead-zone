@@ -10332,12 +10332,15 @@ function _drawZombieShape(ctx, type, r) {
 
 // ---- AI TUNING ----
 // Zombies lose interest if the nearest player stays outside DEAGGRO range for
-// DEAGGRO_FRAMES frames, and revert to wandering. Re-aggro happens instantly
-// when the player crosses back inside AGGRO range (hysteresis gap prevents
-// oscillation). Some types are relentless and never deaggro.
-const ZOMBIE_AGGRO_RANGE    = 440;  // re-aggro within this
-const ZOMBIE_DEAGGRO_RANGE  = 520;  // start losing interest beyond this
-const ZOMBIE_DEAGGRO_FRAMES = 45;   // 0.75s grace before wandering
+// DEAGGRO_FRAMES frames, and revert to wandering. Re-aggro happens when the
+// player crosses back inside AGGRO range AFTER the post-deaggro grace period
+// expires — that grace gap is the actual "leash break": once an enemy gives
+// up, it can't be instantly re-snared just because the player wandered close.
+// Some types are relentless and never deaggro.
+const ZOMBIE_AGGRO_RANGE      = 540;  // re-aggro within this
+const ZOMBIE_DEAGGRO_RANGE    = 820;  // leash distance — beyond this for DEAGGRO_FRAMES = pursuit drops
+const ZOMBIE_DEAGGRO_FRAMES   = 50;   // ~0.83s grace before wandering
+const ZOMBIE_POSTDEAGGRO_GRACE = 150; // frames after dropping pursuit where the enemy ignores re-aggro
 // Each zombie chases a point OFFSET from the player's position. ±200px is wide
 // enough to produce dramatic scatter even in tight trench sections (880px).
 const ZOMBIE_CHASE_OFFSET_RADIUS = 200;
@@ -26470,33 +26473,39 @@ function update() {
         || (gameMode === 'siege' && z._siegeWallTarget)
         || (gameMode === 'horde' && z._invader);
 
+      // Tick the post-deaggro grace down each frame (set when pursuit dropped)
+      if (z._postDeaggroGrace && z._postDeaggroGrace > 0) z._postDeaggroGrace--;
       if(!z.aware){
-        // Re-aggro: get within AGGRO_RANGE with line of sight, or very close.
-        // Stagger LOS checks by zid so we only pay ~6 raycasts per frame, not 60 on every 10th frame.
-        if(((gameTime+z.zid)%10)===0&&zd<ZOMBIE_AGGRO_RANGE&&hasLineOfSight(z.x,z.y,np.x,np.y)){
+        // Re-aggro: get within AGGRO_RANGE with line of sight, or very close —
+        // BUT only if the post-deaggro grace has expired. Until then, the
+        // enemy explicitly "let go" and wanders in peace even if the player
+        // closes again. This is what makes the leash feel real.
+        const _canReAggro = !z._postDeaggroGrace || z._postDeaggroGrace <= 0;
+        if(_canReAggro && ((gameTime+z.zid)%10)===0 && zd<ZOMBIE_AGGRO_RANGE && hasLineOfSight(z.x,z.y,np.x,np.y)){
           // Dungeon ambush: dramatic wake-up VFX when first spotted
           if (!z.aware && z._dungeonAmbush) {
             for(let ai=0;ai<10;ai++){const aa=Math.random()*Math.PI*2,as=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(aa)*as,vy:Math.sin(aa)*as,life:16,maxLife:16,size:3,color:z.color,type:'spark'});}
             addFloatingText(z.x, z.y - z.radius - 10, '!', '#f44');
             z._dungeonAmbush = false;
           }
-          z.aware=true;z._deaggroTimer=0;if(Math.random()<0.3)playSfxSpatial('zombie_groan',z.x,z.y,0.2,500);for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200){oz.aware=true;oz._deaggroTimer=0;}}
+          z.aware=true;z._deaggroTimer=0;if(Math.random()<0.3)playSfxSpatial('zombie_groan',z.x,z.y,0.2,500);for(const oz of zombies){if(oz===z||oz.aware)continue;if((oz.x-z.x)**2+(oz.y-z.y)**2<200*200){oz.aware=true;oz._deaggroTimer=0;oz._postDeaggroGrace=0;}}
         }
-        if(zd<120){if(!z.aware&&z._dungeonAmbush){for(let ai=0;ai<8;ai++){const aa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(aa)*3,vy:Math.sin(aa)*3,life:12,maxLife:12,size:2,color:z.color,type:'spark'});}addFloatingText(z.x,z.y-z.radius-10,'!','#f44');z._dungeonAmbush=false;}z.aware=true;z._deaggroTimer=0;}
+        // Panic re-aggro on physical contact — grace doesn't save a player who runs INTO them.
+        if(zd<120){if(!z.aware&&z._dungeonAmbush){for(let ai=0;ai<8;ai++){const aa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(aa)*3,vy:Math.sin(aa)*3,life:12,maxLife:12,size:2,color:z.color,type:'spark'});}addFloatingText(z.x,z.y-z.radius-10,'!','#f44');z._dungeonAmbush=false;}z.aware=true;z._deaggroTimer=0;z._postDeaggroGrace=0;}
       } else if (!_relentless) {
-        // Deaggro: if the player is too far for too long, go back to wandering.
-        // Produces scattered behavior when the player kites — enemies that fall
-        // behind stop tracking instead of forming a conga line.
+        // Deaggro: if the player is too far for too long, drop pursuit. The
+        // enemy wanders, and the post-deaggro grace prevents instant re-snare.
         if (zd > ZOMBIE_DEAGGRO_RANGE) {
           z._deaggroTimer = (z._deaggroTimer || 0) + 1;
           if (z._deaggroTimer > ZOMBIE_DEAGGRO_FRAMES) {
             z.aware = false;
             z._deaggroTimer = 0;
+            z._postDeaggroGrace = ZOMBIE_POSTDEAGGRO_GRACE;
             z._chaseOffX = undefined; z._chaseOffY = undefined;
             z._pauseTimer = 0;
-            // Fresh wander state so the transition reads cleanly
-            z.wanderAngle = Math.random() * Math.PI * 2;
-            z.wanderTimer = 40 + Math.floor(Math.random() * 80);
+            // Wander AWAY from the player so it visibly "gives up"
+            z.wanderAngle = Math.atan2(z.y - np.y, z.x - np.x);
+            z.wanderTimer = 60 + Math.floor(Math.random() * 80);
             z.stuckTimer = 0;
             z.lastX = z.x; z.lastY = z.y;
           }
