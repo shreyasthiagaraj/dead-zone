@@ -20697,6 +20697,10 @@ function dash() {
   }
   // Seed tracking so element effects don't proc repeatedly on the same zombie during one dash
   lp._dashHitSet = new Set();
+  // Reset per-dash arc trail state so the first frame of a new dash doesn't
+  // try to draw a lightning line from the previous dash's end position.
+  lp._arcDashPrevX = undefined;
+  lp._arcDashPrevY = undefined;
 }
 
 // ---- DASH TRAIL EFFECTS (v2) ----
@@ -20746,68 +20750,39 @@ function applyDashTrailEffects(lp) {
     particles.push({x:fx+(Math.random()-0.5)*20,y:fy+(Math.random()-0.5)*20,vx:ddx*2,vy:ddy*2,life:10,maxLife:10,size:2+Math.random(),color:Math.random()<0.5?'#8ef':'#cef',type:'spark'});
   }
 
-  // ---- STORM DASH (arc): muted envelope + bright zap arcs to nearby enemies ----
+  // ---- STORM DASH (arc): player IS a lightning bolt + zaps to enemies ----
   if (hasStatic) {
-    // (A) PER-FRAME PLAYER ENVELOPE — the player IS the electrified node.
-    //     A circulating ring of sparks + tiny crackle arcs hugging the body.
+    // (A) THE PLAYER IS THE BOLT
+    //     One jagged lightning segment per frame, drawn from the player's
+    //     position last frame to where they are now. Two layers (cyan outer,
+    //     white core) keep the bolt body bright; short particle life means
+    //     each segment dissolves into the next, so the player visibly looks
+    //     like the head of a moving lightning bolt without a permanent trail.
     {
-      const _envCount = 4;
-      const _envBaseR = PLAYER_RADIUS + 2;
-      for (let _ei = 0; _ei < _envCount; _ei++) {
-        // Stable rotation offset per particle so the ring "spins" instead of
-        // strobing randomly. gameTime drives the rotation.
-        const _ea = (gameTime * 0.16 + (_ei / _envCount) * Math.PI * 2) % (Math.PI * 2);
-        const _eR = _envBaseR + (Math.random() - 0.5) * 3;
-        particles.push({ x: lp.x + Math.cos(_ea) * _eR, y: lp.y + Math.sin(_ea) * _eR,
-          vx: -Math.sin(_ea) * 0.6, vy: Math.cos(_ea) * 0.6,
-          life: 5, maxLife: 5, size: 1.5 + Math.random() * 0.6,
-          color: Math.random() > 0.35 ? '#4ff' : '#fff', type: 'spark' });
+      const _prevX = (typeof lp._arcDashPrevX === 'number') ? lp._arcDashPrevX : lp.x;
+      const _prevY = (typeof lp._arcDashPrevY === 'number') ? lp._arcDashPrevY : lp.y;
+      // Only draw the bolt segment if there's actual distance (avoid first-frame
+      // zero-length segment).
+      const _segDX = lp.x - _prevX, _segDY = lp.y - _prevY;
+      if (_segDX*_segDX + _segDY*_segDY > 4) {
+        particles.push({ x: _prevX, y: _prevY, vx: 0, vy: 0,
+          life: 6, maxLife: 6, size: 2.6,
+          color: '#4ff', type: 'lightning', tx: lp.x, ty: lp.y });
+        particles.push({ x: _prevX, y: _prevY, vx: 0, vy: 0,
+          life: 5, maxLife: 5, size: 1.2,
+          color: '#fff', type: 'lightning', tx: lp.x, ty: lp.y });
       }
-      // Two short crackle arcs hugging the silhouette. Bolts are deliberately
-      // SHORT (just chord segments around the body) — muted, not screen-spanning.
-      const _bolts = (gameTime % 2 === 0) ? 2 : 1;
-      for (let _bi = 0; _bi < _bolts; _bi++) {
-        const _a1 = Math.random() * Math.PI * 2;
-        const _a2 = _a1 + (Math.PI * 0.55) + Math.random() * 0.5;
-        const _r = _envBaseR + Math.random() * 2;
-        particles.push({ x: lp.x + Math.cos(_a1) * _r, y: lp.y + Math.sin(_a1) * _r,
-          vx: 0, vy: 0, life: 4, maxLife: 4, size: 1,
-          color: Math.random() > 0.5 ? '#4ff' : '#fff', type: 'lightning',
-          tx: lp.x + Math.cos(_a2) * _r, ty: lp.y + Math.sin(_a2) * _r });
-      }
+      lp._arcDashPrevX = lp.x;
+      lp._arcDashPrevY = lp.y;
+      // ONE tiny bright mote at the player position — minimal "glow", no ring,
+      // no orbiting sparks. The bolt segment is the show.
+      particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+        life: 4, maxLife: 4, size: 2,
+        color: '#fff', type: 'spark' });
     }
-    // (B) ELECTRIC TAIL — short streaks behind the player along -dash direction.
-    //     Per-frame so the tail reads as continuous, not a flicker.
-    {
-      const _tBack = Math.atan2(-ddy, -ddx);
-      const _tHeadX = lp.x - ddx * 6;
-      const _tHeadY = lp.y - ddy * 6;
-      // 2 jagged lightning streaks per frame — different lengths so the tail
-      // has a frayed, flickering feel rather than a clean straight line.
-      for (let _ti = 0; _ti < 2; _ti++) {
-        const _tLen = 22 + Math.random() * 16;
-        const _tJit = 6;
-        const _tex = _tHeadX - ddx * _tLen + (Math.random() - 0.5) * _tJit;
-        const _tey = _tHeadY - ddy * _tLen + (Math.random() - 0.5) * _tJit;
-        particles.push({ x: _tHeadX + (Math.random() - 0.5) * 3, y: _tHeadY + (Math.random() - 0.5) * 3,
-          vx: 0, vy: 0, life: 7, maxLife: 7, size: _ti === 0 ? 1.2 : 0.8,
-          color: _ti === 0 ? '#4ff' : '#fff', type: 'lightning',
-          tx: _tex, ty: _tey });
-      }
-      // Trailing ember sparks fanning back
-      for (let _si = 0; _si < 3; _si++) {
-        const _sa = _tBack + (Math.random() - 0.5) * 0.7;
-        const _ss = 1.4 + Math.random() * 1.6;
-        particles.push({ x: _tHeadX, y: _tHeadY,
-          vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
-          life: 13 + Math.floor(Math.random() * 5), maxLife: 18,
-          size: 1.3 + Math.random() * 0.8,
-          color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
-      }
-    }
-    // (C) ZAP STRIKES — every 2nd frame, pick up to N nearby enemies and draw a
-    //     CLEAR BRIGHT arc from the player to each. Range cut 180 → 130 so the
-    //     bolts stay punchy instead of streaking across the screen.
+    // (B) ZAP STRIKES — clear bright bolts from the player to nearby enemies.
+    //     This is the star of the effect. Every 2nd frame, pick up to N
+    //     enemies in range and draw a punchy double-stroked arc to each.
     if (gameTime % 2 === 0) {
       const _swLv = _modLevel('static_wake');
       const boltCount = 3 + Math.min(3, _swLv);
