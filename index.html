@@ -2013,7 +2013,7 @@ const UPGRADE_POOL = [
   { id:'static_wake', name:'STORM DASH', rarity:'common', max:1, icon:'⚡', color:'#4ff',
     descs:['Dash strikes 2 random nearby enemies (25 dmg + CHARGED).'], flavor:'you become the lightning.' },
   { id:'overcharge_dash', name:'OVERCHARGE DASH', rarity:'common', max:1, icon:'⚡', color:'#4ff',
-    descs:['Dash detonates CHARGED enemies (+40 dmg, chains to 2).'], flavor:'the dash arcs through every live node.', prereqs:['arc_rounds|static_wake'] },
+    descs:['Dash CHARGES enemies it passes through. CHARGED enemies detonate (+40 dmg, chains to 2).'], flavor:'the dash arcs through every live node.', prereqs:['arc_rounds|static_wake'] },
   { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:1, icon:'⚡', color:'#4ff',
     descs:['Dash endpoint chains arc through CHARGED enemies.'], flavor:'endpoint discharge. arcs fly.', prereqs:['arc_rounds|static_wake'] },
   // ---- DASH: PULSE ----
@@ -20822,7 +20822,11 @@ function applyDashTrailEffects(lp) {
     }
   }
 
-  // ---- OVERCHARGE DASH — detonate Charged enemies the dash passes through ----
+  // ---- OVERCHARGE DASH — detonate Charged enemies in the dash path ----
+  // (Also CHARGES uncharged enemies the dash passes through so the card
+  // works on its own, not just as an arc-rounds combo piece. Storm dash
+  // doesn't apply CHARGED anymore, so without this the card looked dead
+  // for any build that didn't have arc rounds on the gun.)
   const r = hasOvercharge && _m.overchargeDash >= 2 ? 80 : DASH_TRAIL_RADIUS;
   const r2 = r * r;
   for (const z of zombies) {
@@ -20831,6 +20835,16 @@ function applyDashTrailEffects(lp) {
     if (dx*dx + dy*dy > r2) continue;
     // OVERCHARGE DASH — detonate Charged enemies the dash passes through
     // Lv1: +40 dmg + arc to 2 nearby. Lv2: +20 dmg, bigger radius. Lv3: chain targets also become Charged.
+    if (hasOvercharge && !z._charged) {
+      // Self-bootstrap: dash applies CHARGED to fresh enemies. They don't
+      // detonate immediately (no double-tap of damage on the first pass),
+      // but follow-up shots / a second dash pass will pop them.
+      applyCharged(z);
+      hitSet.add(z.zid);
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
+        life: 8, maxLife: 8, size: (z.radius || 14) + 6,
+        color: '#ff4', type: 'wakering' });
+    }
     if (hasOvercharge && z._charged) {
       const odLv = _m.overchargeDash;
       const detonateDmg = _modScale('overcharge_dash', 40, 7);
