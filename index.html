@@ -2343,7 +2343,7 @@ const UPGRADE_POOL = [
   { id:'whirlwind', name:'WHIRLWIND', rarity:'epic', max:1, icon:'⟳', color:'#4ff',
     descs:['After 3 kills in 2s: your next ATTACK is a full 360° spin.'], flavor:'momentum overflows.' },
   { id:'riposte', name:'RIPOSTE', rarity:'rare', max:1, icon:'⊕', color:'#4ff',
-    descs:['Taking damage instantly readies your next ATTACK.'], flavor:'they hit you. you hit harder.' },
+    descs:['Taking damage readies your next ATTACK + makes it deal 3x damage (2s window).'], flavor:'they hit you. you hit harder.' },
   { id:'extended_reach', name:'EXTENDED REACH', rarity:'rare', max:1, icon:'↔', color:'#4ff',
     descs:['Your ATTACK reaches 35% farther.'], flavor:'a longer blade ends it sooner.' },
   { id:'detonator', name:'DETONATOR', rarity:'epic', max:1, icon:'✸', color:'#4ff',
@@ -19716,6 +19716,43 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
   if (p !== getLocalPlayer()) return dmg;
   const _m = runMods || {};
   const _sf = _m.statusForce || 1;
+  // CARD: RIPOSTE empowered strike — triple damage on the first sword hit
+  // within the 2s window after taking damage. Consumed once per proc.
+  if (_m.riposte && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil) {
+    p._riposteReadyUntil = 0;
+    dmg = Math.floor(dmg * 3); // +200% damage
+    // Big impact VFX — clearly more than a normal hit so the counter reads.
+    const _rzr = z.radius || 14;
+    // Bright white core + two nested cyan rings + a forward shockwave ring
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: _rzr + 18, color: '#fff', type: 'spark' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _rzr * 2.2, color: '#fff', type: 'wakering' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: _rzr * 3.4, color: '#4ff', type: 'wakering' });
+    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: _rzr * 4.4, color: '#4ff', type: 'wakering' });
+    // 12-point fan along the strike direction (riposte sells the counter)
+    for (let _ri = 0; _ri < 12; _ri++) {
+      const _t = _ri / 11;
+      const _ra = attackAngle + (_t - 0.5) * (Math.PI * 2/3);
+      const _rL = _rzr + 26 + Math.random() * 12;
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
+        life: 9, maxLife: 9, size: 2.4,
+        color: _ri % 2 === 0 ? '#fff' : '#4ff', type: 'lightning',
+        tx: z.x + Math.cos(_ra) * _rL, ty: z.y + Math.sin(_ra) * _rL });
+    }
+    // Dense forward spark blast
+    for (let _si = 0; _si < 24; _si++) {
+      const _sa = attackAngle + (Math.random() - 0.5) * (Math.PI * 0.9);
+      const _ss = 5 + Math.random() * 6;
+      particles.push({ x: z.x, y: z.y,
+        vx: Math.cos(_sa) * _ss, vy: Math.sin(_sa) * _ss,
+        life: 14 + Math.random() * 6, maxLife: 20,
+        size: 2.5 + Math.random() * 2,
+        color: Math.random() > 0.4 ? '#fff' : '#4ff', type: 'spark' });
+    }
+    addFloatingText(z.x, z.y - _rzr - 12, 'RIPOSTE x3!', '#4ff');
+    z.hitFlash = Math.max(z.hitFlash || 0, 20);
+    screenShake.intensity = Math.max(screenShake.intensity, 9);
+    playSfx('headshot', 0.35) || playSound(1400, 0.10, 'sine', 0.14);
+  }
   // SHATTER FORCE: Exposed + Frozen → 3x dmg
   if (_m.synShatterForce && z._exposed && (z._frozen || z._frozenTimer > 0)) {
     dmg = Math.floor(dmg * (1 + _modScale('syn_shatter_force', 2.0, 0.25)));
@@ -23658,10 +23695,29 @@ function damagePlayerObj(p,damage,attacker) {
     p._dodgeBoostTimer = 60;
     p._dodgeBoostMult = _modScale('dodge_instinct', 0.30, 0.05);
   }
-  // CARD: RIPOSTE — taking damage instantly readies next ATTACK (ripper only)
+  // CARD: RIPOSTE — taking damage instantly readies next ATTACK + the next
+  // swing within ~2s deals 3x damage (ripper only).
   if (p === getLocalPlayer() && runMods && runMods.riposte) {
     p._rLastSwing = 0;
     p._rNoSwingUntil = 0;
+    p._riposteReadyUntil = gameTime + 120; // 2s window
+    // Visible proc — "RIPOSTE!" label + ring + cyan sparks around the player
+    addFloatingText(p.x, p.y - PLAYER_RADIUS - 18, 'RIPOSTE!', '#4ff');
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0,
+      life: 14, maxLife: 14, size: PLAYER_RADIUS + 18,
+      color: '#4ff', type: 'wakering' });
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0,
+      life: 10, maxLife: 10, size: PLAYER_RADIUS + 8,
+      color: '#fff', type: 'wakering' });
+    for (let _ri = 0; _ri < 14; _ri++) {
+      const _ra = (_ri / 14) * Math.PI * 2;
+      const _rs = 3 + Math.random() * 2;
+      particles.push({ x: p.x, y: p.y,
+        vx: Math.cos(_ra) * _rs, vy: Math.sin(_ra) * _rs,
+        life: 14, maxLife: 14, size: 2.2 + Math.random(),
+        color: Math.random() > 0.4 ? '#4ff' : '#fff', type: 'spark' });
+    }
+    playSound(900, 0.06, 'sine', 0.10);
   }
   // ICE ARMOR: damage reduction when at low HP
   if (p === getLocalPlayer() && runMods && runMods.emergencyBuffer > 0) {
