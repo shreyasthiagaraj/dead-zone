@@ -23450,6 +23450,71 @@ function _drawTelegraph(z, _zr) {
   ctx.globalAlpha = 1;
 }
 
+// ---- WALL SLAM VFX ----
+// Loud, hard-to-miss impact effect shared by both wall-slam paths
+// (fast-path substep + stagger path). The wall is where the enemy is
+// right now (their position just got clamped to it); the post-bounce
+// velocity direction tells us which way they're heading off the wall.
+function _emitWallSlamVFX(z, spd) {
+  const _bvAng = Math.atan2(z.vy || 0, z.vx || 0);
+  // (1) Bright white core flash — instant pop of brightness at impact
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
+    life: 6, maxLife: 6, size: (z.radius || 14) + 14,
+    color: '#fff', type: 'spark' });
+  // (2) Three nested expanding rings — white → cyan → cyan outer.
+  //     Make the slam read as a real concussive impact at a glance.
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+    size: (z.radius || 14) * 1.6, color: '#fff', type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16,
+    size: (z.radius || 14) * 2.6, color: '#cef', type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 22, maxLife: 22,
+    size: (z.radius || 14) * 3.6, color: '#cef', type: 'wakering' });
+  // (3) Forward bounce spark fan — sparks trail OFF the wall in the
+  //     post-bounce direction (so the ricochet reads). 22 sparks (was 12).
+  for (let _wi = 0; _wi < 22; _wi++) {
+    const _wa = _bvAng + (Math.random() - 0.5) * 1.5;
+    const _ws = 3 + Math.random() * 6;
+    particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws,
+      life: 16 + Math.floor(Math.random()*8), maxLife: 24,
+      size: 2.4 + Math.random()*2,
+      color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
+  }
+  // (4) Backward splash — a few sparks fly INTO the wall direction at low
+  //     speed, like dust shaken loose by the impact.
+  const _backA = _bvAng + Math.PI;
+  for (let _wi = 0; _wi < 6; _wi++) {
+    const _wa = _backA + (Math.random() - 0.5) * 0.9;
+    const _ws = 1.5 + Math.random() * 2;
+    particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws,
+      life: 10, maxLife: 10, size: 1.6 + Math.random()*1.2,
+      color: '#cef', type: 'spark' });
+  }
+  // (5) Pixel debris — chunky bits flung perpendicular with gravity
+  const _perpA = _bvAng + Math.PI / 2;
+  for (let _pi = 0; _pi < 12; _pi++) {
+    const _ps = 3 + Math.random() * 4;
+    const _side = Math.random() < 0.5 ? 1 : -1;
+    particles.push({ x: z.x, y: z.y,
+      vx: Math.cos(_perpA) * _ps * _side,
+      vy: Math.sin(_perpA) * _ps * _side - 0.5,
+      life: 22, maxLife: 22, size: 1.8 + Math.random(),
+      color: Math.random() > 0.5 ? '#fff' : '#cef', type: 'spark',
+      _pixel: true, gravity: 0.08 });
+  }
+  // (6) Ground scorch + impact decal at the wall
+  if (typeof decals !== 'undefined') {
+    decals.push({ x: z.x, y: z.y, size: (z.radius || 14) * 1.8,
+      alpha: 0.42, color: '#244' });
+    decals.push({ x: z.x, y: z.y, size: (z.radius || 14) * 1.0,
+      alpha: 0.55, color: '#cef' });
+  }
+  // (7) Audio: low thud + bright clack — concussive layered sound
+  playSound(80, 0.10, 'sawtooth', 0.12);
+  playSound(240 + Math.random()*80, 0.05, 'square', 0.10);
+  // (8) Bigger shake (was 7 cap, now 10) so even off-screen slams pulse
+  screenShake.intensity = Math.max(screenShake.intensity, Math.min(10, 4 + spd * 0.18));
+}
+
 function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if (z.hp <= 0) return; // already dead — prevent cascading death effects
   // NaN guard — if hp somehow became NaN, force-kill the zombie so it doesn't become invincible
@@ -26621,48 +26686,19 @@ function update() {
           const _stSlamDmg = Math.min(50, 20 + Math.floor(_stSpd * 1.5));
           damageZombie(z, _stSlamDmg, 0, 0, true);
           addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
-          // ---- BOUNCE: reflect velocity on the wall axis at ~35% retention ----
-          // Per-axis reflection when we know which axis was clamped; for
-          // obstacle pushOut (axis unknown), flip both with a bit less retention.
-          const _bounceMag = 0.35;
+          // ---- BOUNCE: reflect velocity on the wall axis at ~65% retention ----
+          // Higher retention than before so the ricochet actually carries
+          // the enemy back into the room instead of pancaking on the wall.
+          const _bounceMag = 0.65;
           if (_stOutX) z.vx = -z.vx * _bounceMag;
           if (_stOutY) z.vy = -z.vy * _bounceMag;
           if (_stWasPushedFromObs && !_stOutX && !_stOutY) {
-            z.vx = -z.vx * 0.30; z.vy = -z.vy * 0.30;
+            z.vx = -z.vx * 0.55; z.vy = -z.vy * 0.55;
           }
-          // If neither axis was reflected for some edge case, dampen.
           if (!_stOutX && !_stOutY && !_stWasPushedFromObs) {
-            z.vx *= 0.2; z.vy *= 0.2;
+            z.vx *= 0.3; z.vy *= 0.3;
           }
-          // ---- BOUNCE VFX ----
-          // Sparks fan out in the post-bounce direction so the ricochet reads.
-          const _bvAng = Math.atan2(z.vy || 0, z.vx || 0);
-          for (let _wi = 0; _wi < 12; _wi++) {
-            const _wa = _bvAng + (Math.random()-0.5) * 1.4;
-            const _ws = 2 + Math.random() * 5;
-            particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws,
-              life: 14 + Math.floor(Math.random()*6), maxLife: 20,
-              size: 2 + Math.random()*2,
-              color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
-          }
-          // Bright impact ring + smaller white core
-          particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12,
-            size: z.radius + 22, color: '#cef', type: 'wakering' });
-          particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8,
-            size: z.radius + 8, color: '#fff', type: 'wakering' });
-          // Tiny pixel debris flung perpendicular to bounce — sells the impact
-          const _perpA = _bvAng + Math.PI / 2;
-          for (let _pi = 0; _pi < 6; _pi++) {
-            const _ps = 3 + Math.random() * 3;
-            const _side = Math.random() < 0.5 ? 1 : -1;
-            particles.push({ x: z.x, y: z.y,
-              vx: Math.cos(_perpA) * _ps * _side,
-              vy: Math.sin(_perpA) * _ps * _side - 0.5,
-              life: 18, maxLife: 18, size: 1.6 + Math.random(),
-              color: '#fff', type: 'spark', _pixel: true, gravity: 0.08 });
-          }
-          screenShake.intensity = Math.max(screenShake.intensity, Math.min(7, _stSpd * 0.12));
-          playSound(180 + Math.random() * 60, 0.06, 'square', 0.08);
+          _emitWallSlamVFX(z, _stSpd);
           z._slamCooldown = 22;
         }
         if(gameTime%4===0)particles.push({x:z.x+(Math.random()-0.5)*8,y:z.y-z.radius,vx:(Math.random()-0.5)*2,vy:-1,life:8,maxLife:8,size:2,color:'#ff8',type:'spark'});
@@ -28113,41 +28149,11 @@ function update() {
       // another zombie. Damage scales with impact speed (capped) so a
       // routine shove doesn't one-shot a boss.
       if (_hitWallThisFrame && isHost && !z._slamCooldown) {
-        // Base slam damage scales with impact speed (cap 50). EXPOSED
-        // enemies get a higher floor so even a low-speed pulse-shove into
-        // a wall still feels like a real slam.
         const _slamFloor = z._exposed ? 20 : 8;
         const _slamDmg = Math.min(50, _slamFloor + Math.floor(_mvSpd * 1.5));
         damageZombie(z, _slamDmg, 0, 0, true);
         addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
-        // Bounce VFX: sparks fan in the post-bounce velocity direction so
-        // the ricochet reads as motion off the wall, not a stop-and-explode.
-        const _bvAng = Math.atan2(z.vy || 0, z.vx || 0);
-        for (let _wi = 0; _wi < 12; _wi++) {
-          const _wa = _bvAng + (Math.random()-0.5) * 1.4;
-          const _ws = 2 + Math.random() * 5;
-          particles.push({ x: z.x, y: z.y, vx: Math.cos(_wa)*_ws, vy: Math.sin(_wa)*_ws,
-            life: 14 + Math.floor(Math.random()*6), maxLife: 20,
-            size: 2 + Math.random()*2,
-            color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
-        }
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12,
-          size: z.radius + 22, color: '#cef', type: 'wakering' });
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8,
-          size: z.radius + 8, color: '#fff', type: 'wakering' });
-        // Pixel debris perpendicular to bounce
-        const _perpA = _bvAng + Math.PI / 2;
-        for (let _pi = 0; _pi < 6; _pi++) {
-          const _ps = 3 + Math.random() * 3;
-          const _side = Math.random() < 0.5 ? 1 : -1;
-          particles.push({ x: z.x, y: z.y,
-            vx: Math.cos(_perpA) * _ps * _side,
-            vy: Math.sin(_perpA) * _ps * _side - 0.5,
-            life: 18, maxLife: 18, size: 1.6 + Math.random(),
-            color: '#fff', type: 'spark', _pixel: true, gravity: 0.08 });
-        }
-        screenShake.intensity = Math.max(screenShake.intensity, Math.min(7, _mvSpd * 0.1));
-        playSound(180 + Math.random() * 60, 0.06, 'square', 0.08);
+        _emitWallSlamVFX(z, _mvSpd);
         z._slamCooldown = 22;
       }
       // IMPACT ECHO card — exposed enemies moving at speed spread EXPOSED on bump
