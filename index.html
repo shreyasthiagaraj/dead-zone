@@ -12671,9 +12671,11 @@ function openDebugPicker() {
   ];
   const _makeTab = (cls, parent) => {
     const btn = document.createElement('button');
-    btn.style.cssText = `padding:5px 8px;font-size:9px;letter-spacing:1px;font-family:'Courier New',monospace;font-weight:bold;border:1.5px solid ${cls.color}44;border-radius:6px;background:rgba(10,10,20,0.8);color:${cls.color};cursor:pointer;-webkit-tap-highlight-color:transparent`;
+    btn.style.cssText = `padding:5px 8px;font-size:9px;letter-spacing:1px;font-family:'Courier New',monospace;font-weight:bold;border:1.5px solid ${cls.color}44;border-radius:6px;background:rgba(10,10,20,0.8);color:${cls.color};cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation`;
     btn.textContent = cls.label;
-    btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); _renderDebugTab(cls.id); });
+    // Use 'click' (fires on tap = touchdown + touchup at the same spot) so
+    // dragging to scroll doesn't accidentally switch tabs.
+    btn.addEventListener('click', (e) => { e.stopPropagation(); _renderDebugTab(cls.id); });
     parent.appendChild(btn);
   };
   if (row1) { row1.innerHTML = ''; for (const cls of classesRow) _makeTab(cls, row1); }
@@ -12701,7 +12703,7 @@ function _renderDebugTab(classId) {
     const owned = (runUpgrades[u.id] || 0) > 0;
     const card = document.createElement('div');
     card.dataset.modId = u.id;
-    card.style.cssText = `padding:6px;border:1.5px solid ${owned?'#4f4':u.color+'66'};border-radius:8px;background:${owned?'rgba(0,60,0,0.3)':'rgba(6,8,16,0.9)'};display:flex;flex-direction:column;gap:2px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none`;
+    card.style.cssText = `padding:6px;border:1.5px solid ${owned?'#4f4':u.color+'66'};border-radius:8px;background:${owned?'rgba(0,60,0,0.3)':'rgba(6,8,16,0.9)'};display:flex;flex-direction:column;gap:2px;align-items:center;font-family:'Courier New',monospace;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:manipulation`;
     card.innerHTML = `<div style="font-size:16px;pointer-events:none">${u.icon}</div><div style="font-size:8px;font-weight:bold;letter-spacing:1px;color:${u.color};text-align:center;pointer-events:none">${u.name}</div>${owned?'<div style="font-size:7px;color:#4f4;letter-spacing:1px;pointer-events:none">✓ EQUIPPED</div>':''}`;
     container.appendChild(card);
   }
@@ -12712,10 +12714,13 @@ function _renderDebugTab(classId) {
     const container = document.getElementById('debug-cards');
     if (!container || container._debugDelegated) return;
     container._debugDelegated = true;
-    container.addEventListener('pointerdown', (e) => {
+    // 'click' fires on tap (touchdown + touchup at the same spot) — scrolling
+    // with a drag won't fire it, so the user can browse without accidentally
+    // toggling mods. (Was 'pointerdown' which fired the moment a finger landed.)
+    container.addEventListener('click', (e) => {
       const card = e.target.closest('[data-mod-id]');
       if (!card) return;
-      e.preventDefault(); e.stopPropagation();
+      e.stopPropagation();
       const id = card.dataset.modId;
       if ((runUpgrades[id] || 0) > 0) {
         delete runUpgrades[id];
@@ -12729,7 +12734,7 @@ function _renderDebugTab(classId) {
       window._shellDebugModsActive = true;
       rebuildRunMods();
       _renderDebugTab(_debugActiveTab);
-    }, { passive: false });
+    });
   };
   // Try immediately, retry after DOM ready
   _setupDelegation();
