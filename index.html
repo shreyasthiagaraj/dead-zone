@@ -2435,7 +2435,7 @@ const _KEY_STATS = {
   shield_dash:    { label:'shield duration', base:1.5, step:0.3, unit:'s' },
   predator_round: { label:'damage', base:40, step:7, unit:'%' },
   // ---- Dash thermal ----
-  burnout_wake:   { label:'puddle duration', base:3, step:0.5, unit:'s' },
+  burnout_wake:   { label:'puddle duration', base:2, step:0.4, unit:'s' },
   flashpoint:     { label:'detonation radius', base:60, step:10, unit:'px' },
   // ---- Dash cryo ----
   cryo_wake:      { label:'gas radius', base:70, step:12, unit:'px' },
@@ -8525,12 +8525,16 @@ function updateBurnoutPuddles() {
         const pa = Math.random() * Math.PI * 2, pr = Math.random() * p.radius;
         particles.push({ x: p.x + Math.cos(pa)*pr, y: p.y + Math.sin(pa)*pr, vx: (Math.random()-0.5)*0.8, vy: -1 - Math.random()*1.5, life: 16, maxLife: 16, size: 3 + Math.random()*3, color: ['#f80','#fa0','#f40','#ff0'][Math.floor(Math.random()*4)], type: 'explosion' });
       }
-      if (isHost && gameTime % 15 === 0) {
+      // Puddle damage tick: every 30 frames (0.5s, was 15 = 0.25s) so the
+      // OVERHEAT stack cap isn't reached in two ticks. Stacks per tick
+      // dropped 3 → 1 — burnout still maxes a lingering enemy but takes
+      // ~2.5s instead of 0.5s. Damage per tick 6 → 4.
+      if (isHost && gameTime % 30 === 0) {
         const r2 = p.radius * p.radius;
         for (const z of zombies) {
           if (z.hp <= 0) continue;
           const dx = z.x - p.x, dy = z.y - p.y;
-          if (dx*dx + dy*dy < r2) { damageZombie(z, 6, 0, 0, true); applyOverheat(z, 3, 1); }
+          if (dx*dx + dy*dy < r2) { damageZombie(z, 4, 0, 0, true); applyOverheat(z, 1, 1); }
         }
       }
       // CARD: NAPALM VORTEX — pull enemies toward center of fire zones
@@ -20789,18 +20793,21 @@ function applyDashTrailEffects(lp) {
   const ddx = lp.dashDirX || Math.cos(lp.angle), ddy = lp.dashDirY || Math.sin(lp.angle);
 
   // ---- IGNITION TRAIL (thermal): drop fire puddles BEHIND + slightly ahead ----
+  // Puddle life cut (3s → 2s base) and the per-dash seeding hit reduced —
+  // OVERHEAT stacks 12 → 2 so the dash through doesn't instantly cap an
+  // enemy, and damage 18+lv*4 → 12+lv*2 (the tick DoT does the killing).
   if (hasBurnout && gameTime % 2 === 0) {
     const px = lp.x - ddx * 14, py = lp.y - ddy * 14; // mostly behind, slightly forward
     const _bwLv = _modLevel('burnout_wake');
     const pudR = 62 + _bwLv * 4;
-    const _bwLife = Math.floor(_modScale('burnout_wake', 3, 0.5) * 60);
+    const _bwLife = Math.floor(_modScale('burnout_wake', 2, 0.4) * 60);
     burnoutPuddles.push({ x: px, y: py, radius: pudR, life: _bwLife, maxLife: _bwLife });
     for (const z of zombies) {
       if (z.hp <= 0 || hitSet.has(z.zid)) continue;
       if ((z.x-px)**2+(z.y-py)**2 < pudR*pudR) {
         hitSet.add(z.zid);
-        damageZombie(z, 18 + _bwLv * 4, 0, 0);
-        applyOverheat(z, 12, 1);
+        damageZombie(z, 12 + _bwLv * 2, 0, 0);
+        applyOverheat(z, 2, 1);
       }
     }
     // VFX: fire particles at puddle point
