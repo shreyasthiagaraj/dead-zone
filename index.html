@@ -2193,8 +2193,8 @@ const UPGRADE_POOL = [
     descs:['Your SPIKE gains +1 charge.'], flavor:'extra slot in the queue.' },
   { id:'rapid_spike', name:'RAPID SPIKE', rarity:'common', max:1, icon:'⏱', color:'#a4f',
     descs:['Your SPIKE recharges 50% faster.'], flavor:'shorter compile time.' },
-  { id:'wide_spike', name:'WIDE SPIKE', rarity:'common', max:1, icon:'◯', color:'#a4f',
-    descs:['Your SPIKE radius +30%.'], flavor:'broader reach. wider blast.' },
+  { id:'overload_spike', name:'OVERLOAD SPIKE', rarity:'rare', max:1, icon:'☢', color:'#fc0',
+    descs:['Every 4th SPIKE cast is a critical overload: 2× damage, 2× radius.'], flavor:'capacitor saturated. discharge incoming.' },
   { id:'persistent_spike', name:'PERSISTENT SPIKE', rarity:'common', max:1, icon:'⏳', color:'#a4f',
     descs:['Your SPIKE lifetime +50%.'], flavor:'slow expiration. long-running daemon.' },
   { id:'twin_spike', name:'TWIN SPIKE', rarity:'rare', max:1, icon:'⊕', color:'#a4f',
@@ -2502,7 +2502,7 @@ const _KEY_STATS = {
   // ---- Spike enhancements ----
   spike_loop:     { label:'charges', base:1, step:1, unit:'' },
   rapid_spike:    { label:'recharge speed', base:50, step:8, unit:'%' },
-  wide_spike:     { label:'radius bonus', base:30, step:6, unit:'%' },
+  overload_spike: { label:'overload boost', base:100, step:0, unit:'%' },
   persistent_spike:{label:'lifetime bonus', base:50, step:8, unit:'%' },
   twin_spike:     null, // fires 2 — no continuous scale
   // ---- Spike rings ----
@@ -2749,7 +2749,7 @@ function rebuildRunMods() {
     synPermafrost: false, synShatterForce: false, synFrozenCorrupt: false,
     synStormSurge: false, synFaultLine: false, synBreachProtocol: false,
     // Spike (4th-button daemon): one class flavor + universal enhancements
-    spikeClass: null, spikeTwin: 0, spikeRapid: 0, spikeWide: 0, spikePersist: 0, spikeExtraCharge: 0,
+    spikeClass: null, spikeTwin: 0, spikeRapid: 0, spikeOverload: 0, spikePersist: 0, spikeExtraCharge: 0,
     // Utility
     moveSpeedMult: 0, magnetRadiusMult: 0, xpMult: 0,
     recallAnchor: 0, trapMine: 0, gravityWell: 0, hazardZone: 0, extendedUptime: 0, rapidTurret: 0, beaconElement: null, multiBeacon: 0, beaconRangeMult: 1, magBonus: 0,
@@ -2846,7 +2846,7 @@ function rebuildRunMods() {
       // Spike enhancements
       case 'spike_loop':      m.spikeExtraCharge = n; break;
       case 'rapid_spike':     m.spikeRapid = n; break;
-      case 'wide_spike':      m.spikeWide = n; break;
+      case 'overload_spike':  m.spikeOverload = n; break;
       case 'persistent_spike': m.spikePersist = n; break;
       case 'twin_spike':      m.spikeTwin = n; break;
       // Spike ring classes (AoE centered on player)
@@ -3127,10 +3127,8 @@ const _GUN_ONLY_CARDS = new Set([
   'wide_spread',     // IMPACT BLAST is bullet-side currently
   'heavy_caliber',   // gun-only fire rate / bullet size — irrelevant to melee/deadshot
 ]);
-// wide_spike is only meaningful for spike classes that USE a radius (cryodome,
-// kinetic nova/impact_ring, base spike). Other spike classes (orb/torpedo/
-// seeker/chain bolt) ignore it.
-const _RADIUS_SPIKE_CLASSES = new Set(['cryo_dome', 'impact_ring', 'eruption_ring']);
+// (wide_spike removed — replaced by overload_spike which applies to every
+// spike class, no per-class gating needed.)
 // Cards that only apply when the player has RIPPER as their primary weapon.
 const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
@@ -3153,12 +3151,6 @@ function _passesWeaponGate(u) {
   if (_DEADSHOT_CARDS.has(u.id) && selectedPrimary !== 'deadshot') return false;
   // Ripper cards only show when RIPPER is equipped.
   if (_RIPPER_CARDS.has(u.id) && !_isMeleeEquipped()) return false;
-  // Wide Spike is meaningless without a radius-using spike class equipped.
-  if (u.id === 'wide_spike') {
-    const _ownedSpikeClass = ['thermal_spike','cryo_dome','arc_spike','pulse_spike','corrupt_spike','eruption_ring','discharge_ring','impact_ring','plague_ring']
-      .find(id => (runUpgrades[id] || 0) > 0);
-    if (_ownedSpikeClass && !_RADIUS_SPIKE_CLASSES.has(_ownedSpikeClass)) return false;
-  }
   return true;
 }
 
@@ -15610,9 +15602,42 @@ function throwSpike() {
   const _classId = _spikeClass();
   const _twin = (runMods || {}).spikeTwin > 0;
   const _persist = (runMods || {}).spikePersist > 0 ? (1 + _modScale('persistent_spike', 0.50, 0.08)) : 1;
+  // ---- OVERLOAD SPIKE: every 4th cast is a critical overload — 2× damage,
+  // 2× radius, gold-tinted VFX. Cast count is per-player so the cadence is
+  // consistent regardless of how many spikes get spawned per cast.
+  if ((runMods || {}).spikeOverload > 0) {
+    lp._spikeCastCount = (lp._spikeCastCount || 0) + 1;
+  }
+  const _overload = (runMods || {}).spikeOverload > 0 && lp._spikeCastCount > 0 && (lp._spikeCastCount % 4 === 0);
+  const _radW = _overload ? 2.0 : 1.0;
+  const _dmgMult = _overload ? 2.0 : 1.0;
+  // Snapshot the spike array length before dispatch so we can tag every
+  // spike that gets pushed during this cast with the overload flag.
+  const _spikesBefore = spikes.length;
   // Spawn point — at gun barrel tip
   const sx = lp.x + Math.cos(a) * (PLAYER_RADIUS + 10);
   const sy = lp.y + Math.sin(a) * (PLAYER_RADIUS + 10);
+  // OVERLOAD VFX + label at the player on cast
+  if (_overload) {
+    addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 22, '☢ OVERLOAD ☢', '#fc0');
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+      life: 18, maxLife: 18, size: PLAYER_RADIUS + 30,
+      color: '#fc0', type: 'wakering' });
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+      life: 12, maxLife: 12, size: PLAYER_RADIUS + 14,
+      color: '#fff', type: 'wakering' });
+    for (let _oi = 0; _oi < 18; _oi++) {
+      const _oa = (_oi / 18) * Math.PI * 2;
+      const _os = 4 + Math.random() * 3;
+      particles.push({ x: lp.x, y: lp.y,
+        vx: Math.cos(_oa) * _os, vy: Math.sin(_oa) * _os,
+        life: 16, maxLife: 16, size: 2.4 + Math.random()*1.4,
+        color: Math.random() > 0.4 ? '#fc0' : '#fff', type: 'spark' });
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    playSound(1200, 0.06, 'square', 0.08);
+    playSound(800, 0.04, 'sine', 0.06);
+  }
 
   // ============================================================
   // CLASS DISPATCH — each class is a different mechanic
@@ -15771,7 +15796,7 @@ function throwSpike() {
 
   // ==== RING SPIKE CLASSES — unique AoE abilities, no projectile ====
   } else if (_classId === 'eruption' || _classId === 'cryodome' || _classId === 'discharge' || _classId === 'impact' || _classId === 'plague') {
-    const _radW = (runMods || {}).spikeWide > 0 ? (1 + _modScale('wide_spike', 0.30, 0.06)) : 1;
+    // (Uses the outer _radW set at the top of this function — 2x on overload.)
     const px = lp.x, py = lp.y;
 
     if (_classId === 'eruption') {
@@ -15780,8 +15805,9 @@ function throwSpike() {
       const _erR = 130 * _radW;
       const _placeMine = (ox, oy) => {
         spikes.push({ x: ox, y: oy, ownerId: lp.id, classId: 'eruption',
-          phase: 'armed', _ring: true, _ringR: _erR, _erDmg: _modScale('eruption_ring', 100, 15),
-          lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
+          phase: 'armed', _ring: true, _ringR: _erR,
+          _erDmg: _modScale('eruption_ring', 100, 15) * _dmgMult,
+          _overload, lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
       };
       _placeMine(px, py);
       // TWIN SPIKE: drop a second mine 40px ahead so the player can frame
@@ -16052,6 +16078,12 @@ function throwSpike() {
     playSound(500, 0.07, 'sawtooth', 0.06);
     playSound(300, 0.05, 'square', 0.04);
   }
+  // Tag every spike just spawned in this cast with the overload flag —
+  // updateSpikes reads sp._overload for the per-frame 2x radius / damage
+  // multiplier without each spike type needing its own _overload handling.
+  if (_overload) {
+    for (let _ti = _spikesBefore; _ti < spikes.length; _ti++) spikes[_ti]._overload = true;
+  }
 }
 
 // Per-frame physics + lifetime + pulse for all active spikes.
@@ -16061,11 +16093,11 @@ function throwSpike() {
 // ============================================================
 function updateSpikes() {
   if (!isHost) return;
-  const m = runMods || {};
-  const _radBoost = m.spikeWide > 0 ? (1 + _modScale('wide_spike', 0.30, 0.06)) : 1;
   for (let si = spikes.length - 1; si >= 0; si--) {
     const sp = spikes[si];
     sp._pulseTimer = (sp._pulseTimer || 0) + 1;
+    // Per-spike radius/damage multiplier — set by OVERLOAD SPIKE at spawn.
+    const _radBoost = sp._overload ? 2 : 1;
     if (sp._meteor) {
       _updateMeteorSpike(sp, _radBoost);
     } else if (sp._wall) {
@@ -16120,7 +16152,7 @@ function _updateMeteorSpike(sp, _radBoost) {
         if (d2 < _craterR * _craterR) {
           const d = Math.sqrt(d2) || 1;
           const _close = 1 - d / _craterR;
-          damageZombie(z, Math.floor(50 * _close + 10), dx / d * 4, dy / d * 4);
+          damageZombie(z, Math.floor((50 * _close + 10) * _radBoost), dx / d * 4, dy / d * 4);
           applyOverheat(z, 2, 1.2);
         }
       }
@@ -16952,7 +16984,8 @@ function _updateRingZone(sp, _radBoost) {
 // ---------- BASE: NO CLASS ----------
 // Default thump that sticks for a moment.
 function _baseSpikExplode(sp) {
-  const _r = 50;
+  const _ovr = sp._overload ? 2 : 1;
+  const _r = 50 * _ovr;
   // AoE damage to nearby enemies
   for (const z of zombies) {
     if (z.hp <= 0) continue;
@@ -16960,7 +16993,7 @@ function _baseSpikExplode(sp) {
     const d2 = dx*dx + dy*dy;
     if (d2 < _r*_r) {
       const d = Math.sqrt(d2) || 1;
-      damageZombie(z, Math.floor(SPIKE_BASE_DAMAGE * (1 - d/_r) + 5), dx/d*3, dy/d*3);
+      damageZombie(z, Math.floor((SPIKE_BASE_DAMAGE * (1 - d/_r) + 5) * _ovr), dx/d*3, dy/d*3);
     }
   }
   // ---- IMPACT VFX (three-point rule: origin flash → rings → debris) ----
@@ -17160,7 +17193,7 @@ function _updateBaseSpike(sp) {
       const dx = z.x - sp.x, dy = z.y - sp.y;
       if (dx * dx + dy * dy < (z.radius + 6) ** 2) {
         // Direct hit + small AoE explosion
-        damageZombie(z, SPIKE_BASE_DAMAGE + 10, sp.vx * 0.5, sp.vy * 0.5);
+        damageZombie(z, (SPIKE_BASE_DAMAGE + 10) * (sp._overload ? 2 : 1), sp.vx * 0.5, sp.vy * 0.5);
         _baseSpikExplode(sp); return;
       }
     }
@@ -31967,7 +32000,7 @@ function render() {
     const c = _spikeColor(sp);
     const _spt = performance.now();
     const lifeT = Math.max(0, Math.min(1, sp.lifetime / Math.max(1, sp.maxLife)));
-    const _radBoost = (runMods||{}).spikeWide > 0 ? 1.3 : 1;
+    const _radBoost = sp._overload ? 2 : 1;
     if (sp._meteor) {
       // ---- THERMAL: METEOR ----
       if (sp.phase === 'flying') {
