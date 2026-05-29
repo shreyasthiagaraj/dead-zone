@@ -34497,7 +34497,10 @@ function render() {
       ctx.globalAlpha=1;
       ctx.restore();
     }
-    const _zc=z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._shocked>0?'#bff':z._compromised?'#c8f':z._overheat>0?_overheatBodyColor(z._overheat):z._exposed?'#cef':z.hitFlash>0?'#fff':z.color;
+    // Status color picks the body tint. hitFlash is no longer in this chain
+    // — it gets a dedicated white overlay pass after the body draw so it
+    // ALWAYS reads, even on top of frozen/shocked/exposed/overheat tints.
+    const _zc=z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._shocked>0?'#bff':z._compromised?'#c8f':z._overheat>0?_overheatBodyColor(z._overheat):z._exposed?'#cef':z.color;
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
@@ -34553,6 +34556,29 @@ function render() {
       ctx.fillStyle = _zc;
       _drawZombieShape(ctx, z.type, _zr * 0.7);
       ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    // ---- HIT FLASH ----
+    // White overlay across the body silhouette that fades over hitFlash
+    // frames. Drawn AFTER scanlines / tier fill so it lands on top of every
+    // status tint — the body whitens unmistakably on each hit, regardless
+    // of whether the enemy is frozen / overheating / shocked / etc.
+    if (z.hitFlash > 0) {
+      // Most callers set hitFlash in the 6-20 range; clamp/12 lets normal
+      // hits fade to translucent over their 6-frame window while crits or
+      // status procs (which set it to 10/14/20) hold a brighter overlay
+      // for longer.
+      const _hfPct = Math.min(1, z.hitFlash / 12);
+      // Solid white silhouette fill.
+      ctx.globalAlpha = 0.55 + 0.35 * _hfPct;
+      ctx.fillStyle = '#fff';
+      _drawZombieShape(ctx, z.type, _zr);
+      ctx.fill();
+      // Bright rim accent so the silhouette pops against the dark stage.
+      ctx.globalAlpha = Math.min(1, 0.6 + 0.4 * _hfPct);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = _zlw + 0.5;
+      _drawZombieShape(ctx, z.type, _zr);
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
     // (old per-state telegraph rings removed — replaced by _drawTelegraph(z, _zr)
