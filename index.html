@@ -18827,8 +18827,24 @@ function updatePayload() {
     const _plCol = gc2;
     const _plCol2 = _plCls === 'fire' ? '#fa0' : _plCls === 'ice' ? '#cff' : _plCls === 'chain' ? '#8ff' : _plCls === 'wind' ? '#eef' : _plCls === 'corrupt' ? '#f0f' : '#fa0';
     const _plSmoke = _plCls === 'fire' ? '#421' : _plCls === 'ice' ? '#235' : _plCls === 'chain' ? '#124' : _plCls === 'corrupt' ? '#201' : '#111';
-    // Payload shockwave — fast expand, slow fade, irregular inner edge
-    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:14, maxLife:14, size:radius*1.6, color:_plCol, type:'payload_shockwave', _plCol2, _seed: Math.random()*1000 });
+    // CANONICAL SHOCKWAVE — the discharge-style expanding wave, customized
+    // per class. Color matches the payload's class so the wave reads as
+    // thermal / cryo / arc / pulse / viral. Size scales beyond the damage
+    // radius so the visual sweep overshoots the kill zone:
+    //   PULSE (wind):   1.75× + long 22-frame life — heavy pressure wave
+    //   THERMAL (fire): 1.60× + standard 18-frame life — broad fireball front
+    //   ARC (chain):    1.50× + quick 16-frame life — snappy electric pop
+    //   CRYO (ice):     1.40× + short 14-frame life — sharp shatter
+    //   CORRUPT:        1.50× + standard 18-frame life
+    //   no class:       1.45× + standard 18-frame life
+    const _swMul = _plCls === 'wind' ? 1.75 : _plCls === 'fire' ? 1.60 : _plCls === 'chain' ? 1.50 : _plCls === 'ice' ? 1.40 : _plCls === 'corrupt' ? 1.50 : 1.45;
+    const _swLife = _plCls === 'wind' ? 22 : _plCls === 'ice' ? 14 : _plCls === 'chain' ? 16 : 18;
+    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:_swLife, maxLife:_swLife, size:radius*_swMul,
+      color:_plCol, type:'shockwave', _rimColor:'#fff' });
+    // Irregular blob ring on top — keeps the chunky "explosion debris" feel
+    // that distinguishes payload from a clean energy wave. Slightly smaller
+    // and shorter-lived so the canonical shockwave reads as the primary front.
+    particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:12, maxLife:12, size:radius*1.2, color:_plCol, type:'payload_shockwave', _plCol2, _seed: Math.random()*1000 });
     // Bright center flash
     particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:4, maxLife:4, size:18, color:'#fff', type:'spark' });
     // Radial sparks (trimmed from 40 -> 24 — still reads as a big explosion at
@@ -18978,8 +18994,10 @@ function updatePayload() {
             for (const z of zombies) { if (z.hp <= 0) continue; const ddx=z.x-cx,ddy=z.y-cy,dd=Math.sqrt(ddx*ddx+ddy*ddy);
               if (dd < _cRadius + z.radius) { const _cl=1-dd/(_cRadius+z.radius); const _ckb=30+_cl*30; damageZombie(z, Math.floor(_cDmg*_cl), dd>1?(ddx/dd)*_ckb:0, dd>1?(ddy/dd)*_ckb:0, true); } }
           }
-          // FULL explosion per cluster hit — same intensity as main
-          particles.push({x:cx,y:cy,vx:0,vy:0,life:12,maxLife:12,size:_cRadius*1.5,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
+          // FULL explosion per cluster hit — same intensity as main, with
+          // the canonical shockwave layered behind the irregular blob ring.
+          particles.push({x:cx,y:cy,vx:0,vy:0,life:14,maxLife:14,size:_cRadius*1.35,color:_cGc,type:'shockwave',_rimColor:'#fff'});
+          particles.push({x:cx,y:cy,vx:0,vy:0,life:10,maxLife:10,size:_cRadius*1.2,color:_cGc,type:'payload_shockwave',_plCol2:_cGc,_seed:Math.random()*1000});
           particles.push({x:cx,y:cy,vx:0,vy:0,life:4,maxLife:4,size:12,color:'#fff',type:'spark'});
           for (let i = 0; i < 24; i++) { const a2=Math.random()*Math.PI*2,s2=3+Math.random()*8;
             particles.push({x:cx,y:cy,vx:Math.cos(a2)*s2,vy:Math.sin(a2)*s2,life:18,maxLife:18,size:4+Math.random()*4,color:i<6?'#fff':_cGc,type:'explosion'}); }
@@ -34998,6 +35016,39 @@ function render() {
         }
         ctx.closePath(); ctx.stroke();
         ctx.globalAlpha = 1;
+      } else if(p.type==='shockwave'){
+        // Generic shockwave particle — drives drawShockwave (the canonical
+        // expanding-wave primitive) over the particle's lifetime. Use this
+        // whenever you want the discharge-weapon "shockwave" look.
+        //
+        // Required fields when pushing:
+        //   x, y         — origin
+        //   color        — main wave color
+        //   size         — MAX radius the wave reaches
+        //   life/maxLife — total duration in frames (~14-18 typical)
+        // Optional fields:
+        //   _angle, _arc       — for wedge waves (default full 360°)
+        //   _rimColor          — leading-edge stroke (default white)
+        //   _alphaScale        — multiplier on alpha
+        //   _lingerStart       — fraction of life at which linger kicks in (default 0.65)
+        const _prog = 1 - p.life / p.maxLife; // 0 → 1 over the particle's lifetime
+        // Ease-out radius: fast initial expansion, settles toward maxR.
+        const _radius = p.size * (1 - Math.pow(1 - _prog, 2.5));
+        const _lingerStart = (p._lingerStart !== undefined) ? p._lingerStart : 0.65;
+        const _isLinger = _prog >= _lingerStart;
+        // lingerFrames = current count remaining inside linger window.
+        // Drives the rim brightness pulse inside drawShockwave.
+        const _lingerFrames = _isLinger ? Math.max(0, Math.floor(p.life)) : 0;
+        const _maxLingerFrames = Math.max(1, Math.floor(p.maxLife * (1 - _lingerStart)));
+        drawShockwave(ctx, p.x, p.y, _radius, p.size, p.color, {
+          angle: p._angle || 0,
+          arc: (p._arc !== undefined) ? p._arc : Math.PI * 2,
+          lingering: _isLinger,
+          lingerFrames: _lingerFrames,
+          maxLingerFrames: _maxLingerFrames,
+          rimColor: p._rimColor || '#fff',
+          alphaScale: p._alphaScale || 1,
+        });
       } else if(p.type==='payload_shockwave'){
         // Payload shockwave: fast expand → slow deceleration, irregular inner edge
         const _prog = 1 - p.life/p.maxLife; // 0→1
