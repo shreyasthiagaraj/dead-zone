@@ -24009,13 +24009,79 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
         life: 6 + Math.floor(Math.random()*5), maxLife: 11, size: 2.5 + Math.random()*3,
         color: _isi < 3 ? '#fff' : (_isi < 7 ? '#ff0' : _hfColor), type: 'spark' });
     }
-    // Directional sparks — fly in knockback direction (shows force direction)
-    for (let _di = 0; _di < 4; _di++) {
-      const _da = Math.atan2(kby||0, kbx||0) + (Math.random()-0.5)*0.6;
-      const _ds = 5 + Math.random()*6;
+    // Directional sparks — fly in knockback direction (shows force direction).
+    // Doubled count + higher speed range so the "force vector" of the attack
+    // is unmistakable.
+    const _kbMag = Math.hypot(kbx || 0, kby || 0);
+    const _hasDir = _kbMag > 0.1;
+    const _atkAng = _hasDir ? Math.atan2(kby || 0, kbx || 0) : Math.random() * Math.PI * 2;
+    const _atkCx = Math.cos(_atkAng), _atkCy = Math.sin(_atkAng);
+    for (let _di = 0; _di < 8; _di++) {
+      const _da = _atkAng + (Math.random()-0.5)*0.5;
+      const _ds = 6 + Math.random()*7;
       particles.push({ x: z.x, y: z.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds,
-        life: 8 + Math.floor(Math.random()*4), maxLife: 12, size: 2 + Math.random()*2,
-        color: '#fff', type: 'spark' });
+        life: 10 + Math.floor(Math.random()*5), maxLife: 15, size: 2 + Math.random()*2,
+        color: Math.random() > 0.3 ? '#fff' : '#ffd', type: 'spark' });
+    }
+    // ---- DIRECTIONAL BODY CHUNKS ----
+    // Chunky pixel debris launched in the attack direction — reads as
+    // "chunks of the enemy got shot off." Spawn from the SIDE of the enemy
+    // the hit came from (opposite the attack vector) so the chunks read as
+    // exit debris. Count scales with damage tier so small pokes don't shower
+    // chunks but heavy hits really blow off material.
+    //
+    // Performance: pixel-type sparks render as small filled rects (no
+    // shadowBlur). 4-10 chunks per non-silent hit caps the per-frame cost
+    // even when many enemies eat hits simultaneously.
+    const _chunkCount = _hfCrit ? 10 : (_hfExposed ? 7 : (damage >= 25 ? 6 : 4));
+    // Two body-color shades for chunky variety. Darker variant gives the
+    // chunks weight and reads as flesh/material rather than energy.
+    const _zCol = z.color || '#a4f';
+    // Spawn band: the "back" half of the enemy relative to the attack
+    // direction, jittered around the body radius. If no direction, fall
+    // back to a random arc so static hits still spew chunks.
+    const _spawnArc = _hasDir ? -_atkAng : 0; // back = opposite attack
+    const _spawnArcSpread = Math.PI * 0.9; // ~162° fan on the back face
+    const _zr = z.radius || 18;
+    for (let _ci = 0; _ci < _chunkCount; _ci++) {
+      const _spA = _hasDir
+        ? (_spawnArc + (Math.random() - 0.5) * _spawnArcSpread)
+        : (Math.random() * Math.PI * 2);
+      const _spR = _zr * (0.55 + Math.random() * 0.35);
+      const _sx = z.x + Math.cos(_spA) * _spR;
+      const _sy = z.y + Math.sin(_spA) * _spR;
+      // Velocity: heavily biased along attack direction + small lateral
+      // spray. Speeds vary so the spray spreads out over a few frames.
+      const _vMag = _hfCrit ? (9 + Math.random()*6) : (6 + Math.random()*5);
+      const _spreadA = (Math.random() - 0.5) * 0.55;
+      const _vC = Math.cos(_spreadA), _vS = Math.sin(_spreadA);
+      // Rotate attack vector by spread angle: gives a tight forward fan
+      const _vx = (_atkCx * _vC - _atkCy * _vS) * _vMag;
+      const _vy = (_atkCx * _vS + _atkCy * _vC) * _vMag;
+      particles.push({
+        x: _sx, y: _sy,
+        vx: _vx, vy: _vy,
+        life: 22 + Math.floor(Math.random()*10),
+        maxLife: 32,
+        size: 2.5 + Math.random() * (_hfCrit ? 3.5 : 2.5),
+        color: _ci % 3 === 0 ? '#fff' : _zCol,
+        type: 'spark',
+        _pixel: true,
+        gravity: 0.08, // chunks fall — gives weight
+      });
+    }
+    // Forward streak — a bright short tracer line from the impact point
+    // in the attack direction. Sells the "force transferred THIS WAY"
+    // moment at zero performance cost (single lightning particle).
+    if (_hasDir) {
+      const _streakLen = _hfCrit ? 46 : (_hfExposed ? 38 : 30);
+      particles.push({
+        x: z.x, y: z.y, vx: 0, vy: 0,
+        life: 5, maxLife: 5, size: 2.2,
+        color: '#fff', type: 'lightning',
+        tx: z.x + _atkCx * _streakLen,
+        ty: z.y + _atkCy * _streakLen,
+      });
     }
     // Smoke puffs at impact
     for (let _si = 0; _si < 4; _si++) {
