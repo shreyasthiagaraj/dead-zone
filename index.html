@@ -19433,9 +19433,12 @@ const RIPPER_COMBO = [
   { kind:'arcswipe',     range: 104, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 75, cooldown: 130, color:'#fe6', tone: 480, dir: -1, label:'270 SPIN',
     swingDelta: Math.PI * 1.5, swingFollowPrev: true },
   // 6. FINISHER LUNGE — the climax: a committed forward thrust that drives
-  //    through whatever the spin opened up. Big damage + knockback.
-  { kind:'forwardlunge', range: 120, cone: Math.PI * 34/180, damage: 42, knockback: 115, stagger: 85, cooldown: 165, color:'#f60', tone: 540, dir:  0, label:'FINISHER!',
-    lungeDistance: 72, finisher: true },
+  //    through whatever the spin opened up. Shorter reach than the spin
+  //    (90 vs 104) but heavier knockback (175 vs 90) and an unconditional
+  //    forward dash regardless of whether an enemy is in front — the
+  //    motion IS the commitment.
+  { kind:'forwardlunge', range: 90, cone: Math.PI * 34/180, damage: 42, knockback: 175, stagger: 85, cooldown: 165, color:'#f60', tone: 540, dir:  0, label:'FINISHER!',
+    lungeDistance: 110, finisher: true },
 ];
 // Brief delay between one combo finishing and the next combo's first strike.
 // Lets the moment breathe and prevents endless looping while still letting
@@ -19848,15 +19851,27 @@ function _runComboStep(p, def, step, idx) {
         });
       }
     }
-    // The opening LUNGE gets its approach from the idx-0 AUTO-LUNGE block.
-    // The FINISHER lunge isn't idx 0, so close its gap here — still only
-    // toward an out-of-reach in-cone enemy, never gliding into a body.
+    // FINISHER lunge: COMMITTED forward dash regardless of enemy presence.
+    // The forward motion IS the climax of the combo — it should always
+    // happen even if no target is in front, so a finisher whiff still
+    // feels like a finisher.
+    //
+    // Implementation: read step.lungeDistance, convert to an initial
+    // velocity that respects the 0.72/frame decay in the _rLungeVx tick
+    // (geometric sum from v with decay 0.72 = v / 0.28). Approach-vel chase
+    // (toward an out-of-reach enemy) takes priority when one's available so
+    // the finisher still snaps to a real target, but otherwise the player
+    // gets the full lungeDistance forward thrust.
     if (isLocal && _fl && step.finisher) {
-      // Reduced reachMult 1.4 → 1.15 so the finisher doesn't yank the player
-      // toward enemies that are way out of swing range. With combo bonus 1.4x
-      // on a 120 base, the swing already reaches ~168px on its own.
       const _av = _meleeApproachVel(p, a, range, damageCone, { reachMult: 1.15, speedMult: 1.1 });
-      if (_av) { p._rLungeVx = _av.vx; p._rLungeVy = _av.vy; }
+      if (_av) {
+        p._rLungeVx = _av.vx; p._rLungeVy = _av.vy;
+      } else {
+        const _lungeD = step.lungeDistance || 100;
+        const _initV = _lungeD * 0.28;
+        p._rLungeVx = c * _initV;
+        p._rLungeVy = s * _initV;
+      }
     }
     if (isLocal && _fl) triggerCameraZoom(1.03, 150);
     if (isLocal) screenShake.intensity = Math.max(screenShake.intensity, _fl ? 9 : (_jab ? 5.5 : 5));
@@ -24346,6 +24361,10 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   }
   z.hp-=damage;
   z.hitFlash = _critHit ? 10 : 6;
+  // Short instant-white pop, decoupled from the longer hitFlash counter
+  // used by color blending / network sync. Reset to the same 3-frame
+  // window for every hit type so the flash is consistent.
+  z._hfPulse = 3;
   z.vx+=kbx*kbScale*_exposedKbMult*_frozenKbMult;z.vy+=kby*kbScale*_exposedKbMult*_frozenKbMult;
   // Arcade mode: every death (bullet, DoT, AoE, explosion) routes through here
   // so we award points + spawn the flashy "+X" label exactly once per kill.
@@ -27444,6 +27463,7 @@ function update() {
     }
     for(const z of zombies){
       if(z.hitFlash>0)z.hitFlash--;
+      if(z._hfPulse>0)z._hfPulse--;
       // Trench spawn-in animation: locked in place + intangible until anim ends
       if(z._spawnAnim>0){
         z._spawnAnim--;
@@ -29629,6 +29649,7 @@ function update() {
         else z.angle += diff * 0.6;
       }
       if (z.hitFlash > 0) z.hitFlash--;
+      if (z._hfPulse > 0) z._hfPulse--;
     }
   }
 
@@ -30160,6 +30181,9 @@ function applyHostState(msg) {
       for (let i = 0; i < bloodCount; i++) { const spd = (1+intensity)*2; particles.push({x:oz.x+(Math.random()-0.5)*(nz.radius||12),y:oz.y+(Math.random()-0.5)*(nz.radius||12),vx:(Math.random()-0.5)*spd,vy:(Math.random()-0.5)*spd,life:15+Math.random()*10,maxLife:25,size:2+Math.random()*(2+intensity),color:['#f0f','#f4a','#d0f','#f08'][Math.floor(Math.random()*4)],type:'blood'}); }
       if (Math.random() > 0.3) decals.push({x:oz.x+(Math.random()-0.5)*10,y:oz.y+(Math.random()-0.5)*10,size:4+Math.random()*8+intensity*3,alpha:0.4+Math.random()*0.3,color:['#403','#304','#502'][Math.floor(Math.random()*3)]});
       playHitSound();
+      // Trigger the short white pop on non-host too — damageZombie does
+      // this on host; here we mirror it via the damage edge.
+      oz._hfPulse = 3;
     }
   }
   // Generate death effects for zombies that were killed
@@ -34563,21 +34587,16 @@ function render() {
     // frames. Drawn AFTER scanlines / tier fill so it lands on top of every
     // status tint — the body whitens unmistakably on each hit, regardless
     // of whether the enemy is frozen / overheating / shocked / etc.
-    if (z.hitFlash > 0) {
-      // Most callers set hitFlash in the 6-20 range; clamp/12 lets normal
-      // hits fade to translucent over their 6-frame window while crits or
-      // status procs (which set it to 10/14/20) hold a brighter overlay
-      // for longer.
-      const _hfPct = Math.min(1, z.hitFlash / 12);
-      // Solid white silhouette fill.
-      ctx.globalAlpha = 0.55 + 0.35 * _hfPct;
+    // Hit flash is INSTANT — short ~3-frame solid-white pop, then gone.
+    // The flash should read as a punch, not a halo. damageZombie + the
+    // major proc sites set z._hfPulse alongside z.hitFlash so the visual
+    // window is decoupled from the longer hitFlash bookkeeping.
+    if (z._hfPulse > 0) {
+      ctx.globalAlpha = 0.92;
       ctx.fillStyle = '#fff';
       _drawZombieShape(ctx, z.type, _zr);
       ctx.fill();
-      // Bright rim accent so the silhouette pops against the dark stage.
-      ctx.globalAlpha = Math.min(1, 0.6 + 0.4 * _hfPct);
       ctx.strokeStyle = '#fff'; ctx.lineWidth = _zlw + 0.5;
-      _drawZombieShape(ctx, z.type, _zr);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
