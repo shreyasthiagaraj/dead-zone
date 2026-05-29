@@ -2381,7 +2381,7 @@ const UPGRADE_POOL = [
   { id:'executioner', name:'EXECUTIONER', rarity:'rare', max:1, icon:'☥', color:'#4ff',
     descs:['Your finisher deals +75% damage and crits.'], flavor:'the last hit is the only hit.' },
   { id:'bloodletter', name:'BLOODLETTER', rarity:'rare', max:1, icon:'❤', color:'#4ff',
-    descs:['Crits restore 1 HP.'], flavor:'their blood is your fuel.' },
+    descs:['Crits restore 5 HP.'], flavor:'their blood is your fuel.' },
   { id:'whirlwind', name:'WHIRLWIND', rarity:'epic', max:1, icon:'⟳', color:'#4ff',
     descs:['After 3 kills in 2s: your next ATTACK is a full 360° spin.'], flavor:'momentum overflows.' },
   { id:'riposte', name:'RIPOSTE', rarity:'rare', max:1, icon:'⊕', color:'#4ff',
@@ -2594,7 +2594,7 @@ const _KEY_STATS = {
   cleave:         { label:'cone width', base:30, step:5, unit:'%' },
   lunge:          { label:'lunge distance', base:60, step:8, unit:'%' },
   executioner:    { label:'finisher dmg', base:75, step:10, unit:'%' },
-  bloodletter:    { label:'HP per crit', base:1, step:1, unit:' HP' },
+  bloodletter:    { label:'HP per crit', base:5, step:2, unit:' HP' },
   whirlwind:      null, // mechanic toggle (3 kills → 360 spin)
   riposte:        null, // mechanic toggle (refund swing)
   // ---- Cross-weapon ----
@@ -3129,6 +3129,21 @@ const _GUN_ONLY_CARDS = new Set([
 ]);
 // (wide_spike removed — replaced by overload_spike which applies to every
 // spike class, no per-class gating needed.)
+// PERSISTENT SPIKE only matters for spike classes that have a lifetime the
+// player benefits from extending — base spike has no lingering presence
+// (flies straight, hits, gone), so the card is hidden until a benefiting
+// class is equipped.
+const _PERSIST_BENEFIT_CLASSES = new Set([
+  'thermal_spike',    // METEOR — extends puddle/embers
+  'cryo_dome',        // CRYO BLAST — wall stays up longer
+  'arc_spike',        // TESLA ORB — orb hovers + zaps longer
+  'pulse_spike',      // KINETIC TORPEDO — extends piercing window
+  'corrupt_spike',    // VIRAL SEEKER — homing window longer
+  'eruption_ring',    // THERMAL MINE — mine waits longer
+  'discharge_ring',   // CHAIN BOLT — bolt persists
+  'impact_ring',      // KINETIC NOVA — wave lingers
+  'plague_ring',      // MIASMA — cloud drifts longer
+]);
 // Cards that only apply when the player has RIPPER as their primary weapon.
 const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
@@ -3151,6 +3166,16 @@ function _passesWeaponGate(u) {
   if (_DEADSHOT_CARDS.has(u.id) && selectedPrimary !== 'deadshot') return false;
   // Ripper cards only show when RIPPER is equipped.
   if (_RIPPER_CARDS.has(u.id) && !_isMeleeEquipped()) return false;
+  // Hide PERSISTENT SPIKE until the player has equipped a spike class
+  // that benefits from extended lifetime. (Default base spike doesn't
+  // linger, so the card is dead-pick without a class.)
+  if (u.id === 'persistent_spike') {
+    let _hasBenefit = false;
+    for (const _cls of _PERSIST_BENEFIT_CLASSES) {
+      if ((runUpgrades[_cls] || 0) > 0) { _hasBenefit = true; break; }
+    }
+    if (!_hasBenefit) return false;
+  }
   return true;
 }
 
@@ -15592,13 +15617,19 @@ function throwSpike() {
   if (gameState !== 'playing') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
-  // MINE REMOTE DETONATION: if eruption class, no charges, and mines exist → detonate all
-  if ((lp._spikeCharges || 0) <= 0 && _spikeClass() === 'eruption') {
+  // MINE REMOTE DETONATION: thermal-mine class only — if ANY armed mines
+  // exist when the player presses Spike again, detonate them all. (Was
+  // gated to "no charges left", which felt inconsistent; the natural
+  // mental model is press = detonate the mines you've placed.)
+  if (_spikeClass() === 'eruption') {
     const _mines = spikes.filter(s => s.classId === 'eruption' && s.phase === 'armed');
     if (_mines.length > 0) {
       for (const mine of _mines) { mine._detonate = true; }
-      screenShake.intensity = Math.max(screenShake.intensity, 4);
-      playSound(600, 0.06, 'square', 0.06);
+      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 16, '☢ DETONATE ☢', '#f80');
+      screenShake.intensity = Math.max(screenShake.intensity, 8);
+      playSound(220, 0.10, 'sawtooth', 0.16);
+      playSound(80, 0.18, 'sawtooth', 0.18);
+      setTimeout(() => playSound(900, 0.05, 'square', 0.08), 30);
       return;
     }
   }
@@ -15624,9 +15655,10 @@ function throwSpike() {
   // Spawn point — at gun barrel tip
   const sx = lp.x + Math.cos(a) * (PLAYER_RADIUS + 10);
   const sy = lp.y + Math.sin(a) * (PLAYER_RADIUS + 10);
-  // OVERLOAD: no UI label. The visual cue is on the spike itself
-  // (gold tint + slightly larger render via _radBoost in updateSpikes
-  // and the renderer).
+  // OVERLOAD cast: pop a label so the player sees the cadence hit.
+  if (_overload) {
+    addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 20, '☢ OVERLOAD ☢', '#fc0');
+  }
 
   // ============================================================
   // CLASS DISPATCH — each class is a different mechanic
@@ -16654,11 +16686,17 @@ function _updateRingZone(sp, _radBoost) {
   // ======== THERMAL MINE — armed, detonates on contact or remote ========
   if (sp.classId === 'eruption') {
     if (sp.phase === 'armed') {
-      // Proximity trigger — enemy steps on it
+      // Proximity trigger — enemies within ~half the mine's blast radius
+      // set it off (was z.radius + 16 which required stepping right on top).
+      // sp._ringR is the blast radius set at spawn; use 55% of it so the
+      // trigger zone feels like a real proximity sensor without being so
+      // wide that enemies always die at the edge of the radius.
+      const _trigR = ((sp._ringR || 100) * 0.55);
+      const _trigR2 = _trigR * _trigR;
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
-        if (dx * dx + dy * dy < (z.radius + 16) ** 2) { sp._detonate = true; break; }
+        if (dx * dx + dy * dy < _trigR2) { sp._detonate = true; break; }
       }
       // Remote detonation flag
       if (sp._detonate) { _detonateMine(sp); return; }
@@ -19338,7 +19376,7 @@ function _runComboStep(p, def, step, idx) {
     let dmg = isCrit ? Math.floor(_scaledBase * 2) : _scaledBase;
     // CARD: BLOODLETTER — crits restore 1 HP
     if (isCrit && _rmCombo.bloodletter && isLocal && p.alive) {
-      p.hp = Math.min(p.maxHp || 100, p.hp + _modScale('bloodletter', 1, 1));
+      p.hp = Math.min(p.maxHp || 100, p.hp + _modScale('bloodletter', 5, 2));
     }
     // Pre-damage hooks: synergy damage amps (Shatter Force / Breach Protocol) +
     // status procs that can change kb/stagger (Pulse Shot).
@@ -21035,30 +21073,87 @@ function applyDashTrailEffects(lp) {
   }
 
   // ---- KINETIC WAKE (pulse): shove enemies to SIDES of dash path ----
+  // Big, obvious pulse-class VFX flanking the dash: pale-blue pressure
+  // halo around the player, sideways shockwave rings emitting outward,
+  // air-streak whoosh particles fanning to either side, plus the existing
+  // perpendicular shove of any enemy caught in the wake.
   if (hasKinetic) {
     const r = DASH_TRAIL_RADIUS;
     const r2 = r * r;
+    const perpX = -ddy, perpY = ddx;
+    // Pressure halo on the player — pulsing pale-blue disc, every frame.
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+      life: 6, maxLife: 6, size: PLAYER_RADIUS + 14 + (gameTime % 4),
+      color: '#cef', type: 'wakering' });
+    particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0,
+      life: 4, maxLife: 4, size: PLAYER_RADIUS + 6,
+      color: '#fff', type: 'wakering' });
+    // Sideways shockwave rings — pulsing ovals on each flank, fade fast.
+    if (gameTime % 2 === 0) {
+      for (const _side of [1, -1]) {
+        const _rx = lp.x + perpX * (PLAYER_RADIUS + 16) * _side;
+        const _ry = lp.y + perpY * (PLAYER_RADIUS + 16) * _side;
+        particles.push({ x: _rx, y: _ry, vx: perpX * 1.6 * _side, vy: perpY * 1.6 * _side,
+          life: 12, maxLife: 12, size: 28 + Math.random()*8,
+          color: '#cef', type: 'wakering' });
+        particles.push({ x: _rx, y: _ry, vx: perpX * 1.2 * _side, vy: perpY * 1.2 * _side,
+          life: 8, maxLife: 8, size: 16 + Math.random()*6,
+          color: '#fff', type: 'wakering' });
+      }
+    }
+    // Air-streak whoosh particles flanking BOTH sides — long fast streaks
+    // perpendicular to dash. Bigger and denser than the old 5 motes.
+    for (const _side of [1, -1]) {
+      for (let _wi = 0; _wi < 3; _wi++) {
+        const _wsBase = 4 + Math.random() * 3;
+        const _spawnOff = PLAYER_RADIUS + 6 + Math.random() * 8;
+        particles.push({
+          x: lp.x + perpX * _spawnOff * _side + ddx * (Math.random()-0.5) * 14,
+          y: lp.y + perpY * _spawnOff * _side + ddy * (Math.random()-0.5) * 14,
+          vx: perpX * _wsBase * _side + ddx * (Math.random()-0.5) * 1.2,
+          vy: perpY * _wsBase * _side + ddy * (Math.random()-0.5) * 1.2,
+          life: 14 + Math.floor(Math.random()*4), maxLife: 18,
+          size: 2 + Math.random()*1.4,
+          color: Math.random() > 0.45 ? '#cef' : '#fff', type: 'spark',
+        });
+      }
+    }
+    // Forward "wind front" wisps blown ahead of the player
+    for (let _fi = 0; _fi < 2; _fi++) {
+      const _fOff = PLAYER_RADIUS + 8 + Math.random() * 6;
+      particles.push({
+        x: lp.x + ddx * _fOff + (Math.random()-0.5) * 14,
+        y: lp.y + ddy * _fOff + (Math.random()-0.5) * 14,
+        vx: ddx * (3 + Math.random()*2), vy: ddy * (3 + Math.random()*2),
+        life: 18, maxLife: 18, size: 6 + Math.random()*4,
+        color: '#cef', type: 'smoke', _smokeAlpha: 0.22 + Math.random()*0.1,
+      });
+    }
+    // ---- Damage / knockback to enemies caught in the wake (existing) ----
     for (const z of zombies) {
       if (z.hp <= 0 || hitSet.has(z.zid)) continue;
       const dx = z.x - lp.x, dy = z.y - lp.y;
       if (dx*dx + dy*dy > r2) continue;
       hitSet.add(z.zid);
-      const d = Math.sqrt(dx*dx+dy*dy) || 1;
-      // Pulse Wake trail kb cranked: was 14 + lv*8 (22/30/38).
-      // Now 28 + lv*16 (44/60/76) — they fly sideways.
       const _kwLv = _modLevel('kinetic_wake');
       const pushF = 28 + _kwLv * 16;
       const trailDmg = _modScale('kinetic_wake', 30, 5);
-      // Push PERPENDICULAR to dash direction (to the sides)
-      const perpX = -ddy, perpY = ddx;
-      const side = (dx * perpX + dy * perpY) > 0 ? 1 : -1; // which side of dash path
-      // The damageZombie kb factor was 0.3 of pushF — bump to 0.6 so the
-      // damage-tick shove matches the velocity shove.
+      const side = (dx * perpX + dy * perpY) > 0 ? 1 : -1;
       damageZombie(z, trailDmg, perpX * pushF * 0.6 * side, perpY * pushF * 0.6 * side);
       z.vx += perpX * pushF * side; z.vy += perpY * pushF * side;
       z.staggerTimer = Math.max(z.staggerTimer || 0, 18 + _m.kineticWake * 6);
       applyExposed(z);
-      for(let ki=0;ki<5;ki++){const ka=Math.random()*Math.PI*2,ks=2+Math.random()*2.5;particles.push({x:z.x,y:z.y,vx:Math.cos(ka)*ks,vy:Math.sin(ka)*ks,life:12,maxLife:12,size:2+Math.random(),color:Math.random()>0.4?'#cef':'#fff',type:'spark'});}
+      // Per-enemy hit burst: short whoosh ring + 8 directional sparks
+      particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+        size: (z.radius || 14) * 1.8, color: '#cef', type: 'wakering' });
+      const _hitAng = Math.atan2(perpY * side, perpX * side);
+      for (let _ki = 0; _ki < 8; _ki++) {
+        const _ka = _hitAng + (Math.random()-0.5) * 1.2;
+        const _ks = 3 + Math.random() * 3;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(_ka)*_ks, vy: Math.sin(_ka)*_ks,
+          life: 14, maxLife: 14, size: 2 + Math.random()*1.4,
+          color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
+      }
     }
   }
 
@@ -23549,9 +23644,11 @@ function _emitWallSlamVFX(z, spd) {
     decals.push({ x: z.x, y: z.y, size: (z.radius || 14) * 1.0,
       alpha: 0.55, color: '#cef' });
   }
-  // (7) Audio: low thud + bright clack — concussive layered sound
-  playSound(80, 0.10, 'sawtooth', 0.12);
-  playSound(240 + Math.random()*80, 0.05, 'square', 0.10);
+  // (7) Audio: layered impact — deep sub-thud, crunchy mid, bright crack
+  playSound(55, 0.16, 'sawtooth', 0.18);
+  playSound(120, 0.10, 'square', 0.14);
+  playSound(300 + Math.random()*100, 0.06, 'square', 0.12);
+  setTimeout(() => playSound(900 + Math.random()*200, 0.04, 'sine', 0.08), 30);
   // (8) Bigger shake (was 7 cap, now 10) so even off-screen slams pulse
   screenShake.intensity = Math.max(screenShake.intensity, Math.min(10, 4 + spd * 0.18));
 }
@@ -26727,17 +26824,17 @@ function update() {
           const _stSlamDmg = Math.min(50, 20 + Math.floor(_stSpd * 1.5));
           damageZombie(z, _stSlamDmg, 0, 0, true);
           addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
-          // ---- BOUNCE: reflect velocity on the wall axis at ~65% retention ----
-          // Higher retention than before so the ricochet actually carries
-          // the enemy back into the room instead of pancaking on the wall.
-          const _bounceMag = 0.65;
+          // ---- BOUNCE: reflect velocity on the wall axis at ~85% retention ----
+          // High retention so the enemy carries strong momentum back into
+          // the room — proper ricochet feel.
+          const _bounceMag = 0.85;
           if (_stOutX) z.vx = -z.vx * _bounceMag;
           if (_stOutY) z.vy = -z.vy * _bounceMag;
           if (_stWasPushedFromObs && !_stOutX && !_stOutY) {
-            z.vx = -z.vx * 0.55; z.vy = -z.vy * 0.55;
+            z.vx = -z.vx * 0.78; z.vy = -z.vy * 0.78;
           }
           if (!_stOutX && !_stOutY && !_stWasPushedFromObs) {
-            z.vx *= 0.3; z.vy *= 0.3;
+            z.vx *= 0.4; z.vy *= 0.4;
           }
           _emitWallSlamVFX(z, _stSpd);
           z._slamCooldown = 22;
@@ -26790,13 +26887,21 @@ function update() {
 
       // Tick the post-deaggro grace down each frame (set when pursuit dropped)
       if (z._postDeaggroGrace && z._postDeaggroGrace > 0) z._postDeaggroGrace--;
+      // Arcade arena is much smaller (~1620px) than the default; using the
+      // global 650 deaggro means almost no enemy ever reaches the leash.
+      // Use a tighter arcade leash (440) + faster deaggro frames (30) so
+      // straggling enemies actually break off pursuit and wander.
+      const _arcadeMode = gameMode === 'arcade';
+      const _deaggroR = _arcadeMode ? 440 : ZOMBIE_DEAGGRO_RANGE;
+      const _deaggroF = _arcadeMode ? 30 : ZOMBIE_DEAGGRO_FRAMES;
+      const _aggroR = _arcadeMode ? 380 : ZOMBIE_AGGRO_RANGE;
       if(!z.aware){
         // Re-aggro: get within AGGRO_RANGE with line of sight, or very close —
         // BUT only if the post-deaggro grace has expired. Until then, the
         // enemy explicitly "let go" and wanders in peace even if the player
         // closes again. This is what makes the leash feel real.
         const _canReAggro = !z._postDeaggroGrace || z._postDeaggroGrace <= 0;
-        if(_canReAggro && ((gameTime+z.zid)%10)===0 && zd<ZOMBIE_AGGRO_RANGE && hasLineOfSight(z.x,z.y,np.x,np.y)){
+        if(_canReAggro && ((gameTime+z.zid)%10)===0 && zd<_aggroR && hasLineOfSight(z.x,z.y,np.x,np.y)){
           // Dungeon ambush: dramatic wake-up VFX when first spotted
           if (!z.aware && z._dungeonAmbush) {
             for(let ai=0;ai<10;ai++){const aa=Math.random()*Math.PI*2,as=2+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(aa)*as,vy:Math.sin(aa)*as,life:16,maxLife:16,size:3,color:z.color,type:'spark'});}
@@ -26810,9 +26915,9 @@ function update() {
       } else if (!_relentless) {
         // Deaggro: if the player is too far for too long, drop pursuit. The
         // enemy wanders, and the post-deaggro grace prevents instant re-snare.
-        if (zd > ZOMBIE_DEAGGRO_RANGE) {
+        if (zd > _deaggroR) {
           z._deaggroTimer = (z._deaggroTimer || 0) + 1;
-          if (z._deaggroTimer > ZOMBIE_DEAGGRO_FRAMES) {
+          if (z._deaggroTimer > _deaggroF) {
             z.aware = false;
             z._deaggroTimer = 0;
             z._postDeaggroGrace = ZOMBIE_POSTDEAGGRO_GRACE;
@@ -27254,9 +27359,37 @@ function update() {
             // Wind up — visible shake, stops moving
             z.vx=0;z.vy=0;z._leapTimer--;
             if (!z._leapMax) z._leapMax = z._leapTimer + 1;
+            const _wuT = 1 - z._leapTimer / z._leapMax; // 0 → 1 as windup progresses
             // Reticle at the landing point — telegraph WHERE not just WHEN
-            _setTele(z, 'crouch', 1 - z._leapTimer / z._leapMax, { col: z.color });
+            _setTele(z, 'crouch', _wuT, { col: z.color });
             z.x+=(Math.random()-0.5)*3;z.y+=(Math.random()-0.5)*3; // shake
+            // ---- PRE-IMPACT SHOCKWAVE TELEGRAPH ----
+            // Pulse a red danger ring at the LANDING POSITION showing the
+            // ground-pound damage radius (200). Two layers — a thick rim
+            // ring and a pulsing fill — so the player can clearly read
+            // the threat zone before the slam lands.
+            if (gameTime % 2 === 0) {
+              const _gpR = 200;
+              particles.push({ x: z._leapTx, y: z._leapTy, vx: 0, vy: 0,
+                life: 6, maxLife: 6, size: _gpR,
+                color: '#f44', type: 'wakering' });
+              if (gameTime % 4 === 0) {
+                particles.push({ x: z._leapTx, y: z._leapTy, vx: 0, vy: 0,
+                  life: 10, maxLife: 10, size: _gpR * (0.4 + _wuT * 0.5),
+                  color: '#f44', type: 'wakering' });
+              }
+              // Tiny inward sparks pointing at the landing center
+              for (let _ti = 0; _ti < 3; _ti++) {
+                const _ta = Math.random() * Math.PI * 2;
+                const _tr = _gpR * (0.85 + Math.random() * 0.15);
+                particles.push({
+                  x: z._leapTx + Math.cos(_ta) * _tr,
+                  y: z._leapTy + Math.sin(_ta) * _tr,
+                  vx: -Math.cos(_ta) * 2, vy: -Math.sin(_ta) * 2,
+                  life: 10, maxLife: 10, size: 2, color: '#f44', type: 'spark',
+                });
+              }
+            }
             if(z._leapTimer<=0){z._leapState='leap';z._leapTimer=12;z._leapMax=0;_clearTele(z);
               const la=Math.atan2(z._leapTy-z.y,z._leapTx-z.x);z.vx=Math.cos(la)*12;z.vy=Math.sin(la)*12;}
           } else if(z._leapState==='leap'){
@@ -27271,12 +27404,38 @@ function update() {
               // it used to be trivially out-spaced.
               const _gpR = 200;
               for(const p of players){if(!p.alive)continue;const pd=Math.sqrt((p.x-z.x)**2+(p.y-z.y)**2);if(pd<_gpR)damagePlayerObj(p,30);}
-              screenShake.intensity=Math.max(screenShake.intensity,12);
-              // Bigger visual ring to match the bigger damage radius.
-              for(let si=0;si<24;si++){const sa=si/24*Math.PI*2;particles.push({x:z.x+Math.cos(sa)*100,y:z.y+Math.sin(sa)*100,vx:Math.cos(sa)*5,vy:Math.sin(sa)*5,life:24,maxLife:24,size:5,color:'#a85',type:'spark'});}
-              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:18,maxLife:18,size:_gpR,color:'#a85',type:'wakering'});
-              particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_gpR*0.6,color:'#fff',type:'wakering'});
+              screenShake.intensity=Math.max(screenShake.intensity,14);
+              // ---- IMPACT SHOCKWAVE — three nested rings at full radius so
+              //      the damage zone is unmistakable, plus a dense ring of
+              //      spark debris flying outward from the rim. ----
+              // 32 rim sparks (was 24) flying outward fast
+              for (let si = 0; si < 32; si++) {
+                const sa = si / 32 * Math.PI * 2 + Math.random() * 0.1;
+                particles.push({ x: z.x + Math.cos(sa) * (_gpR * 0.5),
+                  y: z.y + Math.sin(sa) * (_gpR * 0.5),
+                  vx: Math.cos(sa) * 8, vy: Math.sin(sa) * 8,
+                  life: 26, maxLife: 26, size: 4 + Math.random() * 2,
+                  color: '#a85', type: 'spark' });
+              }
+              // Three nested wakerings: white core flash, gold rim, dim outer
+              particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8, maxLife: 8,
+                size: _gpR * 0.4, color: '#fff', type: 'wakering' });
+              particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16,
+                size: _gpR * 0.75, color: '#fa0', type: 'wakering' });
+              particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 22, maxLife: 22,
+                size: _gpR, color: '#a85', type: 'wakering' });
+              // Ground scorch decal at impact so the slam leaves a footprint
+              decals.push({ x: z.x, y: z.y, size: _gpR * 0.9, alpha: 0.45,
+                color: '#421', _fade: 0.008 });
+              // Pixel debris with gravity for "thump" weight
+              for (let _di = 0; _di < 10; _di++) {
+                const _da = Math.random() * Math.PI * 2, _ds = 4 + Math.random() * 4;
+                particles.push({ x: z.x, y: z.y, vx: Math.cos(_da)*_ds, vy: Math.sin(_da)*_ds - 1,
+                  life: 24, maxLife: 24, size: 2 + Math.random() * 1.5,
+                  color: '#a85', type: 'spark', _pixel: true, gravity: 0.1 });
+              }
               playExplosionSound();
+              playSound(60, 0.18, 'sawtooth', 0.18);
             }
           }
         }
@@ -28753,12 +28912,15 @@ function update() {
   // Both passes handled here with a single swap-pop sweep.
   {
     let _dw = 0;
+    // Default fade rate for decals that don't specify one — slow but
+    // inevitable, so wall slams / blight zone / thermal scorch / etc.
+    // don't accumulate as permanent floor stains.
+    const _DEFAULT_DECAL_FADE = 0.002;
     for (let _di = 0; _di < decals.length; _di++) {
       const _dd = decals[_di];
-      if (_dd._fade) {
-        _dd.alpha -= _dd._fade;
-        if (_dd.alpha <= 0) continue; // drop
-      }
+      const _fr = (typeof _dd._fade === 'number') ? _dd._fade : _DEFAULT_DECAL_FADE;
+      _dd.alpha -= _fr;
+      if (_dd.alpha <= 0) continue; // drop
       decals[_dw++] = _dd;
     }
     decals.length = _dw;
@@ -34194,7 +34356,12 @@ function render() {
     // Element tint: player outline shifts color when element is active
     const _elemColor = (p===getLocalPlayer()&&activeElement) ? (activeElement.id==='fire'?'#f80':activeElement.id==='ice'?'#4ef':activeElement.id==='lightning'?'#eef':null) : null;
     const _elemId = (p===getLocalPlayer()&&activeElement) ? activeElement.id : null;
-    const _pc=p.damageFlash>0?'#f44':(_elemColor||p.color);
+    // RAGE power-up: player body burns orange-red while active. Pulses so
+    // the buff is clearly visible at a glance, not just from the damage UI.
+    const _rageActive = (typeof playerHasPowerUp === 'function') && playerHasPowerUp(p, 'rage');
+    const _ragePulse = _rageActive ? (0.85 + Math.sin(performance.now()*0.018)*0.15) : 1;
+    const _rageColor = _rageActive ? (Math.sin(performance.now()*0.012) > 0 ? '#f44' : '#f80') : null;
+    const _pc=p.damageFlash>0?'#f44':(_rageColor||_elemColor||p.color);
     // Dash override: body glows bright cyan (or element color) during dash
     const _dashColor = _isDashing ? '#0ff' : null;
     const _bodyColor = _dashColor || _pc;
@@ -34202,7 +34369,14 @@ function render() {
     ctx.fillStyle=_bodyColor;ctx.globalAlpha=_isDashing?0.3:(_elemColor?0.18:0.12);ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS+(_isDashing?8:(_elemColor?5:3)),0,Math.PI*2);ctx.fill();
     ctx.globalAlpha=_isDashing?(0.4+Math.random()*0.4):(p.invincible>0&&Math.floor(p.invincible/50)%2===0?0.5:1);
     ctx.fillStyle='#0a0a12';ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS,0,Math.PI*2);ctx.fill();
-    ctx.strokeStyle=_bodyColor;ctx.lineWidth=_isDashing?3:(_elemColor?3:2.5);ctx.stroke();ctx.shadowBlur=0;
+    // RAGE inner fill — tints the body interior orange-red instead of black.
+    if (_rageActive && !_isDashing) {
+      ctx.globalAlpha = 0.35 * _ragePulse;
+      ctx.fillStyle = '#f40';
+      ctx.beginPath(); ctx.arc(0, 0, PLAYER_RADIUS, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle=_bodyColor;ctx.lineWidth=_isDashing?3:(_elemColor||_rageActive?3:2.5);ctx.stroke();ctx.shadowBlur=0;
     // Reload arc: orange ring that fills clockwise as reload progresses
     if (_gunReloading && _gunReloadTimer > 0 && p === getLocalPlayer()) {
       const reloadPct = 1 - (_gunReloadTimer / GUN_RELOAD_TIME);
