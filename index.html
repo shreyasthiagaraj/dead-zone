@@ -5971,6 +5971,9 @@ let _sectionYPositions = []; // Y origin in cells (2D placement)
 let _sectionExitDirs = []; // exit direction per section: 'E','N','S','W'
 let _sectionEntryDirs = []; // entry direction per section (opposite of prev exit)
 let _sectionTemplateNames = []; // template name per section (set once in generateTrenchMap)
+let _sectionMultiDoors = []; // per-section { mode, primaryOffset, secondaryOffset } or null
+// Tracker shared between generateTrenchMap (geometry decision) and initTrenchSections
+// (reward type assignment) so both agree on which sections branch.
 
 function generateTrenchMap(seed) {
   // SELECT TEMPLATES FIRST — this is the single source of truth for section widths.
@@ -5982,6 +5985,7 @@ function generateTrenchMap(seed) {
     _sectionHeights = [];
     _sectionTemplateNames = [];
     _sectionThemes = [];
+    _sectionMultiDoors = []; // reset alongside templates — picker depends on them
     for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
       const isBoss = si === 10 || si === 20 || si === 30 || si === 40 || (si > 40 && (si - 40) % 10 === 0);
       const theme = _pickSectionTheme(si, isBoss);
@@ -6060,6 +6064,35 @@ function generateTrenchMap(seed) {
   for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
     _sectionXPositions[si] += _shiftX;
     _sectionYPositions[si] += _shiftY;
+  }
+  // MULTI-DOOR mode decision — must happen before corridor carving so the
+  // extra branches can be cut alongside the primary corridor. Preserved on
+  // checkpoint resume (saved separately, restored before generateTrenchMap).
+  const _mdAlreadyPreset = Array.isArray(_sectionMultiDoors) && _sectionMultiDoors.length === TRENCH_NUM_SECTIONS;
+  if (!_mdAlreadyPreset) {
+    _sectionMultiDoors = new Array(TRENCH_NUM_SECTIONS).fill(null);
+    let _gapSinceMD = 99;
+    for (let si = 0; si < TRENCH_NUM_SECTIONS; si++) {
+      _gapSinceMD++;
+      const isBoss = _isBossSectionIdx(si);
+      const isFirst = (si === 0);
+      const isExpedition = _sectionThemes[si] === 'EXPEDITION';
+      const prevIsBoss = si > 0 && _isBossSectionIdx(si - 1);
+      const nextIsBoss = si + 1 < TRENCH_NUM_SECTIONS && _isBossSectionIdx(si + 1);
+      if (isBoss || isFirst || isExpedition || prevIsBoss || nextIsBoss) continue;
+      if (si < 4) continue; // hold off until section 4
+      if (_gapSinceMD < 2) continue; // never two in a row
+      const exitD = _sectionExitDirs[si] || 'E';
+      const secW = _sectionWidths[si];
+      const secH = _sectionHeights[si] || TRENCH_HEIGHT;
+      const mode = _pickMultiDoorMode(exitD, secW, secH, _sectionTemplateNames[si]);
+      if (!mode) continue;
+      if (Math.random() >= 0.5) continue; // ~1-in-3 of eligible sections
+      _sectionMultiDoors[si] = { mode, primaryOffset: -_MULTIDOOR_OFFSET_CELLS, secondaryOffset: +_MULTIDOOR_OFFSET_CELLS };
+      // adjacent has no offset semantics — secondary is on the other wall entirely.
+      if (mode === 'adjacent') { _sectionMultiDoors[si].primaryOffset = 0; _sectionMultiDoors[si].secondaryOffset = 0; }
+      _gapSinceMD = 0;
+    }
   }
   const totalWCells = (_maxSX - _minSX) + 2;
   const totalHCells = (_maxSY - _minSY) + 2;
@@ -6291,35 +6324,88 @@ function generateTrenchMap(seed) {
       _template: tmplName, _domain: domain });
   }
   // CARVE CORRIDORS between adjacent sections
+  // Helper: carve a 3-wide horizontal strip from (x1, cy) to (x2, cy). Inclusive of endpoints.
+  const _carveHStrip = (x1, x2, cy) => {
+    const lo = Math.min(x1, x2), hi = Math.max(x1, x2);
+    for (let cx = lo; cx <= hi; cx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const gy = cy + dy;
+        if (cx >= 0 && cx < GRID_W && gy >= 0 && gy < GRID_H) dungeonGrid[gy][cx] = true;
+      }
+    }
+  };
+  const _carveVStrip = (y1, y2, cx) => {
+    const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+    for (let cy = lo; cy <= hi; cy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const gx = cx + dx;
+        if (gx >= 0 && gx < GRID_W && cy >= 0 && cy < GRID_H) dungeonGrid[cy][gx] = true;
+      }
+    }
+  };
   for (let si = 0; si < TRENCH_NUM_SECTIONS - 1; si++) {
     const sx = _sectionXPositions[si], sy = _sectionYPositions[si] || 0;
     const sw = _sectionWidths[si], sh = _sectionHeights[si] || TRENCH_HEIGHT;
     const nx = _sectionXPositions[si+1], ny = _sectionYPositions[si+1] || 0;
     const nw = _sectionWidths[si+1], nh = _sectionHeights[si+1] || TRENCH_HEIGHT;
     const exitD = _sectionExitDirs[si] || 'E';
+    const md = _sectionMultiDoors[si];
     // Corridor: 3 cells wide, connects exit of si to entry of si+1
     const _cw = 3; // corridor width in cells
     if (exitD === 'E') {
       // Horizontal corridor from right wall of si to left wall of si+1
-      const _cy = sy + Math.floor(sh / 2); // corridor center Y
+      const _cy = sy + Math.floor(sh / 2); // primary corridor center Y
       const _cx1 = sx + sw; // start X (right edge of si)
       const _cx2 = nx; // end X (left edge of si+1)
-      for (let cx = _cx1; cx < _cx2; cx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const gy = _cy + dy;
-          if (cx >= 0 && cx < GRID_W && gy >= 0 && gy < GRID_H) dungeonGrid[gy][cx] = true;
-        }
+      _carveHStrip(_cx1, _cx2 - 1, _cy);
+      // ---- MULTI-DOOR secondary corridor ----
+      if (md && md.mode === 'paired_vertical') {
+        // Primary door above midline, secondary below — or vice versa per offsets.
+        // Each door has its own short horizontal stub; both bend toward the corridor midline and merge.
+        const _pCy = _cy + md.primaryOffset;
+        const _sCy = _cy + md.secondaryOffset;
+        // Move primary stub: 3-wide strip from wall to a merge X partway along corridor.
+        const _mergeX = _cx1 + Math.floor((_cx2 - _cx1) / 2);
+        _carveHStrip(_cx1, _mergeX, _pCy);
+        _carveHStrip(_cx1, _mergeX, _sCy);
+        // Vertical join: connect both stubs to the corridor midline at _mergeX.
+        _carveVStrip(_pCy, _cy, _mergeX);
+        _carveVStrip(_sCy, _cy, _mergeX);
+      } else if (md && md.mode === 'adjacent') {
+        // Primary east corridor already cut. Secondary leaves via NORTH wall,
+        // bends east, and merges into the primary corridor before the next section.
+        const _sDoorCx = sx + Math.floor(sw / 2);
+        const _topWallY = sy; // top wall row (exit cell is sy + 1 internally)
+        // Climb up out of the section by 3 cells, then run east to the corridor join.
+        const _bendY = sy - 3;
+        _carveVStrip(_topWallY - 1, _bendY, _sDoorCx);
+        _carveHStrip(_sDoorCx, _cx1, _bendY);
+        // Drop down into the primary corridor.
+        _carveVStrip(_bendY, _cy, _cx1);
       }
     } else if (exitD === 'N') {
       // Vertical corridor upward from top wall of si to bottom wall of si+1
       const _cx = sx + Math.floor(sw / 2);
       const _cy1 = sy; // top edge of si (corridor goes up from here)
       const _cy2 = ny + nh; // bottom edge of si+1
-      for (let cy = _cy2; cy < _cy1; cy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const gx = _cx + dx;
-          if (gx >= 0 && gx < GRID_W && cy >= 0 && cy < GRID_H) dungeonGrid[cy][gx] = true;
-        }
+      _carveVStrip(_cy2, _cy1 - 1, _cx);
+      if (md && md.mode === 'paired_horizontal') {
+        const _pCx = _cx + md.primaryOffset;
+        const _sCx = _cx + md.secondaryOffset;
+        const _mergeY = _cy1 - Math.floor((_cy1 - _cy2) / 2);
+        _carveVStrip(_mergeY, _cy1 - 1, _pCx);
+        _carveVStrip(_mergeY, _cy1 - 1, _sCx);
+        _carveHStrip(_pCx, _cx, _mergeY);
+        _carveHStrip(_sCx, _cx, _mergeY);
+      } else if (md && md.mode === 'adjacent') {
+        // Primary north corridor already cut. Secondary leaves via EAST wall,
+        // bends north, merges into the primary corridor.
+        const _sDoorCy = sy + Math.floor(sh / 2);
+        const _eastWallX = sx + sw;
+        const _bendX = sx + sw + 3;
+        _carveHStrip(_eastWallX, _bendX, _sDoorCy);
+        _carveVStrip(_sDoorCy, _cy1 - 1, _bendX);
+        _carveHStrip(_bendX, _cx, _cy1 - 1);
       }
     } else if (exitD === 'S') {
       // Vertical corridor downward from bottom wall of si to top wall of si+1
@@ -6367,6 +6453,32 @@ function generateTrenchMap(seed) {
   rooms[0].theme = ROOM_THEMES[4];
   roomDetails = [{ ri: 0, theme: rooms[0].theme, details: [], brightness: 1.0, flicker: false }];
   uploadDungeonGrid();
+}
+
+// ---- MULTI-DOOR (BRANCHING CHOICE) ----
+// Modes: 'paired_vertical' = both doors on east wall, stacked.
+//        'paired_horizontal' = both doors on north wall, side-by-side.
+//        'adjacent' = one east + one north (open arenas only).
+// All three converge on the SAME next section — only the reward differs.
+const _MULTIDOOR_OFFSET_CELLS = 3; // each door is centered ±3 from wall midpoint
+function _pickMultiDoorMode(exitD, secW, secH, tmplName) {
+  const tmpl = TRENCH_TEMPLATES[tmplName];
+  if (!tmpl) return null;
+  if (tmpl._dungeon) return null;
+  // Need room for two 4-cell doors with at least a 2-cell wall gap between them.
+  const _vOk = secH >= 14;
+  const _hOk = secW >= 18;
+  const _openArenas = ['arena','wide_arena','tall_arena','grand_hall'];
+  const _adjOk = secW >= 24 && secH >= 16 && _openArenas.includes(tmplName);
+  if (_adjOk && Math.random() < 0.30) return 'adjacent';
+  if (exitD === 'E' && _vOk) return 'paired_vertical';
+  if (exitD === 'N' && _hOk) return 'paired_horizontal';
+  if (_vOk) return 'paired_vertical';
+  if (_hOk) return 'paired_horizontal';
+  return null;
+}
+function _isBossSectionIdx(idx) {
+  return idx === 10 || idx === 20 || idx === 30 || idx === 40 || (idx > 40 && (idx - 40) % 10 === 0);
 }
 
 function initTrenchSections() {
@@ -6456,26 +6568,29 @@ function initTrenchSections() {
     const hazards = [];
     // Door reward system: class-scoped terminals + base rewards
     let _multiDoor = null;
+    let _multiDoorMode = null;
     let _doorReward = null;
     const _isFirstSection = (i === 0);
-    // Every non-boss section gets a door reward — including the section right
-    // before a boss (formerly excluded). Boss sections still skip the door
-    // because the boss kill itself drops a guaranteed card.
     const _doorEligible = !isBoss && !_isFirstSection;
-    const _multiDoorEligible = _doorEligible && i >= 3;
-    const _multiDoorGuaranteed = _multiDoorEligible && (i % 2 === 1);
-    const _multiDoorRandom = _multiDoorEligible && Math.random() < 0.55;
+    const _exitD_i = _sectionExitDirs[i] || 'E';
+    // Pull pre-computed geometry decision from generateTrenchMap.
+    const _mdGeom = _sectionMultiDoors && _sectionMultiDoors[i];
     if (_isFirstSection) {
-      // GUARANTEED: first section of every run is a class mod terminal so the
-      // player picks an identity before they pick anything else. Class chosen
-      // uniformly at random — fresh runs have no investment to weight against.
       const _firstClasses = ['thermal','cryo','arc','pulse','corrupt'];
       _doorReward = 'mod_' + _firstClasses[Math.floor(Math.random() * _firstClasses.length)];
-    } else if (_multiDoorGuaranteed || _multiDoorRandom) {
+    } else if (_mdGeom) {
       const _r1 = _pickDoorReward(null);
       let _r2 = _pickDoorReward(_r1);
       let _safe = 10; while (_r2 === _r1 && _safe-- > 0) _r2 = _pickDoorReward(_r1);
-      _multiDoor = { top: _r1, bottom: _r2 };
+      _multiDoorMode = _mdGeom.mode;
+      const _primaryDir = _exitD_i;
+      const _secondaryDir = (_mdGeom.mode === 'adjacent')
+        ? (_primaryDir === 'E' ? 'N' : 'E')
+        : _primaryDir;
+      _multiDoor = {
+        primary:   { dir: _primaryDir,   reward: _r1, offset: _mdGeom.primaryOffset || 0 },
+        secondary: { dir: _secondaryDir, reward: _r2, offset: _mdGeom.secondaryOffset || 0 },
+      };
     } else if (_doorEligible) {
       _doorReward = _pickDoorReward(null);
     }
@@ -6492,6 +6607,7 @@ function initTrenchSections() {
       spawned: false,
       cleared: false,
       multiDoor: _multiDoor,
+      multiDoorMode: _multiDoorMode,
       doorReward: _doorReward,
       doorSide: _sectionExitDirs[i] === 'N' ? 'top' : _sectionExitDirs[i] === 'S' ? 'bottom' : 'right',
       entryDir: _sectionEntryDirs[i] || 'W',
@@ -6948,10 +7064,12 @@ function updateTrench() {
     sec.cleared = true;
     sec._openedAt = gameTime; // drives door-open animation in render
     score += 200 * (trenchSection + 1);
-    // ---- SECTION CLEAR BANNER ----
-    // Juicy "SYSTEM CLEANSED" moment — flash the screen-announce div and pulse
-    // the screen shake so room clears feel like an accomplishment, not just
-    // the door opening silently.
+    if (sec.multiDoor && !sec._chooseCueFired) {
+      sec._chooseCueFired = true;
+      for (const _cp of players) {
+        if (_cp.alive) addFloatingText(_cp.x, _cp.y - 36, 'CHOOSE', '#fff');
+      }
+    }
     showSectionTitleCard('\u25C6 SYSTEM CLEANSED \u25C6', 'proceed through the gate', false);
     screenShake.intensity = Math.max(screenShake.intensity, 6);
     triggerGlitchSurge(0.3, 20);
@@ -7052,35 +7170,52 @@ function updateTrench() {
       }
     }
   }
-  // Door trigger: when cleared and any player reaches the exit door
+  // Door trigger: when cleared and any player reaches an exit door
   if (sec.cleared && _trenchPendingNext < 0 && gameState !== 'shop' && gameState !== 'reforge' && !_dlChoicePending) {
     const _exitD = sec.exitDir || 'E';
     const _secY = sec.y || 0;
     const _secH2 = sec.height || (_secH(trenchSection) * CELL_SIZE);
     const _DOOR_SZ = 4 * CELL_SIZE;
-    // Compute door trigger zone based on exit direction
-    let _doorHit = false;
+    // Check whether a point is inside the door zone for a given side spec.
+    const _isInDoorZone = (p, dir, offsetCells) => {
+      const _off = (offsetCells || 0) * CELL_SIZE;
+      if (dir === 'E') {
+        const _wx = sec.x + TW - CELL_SIZE;
+        const _cy = _secY + _secH2/2 + _off;
+        return p.x >= _wx - PLAYER_RADIUS - 6 && p.y >= _cy - _DOOR_SZ/2 && p.y <= _cy + _DOOR_SZ/2;
+      } else if (dir === 'N') {
+        const _wy = _secY + CELL_SIZE;
+        const _cx = sec.x + TW/2 + _off;
+        return p.y <= _wy + PLAYER_RADIUS + 6 && p.x >= _cx - _DOOR_SZ/2 && p.x <= _cx + _DOOR_SZ/2;
+      } else if (dir === 'S') {
+        const _wy = _secY + _secH2 - CELL_SIZE;
+        const _cx = sec.x + TW/2 + _off;
+        return p.y >= _wy - PLAYER_RADIUS - 6 && p.x >= _cx - _DOOR_SZ/2 && p.x <= _cx + _DOOR_SZ/2;
+      }
+      return false;
+    };
     for (const p of players) {
       if (!p.alive) continue;
-      let _inDoor = false;
-      if (_exitD === 'E') {
-        const _wx = sec.x + TW - CELL_SIZE;
-        const _dy1 = _secY + _secH2/2 - _DOOR_SZ/2, _dy2 = _secY + _secH2/2 + _DOOR_SZ/2;
-        _inDoor = p.x >= _wx - PLAYER_RADIUS - 6 && p.y >= _dy1 && p.y <= _dy2;
-      } else if (_exitD === 'N') {
-        const _wy = _secY + CELL_SIZE;
-        const _dx1 = sec.x + TW/2 - _DOOR_SZ/2, _dx2 = sec.x + TW/2 + _DOOR_SZ/2;
-        _inDoor = p.y <= _wy + PLAYER_RADIUS + 6 && p.x >= _dx1 && p.x <= _dx2;
-      } else if (_exitD === 'S') {
-        const _wy = _secY + _secH2 - CELL_SIZE;
-        const _dx1 = sec.x + TW/2 - _DOOR_SZ/2, _dx2 = sec.x + TW/2 + _DOOR_SZ/2;
-        _inDoor = p.y >= _wy - PLAYER_RADIUS - 6 && p.x >= _dx1 && p.x <= _dx2;
+      let _picked = null; // 'single' | 'primary' | 'secondary'
+      let _reward = null;
+      if (sec.multiDoor) {
+        // Primary checked first; whichever zone the player's center lands in wins.
+        if (_isInDoorZone(p, sec.multiDoor.primary.dir, sec.multiDoor.primary.offset || 0)) {
+          _picked = 'primary'; _reward = sec.multiDoor.primary.reward;
+        } else if (_isInDoorZone(p, sec.multiDoor.secondary.dir, sec.multiDoor.secondary.offset || 0)) {
+          _picked = 'secondary'; _reward = sec.multiDoor.secondary.reward;
+        }
+      } else if (_isInDoorZone(p, _exitD, 0)) {
+        _picked = 'single'; _reward = sec.doorReward;
       }
-      if (_inDoor) {
+      if (_picked) {
+        if (sec.multiDoor && !sec._doorChosen) {
+          sec._doorChosen = _picked;
+          sec._chosenAt = gameTime;
+        }
         _trenchPendingNext = trenchSection + 1;
-        window._pendingDoorReward = sec.doorReward || (sec.multiDoor ? sec.multiDoor.top : null);
+        window._pendingDoorReward = _reward;
         startTrenchFade();
-        _doorHit = true;
         break;
       }
     }
@@ -9922,6 +10057,10 @@ function saveCheckpoint() {
     sectionYPositions: _sectionYPositions,
     sectionExitDirs: _sectionExitDirs,
     sectionEntryDirs: _sectionEntryDirs,
+    sectionMultiDoors: _sectionMultiDoors,
+    // Per-section runtime state for multi-door (rewards picked at init time
+    // depend on player class state, so they must persist across resume).
+    sectionMultiDoorRewards: trenchSections.map(s => s.multiDoor ? [s.multiDoor.primary.reward, s.multiDoor.secondary.reward, s._doorChosen || null] : null),
     // Player state
     hp: lp.hp,
     maxHp: lp.maxHp,
@@ -9987,6 +10126,9 @@ function resumeFromCheckpoint() {
   _sectionYPositions = cp.sectionYPositions || [];
   _sectionExitDirs = cp.sectionExitDirs || [];
   _sectionEntryDirs = cp.sectionEntryDirs || [];
+  // Restore multi-door geometry so generateTrenchMap re-carves the same corridors.
+  // (generateTrenchMap recomputes _sectionMultiDoors if the array is empty.)
+  if (Array.isArray(cp.sectionMultiDoors)) _sectionMultiDoors = cp.sectionMultiDoors;
 
   // Generate the dungeon using saved templates
   window._currentLevelSeed = cp.seed;
@@ -9994,6 +10136,18 @@ function resumeFromCheckpoint() {
 
   // Initialize trench sections (wave data, enemy types, etc.)
   initTrenchSections();
+  // After init: restore saved reward types + chosen state per multi-door section.
+  if (Array.isArray(cp.sectionMultiDoorRewards)) {
+    for (let _i = 0; _i < cp.sectionMultiDoorRewards.length; _i++) {
+      const _r = cp.sectionMultiDoorRewards[_i];
+      const _s = trenchSections[_i];
+      if (_r && _s && _s.multiDoor) {
+        _s.multiDoor.primary.reward = _r[0];
+        _s.multiDoor.secondary.reward = _r[1];
+        if (_r[2]) { _s._doorChosen = _r[2]; _s._chosenAt = gameTime; }
+      }
+    }
+  }
 
   // Mark all sections up to checkpoint as cleared. Setting
   // _checkpointRoomActive = true means the saved section re-enters as the
@@ -10153,6 +10307,8 @@ function saveMidRunSession() {
     sectionYPositions: _sectionYPositions,
     sectionExitDirs: _sectionExitDirs,
     sectionEntryDirs: _sectionEntryDirs,
+    sectionMultiDoors: _sectionMultiDoors,
+    sectionMultiDoorRewards: trenchSections.map(s => s.multiDoor ? [s.multiDoor.primary.reward, s.multiDoor.secondary.reward, s._doorChosen || null] : null),
     px: lp.x, py: lp.y, angle: lp.angle || 0,
     hp: lp.hp, maxHp: lp.maxHp,
     dashCooldown: lp.dashCooldown || 0,
@@ -10193,9 +10349,21 @@ function resumeMidRunSession() {
   _sectionYPositions = sess.sectionYPositions || [];
   _sectionExitDirs = sess.sectionExitDirs || [];
   _sectionEntryDirs = sess.sectionEntryDirs || [];
+  if (Array.isArray(sess.sectionMultiDoors)) _sectionMultiDoors = sess.sectionMultiDoors;
   window._currentLevelSeed = sess.seed;
   generateTrenchMap(sess.seed);
   initTrenchSections();
+  if (Array.isArray(sess.sectionMultiDoorRewards)) {
+    for (let _i = 0; _i < sess.sectionMultiDoorRewards.length; _i++) {
+      const _r = sess.sectionMultiDoorRewards[_i];
+      const _s = trenchSections[_i];
+      if (_r && _s && _s.multiDoor) {
+        _s.multiDoor.primary.reward = _r[0];
+        _s.multiDoor.secondary.reward = _r[1];
+        if (_r[2]) { _s._doorChosen = _r[2]; _s._chosenAt = gameTime; }
+      }
+    }
+  }
   trenchSection = sess.section || 0;
   _trenchPrevSection = trenchSection;
   _trenchPendingNext = -1;
@@ -29580,7 +29748,18 @@ function update() {
     const sWave = gameMode === 'siege' ? (siegeWave || 0) : 0;
     const sWaveSt = gameMode === 'siege' ? (siegeWaveState || 'rest') : null;
     const sWaveTimer = gameMode === 'siege' ? (siegeWaveTimer || 0) : 0;
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer });
+    // Multi-door payload for current section: rewards + chosen side.
+    // Format: [sectionIdx, chosenSide, primaryReward, secondaryReward]
+    // chosenSide: 0=primary, 1=secondary, -1=uncommitted.
+    let mdChoice = null;
+    if (gameMode === 'trench' && trenchSections[trenchSection]) {
+      const _mdSec = trenchSections[trenchSection];
+      if (_mdSec.multiDoor) {
+        const _side = _mdSec._doorChosen === 'secondary' ? 1 : (_mdSec._doorChosen === 'primary' ? 0 : -1);
+        mdChoice = [trenchSection, _side, _mdSec.multiDoor.primary.reward, _mdSec.multiDoor.secondary.reward];
+      }
+    }
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer, mdChoice });
   }
 
   updateHUD();
@@ -29621,6 +29800,18 @@ function applyHostState(msg) {
       }
     }
     trenchSection = msg.trenchSection;
+  }
+  // Multi-door sync — mirror host's reward picks (since per-player class weighting
+  // makes _pickDoorReward non-deterministic across clients) + chosen side so the
+  // unchosen door shut animation plays on non-host too.
+  if (!isHost && msg.mdChoice && Array.isArray(msg.mdChoice) && trenchSections && trenchSections[msg.mdChoice[0]]) {
+    const _mdSec = trenchSections[msg.mdChoice[0]];
+    if (_mdSec.multiDoor) {
+      if (msg.mdChoice[2]) _mdSec.multiDoor.primary.reward = msg.mdChoice[2];
+      if (msg.mdChoice[3]) _mdSec.multiDoor.secondary.reward = msg.mdChoice[3];
+      if (msg.mdChoice[1] === 0 && !_mdSec._doorChosen) { _mdSec._doorChosen = 'primary'; _mdSec._chosenAt = gameTime; }
+      else if (msg.mdChoice[1] === 1 && !_mdSec._doorChosen) { _mdSec._doorChosen = 'secondary'; _mdSec._chosenAt = gameTime; }
+    }
   }
   if (msg.cpRoom !== undefined) {
     const _wasCp = _checkpointRoomActive;
@@ -33583,27 +33774,54 @@ function render() {
     };
 
     if (!isLast) {
-      // Render exit door based on exit direction
       const _exitD = sec.exitDir || 'E';
       const _secY = sec.y || 0;
       const _secH2 = sec.height || (_curSecHpx());
-      const _sr = sec.doorReward || null;
-      const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : '#f44';
-      if (_exitD === 'E') {
-        const dx = sec.x + TW - CELL_SIZE;
-        const _dy1 = _secY + _secH2/2 - _DOOR_W/2;
-        const _dy2 = _secY + _secH2/2 + _DOOR_W/2;
-        _drawPortal(dx, _dy1, dx, _dy2, dColor, false);
-      } else if (_exitD === 'N') {
-        const dy = _secY + CELL_SIZE;
-        const _dx1 = sec.x + TW/2 - _DOOR_W/2;
-        const _dx2 = sec.x + TW/2 + _DOOR_W/2;
-        _drawPortal(_dx1, dy, _dx2, dy, dColor, true);
-      } else if (_exitD === 'S') {
-        const dy = _secY + _secH2 - CELL_SIZE;
-        const _dx1 = sec.x + TW/2 - _DOOR_W/2;
-        const _dx2 = sec.x + TW/2 + _DOOR_W/2;
-        _drawPortal(_dx1, dy, _dx2, dy, dColor, true);
+      // Compute the [x1,y1,x2,y2,isHoriz] portal rect for a given side spec.
+      // For paired modes the offset (in cells) shifts the door perpendicular to the wall.
+      const _portalRectFor = (dir, offsetCells) => {
+        const _off = (offsetCells || 0) * CELL_SIZE;
+        if (dir === 'E') {
+          const dx = sec.x + TW - CELL_SIZE;
+          const cy = _secY + _secH2/2 + _off;
+          return [dx, cy - _DOOR_W/2, dx, cy + _DOOR_W/2, false];
+        } else if (dir === 'N') {
+          const dy = _secY + CELL_SIZE;
+          const cx = sec.x + TW/2 + _off;
+          return [cx - _DOOR_W/2, dy, cx + _DOOR_W/2, dy, true];
+        } else if (dir === 'S') {
+          const dy = _secY + _secH2 - CELL_SIZE;
+          const cx = sec.x + TW/2 + _off;
+          return [cx - _DOOR_W/2, dy, cx + _DOOR_W/2, dy, true];
+        }
+        return null;
+      };
+      if (sec.multiDoor) {
+        // ---- MULTI-DOOR: render both portals, each in its reward color. ----
+        const _mdP = sec.multiDoor.primary;
+        const _mdS = sec.multiDoor.secondary;
+        const _chosen = sec._doorChosen || null; // 'primary' | 'secondary' | null
+        const _drawSide = (spec, sideKey) => {
+          const _rect = _portalRectFor(spec.dir, spec.offset || 0);
+          if (!_rect) return;
+          const _isClosed = _chosen && _chosen !== sideKey;
+          // Once one door is chosen, the other shuts: color desaturates and the slit fades.
+          const _baseColor = _rewardColors[spec.reward] || '#0ff';
+          const _color = !open ? '#f44' : _isClosed ? '#444' : _baseColor;
+          const _shutPhase = _isClosed ? Math.min(1, ((gameTime - (sec._chosenAt || gameTime)) / 24)) : 0;
+          const _prevAlpha = ctx.globalAlpha;
+          ctx.save();
+          if (_isClosed) ctx.globalAlpha = _prevAlpha * (1 - _shutPhase * 0.85);
+          _drawPortal(_rect[0], _rect[1], _rect[2], _rect[3], _color, _rect[4]);
+          ctx.restore();
+        };
+        _drawSide(_mdP, 'primary');
+        _drawSide(_mdS, 'secondary');
+      } else {
+        const _sr = sec.doorReward || null;
+        const dColor = open ? (_sr ? (_rewardColors[_sr]||'#0ff') : '#0ff') : '#f44';
+        const _rect = _portalRectFor(_exitD, 0);
+        if (_rect) _drawPortal(_rect[0], _rect[1], _rect[2], _rect[3], dColor, _rect[4]);
       }
     } else {
       // Last section — escape door east
@@ -36199,23 +36417,37 @@ function render() {
         ctx.fillText(m.label, sx, sy + _dsBob + 11);
         ctx.restore();
       };
-      if (!_dsLast && _dsSec.doorReward) {
+      if (!_dsLast) {
         const _exitD = _dsSec.exitDir || 'E';
         const _dsSecY = _dsSec.y || 0;
         const _dsSecH = _dsSec.height || _curSecHpx();
-        const _DW = 4*CELL_SIZE;
-        let _signX, _signY;
-        if (_exitD === 'E') {
-          _signX = _dsSec.x + _dsTW + 0.5*CELL_SIZE;
-          _signY = _dsSecY + _dsSecH/2;
-        } else if (_exitD === 'N') {
-          _signX = _dsSec.x + _dsTW/2;
-          _signY = _dsSecY - 0.5*CELL_SIZE;
-        } else if (_exitD === 'S') {
-          _signX = _dsSec.x + _dsTW/2;
-          _signY = _dsSecY + _dsSecH + 0.5*CELL_SIZE;
+        // Sign placement helper — returns world-space [x, y] above/beside the door.
+        const _signXYFor = (dir, offsetCells) => {
+          const _off = (offsetCells || 0) * CELL_SIZE;
+          if (dir === 'E') return [_dsSec.x + _dsTW + 0.5*CELL_SIZE, _dsSecY + _dsSecH/2 + _off];
+          if (dir === 'N') return [_dsSec.x + _dsTW/2 + _off, _dsSecY - 0.5*CELL_SIZE];
+          if (dir === 'S') return [_dsSec.x + _dsTW/2 + _off, _dsSecY + _dsSecH + 0.5*CELL_SIZE];
+          return null;
+        };
+        if (_dsSec.multiDoor) {
+          const _chosen = _dsSec._doorChosen || null;
+          const _drawSign = (spec, sideKey) => {
+            const xy = _signXYFor(spec.dir, spec.offset || 0);
+            if (!xy) return;
+            const _isClosed = _chosen && _chosen !== sideKey;
+            const _shutPhase = _isClosed ? Math.min(1, ((gameTime - (_dsSec._chosenAt || gameTime)) / 24)) : 0;
+            const _prev = ctx.globalAlpha;
+            ctx.save();
+            if (_isClosed) ctx.globalAlpha = _prev * (1 - _shutPhase);
+            _dsSign(xy[0], xy[1], spec.reward, _dsOpen);
+            ctx.restore();
+          };
+          _drawSign(_dsSec.multiDoor.primary, 'primary');
+          _drawSign(_dsSec.multiDoor.secondary, 'secondary');
+        } else if (_dsSec.doorReward) {
+          const xy = _signXYFor(_exitD, 0);
+          if (xy) _dsSign(xy[0], xy[1], _dsSec.doorReward, _dsOpen);
         }
-        if (_signX != null) _dsSign(_signX, _signY, _dsSec.doorReward, _dsOpen);
       }
     }
 
@@ -36798,6 +37030,35 @@ function renderMinimap(){
   }
   // Exit on minimap
   if(exitPos){const ep=0.7+Math.sin(gameTime*0.08)*0.3;minimapCtx.fillStyle=`rgba(0,255,255,${ep})`;minimapCtx.beginPath();minimapCtx.arc(exitPos.x*sx,exitPos.y*sy,4,0,Math.PI*2);minimapCtx.fill();}
+  // Multi-door markers on minimap — colored dots at each door's wall position.
+  if (gameMode === 'trench' && trenchSections && trenchSections[trenchSection]) {
+    const _mmSec = trenchSections[trenchSection];
+    if (_mmSec.cleared && _mmSec.multiDoor) {
+      const _mmTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
+      const _mmSecY = _mmSec.y || 0;
+      const _mmSecH = _mmSec.height || _curSecHpx();
+      const _mmDot = (dir, offsetCells, reward, chosenFlag) => {
+        const _off = (offsetCells || 0) * CELL_SIZE;
+        let _wx, _wy;
+        if (dir === 'E') { _wx = _mmSec.x + _mmTW - CELL_SIZE; _wy = _mmSecY + _mmSecH/2 + _off; }
+        else if (dir === 'N') { _wx = _mmSec.x + _mmTW/2 + _off; _wy = _mmSecY + CELL_SIZE; }
+        else if (dir === 'S') { _wx = _mmSec.x + _mmTW/2 + _off; _wy = _mmSecY + _mmSecH - CELL_SIZE; }
+        else return;
+        const meta = _DOOR_REWARD_META[reward];
+        const _col = meta ? meta.color : '#0ff';
+        const _pulse = 0.7 + Math.sin(gameTime*0.10) * 0.3;
+        minimapCtx.fillStyle = chosenFlag === false ? 'rgba(80,80,80,0.5)' : _col;
+        minimapCtx.globalAlpha = chosenFlag === false ? 0.4 : _pulse;
+        minimapCtx.beginPath();
+        minimapCtx.arc(_wx * sx, _wy * sy, 3.5, 0, Math.PI*2);
+        minimapCtx.fill();
+        minimapCtx.globalAlpha = 1;
+      };
+      const _chosen = _mmSec._doorChosen || null;
+      _mmDot(_mmSec.multiDoor.primary.dir, _mmSec.multiDoor.primary.offset, _mmSec.multiDoor.primary.reward, _chosen && _chosen !== 'primary' ? false : true);
+      _mmDot(_mmSec.multiDoor.secondary.dir, _mmSec.multiDoor.secondary.offset, _mmSec.multiDoor.secondary.reward, _chosen && _chosen !== 'secondary' ? false : true);
+    }
+  }
   minimapCtx.strokeStyle='rgba(255,255,255,0.2)';minimapCtx.lineWidth=1;minimapCtx.strokeRect((camera.x-canvas.width/2)*sx,(camera.y-canvas.height/2)*sy,canvas.width*sx,canvas.height*sy);
 }
 
