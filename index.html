@@ -15603,6 +15603,128 @@ function _spikeClass() {
   return null;
 }
 
+// ============================================================
+// SHOCKWAVE PRIMITIVE
+// ============================================================
+// Reusable expanding-wave renderer. This is the visual lifted out of the
+// DISCHARGE weapon — five layered fills that together sell "energy front
+// dispersing as it expands." Used by the DISCHARGE weapon, the KINETIC NOVA
+// spike, and anything else that needs the same look. Whenever a feature
+// asks for a "shockwave," route it through here so the visual stays
+// consistent across the codebase.
+//
+// Args:
+//   ctx        — 2D context (caller manages save/restore around any extras)
+//   x, y       — wave origin in world coords
+//   radius     — current radius (0 .. maxRadius)
+//   maxRadius  — full radius — drives band thickness easing + alpha fade
+//   color      — primary wave color (e.g. '#cef' pulse, '#fe6' arc, '#f60' fire)
+// Optional opts:
+//   angle              — center angle (radians) for wedge waves (default 0)
+//   arc                — angular spread (radians); >= 2π = full 360° annulus (default 2π)
+//   lingering          — true = hairline rim, brighter pulse (settled-at-boundary look)
+//   lingerFrames       — current count inside linger (drives rim pulse sin)
+//   maxLingerFrames    — denominator for inner-wake catch-up during linger
+//   rimColor           — leading-edge stroke color (default '#fff')
+//   alphaScale         — multiplier on computed alpha (default 1) for dialing intensity
+//
+// The five layers, all inside one ctx.save()/restore():
+//   1. Wide ambient radial-gradient halo (alpha * 0.06)
+//   2. Translucent inner wake band, inner edge catches up during linger (alpha * 0.12)
+//   3. Solid bright barrier band, thickness tapers thick→hairline (alpha * 0.85)
+//   4. Bright rim stroke at outer radius, line width tapers (alpha * 1.4 clamped)
+//   5. Inner glow stroke at inner radius (alpha * 0.4)
+// shadowBlur is used on layers 4-5 for the rim glow — the perf rule warns
+// against it, but a single short-lived wave is fine. Avoid stacking many
+// of these per frame.
+function drawShockwave(ctx, x, y, radius, maxRadius, color, opts) {
+  if (!(radius > 0) || !(maxRadius > 0)) return;
+  opts = opts || {};
+  const angle = opts.angle || 0;
+  const arc = (opts.arc !== undefined) ? opts.arc : Math.PI * 2;
+  const halfA = arc * 0.5;
+  const fullCircle = arc >= (Math.PI * 2 - 0.001);
+  const lingering = !!opts.lingering;
+  const lingerFrames = opts.lingerFrames || 0;
+  const maxLingerFrames = Math.max(1, opts.maxLingerFrames || 30);
+  const rimColor = opts.rimColor || '#fff';
+  const alphaScale = (opts.alphaScale !== undefined) ? opts.alphaScale : 1;
+
+  const fadePct = Math.min(1, radius / maxRadius);
+  const lingerBoost = lingering ? (2.0 + 0.5 * Math.sin(lingerFrames * 0.8)) : 1.0;
+  const alpha = (0.85 - 0.7 * fadePct) * lingerBoost * alphaScale;
+  if (alpha <= 0) return;
+
+  // Annulus path builder. fullCircle uses evenodd-friendly nested circles;
+  // wedge mode builds a closed sliver from outer arc to inner arc.
+  const _annulus = (outerR, innerR) => {
+    ctx.beginPath();
+    if (fullCircle) {
+      ctx.arc(x, y, outerR, 0, Math.PI * 2);
+      ctx.arc(x, y, Math.max(0, innerR), 0, Math.PI * 2, true);
+    } else {
+      ctx.arc(x, y, outerR, angle - halfA, angle + halfA);
+      ctx.arc(x, y, Math.max(0, innerR), angle + halfA, angle - halfA, true);
+      ctx.closePath();
+    }
+  };
+  // Outer-edge stroke path
+  const _outerStroke = (r) => {
+    ctx.beginPath();
+    if (fullCircle) ctx.arc(x, y, r, 0, Math.PI * 2);
+    else ctx.arc(x, y, r, angle - halfA, angle + halfA);
+  };
+
+  ctx.save();
+  // Layer 1: wide ambient radial-gradient halo
+  ctx.globalAlpha = alpha * 0.06;
+  const grad = ctx.createRadialGradient(x, y, radius * 0.3, x, y, radius * 1.1);
+  grad.addColorStop(0, 'transparent');
+  grad.addColorStop(0.5, color);
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  if (fullCircle) {
+    ctx.beginPath(); ctx.arc(x, y, radius * 1.1, 0, Math.PI * 2); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.moveTo(x, y);
+    ctx.arc(x, y, radius * 1.1, angle - halfA, angle + halfA);
+    ctx.closePath(); ctx.fill();
+  }
+  // Layer 2: translucent inner wake band — inner edge catches up during linger
+  const lingerProg = lingering ? Math.max(0, 1 - lingerFrames / maxLingerFrames) : 0;
+  const trailR = Math.max(0, (radius - 60) * (1 - lingerProg * 0.85));
+  ctx.globalAlpha = alpha * 0.12;
+  ctx.fillStyle = color;
+  _annulus(radius, trailR);
+  ctx.fill(fullCircle ? 'evenodd' : undefined);
+  // Layer 3: solid bright barrier band — thick at origin → hairline at boundary
+  const bandT = lingering ? 3 : Math.max(3, 36 * Math.pow(1 - fadePct, 1.1));
+  const outerR = radius;
+  const innerR = Math.max(0, radius - bandT);
+  ctx.globalAlpha = alpha * 0.85;
+  ctx.fillStyle = color;
+  _annulus(outerR, innerR);
+  ctx.fill(fullCircle ? 'evenodd' : undefined);
+  // Layer 4: bright rim leading edge — line width tapers thick→hairline
+  const rimW = lingering ? 1.5 : Math.max(1.5, 12 * Math.pow(1 - fadePct, 1.3));
+  ctx.globalAlpha = Math.min(1, alpha * 1.4);
+  ctx.strokeStyle = rimColor;
+  ctx.lineWidth = rimW;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = lingering ? 18 : 14;
+  _outerStroke(outerR);
+  ctx.stroke();
+  // Layer 5: inner glow edge — also tapers thin
+  ctx.globalAlpha = alpha * 0.4;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lingering ? 1 : Math.max(1, 3 * Math.pow(1 - fadePct, 1.2));
+  ctx.shadowBlur = 8;
+  _outerStroke(innerR);
+  ctx.stroke();
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
 function _spikeColor(sp) {
   if (!sp || !sp.classId) return '#f44';
   // OVERLOAD SPIKE: tint gold so the overload variant is visually obvious.
@@ -31903,66 +32025,19 @@ function render() {
       ctx.restore();
     }
   }
-  // Discharge wave — expanding arc with solid barrier front
+  // Discharge wave — expanding shockwave (uses the shared drawShockwave
+  // primitive so the visual stays in lockstep with other shockwave callers
+  // like the Kinetic Nova spike).
   if (_dischargeActive && _dischargeWave) {
     const w = _dischargeWave;
-    const halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
-    const fadePct = w.radius / w.maxRadius;
-    // Linger boost: during linger phase, wave gets BRIGHTER not dimmer
     const isLingering = w._lingering && w._lingerFrames > 0;
-    const lingerBoost = isLingering ? 2.0 + 0.5 * Math.sin(w._lingerFrames * 0.8) : 1.0;
-    // Opaque at start (~0.85) → translucent at boundary (~0.15). Reads as the
-    // shockwave dispersing its energy over a larger and larger area.
-    const alpha = (0.85 - 0.7 * fadePct) * lingerBoost;
-    ctx.save();
-    // Wide ambient glow behind the wave — makes it feel powerful
-    ctx.globalAlpha = alpha * 0.06;
-    const _waveGlow = ctx.createRadialGradient(w.x, w.y, w.radius * 0.3, w.x, w.y, w.radius * 1.1);
-    _waveGlow.addColorStop(0, 'transparent'); _waveGlow.addColorStop(0.5, w.color); _waveGlow.addColorStop(1, 'transparent');
-    ctx.fillStyle = _waveGlow;
-    ctx.beginPath(); ctx.moveTo(w.x, w.y);
-    ctx.arc(w.x, w.y, w.radius * 1.1, w.angle - halfA, w.angle + halfA);
-    ctx.closePath(); ctx.fill();
-    // Inner shockwave catches up during linger — trail's inner edge pulls
-    // toward center as the lingering frames count down. Reads as the slower
-    // mass behind the rim arriving at the boundary.
-    const _lingerProgress = isLingering ? Math.max(0, 1 - w._lingerFrames / DISCHARGE_LINGER_FRAMES) : 0;
-    const trailR = Math.max(0, (w.radius - 60) * (1 - _lingerProgress * 0.85));
-    ctx.globalAlpha = alpha * 0.12;
-    ctx.fillStyle = w.color;
-    ctx.beginPath();
-    ctx.arc(w.x, w.y, w.radius, w.angle - halfA, w.angle + halfA);
-    ctx.arc(w.x, w.y, trailR, w.angle + halfA, w.angle - halfA, true);
-    ctx.closePath();
-    ctx.fill();
-    // Solid barrier band — thick at origin (~36px), thins toward boundary,
-    // hairline (~3px) during linger. Sells "shockwave loses energy" visually.
-    const _bandThickness = isLingering ? 3 : Math.max(3, 36 * Math.pow(1 - fadePct, 1.1));
-    const barrierOuter = w.radius;
-    const barrierInner = Math.max(0, w.radius - _bandThickness);
-    ctx.globalAlpha = alpha * 0.85;
-    ctx.fillStyle = w.color;
-    ctx.beginPath();
-    ctx.arc(w.x, w.y, barrierOuter, w.angle - halfA, w.angle + halfA);
-    ctx.arc(w.x, w.y, barrierInner, w.angle + halfA, w.angle - halfA, true);
-    ctx.closePath();
-    ctx.fill();
-    // Bright white leading edge — the energy crest. Line width ramps from
-    // ~12px at origin to a 1.5px hairline by the time it reaches max.
-    const _rimWidth = isLingering ? 1.5 : Math.max(1.5, 12 * Math.pow(1 - fadePct, 1.3));
-    ctx.globalAlpha = Math.min(1, alpha * 1.4);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = _rimWidth; ctx.shadowColor = w.color; ctx.shadowBlur = isLingering ? 18 : 14;
-    ctx.beginPath();
-    ctx.arc(w.x, w.y, barrierOuter, w.angle - halfA, w.angle + halfA);
-    ctx.stroke();
-    // Inner glow edge — also ramps thin
-    ctx.globalAlpha = alpha * 0.4;
-    ctx.strokeStyle = w.color; ctx.lineWidth = isLingering ? 1 : Math.max(1, 3 * Math.pow(1 - fadePct, 1.2)); ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.arc(w.x, w.y, barrierInner, w.angle - halfA, w.angle + halfA);
-    ctx.stroke();
-    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-    ctx.restore();
+    drawShockwave(ctx, w.x, w.y, w.radius, w.maxRadius, w.color, {
+      angle: w.angle,
+      arc: w.waveAngle || DISCHARGE_ANGLE,
+      lingering: isLingering,
+      lingerFrames: w._lingerFrames || 0,
+      maxLingerFrames: DISCHARGE_LINGER_FRAMES,
+    });
   }
   // Residual field zones (from RESIDUAL FIELD mod)
   // ---- BURNOUT PUDDLES / BLIGHT ZONES — visible ground effect ----
@@ -32590,63 +32665,32 @@ function render() {
         }
         ctx.save(); ctx.translate(sp.x, sp.y);
       } else if (sp.classId === 'impact' && sp._nova) {
-        // ---- KINETIC NOVA — 360° pulse shockwave (discharge weapon look) ----
-        // Mirror of the DISCHARGE wave: wide ambient glow + translucent inner
-        // fill + solid bright barrier band + white leading edge + inner glow.
-        // Built as full circles instead of wedge arcs. Color: #cef (pulse).
+        // ---- KINETIC NOVA — 360° pulse shockwave with nova-only extras ----
+        // The core wave uses the shared drawShockwave primitive so it
+        // matches the discharge weapon's look. Nova layers on two extras
+        // on top: a faint mid pulse ring (depth) and radial speed-line
+        // spokes (energy moving outward). Already inside ctx.save()+
+        // translate(sp.x, sp.y) from the parent block, so coords are
+        // local. drawShockwave is absolute-space so we have to feed
+        // (sp.x, sp.y) explicitly — undo the translation around the call.
         const _isLinger = sp.phase === 'lingering';
         const _r = _isLinger ? sp._novaMaxR : sp._novaR;
-        const _fadePct = _r / sp._novaMaxR;
         const _maxR = sp._novaMaxR;
-        // Linger boost: rim BRIGHTENS during linger, then dies.
-        const _lingerBoost = _isLinger
-          ? 1.6 + 0.5 * Math.sin(sp._lingerT * 0.8)
-          : 1.0;
-        const _alpha = (0.85 - 0.7 * _fadePct) * _lingerBoost;
-        // Layer 1: wide ambient halo behind the wave
-        ctx.globalAlpha = _alpha * 0.06;
-        const _glow = ctx.createRadialGradient(0, 0, _r * 0.3, 0, 0, _r * 1.1);
-        _glow.addColorStop(0, 'transparent');
-        _glow.addColorStop(0.5, '#cef');
-        _glow.addColorStop(1, 'transparent');
-        ctx.fillStyle = _glow;
-        ctx.beginPath(); ctx.arc(0, 0, _r * 1.1, 0, Math.PI*2); ctx.fill();
-        // Layer 2: translucent inner fill — annular wake band the wave has swept.
-        // Inner edge pulls toward center during linger (mass arriving at boundary).
-        const _lingerProg = _isLinger ? Math.max(0, 1 - sp._lingerT / Math.max(1, sp._maxLinger)) : 0;
-        const _trailR = Math.max(0, (_r - 60) * (1 - _lingerProg * 0.85));
-        ctx.globalAlpha = _alpha * 0.12;
-        ctx.fillStyle = '#cef';
-        ctx.beginPath();
-        ctx.arc(0, 0, _r, 0, Math.PI*2);
-        ctx.arc(0, 0, _trailR, 0, Math.PI*2, true);
-        ctx.fill('evenodd');
-        // Layer 3: solid barrier band — thick at origin, hairline near boundary
-        // / during linger. Sells "shockwave loses energy" visually.
-        const _bandT = _isLinger ? 3 : Math.max(3, 36 * Math.pow(1 - _fadePct, 1.1));
-        const _outerR = _r;
-        const _innerR = Math.max(0, _r - _bandT);
-        ctx.globalAlpha = _alpha * 0.85;
-        ctx.fillStyle = '#cef';
-        ctx.beginPath();
-        ctx.arc(0, 0, _outerR, 0, Math.PI*2);
-        ctx.arc(0, 0, _innerR, 0, Math.PI*2, true);
-        ctx.fill('evenodd');
-        // Layer 4: bright white leading edge — line width tapers as wave expands
-        const _rimW = _isLinger ? 1.5 : Math.max(1.5, 12 * Math.pow(1 - _fadePct, 1.3));
-        ctx.globalAlpha = Math.min(1, _alpha * 1.4);
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = _rimW;
-        ctx.beginPath(); ctx.arc(0, 0, _outerR, 0, Math.PI*2); ctx.stroke();
-        // Layer 5: inner pulse-color glow edge — also tapers thin
-        ctx.globalAlpha = _alpha * 0.4;
-        ctx.strokeStyle = '#cef'; ctx.lineWidth = _isLinger ? 1 : Math.max(1, 3 * Math.pow(1 - _fadePct, 1.2));
-        ctx.beginPath(); ctx.arc(0, 0, _innerR, 0, Math.PI*2); ctx.stroke();
-        // Layer 6: faint mid pulse ring — gives the energy fill a band of depth.
+        const _fadePct = _r / _maxR;
+        ctx.save(); ctx.translate(-sp.x, -sp.y);
+        drawShockwave(ctx, sp.x, sp.y, _r, _maxR, '#cef', {
+          lingering: _isLinger,
+          lingerFrames: sp._lingerT || 0,
+          maxLingerFrames: sp._maxLinger || 14,
+        });
+        ctx.restore();
+        // Nova-only extras (local coords ok, parent translate is active).
+        const _alpha = (0.85 - 0.7 * _fadePct) * (_isLinger ? (1.6 + 0.5 * Math.sin(sp._lingerT * 0.8)) : 1.0);
+        // Faint mid pulse ring — depth band inside the wake.
         ctx.globalAlpha = _alpha * 0.18;
         ctx.strokeStyle = '#cef'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(0, 0, _r * 0.6, 0, Math.PI*2); ctx.stroke();
-        // Layer 7: radial speed lines streaking outward from origin to current
-        // radius — sells the "pulse energy moving outward" effect. 12 spokes.
+        // Radial speed-line spokes — only during expansion.
         if (!_isLinger) {
           ctx.globalAlpha = _alpha * 0.5;
           ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
