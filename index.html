@@ -2144,11 +2144,10 @@ const UPGRADE_POOL = [
     flavor:'their weakness is your acceleration.', prereqs:['pulse_shot|kinetic_wake'] },
   // KINETIC GLIDE — extends the dash motion window so the player covers more
   // ground per dash. Distance only, not speed: the dash lasts longer at the
-  // same velocity. Each stack adds +50% distance and the dash leaves a
-  // distinct trailing vapor streak (in addition to whatever element wake
-  // is also equipped).
+  // same velocity. Each stack adds +50% distance; the wake itself is
+  // unchanged (it just runs for longer because the dash does).
   { id:'kinetic_glide', name:'KINETIC GLIDE', rarity:'common', max:3, icon:'💨', color:'#cef',
-    descs:['+50% dash distance · vapor streak wake.', '+100% dash distance · vapor streak wake.', '+150% dash distance · vapor streak wake.'],
+    descs:['+50% dash distance.', '+100% dash distance.', '+150% dash distance.'],
     flavor:'momentum bleeds off slower.' },
   { id:'shockfront', name:'SHOCKFRONT', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['EXPOSED kills emit a 60px knockback burst.'],
@@ -19803,6 +19802,29 @@ function _runComboStep(p, def, step, idx) {
       if (_heavy) _shake = 6;
       screenShake.intensity = Math.max(screenShake.intensity, _shake);
     }
+    // CRYO INFUSION: snowflake burst along the swing arc. Spawns 8 flakes
+    // (more on heavy / wide swings) scattered through the cone so the
+    // strike reads as ice-themed even before the slash_arc trail catches up.
+    if (_rmCombo.dominantClass === 'ice') {
+      const _icyN = _heavy ? 14 : (_arcwide ? 12 : 8);
+      const _icyConeHalf = (step.cone || Math.PI) * 0.5;
+      for (let _xi = 0; _xi < _icyN; _xi++) {
+        const _xa = a + (Math.random() - 0.5) * _icyConeHalf * 2;
+        const _xr = 0.25 + Math.random() * 0.7; // 25-95% of swing range
+        const _xs = 0.5 + Math.random() * 1.2;
+        particles.push({
+          x: p.x + Math.cos(_xa) * range * _xr,
+          y: p.y + Math.sin(_xa) * range * _xr,
+          vx: Math.cos(_xa) * _xs + (Math.random()-0.5) * 0.6,
+          vy: Math.sin(_xa) * _xs + (Math.random()-0.5) * 0.6 - 0.2,
+          life: 38 + Math.floor(Math.random() * 18),
+          maxLife: 56,
+          size: 3 + Math.random() * 7, // random 3-10px
+          color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
+          type: 'snowflake',
+        });
+      }
+    }
   } else if (step.kind === 'jab' || step.kind === 'forwardlunge') {
     // ---- FORWARD THRUST: clear, flashy piercing strike. Forward energy
     // beam, big tip impact, forward-flying sparks, kick-off smoke. The
@@ -25261,61 +25283,9 @@ function update() {
       const _wR = 60;
       const _ddx = lp.dashDirX || 0, _ddy = lp.dashDirY || 0;
       const _backX = -_ddx, _backY = -_ddy;
-      // ---- KINETIC GLIDE VAPOR STREAK ----
-      // Distinct wake for the dash-distance mod: a stretchy pale streak that
-      // lingers longer than the regular dashtrail, plus per-step scuff
-      // residue. Reads as "momentum trailing off" — the slide goes further.
-      // Renders behind the player regardless of element wake (it can stack).
-      if (_mods.dashDistance > 0) {
-        const _glideLv = _mods.dashDistance;
-        // Two narrow streak dashes spawned per frame, offset perpendicular
-        // to the dash direction so the wake reads as TWO lines (one per
-        // shoulder of the player), not a single fat trail.
-        const _streakOffN = 6;
-        for (let _gi = 0; _gi < 2; _gi++) {
-          const _gSide = _gi === 0 ? 1 : -1;
-          const _gx = lp.x + _backX * 18 + _perpX * _streakOffN * _gSide;
-          const _gy = lp.y + _backY * 18 + _perpY * _streakOffN * _gSide;
-          // Long pale streak — outlives the regular trail by ~2x
-          particles.push({
-            x: _gx, y: _gy,
-            vx: _backX * 0.6, vy: _backY * 0.6,
-            life: 22 + _glideLv * 3, maxLife: 26 + _glideLv * 3,
-            size: PLAYER_RADIUS * 0.7,
-            color: '#cef', type: 'dashtrail',
-          });
-        }
-        // Tight bright core streak — short-lived but bright, sells the
-        // "fast-moving body" right behind the player.
-        particles.push({
-          x: lp.x + _backX * 8, y: lp.y + _backY * 8,
-          vx: 0, vy: 0,
-          life: 10, maxLife: 10, size: PLAYER_RADIUS * 0.5,
-          color: '#fff', type: 'dashtrail',
-        });
-        // Per-2-frame scuff residue decal — short skid mark behind player.
-        if ((lp._dashFrames % 2) === 0) {
-          decals.push({
-            type: 'residue', x: lp.x + _backX * 6, y: lp.y + _backY * 6,
-            size: 6, color: '#cef', alpha: 0.32,
-            _angle: Math.atan2(_ddy, _ddx),
-            _fade: 0.005,
-          });
-        }
-        // Speed lines streaming back from the player at the wake edge.
-        if (gameTime % 2 === 0) {
-          for (let _si = -1; _si <= 1; _si += 2) {
-            const _slX = lp.x + _perpX * (PLAYER_RADIUS * 0.45) * _si + _backX * 4;
-            const _slY = lp.y + _perpY * (PLAYER_RADIUS * 0.45) * _si + _backY * 4;
-            particles.push({
-              x: _slX, y: _slY,
-              vx: _backX * 2.4, vy: _backY * 2.4,
-              life: 12, maxLife: 12, size: 1.2,
-              color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark',
-            });
-          }
-        }
-      }
+      // (Kinetic Glide's custom vapor-streak wake was removed — it
+      // visually conflicted with the default dashtrail. The mod now reads
+      // as identical to the regular dash, just longer.)
       if (_mods.burnoutWake > 0) {
         // IGNITION TRAIL: fire particles trailing BEHIND player
         for (let fi = 0; fi < 4; fi++) {
@@ -25335,16 +25305,22 @@ function update() {
             life: 14, maxLife: 14, size: 3+Math.random()*3, color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
         }
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
-        // Snowflake trail — one drifting flake every other frame at the
-        // player's back, gives the cryo dash a recognizable winter motif.
-        if (gameTime % 2 === 0) {
+        // Snowflake trail — drifting flakes at the player's back, gives
+        // the cryo dash a recognizable winter motif. 2-3 per frame with
+        // randomized sizes (3-11px) and longer life so the snowfall reads
+        // clearly even at a glance.
+        const _sfCount = 2 + (gameTime % 2);
+        for (let _sfI = 0; _sfI < _sfCount; _sfI++) {
+          const _sfPerpOff = (Math.random() - 0.5) * 36; // wide lateral spread
+          const _sfBackOff = 8 + Math.random() * 22;
           particles.push({
-            x: lp.x + _backX * 14 + (Math.random()-0.5) * 10,
-            y: lp.y + _backY * 14 + (Math.random()-0.5) * 10,
-            vx: _backX * 0.6 + (Math.random()-0.5) * 0.4,
-            vy: _backY * 0.6 + (Math.random()-0.5) * 0.4 - 0.2,
-            life: 28, maxLife: 28, size: 4 + Math.random() * 2,
-            color: Math.random() > 0.5 ? '#cef' : '#8ef',
+            x: lp.x + _backX * _sfBackOff + _perpX * _sfPerpOff + (Math.random()-0.5) * 8,
+            y: lp.y + _backY * _sfBackOff + _perpY * _sfPerpOff + (Math.random()-0.5) * 8,
+            vx: _backX * (0.4 + Math.random() * 0.4) + (Math.random()-0.5) * 0.6,
+            vy: _backY * (0.4 + Math.random() * 0.4) + (Math.random()-0.5) * 0.6 - 0.2,
+            life: 50 + Math.floor(Math.random() * 24), maxLife: 70,
+            size: 3 + Math.random() * 8, // 3-11px range for visual variety
+            color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
             type: 'snowflake',
           });
         }
