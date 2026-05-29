@@ -8920,8 +8920,8 @@ function applyChill(z, stacks, force) {
         x: z.x + Math.cos(_sfA) * z.radius * 0.4,
         y: z.y + Math.sin(_sfA) * z.radius * 0.4,
         vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS - 0.3,
-        life: 110 + Math.floor(Math.random() * 50), maxLife: 160,
-        size: 3 + Math.random() * 6,
+        life: 30, maxLife: 30,
+        size: 3 + Math.random() * 3, // small 3-6px
         color: Math.random() > 0.4 ? '#cef' : '#8ef',
         type: 'snowflake',
       });
@@ -18793,6 +18793,25 @@ function updateDischarge() {
           life: 16, maxLife: 16, size: 1.4 + Math.random() * 0.9,
           color: '#fff', type: 'spark' });
       }
+      // CRYO PROTOCOL: snowflakes scattered within the swept area so the
+      // discharge reads as cryo, not generic. 3 per frame at small sizes,
+      // short life (~20 frames) so they float briefly within the wave
+      // and fade as the wave moves on. Pushed AFTER smoke + sparks so
+      // they render on top of the dust trail.
+      if (w.classId === 'ice') {
+        for (let _csI = 0; _csI < 3; _csI++) {
+          const _csA = Math.random() * Math.PI * 2;
+          const _csR = w.radius * (0.1 + Math.pow(Math.random(), 0.7) * 0.8);
+          particles.push({
+            x: w.x + Math.cos(_csA) * _csR,
+            y: w.y + Math.sin(_csA) * _csR,
+            vx: (Math.random() - 0.5) * 0.6, vy: (Math.random() - 0.5) * 0.6 - 0.15,
+            life: 20, maxLife: 20, size: 3 + Math.random() * 4, // small 3-7px
+            color: Math.random() > 0.5 ? '#fff' : '#cef',
+            type: 'snowflake', _priority: true,
+          });
+        }
+      }
     }
 
     if (w.radius >= w.maxRadius) {
@@ -19852,25 +19871,24 @@ function _runComboStep(p, def, step, idx) {
       if (_heavy) _shake = 6;
       screenShake.intensity = Math.max(screenShake.intensity, _shake);
     }
-    // CRYO INFUSION: snowflake burst along the swing arc. Spawns 8 flakes
-    // (more on heavy / wide swings) scattered through the cone so the
-    // strike reads as ice-themed even before the slash_arc trail catches up.
+    // CRYO INFUSION: subtle snowflake hint along the swing arc. Just a
+    // few small flakes scattered through the cone so the strike reads
+    // as ice-themed without overwhelming the swing's own arc trail.
     if (_rmCombo.dominantClass === 'ice') {
-      const _icyN = _heavy ? 14 : (_arcwide ? 12 : 8);
+      const _icyN = _heavy ? 5 : (_arcwide ? 4 : 3);
       const _icyConeHalf = (step.cone || Math.PI) * 0.5;
       for (let _xi = 0; _xi < _icyN; _xi++) {
         const _xa = a + (Math.random() - 0.5) * _icyConeHalf * 2;
-        const _xr = 0.25 + Math.random() * 0.7; // 25-95% of swing range
-        const _xs = 0.5 + Math.random() * 1.2;
+        const _xr = 0.3 + Math.random() * 0.6;
+        const _xs = 0.5 + Math.random() * 1.0;
         particles.push({
           x: p.x + Math.cos(_xa) * range * _xr,
           y: p.y + Math.sin(_xa) * range * _xr,
           vx: Math.cos(_xa) * _xs + (Math.random()-0.5) * 0.6,
           vy: Math.sin(_xa) * _xs + (Math.random()-0.5) * 0.6 - 0.2,
-          life: 38 + Math.floor(Math.random() * 18),
-          maxLife: 56,
-          size: 3 + Math.random() * 7,
-          color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
+          life: 22 + Math.floor(Math.random() * 8), maxLife: 30,
+          size: 3 + Math.random() * 4, // small 3-7px
+          color: Math.random() > 0.5 ? '#cef' : '#8ef',
           type: 'snowflake',
         });
       }
@@ -23991,8 +24009,8 @@ function dropZombieLoot(z) {
       particles.push({
         x: z.x, y: z.y,
         vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS,
-        life: 130 + Math.floor(Math.random() * 60), maxLife: 190,
-        size: 3 + Math.random() * 7,
+        life: 35, maxLife: 35,
+        size: 3 + Math.random() * 4, // small 3-7px
         color: Math.random() > 0.5 ? '#cef' : '#aef',
         type: 'snowflake',
       });
@@ -25348,32 +25366,40 @@ function update() {
         if (gameTime%2===0) decals.push({x:lp.x+_backX*10,y:lp.y+_backY*10,size:12+Math.random()*8,alpha:0.2,color:'#420'});
       }
       if (_mods.cryoWake > 0) {
-        // COLD FRONT: cold gas + snowflakes emanating AHEAD of player.
-        // Each iteration pushes a frost spark + a snowflake at the SAME
-        // position and velocity, so the cold breeze reads as a mix of
-        // sparkle and crystal flakes. Snowflakes get the spark's short
-        // ~14-frame life so they share the cloud's lifecycle (longer
-        // lives were getting evicted by the 180/300 particle cap before
-        // they could render — that's why they were "appearing for an
-        // instant"). They're bigger than the sparks so they read clearly.
+        // COLD FRONT: cold gas + crystal flakes emanating AHEAD of player.
+        // CRITICAL ORDERING: smoke is pushed FIRST so it renders BELOW
+        // the sparks and snowflakes. Earlier the smoke was last and
+        // covered the flakes with its broad cyan tint — that's why
+        // they kept being invisible.
+        // Cold gas smoke first (renders under everything else)
+        if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
+        // Frost sparks (small sparkle, short-lived)
         for (let ci = 0; ci < 3; ci++) {
           const fwdOff = 20 + Math.random() * 30;
-          const _sx = lp.x + _ddx*fwdOff + (Math.random()-0.5)*20;
-          const _sy = lp.y + _ddy*fwdOff + (Math.random()-0.5)*20;
-          const _svx = _ddx*3 + (Math.random()-0.5)*1;
-          const _svy = _ddy*3 + (Math.random()-0.5)*1;
-          // Frost spark — small sparkle of the cloud
-          particles.push({ x: _sx, y: _sy, vx: _svx, vy: _svy,
+          particles.push({
+            x: lp.x + _ddx*fwdOff + (Math.random()-0.5)*20,
+            y: lp.y + _ddy*fwdOff + (Math.random()-0.5)*20,
+            vx: _ddx*3 + (Math.random()-0.5)*1, vy: _ddy*3 + (Math.random()-0.5)*1,
             life: 14, maxLife: 14, size: 3+Math.random()*3,
             color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
-          // Snowflake — same lifecycle as the spark, larger silhouette,
-          // mixed straight into the cloud as crystal flakes.
-          particles.push({ x: _sx, y: _sy, vx: _svx, vy: _svy,
-            life: 14, maxLife: 14, size: 6 + Math.random() * 7,
-            color: Math.random()>0.5 ? '#fff' : (Math.random()>0.5 ? '#cef' : '#8ef'),
+        }
+        // SNOWFLAKES — pushed LAST so they render ON TOP of the gas
+        // and sparks. 5 per frame at 4-9px, brightly white-biased so
+        // they pop against the cyan smoke. Life 22 frames (1.5x spark
+        // life) so they're visible after the spark fades but expire
+        // before the 180-particle cap can evict them.
+        for (let _sfI = 0; _sfI < 5; _sfI++) {
+          const _sfFwd = 22 + Math.random() * 30;
+          const _sfPerp = (Math.random() - 0.5) * 30;
+          particles.push({
+            x: lp.x + _ddx * _sfFwd + _perpX * _sfPerp,
+            y: lp.y + _ddy * _sfFwd + _perpY * _sfPerp,
+            vx: _ddx * 3 + (Math.random()-0.5)*0.8,
+            vy: _ddy * 3 + (Math.random()-0.5)*0.8,
+            life: 22, maxLife: 22, size: 4 + Math.random() * 5,
+            color: Math.random() > 0.6 ? '#fff' : (Math.random() > 0.4 ? '#cef' : '#8ef'),
             type: 'snowflake', _priority: true });
         }
-        if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
       }
       // STORM DASH per-frame VFX intentionally lives ONLY in
       // applyDashTrailEffects now (player-as-lightning-bolt segment + zap
