@@ -8863,7 +8863,7 @@ function applyElementOnHit(z, damage, srcX, srcY) {
     const _sx=srcX!==undefined?srcX:getLocalPlayer()?.x||z.x;
     const _sy=srcY!==undefined?srcY:getLocalPlayer()?.y||z.y;
     particles.push({x:_sx,y:_sy,vx:0,vy:0,life:18,maxLife:18,size:1,color:'#fe6',type:'lightning',tx:z.x,ty:z.y});
-    playSfx('zap',0.2);
+    playSfx('zap', 0.2, 0.06);
     for(let si=0;si<4;si++)particles.push({x:z.x+(Math.random()-0.5)*15,y:z.y+(Math.random()-0.5)*15,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:12,maxLife:12,size:2+Math.random()*3,color:'#fe6',type:'spark'});
     // Chain to 2 nearby enemies at 20% damage each (3 total including primary)
     let lastZ = z; const hitSet = new Set();
@@ -10715,9 +10715,33 @@ try {
 } catch(e) {}
 
 // Synthesizer fallback for when mp3s aren't loaded
-function playSound(freq, dur, type='square', vol=0.15) {
+// ============================================================
+// AUDIO PITCH VARIANCE
+// ============================================================
+// Tiny per-call randomization on freq / playbackRate keeps high-repetition
+// sounds (gun shots, hits, deaths, explosions) from feeling like a click
+// track. The variance is intentionally SMALL — anything past ~10% reads as
+// "broken audio" instead of "organic." Sounds whose identity matters for
+// player recognition (UI, reload, pickup, power-up, wave cue) skip variance.
+//
+// Helper: returns a multiplier in [1 - var, 1 + var]. Safe with var = 0.
+function _pitchMul(variance) {
+  if (!variance) return 1;
+  return 1 + (Math.random() - 0.5) * 2 * variance;
+}
+function playSound(freq, dur, type='square', vol=0.15, pitchVar=0) {
   if (!audioCtx) return;
-  try { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(freq*0.5, audioCtx.currentTime+dur); g.gain.setValueAtTime(vol, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur); o.connect(g); g.connect(sfxBus||audioCtx.destination); o.start(); o.stop(audioCtx.currentTime+dur); } catch(e) {}
+  try {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type;
+    const f = freq * _pitchMul(pitchVar);
+    o.frequency.setValueAtTime(f, audioCtx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(f*0.5, audioCtx.currentTime+dur);
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur);
+    o.connect(g); g.connect(sfxBus||audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime+dur);
+  } catch(e) {}
 }
 
 // ---- Sound Effects System ----
@@ -10777,13 +10801,16 @@ function loadSfx() {
   }
 }
 
-function playSfx(name, vol = 0.5) {
+function playSfx(name, vol = 0.5, pitchVar = 0) {
   if (!audioCtx || !sfxBuffers[name]) return false;
   try {
     const src = audioCtx.createBufferSource();
     const gain = audioCtx.createGain();
     src.buffer = sfxBuffers[name];
     gain.gain.value = vol;
+    // Buffer playback rate shifts pitch + speed together. Fine for short
+    // SFX (<300ms); avoid on long loops since the loop body would warp.
+    if (pitchVar) src.playbackRate.value = _pitchMul(pitchVar);
     src.connect(gain);
     gain.connect(sfxBus || audioCtx.destination);
     src.start();
@@ -11038,16 +11065,19 @@ function updateAmbientAudio() {
 
 // ---- Sound Effect Wrappers ----
 function playWeaponSound(weaponType, fallbackSound) {
-  // Loop weapons: start/maintain the loop instead of per-shot sounds
+  // Loop weapons: start/maintain the loop instead of per-shot sounds.
+  // (NO pitch variance — the loop body would warp.)
   if (WEAPON_LOOP_MAP[weaponType]) {
     startWeaponLoop(weaponType);
     return;
   }
-  // Per-shot weapons — individual volume overrides
+  // Per-shot weapons — individual volume overrides + ±4% pitch variance.
+  // Bursts (rifle/revolver/pistol full-auto) otherwise read as a click
+  // track; the small variance gives each shot its own identity.
   const WEAPON_VOL = { pistol: 1.0, revolver: 0.7, shotgun: 0.7, rifle: 0.7, rpg: 0.8, lightning: 0.7 };
   const sfxName = WEAPON_SFX_MAP[weaponType];
-  if (sfxName && playSfx(sfxName, WEAPON_VOL[weaponType] || 0.5)) return;
-  if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, weaponType==='pistol'?0.25:0.15);
+  if (sfxName && playSfx(sfxName, WEAPON_VOL[weaponType] || 0.5, 0.04)) return;
+  if (fallbackSound) playSound(fallbackSound.freq, fallbackSound.duration, fallbackSound.type, weaponType==='pistol'?0.25:0.15, 0.04);
 }
 
 // ============================================================
@@ -11102,12 +11132,19 @@ function hapticCheckpoint() { _hapticNotification('SUCCESS'); }
 function hapticOverheat()   { _hapticNotification('WARNING'); }
 function hapticFreeze()     { _hapticImpact('LIGHT', 100); }
 
-function playHitSound() { if (!playSfx('zombie_hit', 0.3)) { if (!playSfx('hit', 0.3)) playSound(300,0.05,'sine',0.1); } hapticHit(); }
-function playDeathSound() { if (!playSfx('death', 0.5)) playSound(100,0.2,'sawtooth',0.12); hapticKill(); }
+// Bullet hit: ±6% pitch — many per second during peak combat. Without
+// variance the rapid-fire pattern of identical hits reads as mechanical.
+function playHitSound() { if (!playSfx('zombie_hit', 0.3, 0.06)) { if (!playSfx('hit', 0.3, 0.06)) playSound(300,0.05,'sine',0.1,0.06); } hapticHit(); }
+// Enemy death: ±8% — kills cluster (AoE, splash, chains); each death
+// should sound like a distinct enemy, not the same sample on repeat.
+function playDeathSound() { if (!playSfx('death', 0.5, 0.08)) playSound(100,0.2,'sawtooth',0.12,0.08); hapticKill(); }
 function playPickupSound() { if (!playSfx('pickup', 0.4)) { playSound(880,0.1,'sine',0.15); playSound(1200,0.1,'sine',0.1); } hapticPickup(); }
 function playDashSound() { if (!playSfx('dash', 0.3)) playSound(400,0.1,'sine',0.1); hapticDash(); }
 function playHurtSound() { if (!playSfx('hurt', 0.5)) playSound(200,0.15,'sawtooth',0.15); hapticHurt(); }
-function playExplosionSound() { if (!playSfx('explosion', 0.4)) { playSound(60,0.25,'sawtooth',0.14); playSound(40,0.3,'square',0.08); } hapticExplosion(); }
+// Explosion: ±5% — cluster bombs and chain explosions stack many
+// playExplosionSound calls within a few frames; identical pitches create
+// audible phasing/comb-filter artifacts.
+function playExplosionSound() { if (!playSfx('explosion', 0.4, 0.05)) { playSound(60,0.25,'sawtooth',0.14,0.05); playSound(40,0.3,'square',0.08,0.05); } hapticExplosion(); }
 function playIgniteSound() { if (!playSfx('ignite', 0.25)) { playSound(200,0.12,'sawtooth',0.08); playSound(120,0.18,'square',0.05); } haptic(10, 100); }
 function playReloadSound() { if (!playSfx('reload', 0.4)) playSound(600,0.05,'sine',0.1); }
 function playRepairSound() {
@@ -11134,7 +11171,9 @@ function playRepairSound() {
     o3.connect(g3); g3.connect(sfxBus || audioCtx.destination); o3.start(t); o3.stop(t + 0.06);
   } catch(e) {}
 }
-function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.4)) playSound(300,0.05,'sine',0.06); }
+// Zombie attack: ±6% — multiple enemies attack simultaneously; without
+// variance a swarm sounds like one entity attacking on a metronome.
+function playZombieAttackSound() { if (!playSfx('zombie_attack', 0.4, 0.06)) playSound(300,0.05,'sine',0.06,0.06); }
 function playLevelCompleteSound() { playSfx('level_complete', 0.6); hapticLevelUp(); }
 function playGameOverSound() { playSfx('game_over', 0.7); stopMusic(0.5); setTimeout(() => playMusic('music_gameover', 2.0), 1000); }
 function playHeadshotSound() { if (!playSfx('headshot', 0.5)) playSound(1200,0.06,'square',0.15); }
@@ -17045,7 +17084,7 @@ function _updateRingZone(sp, _radBoost) {
         particles.push({ x: _prevX, y: _prevY, vx: 0, vy: 0, life: 14, maxLife: 14,
           size: 2, color: '#fe6', type: 'lightning', tx: z.x, ty: z.y });
         screenShake.intensity = Math.max(screenShake.intensity, 3);
-        playSfx('zap', 0.12);
+        playSfx('zap', 0.12, 0.06);
         // No next target — bolt keeps flying in current direction
         break;
       }
@@ -17425,7 +17464,7 @@ function _updateArcBoltSpike(sp) {
           size: 2 + Math.random() * 1.8,
           color: Math.random() > 0.5 ? sp._color : '#fff', type: 'spark' });
       }
-      if (typeof playSfx === 'function') playSfx('zap', 0.12);
+      if (typeof playSfx === 'function') playSfx('zap', 0.12, 0.06);
       sp._piercedCount++;
       if (sp._piercedCount > sp._pierce) { sp.lifetime = 0; return; }
     }
@@ -20446,7 +20485,7 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
         applyCharged: arcLv >= 2, sourceZid: z.zid,
       });
     }
-    if (typeof playSfx === 'function') playSfx('zap', 0.10);
+    if (typeof playSfx === 'function') playSfx('zap', 0.10, 0.06);
   }
 }
 
@@ -21078,7 +21117,7 @@ function dash() {
       particles.push({ x: lp.x, y: lp.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
         life: 10, maxLife: 10, size: 1.5, color: '#fe6', type: 'spark' });
     }
-    playSfx('zap', 0.2) || playSound(220, 0.1, 'sawtooth', 0.1);
+    playSfx('zap', 0.2, 0.06) || playSound(220, 0.1, 'sawtooth', 0.1);
   }
   if (_mods.kineticWake > 0) {
     for (let fi = 0; fi < 6; fi++) {
@@ -21492,7 +21531,7 @@ function applyDashTrailEffects(lp) {
         particles.push({x:lastZ.x,y:lastZ.y,vx:0,vy:0,life:12,maxLife:12,size:1,color:'#fff',type:'lightning',tx:bZ.x,ty:bZ.y});
         detHit.add(bZ.zid); lastZ = bZ;
       }
-      playSfx('zap', 0.25);
+      playSfx('zap', 0.25, 0.06);
     }
   }
 }
@@ -21615,7 +21654,7 @@ function triggerShockwaveDash(lp) {
       particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 14, maxLife: 14,
         size: 1, color: '#fe6', type: 'lightning', tx, ty });
     }
-    playSfx('zap', 0.3) || playSound(220, 0.12, 'sawtooth', 0.12);
+    playSfx('zap', 0.3, 0.06) || playSound(220, 0.12, 'sawtooth', 0.12);
   }
   if (blastElem === 'wind') {
     // WIND: 20 swirl particles with tangential bias
@@ -22497,7 +22536,7 @@ function _spawnArcadeMultikillCallout(tier) {
   const _vol = Math.min(0.7, 0.22 + tier * 0.07);
   const _ok = playSfx('killstreak', _vol);
   if (!_ok) playSound(600 + tier * 140, 0.12, 'sine', 0.18);
-  if (tier >= 4) playSfx('zap', 0.3);
+  if (tier >= 4) playSfx('zap', 0.3, 0.06);
   if (tier >= 6) playSfx('headshot', 0.4);
 }
 
@@ -24401,7 +24440,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if(z.hp>0&&z.hp<z.maxHp*0.4) z._bleeding=true;
   if(!silent){
     if(z._frozenTimer>0) playSfx('ice_hit',0.25)||playHitSound();
-    else if(z._shocked>0||z._charged) playSfx('zap',0.15)||playHitSound();
+    else if(z._shocked>0||z._charged) playSfx('zap', 0.15, 0.06)||playHitSound();
     else playHitSound();
   }
   // Damage number popup — gun damage accumulates on sticky label; DOT/status creates separate drifting text
@@ -26858,7 +26897,7 @@ function update() {
                         applyCharged: arcLv >= 2, sourceZid: z.zid,
                       });
                     }
-                    playSfx('zap', 0.10);
+                    playSfx('zap', 0.10, 0.06);
                   }
                   // Apply element effects from modifier system
                   if(b._element)applyElementOnHit(z,b.damage,b.x,b.y);
