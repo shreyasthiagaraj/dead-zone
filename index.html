@@ -16067,6 +16067,39 @@ function drawShockwave(ctx, x, y, radius, maxRadius, color, opts) {
   ctx.restore();
 }
 
+// ============================================================
+// LOB SHADOW PRIMITIVE
+// ============================================================
+// Squashed-ellipse ground shadow drawn directly under a lobbed projectile
+// so the player can read its altitude + landing spot at a glance. Use for
+// anything that arcs through the third dimension: meteor, artillery shell,
+// bomber bomb, mortar shot, payload grenade.
+//
+// Args:
+//   ctx           — 2D context
+//   gx, gy        — projectile's GROUND position (the un-arched (x,y) — i.e.
+//                   if the body is rendered at y - arcDip, gy is just y).
+//   altitudeFrac  — 0..1. 1 = peak of arc, 0 = on the ground. Drives both
+//                   shadow size and opacity (smaller + lighter when high,
+//                   larger + darker when about to land).
+//   baseSize      — shadow's HORIZONTAL radius at full descent (when
+//                   altitudeFrac = 0). Pick ~projectile body radius.
+function drawLobShadow(ctx, gx, gy, altitudeFrac, baseSize) {
+  if (!(baseSize > 0)) return;
+  const t = Math.max(0, Math.min(1, altitudeFrac));
+  // Size: grows from 40% → 100% of baseSize as projectile descends.
+  const sz = baseSize * (0.4 + 0.6 * (1 - t));
+  // Alpha: 0.18 high → 0.45 just before landing.
+  const alpha = 0.18 + 0.27 * (1 - t);
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
+  ctx.beginPath();
+  // Vertical squash 0.4 keeps the shadow reading as ground-cast.
+  ctx.ellipse(gx, gy, sz, sz * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function _spikeColor(sp) {
   if (!sp || !sp.classId) return '#f44';
   // OVERLOAD SPIKE: tint gold so the overload variant is visually obvious.
@@ -27762,7 +27795,7 @@ function update() {
           z.vx=(zdx/zd)*z.speed*0.7;z.vy=(zdy/zd)*z.speed*0.7;
           if(zd<250&&_now-z.lastFired>z.fireRate*(z._fireRateMult||1)){z.lastFired=_now;
             const bx=np.x+(Math.random()-0.5)*40,by=np.y+(Math.random()-0.5)*40;
-            pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:120,_damage:35,_radius:70,bobTimer:0});}
+            pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:120,_initTimer:120,_damage:35,_radius:70,bobTimer:0});}
         }
         // ---- SHIELDER: front shield blocks bullets, must be flanked ----
         else if(zt?.shielded){
@@ -27946,7 +27979,7 @@ function update() {
             z._shotTimer=0;
             for(let mi=0;mi<3;mi++){
               const bx=np.x+(Math.random()-0.5)*80,by=np.y+(Math.random()-0.5)*80;
-              pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90+mi*20,_damage:z.damage*0.6,_radius:70,bobTimer:0});
+              pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90+mi*20,_initTimer:90+mi*20,_damage:z.damage*0.6,_radius:70,bobTimer:0});
             }
             for(let pi=0;pi<8;pi++){const pa=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:14,maxLife:14,size:4,color:'#4ef',type:'spark'});}
             screenShake.intensity=Math.max(screenShake.intensity,4);playZombieAttackSound();
@@ -28304,7 +28337,7 @@ function update() {
             if (z._chargeUp >= 35) {
               z._chargeUp = 0; z._mortarTimer=0; _clearTele(z);
               const bx=np.x+(Math.random()-0.5)*40, by=np.y+(Math.random()-0.5)*40;
-              pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90,_damage:z.damage,_radius:60,bobTimer:0});
+              pickups.push({type:'_bomb',x:z.x,y:z.y,_tx:bx,_ty:by,_timer:90,_initTimer:90,_damage:z.damage,_radius:60,bobTimer:0});
               for(let pi=0;pi<10;pi++){const pa=Math.random()*Math.PI*2,ps=3+Math.random()*5;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*ps,vy:Math.sin(pa)*ps,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.3?z.color:'#fff',type:'spark'});}
               particles.push({x:z.x,y:z.y,vx:0,vy:0,life:8,maxLife:8,size:z.radius+20,color:z.color,type:'wakering'});
               playSound(200,0.1,'sawtooth',0.08); playSound(400,0.06,'sine',0.06);
@@ -31346,6 +31379,10 @@ function render() {
       // so short lobs still arc, long lobs arc dramatically.
       const _arcH = Math.min(220, 60 + Math.hypot(_tx - _sx, _ty - _sy) * 0.35);
       const _shellY = _shellYLin - 4 * _arcH * _prog * (1 - _prog);
+      // Ground shadow at the linear (un-arched) position so the player can
+      // track where the shell will land. Altitude fraction = 4*prog*(1-prog)
+      // gives 0 at launch/land and 1 at the peak.
+      drawLobShadow(ctx, _shellX, _shellYLin, 4 * _prog * (1 - _prog), 9);
       ctx.save();
       // Tail glow trail
       ctx.globalAlpha = 0.4;
@@ -33097,6 +33134,10 @@ function render() {
         const t = sp._arcT / sp._arcDur;
         const arcDip = Math.sin(t * Math.PI) * 80;
         const drawY = sp.y - arcDip;
+        // Ground shadow at the true (un-arched) position so the player can
+        // track where the meteor will land. altitudeFrac = sin(t*PI) gives
+        // 0 at launch/land and 1 at the peak.
+        drawLobShadow(ctx, sp.x, sp.y, Math.sin(t * Math.PI), 14);
         // Comet tail — long fading streak behind
         ctx.save();
         ctx.translate(sp.x, drawY);
@@ -33589,6 +33630,19 @@ function render() {
     const _pulseRate = 0.006 + _urgency * 0.02; // faster pulsing near detonation
     const _pulse = 0.5 + Math.sin(performance.now() * _pulseRate) * 0.4;
     const _bombCol = _urgency > 0.7 ? '#f44' : '#fa0'; // orange → red shift
+    // Flight arc: the bomb visually lifts during the in-flight window
+    // (p._timer > 60) and then sits on the ground for the countdown. Using
+    // _initTimer captured at spawn so the arc duration adapts to the source
+    // (bomber = 120, mortar = 90). Falls back to no-arc for legacy bombs.
+    const _flightSpan = Math.max(1, (p._initTimer || 120) - 60);
+    const _flyT = p._timer > 60 ? Math.max(0, Math.min(1, ((p._initTimer || 120) - p._timer) / _flightSpan)) : 1;
+    const _alt = p._timer > 60 ? Math.sin(_flyT * Math.PI) : 0;
+    const _arcDip = _alt * 70; // peak ~70px above the linear path
+    // Ground shadow at the bomb's true (un-arched) position so the player
+    // can read the landing spot during flight.
+    if (p._timer > 60) drawLobShadow(ctx, p.x, p.y, _alt, 10);
+    // Translate to the landing spot; the body (core) is offset upward by
+    // _arcDip below so the danger ring + crosshair stay on the ground.
     ctx.save();ctx.translate(p.x,p.y);
     // 1) Danger zone: segmented warning ring expanding to blast radius
     const _dzR = Math.max(0, p._radius * _urgency);
@@ -33617,17 +33671,19 @@ function render() {
     ctx.moveTo(-_chLen, 0); ctx.lineTo(-3, 0);
     ctx.moveTo(3, 0); ctx.lineTo(_chLen, 0);
     ctx.stroke();
-    // 3) Core: pulsing diamond with glow rings
+    // 3) Core: pulsing diamond with glow rings. Lifted by _arcDip during
+    // the flight phase so the body visually arcs above the landing reticle.
     const _coreR = 5 + _pulse * 2;
+    const _by = -_arcDip; // body Y offset (negative = up)
     // Outer glow ring
     ctx.globalAlpha = 0.25 * _pulse; ctx.strokeStyle = _bombCol; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(0, 0, _coreR + 4, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, _by, _coreR + 4, 0, Math.PI * 2); ctx.stroke();
     // Diamond core
     ctx.globalAlpha = 0.7 + _pulse * 0.3; ctx.fillStyle = _bombCol;
-    ctx.beginPath(); ctx.moveTo(0, -_coreR); ctx.lineTo(_coreR * 0.7, 0); ctx.lineTo(0, _coreR); ctx.lineTo(-_coreR * 0.7, 0); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, _by - _coreR); ctx.lineTo(_coreR * 0.7, _by); ctx.lineTo(0, _by + _coreR); ctx.lineTo(-_coreR * 0.7, _by); ctx.closePath(); ctx.fill();
     // White hot center
     ctx.globalAlpha = 0.8; ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(0, 0, 2 + _pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, _by, 2 + _pulse, 0, Math.PI * 2); ctx.fill();
     ctx.restore();continue;}
     // ---- ARCADE: SCORE GEM (cyan crystal) ----
     if (p.type === 'score_gem') {
