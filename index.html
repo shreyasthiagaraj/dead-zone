@@ -8920,7 +8920,8 @@ function applyChill(z, stacks, force) {
         x: z.x + Math.cos(_sfA) * z.radius * 0.4,
         y: z.y + Math.sin(_sfA) * z.radius * 0.4,
         vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS - 0.3,
-        life: 28, maxLife: 28, size: 4 + Math.random() * 2,
+        life: 110 + Math.floor(Math.random() * 50), maxLife: 160,
+        size: 3 + Math.random() * 6,
         color: Math.random() > 0.4 ? '#cef' : '#8ef',
         type: 'snowflake',
       });
@@ -19866,9 +19867,9 @@ function _runComboStep(p, def, step, idx) {
           y: p.y + Math.sin(_xa) * range * _xr,
           vx: Math.cos(_xa) * _xs + (Math.random()-0.5) * 0.6,
           vy: Math.sin(_xa) * _xs + (Math.random()-0.5) * 0.6 - 0.2,
-          life: 38 + Math.floor(Math.random() * 18),
-          maxLife: 56,
-          size: 3 + Math.random() * 7, // random 3-10px
+          life: 130 + Math.floor(Math.random() * 60),
+          maxLife: 190,
+          size: 3 + Math.random() * 8,
           color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
           type: 'snowflake',
         });
@@ -23990,7 +23991,8 @@ function dropZombieLoot(z) {
       particles.push({
         x: z.x, y: z.y,
         vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS,
-        life: 36, maxLife: 36, size: 5 + Math.random() * 2,
+        life: 130 + Math.floor(Math.random() * 60), maxLife: 190,
+        size: 3 + Math.random() * 7,
         color: Math.random() > 0.5 ? '#cef' : '#aef',
         type: 'snowflake',
       });
@@ -25354,10 +25356,12 @@ function update() {
             life: 14, maxLife: 14, size: 3+Math.random()*3, color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
         }
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
-        // Snowflake burst — spawned IN FRONT where the existing frost
-        // sparks are flying so the snowflakes ride the same outward
-        // cloud (not trailing behind the player). 2-3 per frame, random
-        // sizes 3-11px, life ~60 frames.
+        // Snowflake burst — spawned IN FRONT, riding the same forward
+        // cloud as the frost sparks. Gentler initial velocity so the
+        // snowflake render's drag + buoyancy can take over and the
+        // flakes LINGER + FLOAT in the air after the dash passes
+        // rather than flying off-screen with the player. Long life
+        // (~180 frames) so they hang visible for ~3 seconds.
         const _sfCount = 2 + (gameTime % 2);
         for (let _sfI = 0; _sfI < _sfCount; _sfI++) {
           const _sfFwdOff = 18 + Math.random() * 36;
@@ -25365,11 +25369,12 @@ function update() {
           particles.push({
             x: lp.x + _ddx * _sfFwdOff + _perpX * _sfPerpOff,
             y: lp.y + _ddy * _sfFwdOff + _perpY * _sfPerpOff,
-            // Velocity follows the frost-spark direction: forward + spread.
-            vx: _ddx * (2 + Math.random() * 1.2) + (Math.random()-0.5) * 0.8,
-            vy: _ddy * (2 + Math.random() * 1.2) + (Math.random()-0.5) * 0.8,
-            life: 48 + Math.floor(Math.random() * 24), maxLife: 70,
-            size: 3 + Math.random() * 8, // 3-11px range for visual variety
+            // Soft forward push — drag in the snowflake render slows
+            // them within ~30 frames, then buoyancy floats them.
+            vx: _ddx * (0.8 + Math.random() * 0.6) + (Math.random()-0.5) * 0.4,
+            vy: _ddy * (0.8 + Math.random() * 0.6) + (Math.random()-0.5) * 0.4,
+            life: 150 + Math.floor(Math.random() * 60), maxLife: 210,
+            size: 3 + Math.random() * 9, // 3-12px range for visual variety
             color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
             type: 'snowflake',
           });
@@ -35999,14 +36004,28 @@ function render() {
       } else if(p.type==='snowflake'){
         // Snowflake: stylized 6-pointed icon for cryo effects (chill apply,
         // frozen ambient, cryo dash trail, cryo weapon hits). Cheap geometric
-        // draw — six line segments, no shadowBlur. Spins slowly via
-        // p._spin += dt and fades out over its life.
+        // draw — six line segments, no shadowBlur. Floats, drifts, spins,
+        // and fades smoothly: drag slows the initial velocity each frame,
+        // a gentle buoyancy pulls upward, and the alpha curve holds high
+        // visibility until the last ~30% of life.
+        // Drag — drop velocity 4%/frame so the flake settles into a drift.
+        p.vx *= 0.96; p.vy *= 0.96;
+        // Buoyancy — gentle upward pull so the flake floats while it fades.
+        p.vy -= 0.018;
+        // Slight lateral sway via sin so different flakes don't all drift
+        // identically. _sway phase is a stable per-particle offset.
+        if (p._sway === undefined) p._sway = Math.random() * Math.PI * 2;
+        p._sway += 0.05;
+        const _sfSway = Math.sin(p._sway) * 0.12;
+        p.vx += _sfSway;
+        // Power-curve fade: alpha = lifeRatio^0.55 — flake stays near full
+        // visibility for most of its life, then fades quickly at the end.
         const _sfLife = p.life / p.maxLife;
-        const _sfAlpha = _sfLife * (p._alphaScale || 1);
+        const _sfAlpha = Math.pow(_sfLife, 0.55) * (p._alphaScale || 1);
         if (_sfAlpha > 0.02) {
           const _sfSize = p.size;
-          // Spin: starting angle stored in _spin, persists across frames.
-          p._spin = (p._spin || 0) + 0.04;
+          // Spin — slower so the flake reads as floating, not whirling.
+          p._spin = (p._spin || 0) + 0.025;
           ctx.save();
           ctx.translate(p.x, p.y);
           ctx.rotate(p._spin);
