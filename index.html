@@ -2144,6 +2144,12 @@ const UPGRADE_POOL = [
   { id:'long_reach', name:'LONG REACH', rarity:'rare', max:1, icon:'↔', color:'#cef',
     descs:['+40% gun range.'], flavor:'extended targeting field.', prereqs:['pulse_shot|kinetic_wake'] },
   // ---- CLASS PASSIVES — Corrupt ----
+  // VIRAL EXTRACTION — corrupt-themed loot card. Boosts the per-kill drop
+  // chance for health AND bits across non-arcade modes, AND injects a
+  // separate bits-drop roll into the table. Stacks to 3.
+  { id:'viral_extraction', name:'VIRAL EXTRACTION', rarity:'common', max:3, icon:'☣', color:'#a4f',
+    descs:['+10% chance for kills to drop health/bits.', '+20% chance for kills to drop health/bits.', '+30% chance for kills to drop health/bits.'],
+    flavor:'they leak resources on the way out.' },
   { id:'dark_harvest', name:'DARK HARVEST', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['Health pickups +30%. COMPROMISED enemies drop +50% bits.'],
     flavor:'corruption enriches the harvest.', prereqs:['viral_payload|glitch_wake'] },
@@ -2829,6 +2835,7 @@ function rebuildRunMods() {
       case 'impact_echo':       m.impactEcho        = n; break;
       case 'long_reach':        m.longReach         += n; break;
       case 'dark_harvest':      m.darkHarvest       = n; break;
+      case 'viral_extraction':  m.viralExtraction   = n; break;
       case 'siphon':            m.siphon            = n; break;
       case 'infection_vector':  m.infectionVector   = n; break;
       case 'fail_safe':        m.failSafe = true; break;
@@ -3103,7 +3110,7 @@ const _CARD_CLASS_MAP = {};
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike','discharge_ring'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring','kinetic_glide'];
-  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring'];
+  const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring','viral_extraction'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
   for (const id of _arc)     _CARD_CLASS_MAP[id] = 'arc';
@@ -5027,7 +5034,11 @@ function maybeDropPickup(zombie) {
   // ============================================================
   // OTHER MODES: existing drop logic.
   // ============================================================
-  let dropChance = 0.20;
+  // VIRAL EXTRACTION (corrupt mod): boosts drop chance by +10% per stack
+  // (+10/+20/+30%), and on the main drop roll a 'bits' outcome is added
+  // to the loot table so the card delivers on its promise of bits drops.
+  const _vex = (runMods || {}).viralExtraction || 0;
+  let dropChance = 0.20 + 0.10 * _vex;
   if (isBoss)  dropChance = 1.0;
   if (Math.random() > dropChance) return;
   const r = Math.random();
@@ -5036,6 +5047,13 @@ function maybeDropPickup(zombie) {
     if (r < 0.25)      kind = 'element';
     else if (r < 0.65) kind = 'powerup';
     else               kind = 'health';
+  } else if (_vex > 0) {
+    // Reshape the table so bits become a real outcome on non-boss kills.
+    // Without this the existing pool is just powerup/health, so a corrupt
+    // build that picks this card would never actually see bits drops.
+    if (r < 0.40)      kind = 'powerup';
+    else if (r < 0.75) kind = 'health';
+    else               kind = 'bits';
   } else {
     if (r < 0.50)      kind = 'powerup';
     else               kind = 'health';
@@ -5045,6 +5063,8 @@ function maybeDropPickup(zombie) {
     pickups.push({ type: 'powerup', powerupId: pw.id, x, y, bobTimer: Math.random() * Math.PI * 2 });
   } else if (kind === 'health') {
     pickups.push({ type: 'health', amount: 20, x, y, bobTimer: Math.random() * Math.PI * 2 });
+  } else if (kind === 'bits') {
+    pickups.push({ type: 'bits', amount: 3 + Math.floor(Math.random() * 4), x, y, bobTimer: Math.random() * Math.PI * 2 });
   }
 }
 
