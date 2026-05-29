@@ -10345,6 +10345,15 @@ function _drawZombieShape(ctx, type, r) {
   } else if (type === 'mortar') {
     // Squat hexagon — artillery platform
     for (let hi=0;hi<6;hi++){const ha=(hi/6)*Math.PI*2;ctx.lineTo(Math.cos(ha)*r,Math.sin(ha)*r);}ctx.closePath();
+  } else if (type === 'artillery') {
+    // TARGETER: chunky angular cannon platform with a forward muzzle stub —
+    // visually distinct from mortar's flat hex. Front sticks out so it reads
+    // as "this thing is aimed somewhere."
+    ctx.moveTo(r*1.25, -r*0.25); ctx.lineTo(r*1.25, r*0.25);
+    ctx.lineTo(r*0.65, r*0.6);   ctx.lineTo(-r*0.4, r*0.85);
+    ctx.lineTo(-r, r*0.45);      ctx.lineTo(-r, -r*0.45);
+    ctx.lineTo(-r*0.4, -r*0.85); ctx.lineTo(r*0.65, -r*0.6);
+    ctx.closePath();
   } else if (type === 'strafe') {
     // Wedge pointing sideways
     ctx.moveTo(r, -r*0.3); ctx.lineTo(r, r*0.3); ctx.lineTo(-r*0.8, r*0.7); ctx.lineTo(-r*0.8, -r*0.7); ctx.closePath();
@@ -10455,6 +10464,11 @@ const ZOMBIE_TYPES = {
   drone:     { hp: 30, speed: 2.5, radius: 12, color: '#0f8', damage: 4, score: 50 },
   leaper:    { hp: 130, speed: 1.4, radius: 37, color: '#af0', damage: 22, score: 200, leaper: true, canCrossGaps: true },
   mortar:    { hp: 180, speed: 0.46, radius: 41, color: '#a33', damage: 18, score: 250, mortar: true, fireRate: 2200 },
+  // ARTILLERY: locks the player's current position, marks the ground with a
+  // growing reticle for 2.5s, then a lobbed shell arcs in and detonates.
+  // Pure-dodge mechanic: the player has the full telegraph window to step
+  // out of the marked circle, but a direct hit is a heavy ~40 dmg blast.
+  artillery: { hp: 200, speed: 0.55, radius: 36, color: '#f4a', damage: 40, score: 320, artillery: true, fireRate: 3200 },
   strafe:    { hp: 110, speed: 2.1, radius: 24, color: '#fc0', damage: 12, score: 200, ranged: true, fireRate: 2800, strafe: true },
   shieldbot: { hp: 90, speed: 1.6, radius: 24, color: '#4af', damage: 0, score: 250, support: true },
   phaser:    { hp: 100, speed: 1.6, radius: 30, color: '#eef', damage: 20, score: 250, phaser: true, canCrossGaps: true },
@@ -13375,6 +13389,7 @@ const ZOMBIE_CODEX = {
   drone:     { name: 'DRONE',      desc: 'Tiny, fast, comes in swarms. Low damage, low HP.' },
   leaper:    { name: 'LEAPER',     desc: 'Stalks from a distance, then jumps to your position. Impact damages.' },
   mortar:    { name: 'MORTAR BOT', desc: 'Stationary artillery. Lobs delayed explosive shots at your position.' },
+  artillery: { name: 'TARGETER',   desc: 'Marks the ground where you stand and lobs a shell after 2.5s. Move OUT of the circle.' },
   strafe:    { name: 'STRAFE',     desc: 'Moves laterally while firing bursts. Keeps its distance.' },
   shieldbot: { name: 'SHIELDBOT',  desc: 'Support unit. Orbits allies and grants them damage reduction.' },
   phaser:    { name: 'PHASER',     desc: 'Teleports toward you every 1.5s. Hard to kite.' },
@@ -22225,6 +22240,7 @@ function getZombieTypesForWave(wave) {
   if (wave >= 5) t.push('exploder', 'reaper');             // reaper = 180° sweep melee
   if (wave >= 6) t.push('stalker', 'bull');                // bull = charging mid-range
   if (wave >= 7) t.push('lash', 'lancer');                 // double weight on the fan-favorites
+  if (wave >= 8) t.push('artillery');                      // ground-marker lobbed shells — 2.5s dodge window
   if (wave % 5 === 0) { t.push('tank', 'tank', 'exploder', 'brute', 'fast', 'reaper'); }
   if (wave < 5) { t.push('normal', 'normal'); }
   return t;
@@ -23647,7 +23663,7 @@ function spawnZombie() {
   const _shp=t.hp*_sm.hp, _sspd=t.speed*_sm.speed;
   zombies.push({zid:_nextZombieId++,x,y,vx:0,vy:0,hp:_shp,maxHp:_shp,speed:_sspd,radius:t.radius,color:t.color,damage:t.damage,score:t.score,type:tk,attackCooldown:0,hitFlash:0,ranged:t.ranged||false,fireRate:t.fireRate||0,lastFired:0,explodeOnDeath:t.explodeOnDeath||false,explosionRadius:t.explosionRadius||0,angle:0,staggerTimer:0,aware:false,wanderAngle:Math.random()*Math.PI*2,wanderTimer:60+Math.floor(Math.random()*120),stuckTimer:0,lastX:0,lastY:0});
 }
-function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter','lancer');if(lv>=4)t.push('spitter','brute','lash');if(lv>=5)t.push('exploder','reaper');if(lv>=6)t.push('stalker','bull');if(lv<5){t.push('normal','normal');}return t; }
+function getZombieTypesForLevel(lv) { const t=['normal'];if(lv>=2)t.push('fast');if(lv>=3)t.push('tank','splitter','lancer');if(lv>=4)t.push('spitter','brute','lash');if(lv>=5)t.push('exploder','reaper');if(lv>=6)t.push('stalker','bull');if(lv>=7)t.push('artillery');if(lv<5){t.push('normal','normal');}return t; }
 
 // Damage props/chests in radius from any source (specials, dash, explosions).
 // Skips explosive barrels (hp===1, no _prop/_chest) — those have their own
@@ -27850,6 +27866,104 @@ function update() {
             }
           } else { z._chargeUp = 0; _clearTele(z); }
         }
+        // ---- ARTILLERY (TARGETER): marks ground, then lobs a shell ----
+        // 2.5s ground reticle → flash → shell impacts → blast. The shell's
+        // entire flight time IS the telegraph window, so the player has the
+        // full duration to step off the marked circle.
+        else if(zt?.artillery){
+          // Hold mid-range: retreat if too close, advance if too far.
+          if(zd<200){z.vx=-zdx/zd*z.speed*0.8;z.vy=-zdy/zd*z.speed*0.8;}
+          else if(zd>440){z.vx=_chaseDx*z.speed*0.7;z.vy=_chaseDy*z.speed*0.7;}
+          else{z.vx*=0.85;z.vy*=0.85;}
+          z.angle=Math.atan2(zdy,zdx);
+          if(!z._artState) z._artState='idle';
+          if(z._artState==='idle'){
+            z._artCooldown=(z._artCooldown||0)+1;
+            // Fire when cooldown elapsed AND player is in spotting range.
+            if(z._artCooldown>=Math.floor(z.fireRate/16.67) && zd<500){
+              // LOCK the marker at the player's CURRENT position. Movement
+              // after this point lets the player dodge the incoming shell.
+              z._artTx=np.x; z._artTy=np.y;
+              z._artT=0; z._artMaxT=150; // 2.5s @ 60fps
+              z._artBlastR = 95;
+              // Shell launch position is the enemy itself; pre-compute the
+              // start so the arc renders consistently host + non-host.
+              z._artSx=z.x; z._artSy=z.y;
+              z._artState='telegraph';
+              z._artCooldown=0;
+              // Launch puff at the enemy
+              for(let _li=0; _li<12; _li++){
+                const _la = Math.random()*Math.PI*2, _ls = 3+Math.random()*4;
+                particles.push({ x:z.x, y:z.y-6, vx:Math.cos(_la)*_ls, vy:Math.sin(_la)*_ls-1.5,
+                  life:14+Math.random()*6, maxLife:20, size:3+Math.random()*2,
+                  color: Math.random()>0.4 ? z.color : '#fff', type:'spark' });
+              }
+              // Dark smoke puff for the launch
+              for(let _si=0; _si<5; _si++){
+                particles.push({ x:z.x+(Math.random()-0.5)*10, y:z.y-8, vx:(Math.random()-0.5)*1.2, vy:-1.5-Math.random()*1,
+                  life:32, maxLife:32, size:6+Math.random()*4, color:'#222', type:'smoke', _smokeAlpha:0.32 });
+              }
+              playSound(140, 0.16, 'sawtooth', 0.10);
+              playSound(70, 0.18, 'square', 0.08);
+              screenShake.intensity = Math.max(screenShake.intensity, 3);
+            }
+          } else if(z._artState==='telegraph'){
+            z._artT++;
+            // Pre-impact flash 10 frames before landing.
+            if(z._artT === z._artMaxT - 10){
+              for(let _fi=0; _fi<18; _fi++){
+                const _fa = Math.random()*Math.PI*2, _fs = 4+Math.random()*6;
+                particles.push({ x:z._artTx, y:z._artTy, vx:Math.cos(_fa)*_fs, vy:Math.sin(_fa)*_fs,
+                  life:10+Math.random()*4, maxLife:14, size:3+Math.random()*2,
+                  color: Math.random()>0.4 ? '#fff' : '#f4a', type:'spark' });
+              }
+              particles.push({ x:z._artTx, y:z._artTy, vx:0, vy:0,
+                life:6, maxLife:6, size:48, color:'#fff', type:'wakering' });
+              playSound(900, 0.05, 'square', 0.10);
+              playSound(1400, 0.04, 'sine', 0.06);
+            }
+            // Landing impact — shell hits the marked spot.
+            if(z._artT >= z._artMaxT){
+              const _ix = z._artTx, _iy = z._artTy, _ir = z._artBlastR;
+              // Damage in radius (host).
+              for(const p of players){
+                if(!p.alive) continue;
+                const _dx = p.x - _ix, _dy = p.y - _iy, _pd = Math.sqrt(_dx*_dx+_dy*_dy);
+                if(_pd < _ir + PLAYER_RADIUS){
+                  damagePlayerObj(p, z.damage, z);
+                  p.staggerTimer = Math.max(p.staggerTimer||0, 18);
+                  if(_pd > 0.1){
+                    p.vx = (p.vx||0) + (_dx/_pd)*10;
+                    p.vy = (p.vy||0) + (_dy/_pd)*10;
+                  }
+                }
+              }
+              // BLAST VFX — canonical shockwave (drawShockwave) + spark burst
+              particles.push({ x:_ix, y:_iy, vx:0, vy:0, life:18, maxLife:18, size:_ir*1.55,
+                color:'#f4a', type:'shockwave', _rimColor:'#fff' });
+              for(let _bi=0; _bi<24; _bi++){
+                const _ba = Math.random()*Math.PI*2, _bs = 4+Math.random()*8;
+                particles.push({ x:_ix, y:_iy, vx:Math.cos(_ba)*_bs, vy:Math.sin(_ba)*_bs,
+                  life:18+Math.random()*8, maxLife:26, size:3+Math.random()*3,
+                  color: _bi<6 ? '#fff' : (_bi<14 ? '#f4a' : '#fa0'), type:'explosion' });
+              }
+              for(let _di=0; _di<8; _di++){
+                const _da = Math.random()*Math.PI*2, _ds = 1+Math.random()*2;
+                particles.push({ x:_ix+(Math.random()-0.5)*16, y:_iy+(Math.random()-0.5)*16,
+                  vx:Math.cos(_da)*_ds, vy:Math.sin(_da)*_ds,
+                  life:34, maxLife:34, size:6+Math.random()*4,
+                  color:'#222', type:'smoke', _smokeAlpha:0.3 });
+              }
+              decals.push({ x:_ix, y:_iy, size:_ir*0.6, alpha:0.5, color:'#311' });
+              screenShake.intensity = Math.max(screenShake.intensity, 10);
+              playSound(45, 0.30, 'sawtooth', 0.16);
+              playSound(95, 0.18, 'square', 0.10);
+              setTimeout(()=>playSound(180, 0.10, 'sine', 0.05), 50);
+              z._artState='idle';
+              z._artT=0;
+            }
+          }
+        }
         // ---- STRAFE SHOOTER: moves laterally while firing ----
         else if(zt?.strafe){
           // Keep distance ~150px, strafe perpendicular to player
@@ -29275,7 +29389,19 @@ function update() {
       if (z._spawnAnim > 0) fl |= 16;
       if (z._vulnTimer > 0) fl |= 32; // boss vulnerability — for non-host visual parity
       if (z._fwShieldUp) fl |= 64;    // firewall shield-up dome
-      return { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl,oh:z._overheat||0 };
+      const _zRow = { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl,oh:z._overheat||0 };
+      // ARTILLERY: include locked-target + progress so non-host renders the
+      // ground reticle + shell arc at the same position the host is animating.
+      if (z.type === 'artillery' && z._artState === 'telegraph') {
+        _zRow.mTx = Math.round(z._artTx || 0);
+        _zRow.mTy = Math.round(z._artTy || 0);
+        _zRow.mSx = Math.round(z._artSx || z.x);
+        _zRow.mSy = Math.round(z._artSy || z.y);
+        _zRow.mT  = z._artT || 0;
+        _zRow.mMx = z._artMaxT || 150;
+        _zRow.mR  = z._artBlastR || 95;
+      }
+      return _zRow;
     });
     // Player bullets are local-only; only sync zombie projectiles (spitters)
     const zBullets = bullets.filter(b => b.owner === 'zombie').map(b => ({x:+b.x.toFixed(1),y:+b.y.toFixed(1),vx:+b.vx.toFixed(1),vy:+b.vy.toFixed(1),color:b.color||'#5fa',size:b.size||4,life:b.life,owner:'zombie'}));
@@ -29575,6 +29701,18 @@ function applyHostState(msg) {
       if (_fl & 32) { oz._vulnTimer = Math.max(oz._vulnTimer || 0, 6); oz._vulnMaxTimer = oz._vulnMaxTimer || 6; }
       else oz._vulnTimer = 0;
       oz._fwShieldUp = (_fl & 64) !== 0;
+      // ARTILLERY marker fields (only present when telegraphing)
+      if (nz.mTx !== undefined) {
+        oz._artState = 'telegraph';
+        oz._artTx = nz.mTx; oz._artTy = nz.mTy;
+        oz._artSx = nz.mSx; oz._artSy = nz.mSy;
+        oz._artT = nz.mT;   oz._artMaxT = nz.mMx;
+        oz._artBlastR = nz.mR;
+      } else if (oz._artState === 'telegraph') {
+        // Host has cleared the telegraph — drop our local copy too
+        oz._artState = 'idle';
+        oz._artT = 0;
+      }
       updatedZombies.push(oz);
     } else {
       // New zombie: create fresh with position already set (no lerp needed first frame)
@@ -29588,6 +29726,13 @@ function applyHostState(msg) {
       if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
       if (_fl & 32) { fresh._vulnTimer = 6; fresh._vulnMaxTimer = 6; }
       if (_fl & 64) fresh._fwShieldUp = true;
+      if (nz.mTx !== undefined) {
+        fresh._artState = 'telegraph';
+        fresh._artTx = nz.mTx; fresh._artTy = nz.mTy;
+        fresh._artSx = nz.mSx; fresh._artSy = nz.mSy;
+        fresh._artT = nz.mT;   fresh._artMaxT = nz.mMx;
+        fresh._artBlastR = nz.mR;
+      }
       updatedZombies.push(fresh);
     }
   }
@@ -30652,6 +30797,109 @@ function render() {
     }
     ctx.restore(); // pop the floor clip
     ctx.globalAlpha = 1;
+  }
+
+  // ---- ARTILLERY GROUND MARKERS ----
+  // TARGETER enemy locks the player's position at telegraph start and a
+  // reticle grows in opacity at the locked spot for 2.5s before the shell
+  // lands. Drawn here (after decals, before decor + entities) so the player
+  // sees it on the ground beneath them. Reads from per-zombie state on host
+  // and from synced fields on non-host (see zombie sync mTx/mTy/mT/mMax).
+  for (const z of zombies) {
+    if (z.hp <= 0) continue;
+    const _tx = z._artTx, _ty = z._artTy;
+    if (_tx === undefined || _ty === undefined) continue;
+    if (z._artState !== 'telegraph' && z._artT === undefined) continue;
+    const _t = z._artT || 0, _maxT = z._artMaxT || 150;
+    if (_t <= 0 || _maxT <= 0) continue;
+    const _prog = Math.min(1, _t / _maxT);
+    const _r = z._artBlastR || 95;
+    // Skip offscreen markers — viewport cull
+    if (_tx < camera.x - canvas.width / 2 - _r || _tx > camera.x + canvas.width / 2 + _r
+     || _ty < camera.y - canvas.height / 2 - _r || _ty > camera.y + canvas.height / 2 + _r) continue;
+    // Opacity ramp: 0.12 → 0.55, never fully opaque so the player can still
+    // see the ground beneath them.
+    const _alpha = 0.12 + _prog * 0.43;
+    // Subtle red flash pulse near the end to sell "fire incoming."
+    const _urg = Math.max(0, _prog - 0.7) / 0.3; // 0 → 1 in last 30%
+    const _pulse = _urg > 0 ? 0.5 + 0.5 * Math.sin(_t * 0.45) : 0;
+    ctx.save();
+    ctx.translate(_tx, _ty);
+    // Layer 1: filled disc — translucent danger tint
+    ctx.globalAlpha = _alpha * 0.55;
+    ctx.fillStyle = '#f4a';
+    ctx.beginPath(); ctx.arc(0, 0, _r, 0, Math.PI*2); ctx.fill();
+    // Layer 2: pulsing red overlay near end
+    if (_urg > 0) {
+      ctx.globalAlpha = _alpha * 0.35 * _pulse;
+      ctx.fillStyle = '#f24';
+      ctx.beginPath(); ctx.arc(0, 0, _r, 0, Math.PI*2); ctx.fill();
+    }
+    // Layer 3: outer ring — solid edge
+    ctx.globalAlpha = Math.min(1, _alpha * 1.8);
+    ctx.strokeStyle = '#f4a'; ctx.lineWidth = 2 + _prog * 2;
+    ctx.shadowColor = '#f4a'; ctx.shadowBlur = 6 + _prog * 6;
+    ctx.beginPath(); ctx.arc(0, 0, _r, 0, Math.PI*2); ctx.stroke();
+    // Layer 4: target crosshair — four short tick marks at N/S/E/W of the ring
+    ctx.globalAlpha = Math.min(1, _alpha * 1.6);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6;
+    ctx.shadowColor = '#f4a'; ctx.shadowBlur = 4;
+    const _tickIn = _r * 0.72, _tickOut = _r * 0.98;
+    for (let _ti = 0; _ti < 4; _ti++) {
+      const _ta = _ti * Math.PI * 0.5;
+      const _cx = Math.cos(_ta), _cy = Math.sin(_ta);
+      ctx.beginPath();
+      ctx.moveTo(_cx * _tickIn, _cy * _tickIn);
+      ctx.lineTo(_cx * _tickOut, _cy * _tickOut);
+      ctx.stroke();
+    }
+    // Layer 5: inner crosshair (small X at center)
+    ctx.globalAlpha = Math.min(1, _alpha * 1.3);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(-6, -6); ctx.lineTo(6, 6);
+    ctx.moveTo(-6, 6); ctx.lineTo(6, -6);
+    ctx.stroke();
+    // Layer 6: inner highlight ring at 50% radius for depth
+    ctx.globalAlpha = _alpha * 0.6;
+    ctx.lineWidth = 1; ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#fff';
+    ctx.beginPath(); ctx.arc(0, 0, _r * 0.5, 0, Math.PI*2); ctx.stroke();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    ctx.restore();
+    // ---- SHELL ARC ----
+    // The shell launches from (z._artSx, z._artSy) and reaches (_tx, _ty) at _maxT.
+    // Render it as a small glowing dot following a parabolic path (Y dip).
+    const _sx = z._artSx ?? z.x, _sy = z._artSy ?? z.y;
+    if (_prog < 1) {
+      const _shellX = _sx + (_tx - _sx) * _prog;
+      const _shellYLin = _sy + (_ty - _sy) * _prog;
+      // Parabolic dip: peaks at the midpoint. Height scales with launch dist
+      // so short lobs still arc, long lobs arc dramatically.
+      const _arcH = Math.min(220, 60 + Math.hypot(_tx - _sx, _ty - _sy) * 0.35);
+      const _shellY = _shellYLin - 4 * _arcH * _prog * (1 - _prog);
+      ctx.save();
+      // Tail glow trail
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = '#f4a'; ctx.shadowColor = '#f4a'; ctx.shadowBlur = 14;
+      ctx.beginPath(); ctx.arc(_shellX, _shellY, 8, 0, Math.PI*2); ctx.fill();
+      // Body
+      ctx.globalAlpha = 1; ctx.shadowBlur = 8;
+      ctx.fillStyle = '#f4a';
+      ctx.beginPath(); ctx.arc(_shellX, _shellY, 4, 0, Math.PI*2); ctx.fill();
+      // Hot core
+      ctx.fillStyle = '#fff'; ctx.shadowBlur = 4;
+      ctx.beginPath(); ctx.arc(_shellX, _shellY, 1.8, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      ctx.restore();
+      // Embers behind shell
+      if (gameTime % 2 === 0) {
+        particles.push({ x: _shellX + (Math.random()-0.5)*4, y: _shellY + (Math.random()-0.5)*4,
+          vx: (Math.random()-0.5)*0.8, vy: 0.5 + Math.random()*1,
+          life: 14, maxLife: 14, size: 1.5 + Math.random(),
+          color: Math.random() > 0.4 ? '#f4a' : '#fa0', type: 'spark' });
+      }
+    }
   }
 
   // Ambient decor — terminals, server racks, cryopods, etc. Drawn between decals and entities.
