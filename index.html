@@ -25356,26 +25356,26 @@ function update() {
             life: 14, maxLife: 14, size: 3+Math.random()*3, color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
         }
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
-        // Snowflake burst — spawned IN FRONT, riding the same forward
-        // cloud as the frost sparks. Gentler initial velocity so the
-        // snowflake render's drag + buoyancy can take over and the
-        // flakes LINGER + FLOAT in the air after the dash passes
-        // rather than flying off-screen with the player. Long life
-        // (~180 frames) so they hang visible for ~3 seconds.
-        const _sfCount = 2 + (gameTime % 2);
+        // Snowflake burst — same forward velocity as the frost sparks
+        // (~3 px/frame) so the snowflakes ride the SAME outward cloud
+        // and stay with the player's dash. After the global drag
+        // (0.95/frame) eats their momentum over ~30 frames they slow
+        // and float in place, fading over the remaining ~120 frames.
+        // 4 per frame at sizes 7-17px with bolder line width so each
+        // flake is unmistakably visible amid the smaller frost sparks.
+        const _sfCount = 4;
         for (let _sfI = 0; _sfI < _sfCount; _sfI++) {
-          const _sfFwdOff = 18 + Math.random() * 36;
-          const _sfPerpOff = (Math.random() - 0.5) * 32; // lateral spread
+          const _sfFwdOff = 16 + Math.random() * 30;
+          const _sfPerpOff = (Math.random() - 0.5) * 38; // wider spread
           particles.push({
             x: lp.x + _ddx * _sfFwdOff + _perpX * _sfPerpOff,
             y: lp.y + _ddy * _sfFwdOff + _perpY * _sfPerpOff,
-            // Soft forward push — drag in the snowflake render slows
-            // them within ~30 frames, then buoyancy floats them.
-            vx: _ddx * (0.8 + Math.random() * 0.6) + (Math.random()-0.5) * 0.4,
-            vy: _ddy * (0.8 + Math.random() * 0.6) + (Math.random()-0.5) * 0.4,
-            life: 150 + Math.floor(Math.random() * 60), maxLife: 210,
-            size: 3 + Math.random() * 9, // 3-12px range for visual variety
-            color: Math.random() > 0.5 ? '#cef' : (Math.random() > 0.5 ? '#8ef' : '#aef'),
+            // MATCH frost spark velocity exactly — they move as one cloud.
+            vx: _ddx * 3 + (Math.random() - 0.5),
+            vy: _ddy * 3 + (Math.random() - 0.5),
+            life: 130 + Math.floor(Math.random() * 50), maxLife: 180,
+            size: 7 + Math.random() * 10, // 7-17px — big enough to read
+            color: Math.random() > 0.5 ? '#fff' : (Math.random() > 0.5 ? '#cef' : '#8ef'),
             type: 'snowflake',
           });
         }
@@ -36002,24 +36002,18 @@ function render() {
           alphaScale: p._alphaScale || 1,
         });
       } else if(p.type==='snowflake'){
-        // Snowflake: stylized 6-pointed icon for cryo effects (chill apply,
-        // frozen ambient, cryo dash trail, cryo weapon hits). Cheap geometric
-        // draw — six line segments, no shadowBlur. Floats, drifts, spins,
-        // and fades smoothly: drag slows the initial velocity each frame,
-        // a gentle buoyancy pulls upward, and the alpha curve holds high
-        // visibility until the last ~30% of life.
-        // Drag — drop velocity 4%/frame so the flake settles into a drift.
-        p.vx *= 0.96; p.vy *= 0.96;
-        // Buoyancy — gentle upward pull so the flake floats while it fades.
-        p.vy -= 0.018;
-        // Slight lateral sway via sin so different flakes don't all drift
-        // identically. _sway phase is a stable per-particle offset.
+        // Snowflake: stylized 6-pointed icon for cryo effects. The global
+        // particle update (updateShell, line ~14308) already applies
+        // drag = 0.95 every frame to non-blood particles, so the initial
+        // velocity decays on its own; this branch ONLY adds buoyancy and
+        // sway so the flake floats and drifts as it slows.
+        // Gentle upward buoyancy.
+        p.vy -= 0.012;
+        // Lateral sway via per-particle sin phase.
         if (p._sway === undefined) p._sway = Math.random() * Math.PI * 2;
         p._sway += 0.05;
-        const _sfSway = Math.sin(p._sway) * 0.12;
-        p.vx += _sfSway;
-        // Power-curve fade: alpha = lifeRatio^0.55 — flake stays near full
-        // visibility for most of its life, then fades quickly at the end.
+        p.vx += Math.sin(p._sway) * 0.08;
+        // Power-curve fade: alpha holds near full until the last ~30%.
         const _sfLife = p.life / p.maxLife;
         const _sfAlpha = Math.pow(_sfLife, 0.55) * (p._alphaScale || 1);
         if (_sfAlpha > 0.02) {
@@ -36029,9 +36023,13 @@ function render() {
           ctx.save();
           ctx.translate(p.x, p.y);
           ctx.rotate(p._spin);
-          ctx.globalAlpha = _sfAlpha * 0.9;
+          // Bolder line width so each flake reads against the busy frost
+          // spark cloud. Scales mildly with size so big flakes look
+          // chunkier and small flakes still hold their silhouette.
+          const _sfLW = 1.6 + _sfSize * 0.08;
           ctx.strokeStyle = p.color || '#cef';
-          ctx.lineWidth = 1.2;
+          ctx.lineWidth = _sfLW;
+          ctx.globalAlpha = _sfAlpha * 0.95;
           // Six radial spokes
           for (let _si = 0; _si < 6; _si++) {
             const _sa = (_si / 6) * Math.PI * 2;
