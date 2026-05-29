@@ -16462,34 +16462,34 @@ function throwSpike() {
     } else if (_classId === 'impact') {
       // ======== KINETIC NOVA — double-pulse 360° shockwave ========
       // Two waves fire in quick succession at the same origin: a primary
-      // pulse + a 55%-radius echo pulse delayed ~7 frames. The double tap
-      // is what visually distinguishes it from the single discharge wave.
-      // Radius multiplier reduced 0.8 → 0.6 so the nova reads as a tight
-      // pressure burst rather than a giant arena-wide wash. TWIN SPIKE
-      // bumps both pulses by +28%.
+      // pulse + a 55%-radius echo pulse delayed ~10 frames. BOTH pulses
+      // start from a small radius so they visibly expand outward (the echo
+      // no longer just appears mid-wave). Expansion is slower than the
+      // discharge wave so the push reads as a heavy pressure burst — the
+      // ring physically shoves enemies and the player can SEE it sweep.
       const _twinR = _twin ? 1.28 : 1;
       const _maxR = _modScale('impact_ring', 200, 25) * 0.6 * _radW * _twinR;
-      // Primary pulse — full damage, full radius
+      // Primary pulse — full damage, full radius, slower expansion
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
         phase: 'expanding', _ring: true, _nova: true,
-        _novaR: 22, _novaMaxR: _maxR,
-        _maxLinger: Math.floor(14 * _persist), _lingerT: 0,
+        _novaR: 8, _novaMaxR: _maxR,
+        _maxLinger: Math.floor(24 * _persist), _lingerT: 0,
         _hitSet: new Set(),
         _warmup: 0,
-        lifetime: Math.floor(40 * _persist), maxLife: 40, _pulseTimer: 0,
+        lifetime: Math.floor(60 * _persist), maxLife: 60, _pulseTimer: 0,
       });
-      // Echo pulse — smaller, visual-only, fires 7 frames later. The
-      // _warmup gate holds it dormant until the timer ticks down on host
-      // and on non-host (synced).
+      // Echo pulse — smaller, visual-only, fires 10 frames after the
+      // primary. Starts from a small radius so it expands OUT from the
+      // center just like the primary (no more mid-radius pop-in).
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
         phase: 'expanding', _ring: true, _nova: true,
-        _novaR: 12, _novaMaxR: _maxR * 0.55,
-        _maxLinger: Math.floor(10 * _persist), _lingerT: 0,
+        _novaR: 4, _novaMaxR: _maxR * 0.6,
+        _maxLinger: Math.floor(18 * _persist), _lingerT: 0,
         _hitSet: new Set(),
-        _warmup: 7, _visualOnly: true,
-        lifetime: Math.floor(38 * _persist), maxLife: 38, _pulseTimer: 0,
+        _warmup: 10, _visualOnly: true,
+        lifetime: Math.floor(56 * _persist), maxLife: 56, _pulseTimer: 0,
       });
       // Launch flash — white core burst + initial inner sparks. The expanding
       // ring itself is rendered each frame from the spike entity.
@@ -17421,9 +17421,11 @@ function _updateRingZone(sp, _radBoost) {
     // EXPANDING PHASE — ring grows from origin to maxR, damages/launches as it sweeps.
     if (sp.phase === 'expanding') {
       const _prevR = sp._novaR;
-      // Ease-out expansion: fast start, slows near boundary. Hits max in ~10f.
+      // Slower expansion than discharge — the nova is a PRESSURE wave,
+      // not an energy zap. ~16-20 frames to reach max so the sweep is
+      // visible and the push has time to read on enemies it crosses.
       const _pct = sp._novaR / _maxR;
-      const _speed = 78 * Math.pow(1 - _pct, 1.2) + 5;
+      const _speed = 48 * Math.pow(1 - _pct, 1.15) + 3;
       sp._novaR = Math.min(_maxR, sp._novaR + _speed);
       // Damage any enemy the leading edge has passed through this frame.
       // Skipped for the echo pulse (_visualOnly) — primary already hit them.
@@ -17435,11 +17437,14 @@ function _updateRingZone(sp, _radBoost) {
         if (d <= _r) {
           sp._hitSet.add(z.zid);
           const _dn = d || 1;
-          const _push = 38 * (1 - d / _maxR) + 18;
+          // Heavier knockback: 30-90 (was 18-56). Reads as a real shove
+          // — close enemies launch hard, edges still slide. Longer slide
+          // timer too so the launch animation actually lands.
+          const _push = 60 * (1 - d / _maxR) + 30;
           z._slideVx = (z._slideVx || 0) + (dx/_dn) * _push;
           z._slideVy = (z._slideVy || 0) + (dy/_dn) * _push;
-          z._slideTimer = 65;
-          damageZombie(z, 35, (dx/_dn) * 6, (dy/_dn) * 6);
+          z._slideTimer = 95;
+          damageZombie(z, 35, (dx/_dn) * 9, (dy/_dn) * 9);
           applyExposed(z);
           // Per-enemy launch sparks + speed lines back toward origin
           for (let j = 0; j < 8; j++) {
@@ -17471,27 +17476,47 @@ function _updateRingZone(sp, _radBoost) {
           life: 14+Math.random()*8, maxLife: 22, size: 1.6+Math.random()*1.4,
           color: i%3===0 ? '#fff' : '#cef', type: 'spark' });
       }
-      // Inner pulse energy — wind-class sparks drifting inside the swept area.
-      // Bias toward outer 70% so the residual energy paints what the wave
-      // just passed through, mirroring the discharge wave's wake.
-      const _inN = 6;
+      // Inner pulse energy — sparks lingering inside the swept area for
+      // a full second-plus. Bumped from 6/frame to 10/frame and tripled
+      // life (90 frames max) so the dome of crackling energy holds long
+      // after the leading edge passes through. Bias toward outer 70% so
+      // the residual energy paints what the wave just passed through.
+      const _inN = 10;
       for (let i = 0; i < _inN; i++) {
         const _ia = Math.random() * Math.PI*2;
         const _it = 0.15 + Math.pow(Math.random(), 0.7) * 0.8;
         const _ir = _r * _it;
         particles.push({ x: sp.x + Math.cos(_ia)*_ir, y: sp.y + Math.sin(_ia)*_ir,
-          vx: (Math.random()-0.5)*0.5, vy: (Math.random()-0.5)*0.5 - 0.15,
-          life: 26+Math.random()*14, maxLife: 40, size: 1.4+Math.random()*1.6,
+          vx: (Math.random()-0.5)*0.4, vy: (Math.random()-0.5)*0.4 - 0.1,
+          life: 60+Math.random()*30, maxLife: 90, size: 1.4+Math.random()*1.6,
           color: '#cef', type: 'spark' });
       }
-      // White static every other frame — sells the crackling pulse energy.
-      if (sp._pulseTimer % 2 === 0) {
-        const _sa = Math.random() * Math.PI*2;
-        const _sr = _r * (0.1 + Math.random()*0.8);
-        particles.push({ x: sp.x + Math.cos(_sa)*_sr, y: sp.y + Math.sin(_sa)*_sr,
+      // White static every frame — denser crackling. Long-lived so the
+      // dome reads as a sustained energy field, not a quick flash.
+      {
+        const _staticN = 2;
+        for (let _ssI = 0; _ssI < _staticN; _ssI++) {
+          const _sa = Math.random() * Math.PI*2;
+          const _sr = _r * (0.1 + Math.random()*0.8);
+          particles.push({ x: sp.x + Math.cos(_sa)*_sr, y: sp.y + Math.sin(_sa)*_sr,
+            vx: 0, vy: 0,
+            life: 40+Math.random()*20, maxLife: 60, size: 1.4+Math.random()*0.9,
+            color: '#fff', type: 'spark' });
+        }
+      }
+      // Pulse ping rings every 6 frames — small wakering particles inside
+      // the radius that radiate outward. Sells the "pressure pulsing
+      // through the dome" feel. Only on the primary pulse to keep the
+      // visual density manageable.
+      if (!sp._visualOnly && sp._pulseTimer % 6 === 0 && _r > 30) {
+        const _pa = Math.random() * Math.PI*2;
+        const _pr = _r * (0.15 + Math.random()*0.55);
+        particles.push({
+          x: sp.x + Math.cos(_pa) * _pr, y: sp.y + Math.sin(_pa) * _pr,
           vx: 0, vy: 0,
-          life: 16, maxLife: 16, size: 1.4+Math.random()*0.9,
-          color: '#fff', type: 'spark' });
+          life: 18, maxLife: 18, size: 16 + Math.random() * 10,
+          color: '#cef', type: 'wakering',
+        });
       }
       // Glitch chars every 3 frames — chars launch outward from current radius.
       if (sp._pulseTimer % 3 === 0) {
@@ -17518,10 +17543,11 @@ function _updateRingZone(sp, _radBoost) {
         sp._lingerT = sp._maxLinger;
       }
     } else if (sp.phase === 'lingering') {
-      // Lingering hairline rim — pulses as it fades. No more damage; this is
-      // the visual settled-at-the-boundary beat, matching the discharge wave.
+      // Lingering dome — the pressure wave has settled at the boundary
+      // but pulse energy KEEPS crackling inside the swept area for a
+      // beat. No more damage; this is pure spectacle.
       sp._lingerT--;
-      // A few sparse white sparks crackling at the rim
+      // Rim sparks
       if (sp._pulseTimer % 2 === 0) {
         const _la = Math.random() * Math.PI*2;
         particles.push({ x: sp.x + Math.cos(_la)*_maxR, y: sp.y + Math.sin(_la)*_maxR,
@@ -17529,6 +17555,29 @@ function _updateRingZone(sp, _radBoost) {
           vy: Math.sin(_la)*0.6 + (Math.random()-0.5)*0.8,
           life: 14, maxLife: 14, size: 1.4+Math.random()*0.8,
           color: Math.random()>0.4 ? '#fff' : '#cef', type: 'spark' });
+      }
+      // Inner crackle — keep sparking inside the dome during the linger
+      // so the volume reads as filled with energy, not just a ring.
+      const _liN = 4;
+      for (let _li = 0; _li < _liN; _li++) {
+        const _lia = Math.random() * Math.PI*2;
+        const _lir = _maxR * Math.pow(Math.random(), 0.7) * 0.9;
+        particles.push({ x: sp.x + Math.cos(_lia)*_lir, y: sp.y + Math.sin(_lia)*_lir,
+          vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3 - 0.08,
+          life: 36+Math.random()*18, maxLife: 54, size: 1.2+Math.random()*1.2,
+          color: Math.random()>0.4 ? '#cef' : '#fff', type: 'spark' });
+      }
+      // Occasional inner pulse ring during linger — gives the dome a
+      // visible heartbeat.
+      if (!sp._visualOnly && sp._pulseTimer % 8 === 0) {
+        const _pa = Math.random() * Math.PI*2;
+        const _pr = _maxR * (0.2 + Math.random()*0.55);
+        particles.push({
+          x: sp.x + Math.cos(_pa) * _pr, y: sp.y + Math.sin(_pa) * _pr,
+          vx: 0, vy: 0,
+          life: 18, maxLife: 18, size: 14 + Math.random() * 8,
+          color: '#cef', type: 'wakering',
+        });
       }
       if (sp._lingerT <= 0) {
         // Dissolve burst — scatter sparks around the perimeter as the wave dies.
