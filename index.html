@@ -1385,7 +1385,10 @@ let ARENA_W = DEFAULT_ARENA_W, ARENA_H = DEFAULT_ARENA_H;
 let GRID_W = Math.floor(ARENA_W / CELL_SIZE), GRID_H = Math.floor(ARENA_H / CELL_SIZE);
 function setArenaDimensions(w, h) { ARENA_W = w; ARENA_H = h; GRID_W = Math.floor(w / CELL_SIZE); GRID_H = Math.floor(h / CELL_SIZE); gapGrid = null; }
 const TILE_SIZE = 80, PLAYER_RADIUS = 14;
-const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 13.2; // +20% distance (was 11)
+// DASH_FRAMES drives total distance (DASH_SPEED * DASH_FRAMES). Bumped 6→7
+// (+16.7%) so the dash covers more ground at the same speed — lasts a touch
+// longer instead of being faster.
+const DASH_COOLDOWN = 800, DASH_DURATION = 120, DASH_SPEED = 13.2, DASH_FRAMES = 7;
 const PICKUP_RANGE = 65, JOYSTICK_LEFT_MAX = 85, JOYSTICK_RIGHT_MAX = 130;
 const PLAYER_COLORS = ['#0ff','#f0f','#0f0','#ff0'];
 const NET_SEND_RATE = 2; // send state every N frames (~30fps)
@@ -2126,6 +2129,12 @@ const UPGRADE_POOL = [
   { id:'momentum', name:'MOMENTUM', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['+4% move speed per EXPOSED enemy on screen.'],
     flavor:'their weakness is your acceleration.', prereqs:['pulse_shot|kinetic_wake'] },
+  // KINETIC GLIDE — extends the dash motion window so the player covers more
+  // ground per dash. Distance only, not speed: the dash lasts longer at the
+  // same velocity. Stacking adds frames at +20% per level.
+  { id:'kinetic_glide', name:'KINETIC GLIDE', rarity:'common', max:3, icon:'💨', color:'#cef',
+    descs:['+20% dash distance.', '+40% dash distance.', '+60% dash distance.'],
+    flavor:'the slide goes a little further.' },
   { id:'shockfront', name:'SHOCKFRONT', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['EXPOSED kills emit a 60px knockback burst.'],
     flavor:'every kill ripples outward.', prereqs:['pulse_shot|kinetic_wake'] },
@@ -2547,6 +2556,7 @@ const _KEY_STATS = {
   triple_tap:     { label:'tap damage', base:70, step:5, unit:'%' },
   // ---- Utility ----
   swift:          { label:'move speed', base:12, step:3, unit:'%' },
+  kinetic_glide:  { label:'dash distance', base:0, step:20, unit:'%' },
   magnet:         { label:'pickup radius', base:60, step:10, unit:'%' },
   // ---- Extracted Lv2 — thermal ----
   thermal_detonation:{label:'AoE radius', base:80, step:12, unit:'px' },
@@ -2814,6 +2824,7 @@ function rebuildRunMods() {
       case 'superconductor':    m.superconductor    = n; break;
       case 'lightning_rod':     m.lightningRod      = n; break;
       case 'momentum':          m.momentum          = n; break;
+      case 'kinetic_glide':     m.dashDistance      = n; break;
       case 'shockfront':        m.shockfront        = n; break;
       case 'impact_echo':       m.impactEcho        = n; break;
       case 'long_reach':        m.longReach         += n; break;
@@ -3091,7 +3102,7 @@ const _CARD_CLASS_MAP = {};
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','arc_spike','discharge_ring'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring','kinetic_glide'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
@@ -20955,7 +20966,11 @@ function dash() {
   // the remote-player system; we set it to a frame-based value and also track _dashFrames
   // for the local player's actual motion.
   lp.dashTimer = 150;   // 150ms of visible dash state (broadcasts to MP)
-  lp._dashFrames = 6;   // 6 actual dash-motion frames
+  // Dash duration in motion frames. Base 7 (= +16.7% over the previous 6
+  // frames). KINETIC GLIDE (pulse mod card) extends this +20% per stack
+  // (+20%/+40%/+60% across its 3 max). Distance only, speed unchanged.
+  const _glideBonus = ((runMods || {}).dashDistance > 0) ? _modScale('kinetic_glide', 0, 0.20) : 0;
+  lp._dashFrames = Math.max(1, Math.round(DASH_FRAMES * (1 + _glideBonus)));
   // Dash-strike window: melee swings within ~280 ms of dashing fire as a
   // beefier lunging attack instead of the next combo step.
   lp._dashStrikeWindow = performance.now() + 280;
