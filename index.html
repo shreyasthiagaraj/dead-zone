@@ -16444,23 +16444,36 @@ function throwSpike() {
       playSfx('lightning_fire', 0.2) || playSound(1200, 0.06, 'sine', 0.08);
 
     } else if (_classId === 'impact') {
-      // ======== KINETIC NOVA — discharge-style 360° shockwave with pulse-energy fill ========
-      // The nova now spawns as a spike entity that expands from origin to
-      // _novaMaxR over ~10 frames, applies damage/launch as the leading edge
-      // sweeps each enemy, then lingers as a thin hairline pulse for ~14
-      // frames. Visuals mirror the DISCHARGE weapon's wedge shockwave but as
-      // a full 360° annulus, rendered in #cef pulse-class color with white
-      // crackling sparks filling the swept area. TWIN SPIKE: +28% radius so
-      // the two casts read as a genuinely bigger blast.
+      // ======== KINETIC NOVA — double-pulse 360° shockwave ========
+      // Two waves fire in quick succession at the same origin: a primary
+      // pulse + a 55%-radius echo pulse delayed ~7 frames. The double tap
+      // is what visually distinguishes it from the single discharge wave.
+      // Radius multiplier reduced 0.8 → 0.6 so the nova reads as a tight
+      // pressure burst rather than a giant arena-wide wash. TWIN SPIKE
+      // bumps both pulses by +28%.
       const _twinR = _twin ? 1.28 : 1;
-      const _maxR = _modScale('impact_ring', 200, 25) * 0.8 * _radW * _twinR;
+      const _maxR = _modScale('impact_ring', 200, 25) * 0.6 * _radW * _twinR;
+      // Primary pulse — full damage, full radius
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
         phase: 'expanding', _ring: true, _nova: true,
         _novaR: 22, _novaMaxR: _maxR,
         _maxLinger: Math.floor(14 * _persist), _lingerT: 0,
         _hitSet: new Set(),
+        _warmup: 0,
         lifetime: Math.floor(40 * _persist), maxLife: 40, _pulseTimer: 0,
+      });
+      // Echo pulse — smaller, visual-only, fires 7 frames later. The
+      // _warmup gate holds it dormant until the timer ticks down on host
+      // and on non-host (synced).
+      spikes.push({
+        x: px, y: py, ownerId: lp.id, classId: 'impact',
+        phase: 'expanding', _ring: true, _nova: true,
+        _novaR: 12, _novaMaxR: _maxR * 0.55,
+        _maxLinger: Math.floor(10 * _persist), _lingerT: 0,
+        _hitSet: new Set(),
+        _warmup: 7, _visualOnly: true,
+        lifetime: Math.floor(38 * _persist), maxLife: 38, _pulseTimer: 0,
       });
       // Launch flash — white core burst + initial inner sparks. The expanding
       // ring itself is rendered each frame from the spike entity.
@@ -17383,6 +17396,12 @@ function _updateRingZone(sp, _radBoost) {
   // ======== KINETIC NOVA — expanding 360° pulse shockwave + inner pulse energy ========
   } else if (sp.classId === 'impact' && sp._nova) {
     const _maxR = sp._novaMaxR;
+    // WARMUP GATE — second-pulse echo waves wait a few frames before firing.
+    if (sp._warmup > 0) {
+      sp._warmup--;
+      sp.lifetime--;
+      return;
+    }
     // EXPANDING PHASE — ring grows from origin to maxR, damages/launches as it sweeps.
     if (sp.phase === 'expanding') {
       const _prevR = sp._novaR;
@@ -17391,8 +17410,9 @@ function _updateRingZone(sp, _radBoost) {
       const _speed = 78 * Math.pow(1 - _pct, 1.2) + 5;
       sp._novaR = Math.min(_maxR, sp._novaR + _speed);
       // Damage any enemy the leading edge has passed through this frame.
+      // Skipped for the echo pulse (_visualOnly) — primary already hit them.
       const _r = sp._novaR;
-      for (const z of zombies) {
+      if (!sp._visualOnly) for (const z of zombies) {
         if (z.hp <= 0 || sp._hitSet.has(z.zid)) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
         const d = Math.sqrt(dx*dx + dy*dy);
@@ -29923,7 +29943,7 @@ function update() {
         // KINETIC NOVA: sync the expanding-ring fields so non-host renders
         // the wave at the same radius as host (otherwise the spike entity
         // ships as a generic 'b' bullet and the nova visuals never appear).
-        return { ..._base, t:'n', r:+(sp._novaR||0).toFixed(1), mR:+(sp._novaMaxR||0).toFixed(1), lT:sp._lingerT|0, mL:sp._maxLinger|0 };
+        return { ..._base, t:'n', r:+(sp._novaR||0).toFixed(1), mR:+(sp._novaMaxR||0).toFixed(1), lT:sp._lingerT|0, mL:sp._maxLinger|0, w:sp._warmup|0, vo:sp._visualOnly?1:0 };
       } else {
         return { ..._base, t:'b', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1), zid:sp.stuckTo?sp.stuckTo.zid:0 };
       }
@@ -30038,7 +30058,7 @@ function applyHostState(msg) {
       } else if (s.t === 'n') {
         // KINETIC NOVA: rebuild the ring/nova flags + expansion state so the
         // non-host render path treats it like the host's nova entity.
-        return { ...base, _ring:true, _nova:true, _novaR:s.r||0, _novaMaxR:s.mR||0, _lingerT:s.lT||0, _maxLinger:s.mL||0, _hitSet:new Set() };
+        return { ...base, _ring:true, _nova:true, _novaR:s.r||0, _novaMaxR:s.mR||0, _lingerT:s.lT||0, _maxLinger:s.mL||0, _warmup:s.w||0, _visualOnly:!!s.vo, _hitSet:new Set() };
       }
       return { ...base, vx:s.vx||0, vy:s.vy||0 };
     });
@@ -33472,6 +33492,10 @@ function render() {
         // translate(sp.x, sp.y) from the parent block, so coords are
         // local. drawShockwave is absolute-space so we have to feed
         // (sp.x, sp.y) explicitly — undo the translation around the call.
+        // Echo pulses sit dormant during their _warmup window — don't paint
+        // anything so the player only sees one wave start at fire time.
+        if (sp._warmup > 0) { /* no draw during warmup */ }
+        else {
         const _isLinger = sp.phase === 'lingering';
         const _r = _isLinger ? sp._novaMaxR : sp._novaR;
         const _maxR = sp._novaMaxR;
@@ -33505,6 +33529,7 @@ function render() {
           }
         }
         ctx.globalAlpha = 1;
+        } // end !_warmup
       } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
         // MINE: chunkier body + bigger blinking red light + faint danger ring
         // around the blast radius so the player can see the threat area at a
