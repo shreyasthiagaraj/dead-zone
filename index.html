@@ -22039,9 +22039,12 @@ const ARCADE_WAVE_TYPES = {
   heavy_metal:  { name: 'HEAVY METAL',   sub: 'Tanks rolling in — hit and run.',     color: '#fa0', accent: '#f44', icon: '⚙',
                   types: ['tank','brute','tank','bull','normal'],
                   countMult: 0.55, hpMult: 1.15, speedMult: 0.85 },
-  showdown:     { name: 'SHOWDOWN',      sub: 'Spitters break the line — close them out.', color: '#a4f', accent: '#f0f', icon: '⌖',
-                  types: ['mini','spitter','mini','spitter','normal'],
-                  countMult: 0.80, hpMult: 0.90, speedMult: 1.00 },
+  showdown:     { name: 'SHOWDOWN',      sub: 'A spitter holds the line — close them out.', color: '#a4f', accent: '#f0f', icon: '⌖',
+                  // Single ranged type + plenty of melee filler so the wave
+                  // never becomes a kill-box of snipers. Ranged count is
+                  // additionally capped at runtime (see _capRangedSpawns).
+                  types: ['spitter','normal','normal','fast','normal'],
+                  countMult: 0.70, hpMult: 0.90, speedMult: 1.00 },
   elite_guard:  { name: 'ELITE GUARD',   sub: 'Heavy hitters only — no filler.',     color: '#f44', accent: '#fa0', icon: '✦',
                   types: ['brute','splitter','exploder','reaper','lash'],
                   countMult: 0.45, hpMult: 1.00, speedMult: 1.00 },
@@ -22066,10 +22069,14 @@ function getArcadeWaveType(wave) {
   if (wave === 4) return 'standard';
   if (wave === 5) return 'heavy_metal';
   if (wave === 6) return 'runner_storm';
+  if (wave === 7) return 'standard';   // breather before the showdown
   if (wave === 8) return 'standard';
-  if (wave === 9) return 'showdown';
-  // 11+: weighted pool, picked by a wave-number hash for determinism
-  const pool = ['standard','standard','swarm','runner_storm','heavy_metal','showdown','blade_frenzy'];
+  if (wave === 9) return 'showdown';   // single-ranged-type spitter wave
+  // 11+: weighted pool, picked by a wave-number hash for determinism.
+  // Heavily weighted toward melee/standard so the player isn't constantly
+  // dodging ranged crossfire from a roster of projectile types.
+  const pool = ['standard','standard','standard','swarm','runner_storm','heavy_metal','blade_frenzy'];
+  if (wave >= 12) pool.push('showdown');
   if (wave >= 13) pool.push('elite_guard');
   if (wave >= 14) pool.push('blade_frenzy'); // double weight for mid-range melee variety
   if (wave >= 16) pool.push('runner_storm','swarm');
@@ -22240,7 +22247,7 @@ function startArcadeWave() {
   // waves get a chunky balloon count, others scale around the base curve.
   const baseCount = wt.isBoss
     ? Math.floor(8 + arcadeWave * 1.2)
-    : Math.floor(6 + arcadeWave * 2.2);
+    : Math.floor(5 + arcadeWave * 1.7);
   arcadeZombiesTotal = Math.max(2, Math.floor(baseCount * wt.countMult));
   arcadeZombiesSpawned = 0;
   arcadeZombiesKilled = 0;
@@ -22475,14 +22482,15 @@ function updateArcadeWaves() {
     if (arcadeWaveTimer <= 0) startArcadeWave();
     return;
   }
-  // Active wave — sustained spawning. Higher concurrent cap than survival so
-  // the action stays dense on the bigger map.
-  const maxActive = Math.min(18, 7 + arcadeWave);
-  const spawnRate = Math.max(3, 22 - arcadeWave * 2);
+  // Active wave — sustained spawning. Caps tuned so the small arena never
+  // gets choked: cap rises gently and tops out at 14 so the player isn't
+  // ringed by 18 enemies (especially ranged) in a 1620px box.
+  const maxActive = Math.min(14, 5 + Math.floor(arcadeWave * 0.8));
+  const spawnRate = Math.max(5, 22 - arcadeWave * 2);
   spawnTimer++;
   if (spawnTimer % spawnRate === 0 && arcadeZombiesSpawned < arcadeZombiesTotal && zombies.length < maxActive) {
-    const burstCount = arcadeWave >= 6 ? Math.min(3, arcadeZombiesTotal - arcadeZombiesSpawned)
-                     : arcadeWave >= 3 ? Math.min(2, arcadeZombiesTotal - arcadeZombiesSpawned)
+    const burstCount = arcadeWave >= 9 ? Math.min(3, arcadeZombiesTotal - arcadeZombiesSpawned)
+                     : arcadeWave >= 5 ? Math.min(2, arcadeZombiesTotal - arcadeZombiesSpawned)
                      : 1;
     for (let b = 0; b < burstCount; b++) {
       spawnArcadeZombie();
@@ -27087,9 +27095,16 @@ function update() {
         else if(zt?.sniper){
           if(gameMode==='siege'){z.vx=(zdx/zd)*z.speed*0.8;z.vy=(zdy/zd)*z.speed*0.8;}
           else if(zd<200){z.vx=-zdx/zd*z.speed;z.vy=-zdy/zd*z.speed;} // retreat
+          // ARCADE: snipers must advance if they're outside their fire range.
+          // Otherwise they sit offscreen pinging the player from beyond the
+          // viewport, which feels unfair. 500px ≈ edge of screen.
+          else if(gameMode==='arcade'&&zd>500){z.vx=(zdx/zd)*z.speed;z.vy=(zdy/zd)*z.speed;}
           else{z.vx*=0.9;z.vy*=0.9;}
           if(!z._sniperState)z._sniperState='aim';
-          if(z._sniperState==='aim'){z._sniperCharge=(z._sniperCharge||0)+1;
+          // Gate aim/fire by max range so the sniper can't shoot from offscreen.
+          const _sniperMaxRange = gameMode==='arcade' ? 520 : 9999;
+          if(zd>_sniperMaxRange){z._sniperState='aim';z._sniperCharge=0;_clearTele(z);}
+          else if(z._sniperState==='aim'){z._sniperCharge=(z._sniperCharge||0)+1;
             z.angle = Math.atan2(zdy, zdx);
             // Sniper already renders a laser sight in the body block; layer the color flush + muzzle telegraph for stronger read.
             _setTele(z, 'point', z._sniperCharge / 90, { ang: z.angle, col: z.color });
