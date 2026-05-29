@@ -15946,86 +15946,34 @@ function throwSpike() {
       playSfx('lightning_fire', 0.2) || playSound(1200, 0.06, 'sine', 0.08);
 
     } else if (_classId === 'impact') {
-      // ======== KINETIC NOVA — MASSIVE 360° pulse wave, enemies SLIDE across the room ========
-      // TWIN SPIKE: +28% radius. (Firing two stacked novas at the same point
-      // would just double-damage; a bigger blast reads as the actual upgrade.)
+      // ======== KINETIC NOVA — discharge-style 360° shockwave with pulse-energy fill ========
+      // The nova now spawns as a spike entity that expands from origin to
+      // _novaMaxR over ~10 frames, applies damage/launch as the leading edge
+      // sweeps each enemy, then lingers as a thin hairline pulse for ~14
+      // frames. Visuals mirror the DISCHARGE weapon's wedge shockwave but as
+      // a full 360° annulus, rendered in #cef pulse-class color with white
+      // crackling sparks filling the swept area. TWIN SPIKE: +28% radius so
+      // the two casts read as a genuinely bigger blast.
       const _twinR = _twin ? 1.28 : 1;
-      const _r = _modScale('impact_ring', 200, 25) * 0.8 * _radW * _twinR;
-      for (const z of zombies) {
-        if (z.hp <= 0) continue;
-        const dx = z.x - px, dy = z.y - py;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < _r * _r) {
-          const d = Math.sqrt(d2) || 1;
-          // Hefty sliding push — close enemies launch fast, edges still slide.
-          const _push = 38 * (1 - d / _r) + 18;
-          z._slideVx = (z._slideVx || 0) + (dx / d) * _push;
-          z._slideVy = (z._slideVy || 0) + (dy / d) * _push;
-          z._slideTimer = 65; // ~1.1s of sliding so the launch is visible
-          damageZombie(z, 35, dx / d * 6, dy / d * 6);
-          applyExposed(z);
-          // Per-enemy: directional spark spray
-          for (let j = 0; j < 8; j++) {
-            const ja = Math.atan2(dy,dx) + (Math.random()-0.5)*1.2;
-            const js = 4+Math.random()*6;
-            particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
-              life: 12+Math.random()*8, maxLife: 20, size: 2+Math.random()*2.5,
-              color: Math.random()>0.3?'#cef':'#fff', type: 'spark' });
-          }
-          // Speed lines trailing each launched enemy
-          for (let j = 0; j < 3; j++) {
-            particles.push({ x: z.x, y: z.y,
-              vx: -(dx/d)*(2+Math.random()*3), vy: -(dy/d)*(2+Math.random()*3),
-              life: 14, maxLife: 14, size: 1.5+Math.random(), color: '#8cf', type: 'spark' });
-          }
-        }
+      const _maxR = _modScale('impact_ring', 200, 25) * 0.8 * _radW * _twinR;
+      spikes.push({
+        x: px, y: py, ownerId: lp.id, classId: 'impact',
+        phase: 'expanding', _ring: true, _nova: true,
+        _novaR: 22, _novaMaxR: _maxR,
+        _maxLinger: Math.floor(14 * _persist), _lingerT: 0,
+        _hitSet: new Set(),
+        lifetime: Math.floor(40 * _persist), maxLife: 40, _pulseTimer: 0,
+      });
+      // Launch flash — white core burst + initial inner sparks. The expanding
+      // ring itself is rendered each frame from the spike entity.
+      for (let _ni = 0; _ni < 14; _ni++) {
+        const _na = Math.random() * Math.PI * 2, _ns = 4 + Math.random() * 5;
+        particles.push({ x: px, y: py, vx: Math.cos(_na)*_ns, vy: Math.sin(_na)*_ns,
+          life: 10+Math.random()*6, maxLife: 16, size: 3+Math.random()*2,
+          color: Math.random()>0.4?'#fff':'#cef', type: 'spark' });
       }
-      // Fast expanding ripple waves — rapid cascade outward
-      for (let r = 0; r < 6; r++) {
-        particles.push({ x: px, y: py, vx: 0, vy: 0,
-          life: 8+r*3, maxLife: 10+r*3, size: _r*(0.4+r*0.22),
-          color: r<2?'#fff':r<4?'#cef':'#8cf', type: 'wakering' });
-      }
-      // DISCHARGE-STYLE lingering outer rim — uses the payload_rim_linger
-      // particle that fast-expands then holds at the boundary as a hairline
-      // pulse before fading. Sells the wave's reach for ~700ms after the
-      // inner cascade has dissipated.
-      particles.push({ x: px, y: py, vx: 0, vy: 0,
-        life: 50, maxLife: 50, size: _r * 1.05,
-        color: '#cef', type: 'payload_rim_linger', _seed: Math.random() * 1000 });
-      particles.push({ x: px, y: py, vx: 0, vy: 0,
-        life: 38, maxLife: 38, size: _r * 0.7,
-        color: '#fff', type: 'payload_rim_linger', _seed: Math.random() * 1000 });
-      // 48 radial speed lines — dense blast pattern
-      for (let i = 0; i < 48; i++) {
-        const ba = (i/48)*Math.PI*2, bs = 8+Math.random()*10;
-        particles.push({ x: px, y: py, vx: Math.cos(ba)*bs, vy: Math.sin(ba)*bs,
-          life: 18+Math.random()*10, maxLife: 28, size: 2+Math.random()*3,
-          color: i%4===0?'#fff':'#cef', type: 'spark' });
-      }
-      // 12 glitch characters blasted outward
-      const _novaGlyphs = '\u2588\u2591\u2593\u2592\u2573\u25C6\u25AA\u25E2\u25E3';
-      for (let i = 0; i < 12; i++) {
-        const ga = (i/12)*Math.PI*2, gs = 5+Math.random()*5;
-        particles.push({ x: px+Math.cos(ga)*12, y: py+Math.sin(ga)*12,
-          vx: Math.cos(ga)*gs, vy: Math.sin(ga)*gs,
-          life: 22, maxLife: 22, size: 16, color: ['#cef','#fff','#8cf'][i%3],
-          type: 'glitchtext', text: _novaGlyphs[Math.floor(Math.random()*_novaGlyphs.length)] });
-      }
-      // Ground crack decals
-      for (let i = 0; i < 12; i++) {
-        const ca = (i/12)*Math.PI*2, cr = 15+Math.random()*(_r*0.7);
-        decals.push({ type: 'scorch', x: px+Math.cos(ca)*cr, y: py+Math.sin(ca)*cr,
-          size: 3+Math.random()*5, color: 'rgba(180,220,255,0.3)', alpha: 0.35, _fade: 0.002 });
-      }
+      particles.push({ x: px, y: py, vx: 0, vy: 0, life: 6, maxLife: 6, size: 36, color: '#fff', type: 'wakering' });
       decals.push({ type: 'scorch', x: px, y: py, size: 18, color: 'rgba(200,230,255,0.4)', alpha: 0.45, _fade: 0.001 });
-      // Smoke rings from the blast
-      for (let i = 0; i < 8; i++) {
-        const sa = (i/8)*Math.PI*2;
-        particles.push({ x: px+Math.cos(sa)*20, y: py+Math.sin(sa)*20,
-          vx: Math.cos(sa)*3, vy: Math.sin(sa)*3,
-          life: 28, maxLife: 28, size: 5+Math.random()*4, color: '#335', type: 'smoke', _smokeAlpha: 0.18 });
-      }
       screenShake.intensity = Math.max(screenShake.intensity, 18);
       triggerGlitchSurge(0.5, 26);
       // Pulse-wave sound (not explosion): layered sines that sweep down
@@ -16034,7 +15982,6 @@ function throwSpike() {
       playSound(180, 0.22, 'sine', 0.16);
       playSound(520, 0.12, 'sine', 0.08);
       setTimeout(() => playSound(110, 0.18, 'sine', 0.10), 60);
-
     } else if (_classId === 'plague') {
       // ======== MIASMA — thick rolling corruption fog drifting forward ========
       const _cloudR = _modScale('plague_ring', 250, 25) * 0.28 * _radW;
@@ -16932,6 +16879,135 @@ function _updateRingZone(sp, _radBoost) {
     // Max travel or OOB
     if (sp.travel >= 800 || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H) {
       sp.lifetime = 0; return;
+    }
+    sp.lifetime--;
+
+  // ======== KINETIC NOVA — expanding 360° pulse shockwave + inner pulse energy ========
+  } else if (sp.classId === 'impact' && sp._nova) {
+    const _maxR = sp._novaMaxR;
+    // EXPANDING PHASE — ring grows from origin to maxR, damages/launches as it sweeps.
+    if (sp.phase === 'expanding') {
+      const _prevR = sp._novaR;
+      // Ease-out expansion: fast start, slows near boundary. Hits max in ~10f.
+      const _pct = sp._novaR / _maxR;
+      const _speed = 78 * Math.pow(1 - _pct, 1.2) + 5;
+      sp._novaR = Math.min(_maxR, sp._novaR + _speed);
+      // Damage any enemy the leading edge has passed through this frame.
+      const _r = sp._novaR;
+      for (const z of zombies) {
+        if (z.hp <= 0 || sp._hitSet.has(z.zid)) continue;
+        const dx = z.x - sp.x, dy = z.y - sp.y;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if (d <= _r) {
+          sp._hitSet.add(z.zid);
+          const _dn = d || 1;
+          const _push = 38 * (1 - d / _maxR) + 18;
+          z._slideVx = (z._slideVx || 0) + (dx/_dn) * _push;
+          z._slideVy = (z._slideVy || 0) + (dy/_dn) * _push;
+          z._slideTimer = 65;
+          damageZombie(z, 35, (dx/_dn) * 6, (dy/_dn) * 6);
+          applyExposed(z);
+          // Per-enemy launch sparks + speed lines back toward origin
+          for (let j = 0; j < 8; j++) {
+            const ja = Math.atan2(dy, dx) + (Math.random()-0.5)*1.2;
+            const js = 4 + Math.random()*6;
+            particles.push({ x: z.x, y: z.y, vx: Math.cos(ja)*js, vy: Math.sin(ja)*js,
+              life: 12+Math.random()*8, maxLife: 20, size: 2+Math.random()*2.5,
+              color: Math.random()>0.3?'#cef':'#fff', type: 'spark' });
+          }
+          for (let j = 0; j < 3; j++) {
+            particles.push({ x: z.x, y: z.y,
+              vx: -(dx/_dn) * (2+Math.random()*3), vy: -(dy/_dn) * (2+Math.random()*3),
+              life: 14, maxLife: 14, size: 1.5+Math.random(), color: '#8cf', type: 'spark' });
+          }
+        }
+      }
+      // Leading-edge crackle — bright white sparks scattered along the ring.
+      // 12-per-frame keeps the front edge alive without choking the particle
+      // budget; sparks drift outward following the wave direction.
+      const _frontN = 12;
+      for (let i = 0; i < _frontN; i++) {
+        const _fa = (i / _frontN) * Math.PI*2 + Math.random()*0.4;
+        const _fr = _r * (0.92 + Math.random()*0.06);
+        const _fx = sp.x + Math.cos(_fa) * _fr;
+        const _fy = sp.y + Math.sin(_fa) * _fr;
+        particles.push({ x: _fx, y: _fy,
+          vx: Math.cos(_fa)*1.2 + (Math.random()-0.5)*1.2,
+          vy: Math.sin(_fa)*1.2 + (Math.random()-0.5)*1.2,
+          life: 14+Math.random()*8, maxLife: 22, size: 1.6+Math.random()*1.4,
+          color: i%3===0 ? '#fff' : '#cef', type: 'spark' });
+      }
+      // Inner pulse energy — wind-class sparks drifting inside the swept area.
+      // Bias toward outer 70% so the residual energy paints what the wave
+      // just passed through, mirroring the discharge wave's wake.
+      const _inN = 6;
+      for (let i = 0; i < _inN; i++) {
+        const _ia = Math.random() * Math.PI*2;
+        const _it = 0.15 + Math.pow(Math.random(), 0.7) * 0.8;
+        const _ir = _r * _it;
+        particles.push({ x: sp.x + Math.cos(_ia)*_ir, y: sp.y + Math.sin(_ia)*_ir,
+          vx: (Math.random()-0.5)*0.5, vy: (Math.random()-0.5)*0.5 - 0.15,
+          life: 26+Math.random()*14, maxLife: 40, size: 1.4+Math.random()*1.6,
+          color: '#cef', type: 'spark' });
+      }
+      // White static every other frame — sells the crackling pulse energy.
+      if (sp._pulseTimer % 2 === 0) {
+        const _sa = Math.random() * Math.PI*2;
+        const _sr = _r * (0.1 + Math.random()*0.8);
+        particles.push({ x: sp.x + Math.cos(_sa)*_sr, y: sp.y + Math.sin(_sa)*_sr,
+          vx: 0, vy: 0,
+          life: 16, maxLife: 16, size: 1.4+Math.random()*0.9,
+          color: '#fff', type: 'spark' });
+      }
+      // Glitch chars every 3 frames — chars launch outward from current radius.
+      if (sp._pulseTimer % 3 === 0) {
+        const _NOVA_GLYPHS = '█░▓▒╳◆▪◢◣';
+        const _ga = Math.random() * Math.PI*2;
+        const _gr = _r * (0.4 + Math.random()*0.5);
+        const _gs = 2 + Math.random()*2;
+        particles.push({ x: sp.x + Math.cos(_ga)*_gr, y: sp.y + Math.sin(_ga)*_gr,
+          vx: Math.cos(_ga)*_gs, vy: Math.sin(_ga)*_gs,
+          life: 20, maxLife: 20, size: 14,
+          color: Math.random()>0.5 ? '#cef' : '#fff',
+          type: 'glitchtext', text: _NOVA_GLYPHS[Math.floor(Math.random()*_NOVA_GLYPHS.length)] });
+      }
+      // Ground crack decals — laid down along the swept area every few frames.
+      if (sp._pulseTimer % 4 === 0) {
+        const _ca = Math.random() * Math.PI*2;
+        const _cr = (_prevR + (_r - _prevR) * Math.random()) * (0.6 + Math.random()*0.35);
+        decals.push({ type: 'scorch', x: sp.x + Math.cos(_ca)*_cr, y: sp.y + Math.sin(_ca)*_cr,
+          size: 3+Math.random()*5, color: 'rgba(180,220,255,0.3)', alpha: 0.35, _fade: 0.002 });
+      }
+      // Transition to linger when the wave reaches maxR.
+      if (sp._novaR >= _maxR) {
+        sp.phase = 'lingering';
+        sp._lingerT = sp._maxLinger;
+      }
+    } else if (sp.phase === 'lingering') {
+      // Lingering hairline rim — pulses as it fades. No more damage; this is
+      // the visual settled-at-the-boundary beat, matching the discharge wave.
+      sp._lingerT--;
+      // A few sparse white sparks crackling at the rim
+      if (sp._pulseTimer % 2 === 0) {
+        const _la = Math.random() * Math.PI*2;
+        particles.push({ x: sp.x + Math.cos(_la)*_maxR, y: sp.y + Math.sin(_la)*_maxR,
+          vx: Math.cos(_la)*0.6 + (Math.random()-0.5)*0.8,
+          vy: Math.sin(_la)*0.6 + (Math.random()-0.5)*0.8,
+          life: 14, maxLife: 14, size: 1.4+Math.random()*0.8,
+          color: Math.random()>0.4 ? '#fff' : '#cef', type: 'spark' });
+      }
+      if (sp._lingerT <= 0) {
+        // Dissolve burst — scatter sparks around the perimeter as the wave dies.
+        for (let _di = 0; _di < 18; _di++) {
+          const _da = (_di / 18) * Math.PI*2;
+          particles.push({ x: sp.x + Math.cos(_da)*_maxR, y: sp.y + Math.sin(_da)*_maxR,
+            vx: Math.cos(_da)*1.5 + (Math.random()-0.5)*2,
+            vy: Math.sin(_da)*1.5 + (Math.random()-0.5)*2,
+            life: 18+Math.random()*10, maxLife: 28, size: 2+Math.random()*2,
+            color: Math.random()>0.4 ? '#cef' : '#fff', type: 'spark' });
+        }
+        sp.lifetime = 0; return;
+      }
     }
     sp.lifetime--;
 
@@ -29077,6 +29153,11 @@ function update() {
         return { ..._base, t:'p', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1) };
       } else if (sp._seeker) {
         return { ..._base, t:'s', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1), zid:sp._seekerTarget?sp._seekerTarget.zid:(sp.stuckTo?sp.stuckTo.zid:0) };
+      } else if (sp._nova) {
+        // KINETIC NOVA: sync the expanding-ring fields so non-host renders
+        // the wave at the same radius as host (otherwise the spike entity
+        // ships as a generic 'b' bullet and the nova visuals never appear).
+        return { ..._base, t:'n', r:+(sp._novaR||0).toFixed(1), mR:+(sp._novaMaxR||0).toFixed(1), lT:sp._lingerT|0, mL:sp._maxLinger|0 };
       } else {
         return { ..._base, t:'b', vx:+(sp.vx||0).toFixed(1), vy:+(sp.vy||0).toFixed(1), zid:sp.stuckTo?sp.stuckTo.zid:0 };
       }
@@ -29165,6 +29246,10 @@ function applyHostState(msg) {
         return { ...base, _torpedo:true, vx:s.vx||0, vy:s.vy||0 };
       } else if (s.t === 's') {
         return { ...base, _seeker:true, vx:s.vx||0, vy:s.vy||0 };
+      } else if (s.t === 'n') {
+        // KINETIC NOVA: rebuild the ring/nova flags + expansion state so the
+        // non-host render path treats it like the host's nova entity.
+        return { ...base, _ring:true, _nova:true, _novaR:s.r||0, _novaMaxR:s.mR||0, _lingerT:s.lT||0, _maxLinger:s.mL||0, _hitSet:new Set() };
       }
       return { ...base, vx:s.vx||0, vy:s.vy||0 };
     });
@@ -32503,6 +32588,79 @@ function render() {
           ctx.restore();
         }
         ctx.save(); ctx.translate(sp.x, sp.y);
+      } else if (sp.classId === 'impact' && sp._nova) {
+        // ---- KINETIC NOVA — 360° pulse shockwave (discharge weapon look) ----
+        // Mirror of the DISCHARGE wave: wide ambient glow + translucent inner
+        // fill + solid bright barrier band + white leading edge + inner glow.
+        // Built as full circles instead of wedge arcs. Color: #cef (pulse).
+        const _isLinger = sp.phase === 'lingering';
+        const _r = _isLinger ? sp._novaMaxR : sp._novaR;
+        const _fadePct = _r / sp._novaMaxR;
+        const _maxR = sp._novaMaxR;
+        // Linger boost: rim BRIGHTENS during linger, then dies.
+        const _lingerBoost = _isLinger
+          ? 1.6 + 0.5 * Math.sin(sp._lingerT * 0.8)
+          : 1.0;
+        const _alpha = (0.85 - 0.7 * _fadePct) * _lingerBoost;
+        // Layer 1: wide ambient halo behind the wave
+        ctx.globalAlpha = _alpha * 0.06;
+        const _glow = ctx.createRadialGradient(0, 0, _r * 0.3, 0, 0, _r * 1.1);
+        _glow.addColorStop(0, 'transparent');
+        _glow.addColorStop(0.5, '#cef');
+        _glow.addColorStop(1, 'transparent');
+        ctx.fillStyle = _glow;
+        ctx.beginPath(); ctx.arc(0, 0, _r * 1.1, 0, Math.PI*2); ctx.fill();
+        // Layer 2: translucent inner fill — annular wake band the wave has swept.
+        // Inner edge pulls toward center during linger (mass arriving at boundary).
+        const _lingerProg = _isLinger ? Math.max(0, 1 - sp._lingerT / Math.max(1, sp._maxLinger)) : 0;
+        const _trailR = Math.max(0, (_r - 60) * (1 - _lingerProg * 0.85));
+        ctx.globalAlpha = _alpha * 0.12;
+        ctx.fillStyle = '#cef';
+        ctx.beginPath();
+        ctx.arc(0, 0, _r, 0, Math.PI*2);
+        ctx.arc(0, 0, _trailR, 0, Math.PI*2, true);
+        ctx.fill('evenodd');
+        // Layer 3: solid barrier band — thick at origin, hairline near boundary
+        // / during linger. Sells "shockwave loses energy" visually.
+        const _bandT = _isLinger ? 3 : Math.max(3, 36 * Math.pow(1 - _fadePct, 1.1));
+        const _outerR = _r;
+        const _innerR = Math.max(0, _r - _bandT);
+        ctx.globalAlpha = _alpha * 0.85;
+        ctx.fillStyle = '#cef';
+        ctx.beginPath();
+        ctx.arc(0, 0, _outerR, 0, Math.PI*2);
+        ctx.arc(0, 0, _innerR, 0, Math.PI*2, true);
+        ctx.fill('evenodd');
+        // Layer 4: bright white leading edge — line width tapers as wave expands
+        const _rimW = _isLinger ? 1.5 : Math.max(1.5, 12 * Math.pow(1 - _fadePct, 1.3));
+        ctx.globalAlpha = Math.min(1, _alpha * 1.4);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = _rimW;
+        ctx.beginPath(); ctx.arc(0, 0, _outerR, 0, Math.PI*2); ctx.stroke();
+        // Layer 5: inner pulse-color glow edge — also tapers thin
+        ctx.globalAlpha = _alpha * 0.4;
+        ctx.strokeStyle = '#cef'; ctx.lineWidth = _isLinger ? 1 : Math.max(1, 3 * Math.pow(1 - _fadePct, 1.2));
+        ctx.beginPath(); ctx.arc(0, 0, _innerR, 0, Math.PI*2); ctx.stroke();
+        // Layer 6: faint mid pulse ring — gives the energy fill a band of depth.
+        ctx.globalAlpha = _alpha * 0.18;
+        ctx.strokeStyle = '#cef'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(0, 0, _r * 0.6, 0, Math.PI*2); ctx.stroke();
+        // Layer 7: radial speed lines streaking outward from origin to current
+        // radius — sells the "pulse energy moving outward" effect. 12 spokes.
+        if (!_isLinger) {
+          ctx.globalAlpha = _alpha * 0.5;
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+          const _spokeStart = _r * 0.35;
+          const _spokeEnd = _r * 0.92;
+          for (let _si = 0; _si < 12; _si++) {
+            const _sa = (_si / 12) * Math.PI*2;
+            const _sx2 = Math.cos(_sa), _sy2 = Math.sin(_sa);
+            ctx.beginPath();
+            ctx.moveTo(_sx2 * _spokeStart, _sy2 * _spokeStart);
+            ctx.lineTo(_sx2 * _spokeEnd, _sy2 * _spokeEnd);
+            ctx.stroke();
+          }
+        }
+        ctx.globalAlpha = 1;
       } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
         // MINE: chunkier body + bigger blinking red light + faint danger ring
         // around the blast radius so the player can see the threat area at a
