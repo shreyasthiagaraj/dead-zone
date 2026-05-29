@@ -25348,37 +25348,33 @@ function update() {
         if (gameTime%2===0) decals.push({x:lp.x+_backX*10,y:lp.y+_backY*10,size:12+Math.random()*8,alpha:0.2,color:'#420'});
       }
       if (_mods.cryoWake > 0) {
-        // COLD FRONT: frost particles shooting AHEAD of player
+        // COLD FRONT: frost particles + snowflakes shooting AHEAD of player.
+        // Per frame we push 3 paired spawns: a small fast frost spark + a
+        // bigger snowflake at the EXACT same position with the EXACT same
+        // velocity. The snowflake outlives the spark by 4-5x so the cloud
+        // visibly carries snowflakes that persist after the sparks fade.
+        // _priority: true keeps them through the particle cap eviction so
+        // they actually make it on-screen during dense combat frames.
         for (let ci = 0; ci < 3; ci++) {
           const fwdOff = 20 + Math.random() * 30;
-          particles.push({ x: lp.x + _ddx*fwdOff + (Math.random()-0.5)*20, y: lp.y + _ddy*fwdOff + (Math.random()-0.5)*20,
-            vx: _ddx*3 + (Math.random()-0.5)*1, vy: _ddy*3 + (Math.random()-0.5)*1,
-            life: 14, maxLife: 14, size: 3+Math.random()*3, color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
+          const _sx = lp.x + _ddx*fwdOff + (Math.random()-0.5)*20;
+          const _sy = lp.y + _ddy*fwdOff + (Math.random()-0.5)*20;
+          const _svx = _ddx*3 + (Math.random()-0.5)*1;
+          const _svy = _ddy*3 + (Math.random()-0.5)*1;
+          // Frost spark — short-lived, small, the "sparkle" of the cloud
+          particles.push({ x: _sx, y: _sy, vx: _svx, vy: _svy,
+            life: 14, maxLife: 14, size: 3+Math.random()*3,
+            color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
+          // Snowflake — same position + velocity but big and long-lived.
+          // Sizes randomized 6-14px, life 70-110 so the flake outlives the
+          // spark by ~5x and floats in the cloud area as the spark fades.
+          particles.push({ x: _sx, y: _sy, vx: _svx, vy: _svy,
+            life: 70 + Math.floor(Math.random()*40), maxLife: 110,
+            size: 6 + Math.random() * 8,
+            color: Math.random()>0.5 ? '#fff' : (Math.random()>0.5 ? '#cef' : '#8ef'),
+            type: 'snowflake', _priority: true });
         }
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
-        // Snowflake burst — same forward velocity as the frost sparks
-        // (~3 px/frame) so the snowflakes ride the SAME outward cloud
-        // and stay with the player's dash. After the global drag
-        // (0.95/frame) eats their momentum over ~30 frames they slow
-        // and float in place, fading over the remaining ~120 frames.
-        // 4 per frame at sizes 7-17px with bolder line width so each
-        // flake is unmistakably visible amid the smaller frost sparks.
-        const _sfCount = 4;
-        for (let _sfI = 0; _sfI < _sfCount; _sfI++) {
-          const _sfFwdOff = 16 + Math.random() * 30;
-          const _sfPerpOff = (Math.random() - 0.5) * 38; // wider spread
-          particles.push({
-            x: lp.x + _ddx * _sfFwdOff + _perpX * _sfPerpOff,
-            y: lp.y + _ddy * _sfFwdOff + _perpY * _sfPerpOff,
-            // MATCH frost spark velocity exactly — they move as one cloud.
-            vx: _ddx * 3 + (Math.random() - 0.5),
-            vy: _ddy * 3 + (Math.random() - 0.5),
-            life: 130 + Math.floor(Math.random() * 50), maxLife: 180,
-            size: 7 + Math.random() * 10, // 7-17px — big enough to read
-            color: Math.random() > 0.5 ? '#fff' : (Math.random() > 0.5 ? '#cef' : '#8ef'),
-            type: 'snowflake',
-          });
-        }
       }
       // STORM DASH per-frame VFX intentionally lives ONLY in
       // applyDashTrailEffects now (player-as-lightning-bolt segment + zap
