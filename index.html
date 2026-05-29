@@ -8909,7 +8909,24 @@ function applyChill(z, stacks, force) {
   const _prevChill = z._chill || 0;
   z._chill = Math.min(maxChill, _prevChill + Math.ceil(stacks * bonus));
   z._chillTimer = Math.max(z._chillTimer || 0, 240); // 4s
-  if (z._chill > _prevChill) addFloatingText(z.x, z.y - z.radius - 10, 'CHILL x' + z._chill, '#8ef');
+  if (z._chill > _prevChill) {
+    addFloatingText(z.x, z.y - z.radius - 10, 'CHILL x' + z._chill, '#8ef');
+    // Snowflake burst — small flakes scatter outward from the enemy on
+    // each new chill stack. 2-3 flakes is enough to read without choking
+    // the particle budget when many enemies eat a cryo proc at once.
+    for (let _sfI = 0; _sfI < 3; _sfI++) {
+      const _sfA = Math.random() * Math.PI * 2;
+      const _sfS = 0.6 + Math.random() * 1.1;
+      particles.push({
+        x: z.x + Math.cos(_sfA) * z.radius * 0.4,
+        y: z.y + Math.sin(_sfA) * z.radius * 0.4,
+        vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS - 0.3,
+        life: 28, maxLife: 28, size: 4 + Math.random() * 2,
+        color: Math.random() > 0.4 ? '#cef' : '#8ef',
+        type: 'snowflake',
+      });
+    }
+  }
   if (z.boss) return;
   const threshold = 4;
   if (z._frozen) {
@@ -23885,6 +23902,19 @@ function dropZombieLoot(z) {
     }
     // Expanding frost ring + radial ice shards
     for(let _si=0;_si<20;_si++){const _sa=(_si/20)*Math.PI*2,_ss=4+Math.random()*3;particles.push({x:z.x,y:z.y,vx:Math.cos(_sa)*_ss,vy:Math.sin(_sa)*_ss,life:20+Math.random()*10,maxLife:30,size:3+Math.random()*3,color:Math.random()>0.3?'#aef':'#cff',type:'spark'});}
+    // Snowflake shatter — 6 flakes launched outward when a frozen enemy
+    // dies or the cryo shatter procs. Reads as "ice crystallizes outward."
+    for (let _sfI = 0; _sfI < 6; _sfI++) {
+      const _sfA = (_sfI / 6) * Math.PI * 2 + Math.random() * 0.4;
+      const _sfS = 2.5 + Math.random() * 2;
+      particles.push({
+        x: z.x, y: z.y,
+        vx: Math.cos(_sfA) * _sfS, vy: Math.sin(_sfA) * _sfS,
+        life: 36, maxLife: 36, size: 5 + Math.random() * 2,
+        color: Math.random() > 0.5 ? '#cef' : '#aef',
+        type: 'snowflake',
+      });
+    }
     // Inner burst
     for(let _ci=0;_ci<8;_ci++){const _ca=Math.random()*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(_ca)*2,vy:Math.sin(_ca)*2-1,life:24,maxLife:24,size:4+Math.random()*2,color:'#8df',type:'spark',gravity:0.04});}
     // Ground frost decal
@@ -25296,6 +25326,19 @@ function update() {
             life: 14, maxLife: 14, size: 3+Math.random()*3, color: Math.random()>0.3?'#8ef':'#cff', type: 'spark' });
         }
         if (gameTime%3===0) particles.push({ x:lp.x+_ddx*35,y:lp.y+_ddy*35,vx:_ddx,vy:_ddy,life:20,maxLife:20,size:8+Math.random()*5,color:'#8ef',type:'smoke' });
+        // Snowflake trail — one drifting flake every other frame at the
+        // player's back, gives the cryo dash a recognizable winter motif.
+        if (gameTime % 2 === 0) {
+          particles.push({
+            x: lp.x + _backX * 14 + (Math.random()-0.5) * 10,
+            y: lp.y + _backY * 14 + (Math.random()-0.5) * 10,
+            vx: _backX * 0.6 + (Math.random()-0.5) * 0.4,
+            vy: _backY * 0.6 + (Math.random()-0.5) * 0.4 - 0.2,
+            life: 28, maxLife: 28, size: 4 + Math.random() * 2,
+            color: Math.random() > 0.5 ? '#cef' : '#8ef',
+            type: 'snowflake',
+          });
+        }
       }
       // STORM DASH per-frame VFX intentionally lives ONLY in
       // applyDashTrailEffects now (player-as-lightning-bolt segment + zap
@@ -35918,6 +35961,53 @@ function render() {
           rimColor: p._rimColor || '#fff',
           alphaScale: p._alphaScale || 1,
         });
+      } else if(p.type==='snowflake'){
+        // Snowflake: stylized 6-pointed icon for cryo effects (chill apply,
+        // frozen ambient, cryo dash trail, cryo weapon hits). Cheap geometric
+        // draw — six line segments, no shadowBlur. Spins slowly via
+        // p._spin += dt and fades out over its life.
+        const _sfLife = p.life / p.maxLife;
+        const _sfAlpha = _sfLife * (p._alphaScale || 1);
+        if (_sfAlpha > 0.02) {
+          const _sfSize = p.size;
+          // Spin: starting angle stored in _spin, persists across frames.
+          p._spin = (p._spin || 0) + 0.04;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p._spin);
+          ctx.globalAlpha = _sfAlpha * 0.9;
+          ctx.strokeStyle = p.color || '#cef';
+          ctx.lineWidth = 1.2;
+          // Six radial spokes
+          for (let _si = 0; _si < 6; _si++) {
+            const _sa = (_si / 6) * Math.PI * 2;
+            const _cx = Math.cos(_sa), _cy = Math.sin(_sa);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(_cx * _sfSize, _cy * _sfSize);
+            ctx.stroke();
+            // Two short barbs near the tip (each spoke) — gives the
+            // recognizable snowflake silhouette without much cost.
+            const _bx = _cx * _sfSize * 0.62, _by = _cy * _sfSize * 0.62;
+            const _bL = _sfSize * 0.32;
+            const _ba1 = _sa + Math.PI / 3;
+            const _ba2 = _sa - Math.PI / 3;
+            ctx.beginPath();
+            ctx.moveTo(_bx, _by);
+            ctx.lineTo(_bx + Math.cos(_ba1) * _bL, _by + Math.sin(_ba1) * _bL);
+            ctx.moveTo(_bx, _by);
+            ctx.lineTo(_bx + Math.cos(_ba2) * _bL, _by + Math.sin(_ba2) * _bL);
+            ctx.stroke();
+          }
+          // Small bright center dot
+          ctx.globalAlpha = _sfAlpha;
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(0, 0, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
       } else if(p.type==='payload_shockwave'){
         // Payload shockwave: fast expand → slow deceleration, irregular inner edge
         const _prog = 1 - p.life/p.maxLife; // 0→1
