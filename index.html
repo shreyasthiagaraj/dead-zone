@@ -1146,13 +1146,18 @@ body.mobile #mobile-buttons { display: block; }
 
 <!-- ---- SIGNAL LAB OVERLAY ---- -->
 <div id="signallab-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:62;background:rgba(3,3,12,0.88);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)">
-  <div style="text-align:center;margin-bottom:16px">
+  <div style="text-align:center;margin-bottom:16px;max-width:640px">
     <div style="color:#a8f;font-size:10px;letter-spacing:4px;opacity:0.5">// SIGNAL CALIBRATION //</div>
     <div style="color:#a8f;font-size:20px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 12px #a8f;margin-top:4px">SIGNAL LAB</div>
-    <div style="color:#aab;font-size:11px;margin-top:4px">Tune your receiver to prioritize a protocol class</div>
+    <div style="color:#fff;font-size:12px;margin-top:10px;line-height:1.5">Lock in a protocol class to <span style="color:#0f0;font-weight:bold">guarantee</span> this class for the <span style="color:#0f0;font-weight:bold">first mod</span> in the game.</div>
+    <div style="color:#778;font-size:10px;margin-top:4px;letter-spacing:1px">Selection persists until you change it.</div>
   </div>
   <div id="signallab-options" style="display:flex;flex-direction:row;gap:10px;flex-wrap:wrap;justify-content:center;max-width:600px"></div>
-  <button id="btn-signallab-clear" style="margin-top:14px;padding:8px 24px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,255,0.04);border:1px solid #5568;border-radius:8px;color:#889;cursor:pointer">CLEAR FOCUS</button>
+  <div style="display:flex;flex-direction:row;gap:10px;margin-top:18px;align-items:center;justify-content:center;flex-wrap:wrap">
+    <button id="btn-signallab-cancel" style="padding:10px 22px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,68,68,0.06);border:1.5px solid #f44;border-radius:8px;color:#f44;cursor:pointer;text-shadow:0 0 4px rgba(255,68,68,0.25);min-width:110px">CANCEL</button>
+    <button id="btn-signallab-clear" style="padding:10px 22px;font-size:11px;letter-spacing:2px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(255,255,255,0.04);border:1.5px solid #5568;border-radius:8px;color:#889;cursor:pointer;min-width:130px">CLEAR FOCUS</button>
+    <button id="btn-signallab-confirm" style="padding:10px 26px;font-size:12px;letter-spacing:3px;font-family:'Courier New',monospace;font-weight:bold;background:rgba(0,255,128,0.08);border:2px solid #0f0;border-radius:8px;color:#0f0;cursor:pointer;text-shadow:0 0 6px rgba(0,255,0,0.35);min-width:140px;opacity:0.35;pointer-events:none">CONFIRM</button>
+  </div>
 </div>
 
 <!-- ---- CARD INFO MODAL — pop-up triggered by ? badge on shop/level-up cards ---- -->
@@ -4798,34 +4803,63 @@ function closeReforge() {
 }
 
 // --- Signal Lab: research focus UI ---
-function openSignalLab() {
-    if (_signalLabCooldown > 0) return;
-    const el = document.getElementById('signallab-screen');
-    if (!el) return;
+// Signal Lab UI uses a pending-selection model: clicking a class only stages
+// it. CONFIRM commits, CLEAR FOCUS stages "none", CANCEL discards changes.
+let _signalLabPending = null;
+const _SIGNAL_CLASSES = [
+    { id: 'thermal', name: 'THERMAL', icon: '\uD83D\uDD25', color: '#f60', desc: 'Overheat, fire, explosions' },
+    { id: 'cryo', name: 'CRYO', icon: '\uD83E\uDDCA', color: '#8ef', desc: 'Chill, freeze, shatter' },
+    { id: 'arc', name: 'ARC', icon: '\u26A1', color: '#fe6', desc: 'Shocked, chain lightning' },
+    { id: 'pulse', name: 'PULSE', icon: '\uD83D\uDCA8', color: '#cef', desc: 'Knockback, exposed' },
+    { id: 'corrupt', name: 'CORRUPT', icon: '\u2623', color: '#a4f', desc: 'Corrupt, compromised' },
+];
+function _renderSignalLabOptions() {
     const container = document.getElementById('signallab-options');
     if (!container) return;
     container.innerHTML = '';
-    const classes = [
-        { id: 'thermal', name: 'THERMAL', icon: '\uD83D\uDD25', color: '#f60', desc: 'Overheat, fire, explosions' },
-        { id: 'cryo', name: 'CRYO', icon: '\uD83E\uDDCA', color: '#8ef', desc: 'Chill, freeze, shatter' },
-        { id: 'arc', name: 'ARC', icon: '\u26A1', color: '#fe6', desc: 'Shocked, chain lightning' },
-        { id: 'pulse', name: 'PULSE', icon: '\uD83D\uDCA8', color: '#cef', desc: 'Knockback, exposed' },
-        { id: 'corrupt', name: 'CORRUPT', icon: '\u2623', color: '#a4f', desc: 'Corrupt, compromised' },
-    ];
-    for (const cls of classes) {
-        const isActive = _researchFocus === cls.id;
+    for (const cls of _SIGNAL_CLASSES) {
+        const isPending = _signalLabPending === cls.id;
+        const isCurrent = _researchFocus === cls.id;
+        const highlight = isPending;
         const btn = document.createElement('div');
-        btn.style.cssText = 'width:100px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:2px solid ' + (isActive ? cls.color : cls.color + '44') + ';background:' + (isActive ? cls.color + '18' : 'rgba(10,10,20,0.9)') + ';box-shadow:' + (isActive ? '0 0 16px ' + cls.color + '44' : 'none') + ';transition:border-color 0.15s,background 0.15s,box-shadow 0.15s;';
-        btn.innerHTML = '<div style="font-size:24px">' + cls.icon + '</div><div style="font-size:11px;font-weight:bold;letter-spacing:2px;color:' + cls.color + '">' + cls.name + '</div><div style="font-size:9px;color:#aab;text-align:center">' + cls.desc + '</div>' + (isActive ? '<div style="font-size:8px;color:#0f0;letter-spacing:1px;margin-top:2px">\u25CF ACTIVE</div>' : '');
-        const handler = (ev) => { ev.preventDefault(); ev.stopPropagation(); selectResearchFocus(cls.id); };
+        btn.style.cssText = 'width:104px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:2px solid ' + (highlight ? cls.color : cls.color + '44') + ';background:' + (highlight ? cls.color + '24' : 'rgba(10,10,20,0.9)') + ';box-shadow:' + (highlight ? '0 0 18px ' + cls.color + '66' : 'none') + ';transform:' + (highlight ? 'translateY(-2px)' : 'none') + ';transition:border-color 0.15s,background 0.15s,box-shadow 0.15s,transform 0.12s;';
+        let tag = '';
+        if (isPending) tag = '<div style="font-size:8px;color:#0f0;letter-spacing:1px;margin-top:2px">\u25CF PENDING</div>';
+        else if (isCurrent) tag = '<div style="font-size:8px;color:#0cf;letter-spacing:1px;margin-top:2px">\u25CB CURRENT</div>';
+        btn.innerHTML = '<div style="font-size:24px">' + cls.icon + '</div><div style="font-size:11px;font-weight:bold;letter-spacing:2px;color:' + cls.color + '">' + cls.name + '</div><div style="font-size:9px;color:#aab;text-align:center">' + cls.desc + '</div>' + tag;
+        const handler = (ev) => { ev.preventDefault(); ev.stopPropagation(); _signalLabPending = cls.id; _renderSignalLabOptions(); _updateSignalLabButtons(); playSfx('ui_hover', 0.2) || playSound(900, 0.04, 'sine', 0.10); };
         btn.addEventListener('click', handler);
         btn.addEventListener('touchend', handler, { passive: false });
         container.appendChild(btn);
     }
+}
+function _updateSignalLabButtons() {
+    const confirmBtn = document.getElementById('btn-signallab-confirm');
+    if (confirmBtn) {
+        // Enabled whenever pending differs from the currently-applied focus.
+        const _dirty = _signalLabPending !== _researchFocus;
+        confirmBtn.style.opacity = _dirty ? '1' : '0.35';
+        confirmBtn.style.pointerEvents = _dirty ? 'auto' : 'none';
+    }
+}
+function openSignalLab() {
+    if (_signalLabCooldown > 0) return;
+    const el = document.getElementById('signallab-screen');
+    if (!el) return;
+    _signalLabPending = _researchFocus; // start with current focus staged
+    _renderSignalLabOptions();
+    _updateSignalLabButtons();
     const clearBtn = document.getElementById('btn-signallab-clear');
     if (clearBtn) {
-        clearBtn.onclick = (ev) => { ev.preventDefault(); selectResearchFocus(null); };
-        clearBtn.style.display = _researchFocus ? '' : 'none';
+        clearBtn.onclick = (ev) => { ev.preventDefault(); _signalLabPending = null; _renderSignalLabOptions(); _updateSignalLabButtons(); };
+    }
+    const cancelBtn = document.getElementById('btn-signallab-cancel');
+    if (cancelBtn) {
+        cancelBtn.onclick = (ev) => { ev.preventDefault(); closeSignalLab(); };
+    }
+    const confirmBtn = document.getElementById('btn-signallab-confirm');
+    if (confirmBtn) {
+        confirmBtn.onclick = (ev) => { ev.preventDefault(); _commitSignalLabSelection(); };
     }
     if (gameState === 'playing') gameState = 'signallab';
     else if (gameState === 'shell') gameState = 'signallab';
@@ -4835,17 +4869,23 @@ function openSignalLab() {
     triggerGlitchSurge(0.2, 15);
 }
 
-function selectResearchFocus(classId) {
-    _researchFocus = classId;
+function _commitSignalLabSelection() {
+    _researchFocus = _signalLabPending;
     const lp = getLocalPlayer();
-    if (classId) {
+    if (_researchFocus) {
         const cls = { thermal: '#f60', cryo: '#8ef', arc: '#fe6', pulse: '#cef', corrupt: '#a4f' };
-        if (lp) addFloatingText(lp.x, lp.y - 40, 'FOCUS: ' + classId.toUpperCase(), cls[classId] || '#fff');
+        if (lp) addFloatingText(lp.x, lp.y - 40, 'FOCUS: ' + _researchFocus.toUpperCase(), cls[_researchFocus] || '#fff');
     } else {
         if (lp) addFloatingText(lp.x, lp.y - 40, 'FOCUS CLEARED', '#889');
     }
     playSfx('level_up', 0.2) || playSound(1100, 0.06, 'sine', 0.12);
-    setTimeout(() => closeSignalLab(), 400);
+    closeSignalLab();
+}
+
+// Kept for back-compat with any external caller. Routes through the new flow.
+function selectResearchFocus(classId) {
+    _signalLabPending = classId;
+    _commitSignalLabSelection();
 }
 
 function closeSignalLab() {
@@ -6599,7 +6639,12 @@ function initTrenchSections() {
     const _mdGeom = _sectionMultiDoors && _sectionMultiDoors[i];
     if (_isFirstSection) {
       const _firstClasses = ['thermal','cryo','arc','pulse','corrupt'];
-      _doorReward = 'mod_' + _firstClasses[Math.floor(Math.random() * _firstClasses.length)];
+      // Signal Lab focus locks the first-section class if set.
+      if (_researchFocus && _firstClasses.includes(_researchFocus)) {
+        _doorReward = 'mod_' + _researchFocus;
+      } else {
+        _doorReward = 'mod_' + _firstClasses[Math.floor(Math.random() * _firstClasses.length)];
+      }
     } else if (_mdGeom) {
       const _r1 = _pickDoorReward(null);
       let _r2 = _pickDoorReward(_r1);
@@ -11757,7 +11802,10 @@ function generateHordeArena(seed) {
 
 // ---- THE SHELL ROOM ----
 function generateShellRoom() {
-  const SW = 18, SH = 12;
+  // Shell is a full-screen room sized like a normal stage. The player can move,
+  // shoot, dash, and use specials here — it's just another section without
+  // enemies. Door on the right wall starts the run.
+  const SW = 32, SH = 20;
   setArenaDimensions(SW * CELL_SIZE, SH * CELL_SIZE);
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -11766,20 +11814,27 @@ function generateShellRoom() {
   const room = { x: 1, y: 1, w: SW - 2, h: SH - 2 };
   for (let y = room.y; y < room.y + room.h && y < GRID_H; y++)
     for (let x = room.x; x < room.x + room.w && x < GRID_W; x++) dungeonGrid[y][x] = true;
-  // Gateway opening: 2-cell gap in right wall at y=5,6
-  dungeonGrid[5][SW - 1] = true;
-  dungeonGrid[6][SW - 1] = true;
+  // Gateway opening: 4-cell gap in right wall at the vertical midpoint, sized
+  // exactly like a regular section door so the player reads "this is a real exit."
+  const _gateY = Math.floor(SH / 2);
+  for (let _dy = -2; _dy < 2; _dy++) dungeonGrid[_gateY + _dy][SW - 1] = true;
   room.theme = SHELL_THEME;
   room.brightness = 1.0;
   room.flicker = false;
   rooms.push(room);
-  // Room details — cosmetic floor dressing
+  // Room details — sparse decor so the room reads as a real staging area.
   roomDetails = [];
   const details = [];
-  details.push({ type: 'stain', x: 7 * CELL_SIZE, y: 5 * CELL_SIZE, size: 28, color: '#0a0e1a' });
-  details.push({ type: 'scratch', x: 12 * CELL_SIZE, y: 4 * CELL_SIZE, angle: 0.3, len: 20 });
-  details.push({ type: 'stain', x: 5 * CELL_SIZE, y: 8 * CELL_SIZE, size: 20, color: '#080c16' });
-  details.push({ type: 'scratch', x: 14 * CELL_SIZE, y: 9 * CELL_SIZE, angle: -0.4, len: 16 });
+  details.push({ type: 'stain',   x:  8 * CELL_SIZE, y:  5 * CELL_SIZE, size: 30, color: '#0a0e1a' });
+  details.push({ type: 'stain',   x: 22 * CELL_SIZE, y:  6 * CELL_SIZE, size: 24, color: '#080c16' });
+  details.push({ type: 'stain',   x: 14 * CELL_SIZE, y: 14 * CELL_SIZE, size: 36, color: '#0a0e1a' });
+  details.push({ type: 'stain',   x: 26 * CELL_SIZE, y: 15 * CELL_SIZE, size: 22, color: '#080c16' });
+  details.push({ type: 'stain',   x:  6 * CELL_SIZE, y: 17 * CELL_SIZE, size: 20, color: '#08101a' });
+  details.push({ type: 'scratch', x: 12 * CELL_SIZE, y:  4 * CELL_SIZE, angle:  0.3, len: 24 });
+  details.push({ type: 'scratch', x: 20 * CELL_SIZE, y:  9 * CELL_SIZE, angle: -0.5, len: 28 });
+  details.push({ type: 'scratch', x: 10 * CELL_SIZE, y: 13 * CELL_SIZE, angle:  0.4, len: 22 });
+  details.push({ type: 'scratch', x: 25 * CELL_SIZE, y: 11 * CELL_SIZE, angle: -0.3, len: 26 });
+  details.push({ type: 'scratch', x: 17 * CELL_SIZE, y: 17 * CELL_SIZE, angle:  0.2, len: 20 });
   roomDetails.push({ ri: 0, theme: SHELL_THEME, details, brightness: 1.0, flicker: false });
   buildRoomGrid();
   obstacles = [];
@@ -11787,10 +11842,15 @@ function generateShellRoom() {
   uploadDungeonGrid();
   // Terminal positions — spread across the room
   shellTerminals = [
-    { x: 4 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'crypt', label: 'THE FORGE', color: '#ff0', icon: '\u2692' },
-    { x: 4 * CELL_SIZE, y: 8.5 * CELL_SIZE, type: 'codex', label: 'CODEX', color: '#0ff', icon: '\u25C8' },
-    { x: 14 * CELL_SIZE, y: 3.5 * CELL_SIZE, type: 'armory', label: 'ARMORY', color: '#f60', icon: '\u2694' },
-    { x: 9 * CELL_SIZE, y: 3 * CELL_SIZE, type: 'signal_lab', label: 'SIGNAL LAB', color: '#a8f', icon: '\u25C8' },
+    // Top row: CODEX (left) + SIGNAL LAB (right)
+    { x:  9 * CELL_SIZE, y:  3 * CELL_SIZE, type: 'codex',      label: 'CODEX',      color: '#0ff', icon: '\u25C8' },
+    { x: 22 * CELL_SIZE, y:  3 * CELL_SIZE, type: 'signal_lab', label: 'SIGNAL LAB', color: '#a8f', icon: '\u25C8' },
+    // Bottom row: 3 weapon stations the player walks up to equip directly.
+    { x:  8 * CELL_SIZE, y: 16 * CELL_SIZE, type: 'weapon', weaponId: 'pistol',   label: 'SIDEARM',  color: PRIMARY_WEAPON_OPTIONS.pistol.color,   icon: PRIMARY_WEAPON_OPTIONS.pistol.icon },
+    { x: 15 * CELL_SIZE, y: 16 * CELL_SIZE, type: 'weapon', weaponId: 'ripper',   label: 'RIPPER',   color: PRIMARY_WEAPON_OPTIONS.ripper.color,   icon: PRIMARY_WEAPON_OPTIONS.ripper.icon },
+    { x: 22 * CELL_SIZE, y: 16 * CELL_SIZE, type: 'weapon', weaponId: 'deadshot', label: 'DEADSHOT', color: PRIMARY_WEAPON_OPTIONS.deadshot.color, icon: PRIMARY_WEAPON_OPTIONS.deadshot.icon },
+    // FORGE removed from Shell (code preserved elsewhere \u2014 may be brought back).
+    // ARMORY replaced by individual weapon stations above.
   ];
   // Add resume terminal if a checkpoint exists AND still has continues left.
   // A checkpoint with zero continues is a spent respawn — treat it as invalid
@@ -11808,8 +11868,8 @@ function generateShellRoom() {
       clearCheckpoint();
     }
   }
-  shellGatewayPos = { x: (SW - 1.5) * CELL_SIZE, y: 5.5 * CELL_SIZE };
-  shellPlayerSpawn = { x: 9 * CELL_SIZE, y: 6 * CELL_SIZE };
+  shellGatewayPos = { x: (SW - 1.5) * CELL_SIZE, y: _gateY * CELL_SIZE };
+  shellPlayerSpawn = { x: Math.floor(SW / 2) * CELL_SIZE, y: Math.floor(SH / 2) * CELL_SIZE };
   memoryFragments = [];
   hazeParticles = [];
 }
@@ -14341,11 +14401,10 @@ function updateShell() {
   if (gameTime % 3 === 0) { for (let _ap=0;_ap<2;_ap++) { const px=camera.x+(Math.random()-0.5)*canvas.width*0.8,py=camera.y+(Math.random()-0.5)*canvas.height*0.8; const gx=Math.floor(px/CELL_SIZE),gy=Math.floor(py/CELL_SIZE); if(dungeonGrid&&dungeonGrid[gy]&&dungeonGrid[gy][gx])particles.push({x:px,y:py,vx:(Math.random()-0.5)*0.3,vy:-0.2-Math.random()*0.4,life:100+Math.random()*80,maxLife:180,size:1.5+Math.random()*2,color:['#0af6','#0ff4','#08f4','#4af3'][Math.floor(Math.random()*4)],type:'spark'}); } }
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
-  // ---- Player movement (no dash, no combat) ----
+  // ---- Player movement (full normal speed; weapons, dash, special all work). ----
   {
     pollGamepad();
     let dx = 0, dy = 0;
-    // Arrow-key fallback only — WASD removed so A/S can be bound to shoot/special.
     if (keys['arrowup']) dy -= 1;
     if (keys['arrowdown']) dy += 1;
     if (keys['arrowleft']) dx -= 1;
@@ -14353,20 +14412,56 @@ function updateShell() {
     if (leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
     if (gamepad.lx !== 0 || gamepad.ly !== 0) { dx = gamepad.lx; dy = gamepad.ly; }
     const mag = Math.sqrt(dx*dx + dy*dy);
-    let moveSpeed = 3.5;
+    // Use the normal player speed instead of 3.5 — Shell is now a real stage.
+    lp.speed = 5.4 * (1 + (typeof getMetaBonus === 'function' ? getMetaBonus('swift') : 0)) * (1 + ((runMods && runMods.moveSpeedMult) || 0));
+    let moveSpeed = lp.speed;
     if (mag > 0.01) { dx /= mag; dy /= mag; moveSpeed *= Math.min(1, mag); }
     lp.vx = dx * moveSpeed; lp.vy = dy * moveSpeed;
     lp.x += lp.vx; lp.y += lp.vy;
     pushOutOfObstacles(lp, PLAYER_RADIUS);
     lp.x = Math.max(PLAYER_RADIUS, Math.min(ARENA_W - PLAYER_RADIUS, lp.x));
     lp.y = Math.max(PLAYER_RADIUS, Math.min(ARENA_H - PLAYER_RADIUS, lp.y));
-    // Face movement direction on both platforms — desktop uses click-joystick too.
-    const _moveMag = Math.sqrt(lp.vx*lp.vx + lp.vy*lp.vy);
-    if (_moveMag > 0.3) lp.angle = Math.atan2(lp.vy, lp.vx);
+    // Aim: mouse on desktop, right joystick on mobile, fallback to move direction.
+    if (!isMobile && mouse && typeof mouse.worldX === 'number') {
+      lp.angle = Math.atan2(mouse.worldY - lp.y, mouse.worldX - lp.x);
+    } else if (rightJoystick.aiming && (rightJoystick.dx !== 0 || rightJoystick.dy !== 0)) {
+      lp.angle = Math.atan2(rightJoystick.dy, rightJoystick.dx);
+    } else {
+      const _moveMag = Math.sqrt(lp.vx*lp.vx + lp.vy*lp.vy);
+      if (_moveMag > 0.3) lp.angle = Math.atan2(lp.vy, lp.vx);
+    }
+    // Fire weapon when shoot button is held (matches normal stage behavior).
+    const _shootHeld = isMobile ? shootButtonHeld : !!keys['a'];
+    if (_shootHeld) {
+      const _wp = lp.weapons && lp.weapons[lp.currentWeapon];
+      const _now = performance.now();
+      if (_wp && (!_wp._nextFireAt || _now >= _wp._nextFireAt)) {
+        try { fireWeaponForPlayer(lp); } catch(e){}
+      }
+    }
+    // Dash tick: dash() is triggered by space/btn; here we just decay timers.
+    if (lp.dashCooldown > 0) lp.dashCooldown--;
+    if (lp.dashTimer > 0) lp.dashTimer--;
+    if (lp.invincible > 0) lp.invincible--;
   }
-  // ---- Camera — fixed at room center (room is small enough to fit on screen) ----
-  camera.x = ARENA_W / 2;
-  camera.y = ARENA_H / 2;
+  // ---- Camera follow ----
+  if (typeof updateCamera === 'function') updateCamera(lp);
+  else { camera.x = lp.x; camera.y = lp.y; }
+  // ---- Tick player bullets so they fly + decay in the Shell ----
+  if (Array.isArray(bullets)) {
+    let _bw = 0;
+    for (let _bi = 0; _bi < bullets.length; _bi++) {
+      const b = bullets[_bi];
+      if (b.owner !== 'player') { if (_bw !== _bi) bullets[_bw] = b; _bw++; continue; }
+      b.x += b.vx; b.y += b.vy;
+      if (b.trail) { b.trail.push({x:b.x,y:b.y}); if (b.trail.length > 8) b.trail.shift(); }
+      b.life--;
+      const _oob = b.x < 0 || b.x > ARENA_W || b.y < 0 || b.y > ARENA_H;
+      const _hit = obstacleCollision(b.x, b.y, b.size || 2, false);
+      if (b.life > 0 && !_oob && !_hit) { if (_bw !== _bi) bullets[_bw] = b; _bw++; }
+    }
+    bullets.length = _bw;
+  }
   // ---- Screen shake decay ----
   if (screenShake.intensity > 0.1) {
     screenShake.x = (Math.random()-0.5)*2*screenShake.intensity;
@@ -14410,6 +14505,17 @@ function shellInteract(terminal) {
   else if (terminal.type === 'codex') openCodex();
   else if (terminal.type === 'armory') openArmory();
   else if (terminal.type === 'signal_lab') openSignalLab();
+  else if (terminal.type === 'weapon' && terminal.weaponId) {
+    // Equip directly on walk-up — no menu, no confirm step.
+    const _wid = terminal.weaponId;
+    if (selectedPrimary !== _wid) {
+      _setPrimaryBundle(_wid);
+      const opt = PRIMARY_WEAPON_OPTIONS[_wid];
+      const lp = getLocalPlayer();
+      if (lp && opt) addFloatingText(lp.x, lp.y - 32, 'EQUIPPED: ' + opt.name, opt.color);
+      playSfx('weapon_pickup', 0.3) || playSound(600, 0.08, 'square', 0.16);
+    }
+  }
   else if (terminal.type === 'checkpoint') {
     // Resume from checkpoint — fade to black, then restore
     if (_shellTransitioning) return;
@@ -14429,8 +14535,10 @@ function shellInteract(terminal) {
 // pulses traveling along the lines.
 function _renderShellVoidBackground(vL, vR, vT, vB) {
   const t = performance.now();
-  // Dark blue base (not pure black) — the void now has depth.
-  ctx.fillStyle = '#030a18';
+  // Darker, quieter void — reads as the same "outside the room" space as a
+  // normal trench section. The circuit traces are dialed back so the floor
+  // checker pattern is what the eye locks onto.
+  ctx.fillStyle = '#020409';
   ctx.fillRect(vL, vT, vR - vL, vB - vT);
   // Snap to 80px tile grid so the pattern tiles seamlessly.
   const TS = 80;
@@ -14438,9 +14546,9 @@ function _renderShellVoidBackground(vL, vR, vT, vB) {
   const sy = Math.floor(vT / TS) * TS;
   const ex = Math.ceil(vR / TS) * TS;
   const ey = Math.ceil(vB / TS) * TS;
-  // Grid lines
+  // Grid lines — dialed back so the floor is what reads.
   ctx.strokeStyle = '#0af';
-  ctx.globalAlpha = 0.10;
+  ctx.globalAlpha = 0.04;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let y = sy; y <= ey; y += TS) { ctx.moveTo(sx, y); ctx.lineTo(ex, y); }
@@ -14457,8 +14565,8 @@ function _renderShellVoidBackground(vL, vR, vT, vB) {
       const r1 = Math.abs(Math.sin(seed * 0.013) * 4837.5) % 1;
       const r2 = Math.abs(Math.sin(seed * 0.019 + 1.7) * 1842.3) % 1;
       const r3 = Math.abs(Math.sin(seed * 0.029 + 3.1) * 2942.3) % 1;
-      if (r1 < 0.45) continue; // only ~55% of tiles get traces
-      ctx.globalAlpha = 0.18 + r1 * 0.18;
+      if (r1 < 0.7) continue; // only ~30% of tiles get traces (quieter)
+      ctx.globalAlpha = 0.08 + r1 * 0.08;
       ctx.beginPath();
       if (r2 > 0.5) {
         ctx.moveTo(x + 8,  y + TS*0.5);
@@ -14603,68 +14711,71 @@ function renderShellOverlays() {
     ctx.font = 'bold 10px monospace';
     ctx.fillStyle = term.color;
     ctx.fillText(term.label, term.x, term.y + 22);
-    // Interact prompt
-    if (near) {
+    // Weapon station: show EQUIPPED badge when this weapon is currently selected.
+    const _isEquipped = term.type === 'weapon' && term.weaponId === selectedPrimary;
+    if (_isEquipped) {
+      ctx.globalAlpha = 0.85 + Math.sin(t * 0.005) * 0.15;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillStyle = '#0f0';
+      ctx.fillText('● EQUIPPED', term.x, term.y + 34);
+    } else if (near && term.type !== 'weapon') {
+      // Interact prompt (non-weapon: tap/press to open menu)
       ctx.globalAlpha = 0.7 + Math.sin(t * 0.006) * 0.3;
       ctx.font = 'bold 10px monospace';
       ctx.fillStyle = '#fff';
       ctx.fillText(isMobile ? 'TAP' : 'PRESS E', term.x, term.y + 34);
+    } else if (near && term.type === 'weapon') {
+      // Weapon prompt: clarify that walking up equips
+      ctx.globalAlpha = 0.7 + Math.sin(t * 0.006) * 0.3;
+      ctx.font = 'bold 9px monospace';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('WALK UP TO EQUIP', term.x, term.y + 34);
     }
     ctx.restore();
   }
-  // ---- Gateway — dramatic glowing portal, draws the eye ----
+  // ---- Gateway — section-style door slit on the right wall, labeled START RUN. ----
   if (shellGatewayPos) {
     const gx = shellGatewayPos.x, gy = shellGatewayPos.y;
     const gd = lp ? Math.sqrt((lp.x-gx)**2 + (lp.y-gy)**2) : 999;
     const near = gd < 100;
-    const pulse = 0.6 + Math.sin(t * 0.005) * 0.3;
+    const pulse = 0.5 + Math.sin(t * 0.005) * 0.4;
+    const _doorColor = '#0ff';
+    const _DOOR_W = 4 * CELL_SIZE;
+    const _dx = gx; // wall column
+    const _dy1 = gy - _DOOR_W / 2, _dy2 = gy + _DOOR_W / 2;
     ctx.save();
-    // Wide ambient glow — visible across the whole room
-    ctx.globalAlpha = 0.08 * pulse;
-    const wideGrad = ctx.createRadialGradient(gx, gy, 0, gx, gy, 150);
-    wideGrad.addColorStop(0, '#0ff');
-    wideGrad.addColorStop(0.5, '#0ff');
-    wideGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = wideGrad;
-    ctx.beginPath(); ctx.arc(gx, gy, 150, 0, Math.PI*2); ctx.fill();
-    // Vertical light beam — tall and bright
-    ctx.globalAlpha = (near ? 0.25 : 0.12) * pulse;
-    const beam = ctx.createLinearGradient(gx, gy - 100, gx, gy + 100);
-    beam.addColorStop(0, 'transparent');
-    beam.addColorStop(0.2, '#0ff');
-    beam.addColorStop(0.5, '#fff');
-    beam.addColorStop(0.8, '#0ff');
-    beam.addColorStop(1, 'transparent');
-    ctx.fillStyle = beam;
-    ctx.fillRect(gx - 20, gy - 100, 40, 200);
-    // Pulsing rings — more rings, larger
-    for (let ri = 0; ri < 4; ri++) {
-      const rPhase = (t * 0.003 + ri * 1.6) % (Math.PI * 2);
-      const rSize = 14 + Math.sin(rPhase) * 8 + ri * 10;
-      ctx.globalAlpha = (near ? 0.7 : 0.4) * (1 - ri * 0.2) * pulse;
-      ctx.strokeStyle = ri % 2 === 0 ? '#0ff' : '#f0f';
-      ctx.shadowColor = ri % 2 === 0 ? '#0ff' : '#f0f';
-      ctx.shadowBlur = 18;
-      ctx.lineWidth = near ? 3 : 2;
-      ctx.beginPath(); ctx.arc(gx, gy, rSize, 0, Math.PI * 2); ctx.stroke();
+    // Runway glow on the floor pointing into the door (same shape as exit doors).
+    const rLen = 1.5 * CELL_SIZE;
+    for (let s = 0; s < 4; s++) {
+      const t2 = s / 4;
+      ctx.globalAlpha = 0.04 + (t2 * t2) * 0.40 * pulse;
+      ctx.fillStyle = _doorColor;
+      ctx.fillRect(_dx - rLen + t2 * rLen, _dy1, rLen / 4, _dy2 - _dy1);
     }
-    ctx.shadowBlur = 0;
-    // Center glow — intense bright core
-    ctx.globalAlpha = (near ? 0.9 : 0.6) * pulse;
-    const cGrad = ctx.createRadialGradient(gx, gy, 0, gx, gy, 28);
-    cGrad.addColorStop(0, '#fff');
-    cGrad.addColorStop(0.3, '#0ff');
-    cGrad.addColorStop(0.7, 'rgba(0,255,255,0.25)');
-    cGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = cGrad;
-    ctx.beginPath(); ctx.arc(gx, gy, 20, 0, Math.PI*2); ctx.fill();
-    // Label
-    ctx.globalAlpha = near ? 0.9 : 0.5;
-    ctx.fillStyle = '#0ff';
-    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 8;
-    ctx.font = 'bold 10px monospace';
+    // Thick bright slit
+    ctx.globalAlpha = (near ? 1.0 : 0.85) * (0.75 + 0.25 * pulse);
+    ctx.strokeStyle = _doorColor; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(_dx, _dy1); ctx.lineTo(_dx, _dy2); ctx.stroke();
+    // Inner bright core
+    ctx.globalAlpha = (near ? 1.0 : 0.9) * (0.85 + 0.15 * pulse);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(_dx, _dy1); ctx.lineTo(_dx, _dy2); ctx.stroke();
+    // Fill behind slit
+    ctx.globalAlpha = 0.15 * pulse;
+    ctx.fillStyle = _doorColor;
+    ctx.fillRect(_dx - 4, _dy1, 8, _dy2 - _dy1);
+    // START RUN label above the door (same placement as section reward signs).
+    const _labelY = _dy1 - 18 + Math.sin(t * 0.004) * 3;
+    ctx.globalAlpha = near ? 1 : 0.7 + 0.2 * pulse;
+    ctx.fillStyle = _doorColor;
+    ctx.shadowColor = _doorColor; ctx.shadowBlur = 10;
+    ctx.font = 'bold 14px monospace';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('ENTER THE MESH', gx, gy - 45);
+    ctx.fillText('▶', _dx, _labelY - 12);
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = '#fff';
+    ctx.shadowBlur = 6;
+    ctx.fillText('START RUN', _dx, _labelY + 8);
     ctx.shadowBlur = 0;
     ctx.restore();
   }
@@ -15929,7 +16040,8 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 // SPECIAL WEAPON SYSTEM — routes to the selected special
 // ============================================================
 function activateSpecial() {
-  if (gameState === 'shell') return;
+  // Shell is now a real room — specials work here too. Beacon/payload/discharge
+  // still need a special target to be useful but firing them is allowed.
   switch (selectedSpecial) {
     case 'beacon': deployBeacon(); break;
     case 'nova': deployBeacon(); break;
@@ -17945,7 +18057,6 @@ function _spikeWallCollision(ox, oy, r) {
 }
 
 function deployBeacon() {
-  if (gameState === 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   const _m = runMods || {};
@@ -21534,7 +21645,6 @@ function _fireDeadshot(lp) {
 }
 
 function dash() {
-  if (gameState === 'shell') return; // no dash in the Shell
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
@@ -31284,7 +31394,10 @@ function render() {
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       const _px=cx*CELL_SIZE, _py=cy*CELL_SIZE, _CS=CELL_SIZE;
-      const _fp = gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern;
+      // Shell uses the checker pattern (Domain 2 style) for that real-stage read.
+      const _fp = gameState === 'shell'
+        ? 'checker'
+        : (gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern);
       if (_fp === 'checker') {
         // D2: Checker pattern — alternating dark/light tiles
         const _isLight = (cx + cy) % 2 === 0;
