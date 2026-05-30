@@ -11837,7 +11837,7 @@ function generateShellRoom() {
     { col: 4,  weaponId: 'pistol',   color: PRIMARY_WEAPON_OPTIONS.pistol.color,   icon: PRIMARY_WEAPON_OPTIONS.pistol.icon,   name: 'SIDEARM' },
     { col: 11, weaponId: 'ripper',   color: PRIMARY_WEAPON_OPTIONS.ripper.color,   icon: PRIMARY_WEAPON_OPTIONS.ripper.icon,   name: 'RIPPER' },
     { col: 18, weaponId: 'deadshot', color: PRIMARY_WEAPON_OPTIONS.deadshot.color, icon: PRIMARY_WEAPON_OPTIONS.deadshot.icon, name: 'DEADSHOT' },
-  ].map(r => ({ ...r, x: r.col * CELL_SIZE + CELL_SIZE/2, y: 2.4 * CELL_SIZE }));
+  ].map(r => ({ ...r, x: r.col * CELL_SIZE + CELL_SIZE/2, y: 3.4 * CELL_SIZE })); // y=3.4 → 2.4 cells of padding below the top wall
   _shellDoor = { x: (SW - 1) * CELL_SIZE, y: _gateY * CELL_SIZE };
   shellGatewayPos = _shellDoor;
   shellPlayerSpawn = { x: Math.floor(SW / 2) * CELL_SIZE, y: (SH - 3.5) * CELL_SIZE };
@@ -14875,49 +14875,135 @@ function _renderShellWeaponRacks(t) {
   for (const rack of _shellWeaponRacks) {
     const equipped = selectedPrimary === rack.weaponId;
     const near = _shellNearRack === rack;
-    const _glow = equipped ? 1 : 0.55 + 0.15 * Math.sin(t * 0.004 + rack.x);
+    // Levitating bob — sine wave 4px amplitude, phase staggered per rack.
+    const _bob = Math.sin(t * 0.003 + rack.x * 0.05) * 4;
+    const _ix = rack.x, _iy = rack.y + _bob;
+    const _pulse = 0.7 + 0.3 * Math.sin(t * 0.004 + rack.x);
     ctx.save();
-    // Wall mount plate
-    ctx.fillStyle = '#0a1830';
-    ctx.fillRect(rack.x - 26, rack.y - 22, 52, 44);
-    ctx.strokeStyle = equipped ? rack.color : '#3a7fd6';
-    ctx.lineWidth = equipped ? 2.5 : 1.5;
-    ctx.shadowColor = equipped ? rack.color : 'transparent';
-    ctx.shadowBlur = equipped ? 14 : 0;
-    ctx.strokeRect(rack.x - 26 + 0.5, rack.y - 22 + 0.5, 51, 43);
-    ctx.shadowBlur = 0;
-    // Backlit glow inside the plate
-    ctx.globalAlpha = equipped ? 0.30 : 0.10 * _glow;
-    ctx.fillStyle = rack.color;
-    ctx.fillRect(rack.x - 22, rack.y - 18, 44, 36);
+    // 1. Floor shadow under the weapon (oval). Stays anchored — doesn't bob.
+    ctx.globalAlpha = 0.30;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(rack.x, rack.y + 18, 18, 5, 0, 0, Math.PI*2);
+    ctx.fill();
     ctx.globalAlpha = 1;
-    // Weapon icon
+    // 2. Soft levitation glow halo behind the weapon — wider when equipped.
+    const _haloR = equipped ? 36 : 28;
+    const _haloA = equipped ? 0.50 : 0.30 * _pulse;
+    const _halo = ctx.createRadialGradient(_ix, _iy, 0, _ix, _iy, _haloR);
+    _halo.addColorStop(0, rack.color);
+    _halo.addColorStop(0.55, rack.color);
+    _halo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = _haloA;
+    ctx.fillStyle = _halo;
+    ctx.fillRect(_ix - _haloR, _iy - _haloR, _haloR*2, _haloR*2);
+    ctx.globalAlpha = 1;
+    // 3. Tractor-beam vertical lines under the weapon — three thin upward streaks.
+    if (gameTime % 3 === 0 || equipped) {
+      ctx.strokeStyle = rack.color; ctx.lineWidth = 1; ctx.globalAlpha = 0.35;
+      for (let _bi = -1; _bi <= 1; _bi++) {
+        ctx.beginPath();
+        ctx.moveTo(_ix + _bi * 6, rack.y + 18);
+        ctx.lineTo(_ix + _bi * 6, _iy + 4);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // 4. THE WEAPON itself — drawn as a stylized silhouette per weapon type,
+    //    not just a text label. Faces forward; rotation could be wired later
+    //    if we want it spinning, but for now a static silhouette reads cleaner.
+    ctx.save();
+    ctx.translate(_ix, _iy);
+    ctx.shadowColor = rack.color;
+    ctx.shadowBlur = equipped ? 22 : 12;
+    _drawShellWeaponSprite(rack.weaponId, rack.color, equipped);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    // 5. Name label below the floor shadow.
     ctx.fillStyle = equipped ? '#fff' : rack.color;
     ctx.shadowColor = rack.color;
-    ctx.shadowBlur = equipped ? 16 : 8;
-    ctx.font = 'bold 22px monospace';
+    ctx.shadowBlur = equipped ? 8 : 4;
+    ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(rack.icon, rack.x, rack.y - 4);
+    ctx.fillText(rack.name, rack.x, rack.y + 32);
     ctx.shadowBlur = 0;
-    // Name label
-    ctx.fillStyle = equipped ? '#0f0' : rack.color;
-    ctx.font = 'bold 9px monospace';
-    ctx.fillText(rack.name, rack.x, rack.y + 14);
-    // EQUIPPED / WALK UP tag below the plate
+    // 6. EQUIPPED / WALK UP tag below the name.
     if (equipped) {
       ctx.fillStyle = '#0f0';
       ctx.shadowColor = '#0f0'; ctx.shadowBlur = 6;
       ctx.font = 'bold 9px monospace';
-      ctx.fillText('* EQUIPPED', rack.x, rack.y + 32);
+      ctx.fillText('* EQUIPPED', rack.x, rack.y + 46);
       ctx.shadowBlur = 0;
     } else if (near) {
       ctx.fillStyle = '#fff';
       ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t * 0.008);
       ctx.font = 'bold 8px monospace';
-      ctx.fillText('WALK UP', rack.x, rack.y + 32);
+      ctx.fillText('WALK UP', rack.x, rack.y + 46);
       ctx.globalAlpha = 1;
     }
     ctx.restore();
+  }
+}
+
+// Stylized weapon silhouettes — drawn at the origin (caller translates).
+// Pixel-art style with the weapon's color + an inner bright stripe so they
+// read as "weapons" instead of "icons".
+function _drawShellWeaponSprite(weaponId, color, equipped) {
+  const _bright = equipped ? '#fff' : color;
+  const _body = color;
+  if (weaponId === 'pistol') {
+    // Sidearm: chunky handgun silhouette.
+    ctx.fillStyle = _body;
+    ctx.fillRect(-14, -4, 22, 8);   // barrel
+    ctx.fillRect(-16, -5, 4, 10);   // back of slide
+    ctx.fillRect(-7, 3, 8, 9);      // grip
+    ctx.fillRect(7, -1, 4, 4);      // muzzle tip
+    // Bright top stripe (slide rail)
+    ctx.fillStyle = _bright;
+    ctx.fillRect(-12, -3, 18, 1.5);
+    // Trigger nub
+    ctx.fillStyle = '#0c1830';
+    ctx.fillRect(-4, 3, 3, 4);
+  } else if (weaponId === 'ripper') {
+    // Ripper: blade silhouette pointing right.
+    ctx.fillStyle = _body;
+    ctx.beginPath();
+    ctx.moveTo(-12, -2);
+    ctx.lineTo(14, -1);
+    ctx.lineTo(18, 0);
+    ctx.lineTo(14, 1);
+    ctx.lineTo(-12, 2);
+    ctx.closePath();
+    ctx.fill();
+    // Crossguard
+    ctx.fillRect(-14, -6, 4, 12);
+    // Grip
+    ctx.fillStyle = '#0c1830';
+    ctx.fillRect(-19, -2.5, 6, 5);
+    // Edge highlight along the blade
+    ctx.fillStyle = _bright;
+    ctx.fillRect(-10, -1, 22, 1);
+  } else if (weaponId === 'deadshot') {
+    // Deadshot: long rifle / charged carbine.
+    ctx.fillStyle = _body;
+    ctx.fillRect(-16, -3, 28, 6);   // long barrel
+    ctx.fillRect(12, -1, 6, 3);     // muzzle
+    ctx.fillRect(-18, -4, 4, 10);   // stock back
+    ctx.fillRect(-6, 3, 4, 6);      // grip
+    // Scope on top
+    ctx.fillStyle = _bright;
+    ctx.fillRect(-6, -7, 10, 3);
+    // Energy strip down the barrel
+    ctx.fillStyle = _bright;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(-14, -1.5, 24, 1);
+    ctx.globalAlpha = 1;
+  } else {
+    // Fallback — just draw the icon as before.
+    ctx.fillStyle = _bright;
+    ctx.font = 'bold 22px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('?', 0, 0);
   }
 }
 
@@ -28174,8 +28260,8 @@ function update() {
       updateSurvivalWaves();
     } else if (gameMode === 'arcade') {
       updateArcadeWaves();
-    } else {
-      // Continuous zombie spawning based on level
+    } else if (gameMode !== 'shell') {
+      // Continuous zombie spawning based on level (skip Shell — staging only).
       spawnTimer++;
       const maxZombies = Math.min(10, 5 + level * 2);
       const spawnRate = Math.max(5, 25 - level * 3);
@@ -31611,8 +31697,11 @@ function render() {
   // Domain visual: override wall/grid colors based on the current trench domain
   let _domainFloorTint = null, _domainWallColor = null, _domainGridColor = null;
   if (gameState === 'shell') {
-    _domainWallColor = SHELL_THEME.floor;
-    _domainGridColor = SHELL_THEME.grid;
+    // Same shape as a trench domain: wall + neon stroke + subtle floor tint.
+    // Picks blue values so the room reads tinted, not a different theme entirely.
+    _domainWallColor = SHELL_THEME.wall;       // '#0c1830' — dark navy walls
+    _domainGridColor = SHELL_THEME.wallStroke; // '#3a7fd6' — neon blue wall edge
+    _domainFloorTint = 'rgba(60,120,200,0.05)';// subtle blue wash on the floor
   } else if (gameMode === 'trench' && trenchSections[trenchSection]) {
     const _secPal = _getSectionPalette(trenchSection);
     _domainFloorTint = _secPal.floorTint;
@@ -31903,16 +31992,8 @@ function render() {
     ctx.stroke();
     ctx.globalAlpha = 1;
   } else {
-    // Shell: brighter, thicker grid lines so the checkbox pattern is obvious.
-    if (gameState === 'shell') {
-      ctx.globalAlpha = 0.85;
-      ctx.strokeStyle = '#3a7fd6';
-      ctx.lineWidth = 1.2;
-      ctx.stroke(_floorPath);
-    } else {
-      ctx.globalAlpha = 0.4;
-      ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
-    }
+    ctx.globalAlpha = 0.4; // dim the grid lines (same as a normal stage)
+    ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
     ctx.globalAlpha = 1;
   }
   // Wireframe scan line (D4 only) — horizontal gold line sweeping down
