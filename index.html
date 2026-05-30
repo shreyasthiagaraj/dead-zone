@@ -9936,6 +9936,14 @@ function _installParticleThrottle(arr) {
   return arr;
 }
 let bullets = [], zombies = [], particles = _installParticleThrottle([]), pickups = [], decals = [], floatingTexts = [], explosions = [], obstacles = [], barrels = [];
+// Cold Front uses a SEPARATE particle pool (no FIFO cap, no crowd-drop)
+// because its emitter pushes ~80 particles/frame for the cloud's lifetime
+// — that volume would constantly evict everything else from the shared
+// `particles` array. Particles in this pool tick + render with the same
+// lifecycle as the main array but are not subject to the 180/300 cap. The
+// cloud entity just stops PUSHING when it expires; existing particles
+// keep ticking until each one's own life timer runs out.
+let _coldFrontParticles = [];
 
 // ============================================================================
 // SPATIAL GRID for zombie broadphase queries.
@@ -10328,7 +10336,7 @@ function resumeFromCheckpoint() {
 
   // Reset transient state
   zombies = []; bullets = []; pickups = []; barrels = [];
-  particles = _installParticleThrottle([]); decals = []; floatingTexts = [];
+  particles = _installParticleThrottle([]); decals = []; floatingTexts = []; _coldFrontParticles = [];
   explosions = []; xpOrbs = [];
   _nextZombieId = 1;
   _bossDeathFreeze = 0;
@@ -10500,7 +10508,7 @@ function resumeMidRunSession() {
   _gunAmmo = GUN_MAG_SIZE + (runMods.magBonus || 0);
   _gunReloading = false; _gunReloadTimer = 0; _gunIdleTimer = 0;
   zombies = []; bullets = []; pickups = []; barrels = [];
-  particles = _installParticleThrottle([]); decals = []; floatingTexts = [];
+  particles = _installParticleThrottle([]); decals = []; floatingTexts = []; _coldFrontParticles = [];
   explosions = []; xpOrbs = [];
   _nextZombieId = 1;
   _bossDeathFreeze = 0;
@@ -14221,7 +14229,7 @@ function enterShell(fromDeath) {
   generateShellRoom();
   // DON'T create the player yet — spawn sequence will materialize them
   players = []; localPlayerIdx = 0;
-  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = [];
+  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = [];
   floatingTexts = []; explosions = []; barrels = []; xpOrbs = [];
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _dischargeCharging = false; _dischargeCharge = 0; _dischargeWave = null; _deadshotCharging = false; _deadshotCharge = 0;
   activeOrbital = null;
@@ -15199,7 +15207,7 @@ function startSoloGame() {
   const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'trench' ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : (gameMode === 'gauntlet' && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
-  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
+  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = []; floatingTexts = []; explosions = []; barrels = [];
   _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y; cameraOffset.x = 0; cameraOffset.y = 0; window._camLerp = 0.08; window._camSettleFrames = 30;
   if (gameMode === 'dungeon') placeExit();
@@ -15285,7 +15293,7 @@ function startMultiplayerGame() {
     if (lp.id === myId) localPlayerIdx = i;
   }
   remoteInputs = {};
-  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; floatingTexts = []; explosions = []; barrels = [];
+  bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = []; floatingTexts = []; explosions = []; barrels = [];
   _nextZombieId = 1;
   camera.x = c.x; camera.y = c.y;
   if (gameMode === 'dungeon') { placeExit(); }
@@ -26429,7 +26437,7 @@ function update() {
           // Tiny mist particles
           for (let i = 0; i < 30; i++) {
             const fa = Math.random()*Math.PI*2, fr = Math.random()*cf.r;
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(fa)*fr, y: cf.y + Math.sin(fa)*fr,
               vx: cf.vx*0.25 + (Math.random()-0.5)*0.8,
               vy: cf.vy*0.25 + (Math.random()-0.5)*0.7 - 0.2,
@@ -26442,7 +26450,7 @@ function update() {
           // Medium mist puffs — give the cloud body more visual weight
           for (let i = 0; i < 8; i++) {
             const fa = Math.random()*Math.PI*2, fr = Math.random()*cf.r*0.8;
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(fa)*fr, y: cf.y + Math.sin(fa)*fr,
               vx: cf.vx*0.2 + (Math.random()-0.5)*0.5,
               vy: cf.vy*0.2 + (Math.random()-0.5)*0.5 - 0.25,
@@ -26455,7 +26463,7 @@ function update() {
           // Snowflake sparkles — twinkling pixel drift
           for (let i = 0; i < 14; i++) {
             const sa = Math.random()*Math.PI*2, sr = Math.random()*cf.r*0.95;
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(sa)*sr, y: cf.y + Math.sin(sa)*sr,
               vx: (Math.random()-0.5)*1.5,
               vy: -0.3 - Math.random()*0.8,
@@ -26468,7 +26476,7 @@ function update() {
           // twinkling in and out across the cloud volume.
           for (let i = 0; i < 22; i++) {
             const ca = Math.random()*Math.PI*2, cr = Math.random()*cf.r;
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(ca)*cr, y: cf.y + Math.sin(ca)*cr,
               vx: cf.vx*0.1 + (Math.random()-0.5)*0.5,
               vy: cf.vy*0.1 + (Math.random()-0.5)*0.5 - 0.15,
@@ -26482,7 +26490,7 @@ function update() {
           // cloud's PATH stays lit up with stars after the gust passes.
           for (let i = 0; i < 7; i++) {
             const ta = Math.random()*Math.PI*2, tr = Math.random()*cf.r*0.95;
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(ta)*tr, y: cf.y + Math.sin(ta)*tr,
               vx: (Math.random()-0.5)*0.6,
               vy: (Math.random()-0.5)*0.4 - 0.1,
@@ -26504,7 +26512,7 @@ function update() {
             // (_fadeT < 0.3) get the lingering life.
             const _isLate = _fadeT < 0.3;
             const _sfLife = _isLate ? (70 + Math.floor(Math.random()*20)) : (28 + Math.floor(Math.random()*10));
-            particles.push({
+            _coldFrontParticles.push({
               x: cf.x + Math.cos(_sfA)*_sfR, y: cf.y + Math.sin(_sfA)*_sfR,
               // Drift WITH the cloud at its current velocity + light jitter.
               vx: cf.vx*0.4 + (Math.random()-0.5)*0.4,
@@ -29944,6 +29952,22 @@ function update() {
     if (particles.length > PARTICLE_CAP) {
       particles.splice(0, particles.length - PARTICLE_CAP);
     }
+  }
+  // Cold Front particle pool tick — same lifecycle as the main array
+  // but NO cap, NO FIFO eviction. Each particle is removed when its
+  // own life timer hits 0.
+  {
+    let _cfPw = 0;
+    for (let i = 0; i < _coldFrontParticles.length; i++) {
+      const p = _coldFrontParticles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (p.gravity) p.vy += p.gravity;
+      const drag = p.type === 'blood' ? 0.985 : (p.type === 'shell' ? 0.88 : 0.95);
+      p.vx *= drag; p.vy *= drag;
+      p.life--;
+      if (p.life > 0) { if (_cfPw !== i) _coldFrontParticles[_cfPw] = p; _cfPw++; }
+    }
+    _coldFrontParticles.length = _cfPw;
   }
   {
     let _tw = 0;
@@ -36007,10 +36031,14 @@ function render() {
     ctx.restore();
   }
 
-  // Particles — offscreen cull + shadowBlur only when worth it
+  // Particles — offscreen cull + shadowBlur only when worth it.
+  // Renders the main array AND the Cold Front pool through the same
+  // switch. Pool entries render AFTER the main array so cold gas sits
+  // on top of e.g. dash trails when both are present.
   const _pViewL = camera.x - canvas.width/2 - 40, _pViewR = camera.x + canvas.width/2 + 40;
   const _pViewT = camera.y - canvas.height/2 - 40, _pViewB = camera.y + canvas.height/2 + 40;
-  for(const p of particles){
+  for (const _pArr of [particles, _coldFrontParticles])
+  for(const p of _pArr){
     // Offscreen cull (skip lightning since it has separate endpoints)
     if (p.type !== 'lightning' && (p.x < _pViewL || p.x > _pViewR || p.y < _pViewT || p.y > _pViewB)) continue;
     ctx.globalAlpha=p.life/p.maxLife;
