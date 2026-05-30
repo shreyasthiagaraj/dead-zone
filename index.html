@@ -2028,8 +2028,8 @@ const UPGRADE_POOL = [
   { id:'compromised_core', name:'MIASMA', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['COMPROMISED kills leave a 3s corruption cloud (applies CORRUPT).'], flavor:'death breeds corruption.', prereqs:['viral_payload|glitch_wake'] },
   // ---- GENERIC WEAPON ----
-  { id:'wide_spread', name:'IMPACT BLAST', rarity:'epic', max:1, icon:'⫸', color:'#fa0',
-    descs:['Hits cause a 50px explosion (40% damage).'], flavor:'every round is a warhead.' },
+  { id:'wide_spread', name:'IMPACT BLAST', rarity:'epic', max:1, icon:'⫸', color:'#f60',
+    descs:['Hits cause a 50px thermal blast (40% damage).'], flavor:'every round is a warhead.' },
   { id:'piercing_shot', name:'PIERCING SHOT', rarity:'common', max:1, icon:'⚡', color:'#fe6',
     descs:['+1 bullet pierce.'], flavor:'walls barely slow them now.' },
   { id:'rapid_cycle', name:'RAPID CYCLE', rarity:'common', max:1, icon:'⚡', color:'#ff0',
@@ -2379,8 +2379,9 @@ const UPGRADE_POOL = [
   // ---- EXTRACTED Lv2 — Special ----
   { id:'napalm_vortex', name:'NAPALM VORTEX', rarity:'rare', max:1, icon:'♨', color:'#fa0',
     descs:['NAPALM zones pull enemies toward the center.'], flavor:'the fire draws them in.', prereqs:['napalm_zone'] },
-  { id:'mobile_charge', name:'MOBILE CHARGE', rarity:'rare', max:1, icon:'⚡', color:'#f44',
-    descs:['Move at 50% speed while charging your SPECIAL.'], flavor:'aim on the move.', prereqs:['quick_draw'] },
+  // MOBILE CHARGE removed by request.
+  // { id:'mobile_charge', name:'MOBILE CHARGE', rarity:'rare', max:1, icon:'⚡', color:'#f44',
+  //   descs:['Move at 50% speed while charging your SPECIAL.'], flavor:'aim on the move.', prereqs:['quick_draw'] },
   { id:'payload_reserve', name:'PAYLOAD RESERVE', rarity:'rare', max:1, icon:'»', color:'#fa0',
     descs:['Your SPECIAL holds 2 charges.'], flavor:'double the ordnance.', prereqs:['rapid_payload'] },
   { id:'overdrive_turret', name:'OVERDRIVE', rarity:'rare', max:1, icon:'⏱', color:'#0ff',
@@ -3125,7 +3126,7 @@ let _shopVisitCount = 0; // tracks shop visits this run for first-visit rare gua
 // Card-to-class mapping for affinity weighting
 const _CARD_CLASS_MAP = {};
 {
-  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring'];
+  const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring','wide_spread'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge_dash','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','arc_spike','discharge_ring'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring','kinetic_glide'];
@@ -16021,7 +16022,7 @@ function drawShockwave(ctx, x, y, radius, maxRadius, color, opts) {
   const alphaScale = (opts.alphaScale !== undefined) ? opts.alphaScale : 1;
 
   const fadePct = Math.min(1, radius / maxRadius);
-  const lingerBoost = lingering ? (2.0 + 0.5 * Math.sin(lingerFrames * 0.8)) : 1.0;
+  const lingerBoost = lingering ? (1.8 + 0.5 * Math.sin(lingerFrames * 0.8)) : 1.0;
   // Tail fade — during the back half of the linger window, smoothly fade to zero
   // so the wave doesn't pop out of existence at end of life.
   let _tailFade = 1;
@@ -16032,7 +16033,8 @@ function drawShockwave(ctx, x, y, radius, maxRadius, color, opts) {
       _tailFade = (1 - _t) * (1 - _t); // quadratic ease-out to 0
     }
   }
-  const alpha = (0.85 - 0.7 * fadePct) * lingerBoost * alphaScale * _tailFade;
+  // Stronger fade as the wave expands so the ring visibly dissipates with radius.
+  const alpha = (0.95 - 0.85 * fadePct) * lingerBoost * alphaScale * _tailFade;
   if (alpha <= 0) return;
 
   // Annulus path builder. fullCircle uses evenodd-friendly nested circles;
@@ -16483,35 +16485,32 @@ function throwSpike() {
 
     } else if (_classId === 'impact') {
       // ======== KINETIC NOVA — double-pulse 360° shockwave ========
-      // Two waves fire in quick succession at the same origin: a primary
-      // pulse + a 55%-radius echo pulse delayed ~10 frames. BOTH pulses
-      // start from a small radius so they visibly expand outward (the echo
-      // no longer just appears mid-wave). Expansion is slower than the
-      // discharge wave so the push reads as a heavy pressure burst — the
-      // ring physically shoves enemies and the player can SEE it sweep.
+      // BOTH pulses fire at the same instant from radius 0; the inner
+      // (echo) ring expands slower with a smaller maxR so it visibly
+      // trails BEHIND the outer (primary) leading edge. Each pulse fades
+      // as it expands — no more mid-radius pop-in for the echo.
       const _twinR = _twin ? 1.28 : 1;
       const _maxR = _modScale('impact_ring', 200, 25) * 0.6 * _radW * _twinR;
-      // Primary pulse — full damage, full radius, slower expansion
+      // Primary pulse — full damage, full radius, expands normally.
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
         phase: 'expanding', _ring: true, _nova: true,
-        _novaR: 8, _novaMaxR: _maxR,
-        _maxLinger: Math.floor(24 * _persist), _lingerT: 0,
+        _novaR: 2, _novaMaxR: _maxR,
+        _maxLinger: Math.floor(20 * _persist), _lingerT: 0,
         _hitSet: new Set(),
-        _warmup: 0,
+        _warmup: 0, _novaSpeedMult: 1.0,
         lifetime: Math.floor(60 * _persist), maxLife: 60, _pulseTimer: 0,
       });
-      // Echo pulse — smaller, visual-only, fires 10 frames after the
-      // primary. Starts from a small radius so it expands OUT from the
-      // center just like the primary (no more mid-radius pop-in).
+      // Echo pulse — visual-only, smaller maxR + slower expansion so it
+      // always sits behind the primary leading edge.
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
         phase: 'expanding', _ring: true, _nova: true,
-        _novaR: 4, _novaMaxR: _maxR * 0.6,
-        _maxLinger: Math.floor(18 * _persist), _lingerT: 0,
+        _novaR: 0, _novaMaxR: _maxR * 0.55,
+        _maxLinger: Math.floor(14 * _persist), _lingerT: 0,
         _hitSet: new Set(),
-        _warmup: 10, _visualOnly: true,
-        lifetime: Math.floor(56 * _persist), maxLife: 56, _pulseTimer: 0,
+        _warmup: 0, _visualOnly: true, _novaSpeedMult: 0.55,
+        lifetime: Math.floor(60 * _persist), maxLife: 60, _pulseTimer: 0,
       });
       // Launch flash — white core burst + initial inner sparks. The expanding
       // ring itself is rendered each frame from the spike entity.
@@ -17443,11 +17442,11 @@ function _updateRingZone(sp, _radBoost) {
     // EXPANDING PHASE — ring grows from origin to maxR, damages/launches as it sweeps.
     if (sp.phase === 'expanding') {
       const _prevR = sp._novaR;
-      // Slower expansion than discharge — the nova is a PRESSURE wave,
-      // not an energy zap. ~16-20 frames to reach max so the sweep is
-      // visible and the push has time to read on enemies it crosses.
+      // Ease-out expansion. _novaSpeedMult lets the echo pulse expand
+      // slower than the primary so it trails behind the leading edge.
       const _pct = sp._novaR / _maxR;
-      const _speed = 48 * Math.pow(1 - _pct, 1.15) + 3;
+      const _speedMult = sp._novaSpeedMult || 1.0;
+      const _speed = (48 * Math.pow(1 - _pct, 1.15) + 2) * _speedMult;
       sp._novaR = Math.min(_maxR, sp._novaR + _speed);
       // Damage any enemy the leading edge has passed through this frame.
       // Skipped for the echo pulse (_visualOnly) — primary already hit them.
@@ -17462,11 +17461,11 @@ function _updateRingZone(sp, _radBoost) {
           // Heavier knockback: 30-90 (was 18-56). Reads as a real shove
           // — close enemies launch hard, edges still slide. Longer slide
           // timer too so the launch animation actually lands.
-          const _push = 60 * (1 - d / _maxR) + 30;
+          const _push = 30 * (1 - d / _maxR) + 14;
           z._slideVx = (z._slideVx || 0) + (dx/_dn) * _push;
           z._slideVy = (z._slideVy || 0) + (dy/_dn) * _push;
-          z._slideTimer = 95;
-          damageZombie(z, 35, (dx/_dn) * 9, (dy/_dn) * 9);
+          z._slideTimer = 60;
+          damageZombie(z, 35, (dx/_dn) * 4.5, (dy/_dn) * 4.5);
           applyExposed(z);
           // Per-enemy launch sparks + speed lines back toward origin
           for (let j = 0; j < 8; j++) {
@@ -19343,9 +19342,12 @@ function updatePayload() {
     // frames of expansion + ~12 frames of hairline linger. Class
     // residuals (added below) fill the area while the rim lingers.
     const _swMul = _plCls === 'wind' ? 1.75 : _plCls === 'fire' ? 1.60 : _plCls === 'chain' ? 1.50 : _plCls === 'ice' ? 1.40 : _plCls === 'corrupt' ? 1.50 : 1.45;
-    const _swLife = _plCls === 'wind' ? 58 : _plCls === 'ice' ? 46 : _plCls === 'chain' ? 48 : 52;
+    // Snappier expansion + brief linger (discharge-style timing). Expansion
+    // takes ~60% of life and the ease-out curve naturally decelerates at the
+    // end. Linger is ~40% of life, with the back 60% of that fading to 0.
+    const _swLife = _plCls === 'wind' ? 38 : _plCls === 'ice' ? 30 : _plCls === 'chain' ? 32 : 34;
     particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:_swLife, maxLife:_swLife, size:radius*_swMul,
-      color:_plCol, type:'shockwave', _rimColor:'#fff', _lingerStart: 0.5 });
+      color:_plCol, type:'shockwave', _rimColor:'#fff', _lingerStart: 0.6 });
     // (irregular blob ring removed — the canonical thin shockwave reads
     // closer to the discharge weapon now.)
     // Bright center flash
@@ -27156,44 +27158,69 @@ function update() {
                       }
                     }
                   }
-                  // IMPACT BLAST: each hit creates a mini explosion. Lv1: 50px,
-                  // 40% dmg. Lv2: 70px, 60% dmg. One blast per bullet so a
-                  // pierce shot doesn't chain-detonate the whole crowd.
+                  // IMPACT BLAST (thermal): each hit detonates a thermal blast.
+                  // One blast per bullet so a pierce shot doesn't chain-detonate the crowd.
                   if (_m.wideSpread > 0 && !b._impactBlasted) {
                     const _ibR = _modScale('wide_spread', 50, 8);
                     const _ibDmg = Math.floor(_dmg * (0.40 + _modLevel('wide_spread') * 0.05));
-                    // Visible "IMPACT!" callout above the zombie so the player
-                    // can see the card firing (it was easy to miss against the
-                    // surrounding hit VFX).
-                    if (_isLocal) addFloatingText(z.x, z.y - (z.radius || 14) - 22, 'IMPACT!', '#ff0');
                     if (isHost) {
                       for (const oz of zombies) {
                         if (oz === z || oz.hp <= 0) continue;
                         const _ibDx = oz.x-z.x, _ibDy = oz.y-z.y, _ibD = Math.sqrt(_ibDx*_ibDx+_ibDy*_ibDy);
-                        // silent=true: the mini-explosion ring + sparks below cover
-                        // the visual — per-enemy hitflash would compound to ~125
-                        // extra particles for a 5-enemy radius hit and freeze the
-                        // frame. (See payload fix.)
                         if (_ibD < _ibR) damageZombie(oz, _ibDmg, _ibD>1?(_ibDx/_ibD)*4:0, _ibD>1?(_ibDy/_ibD)*4:0, true);
                       }
                     }
-                    // BIG VFX: double ring + sparks + smoke + screenshake
-                    const _ibCol = b.color || '#ff0';
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _ibR, color: _ibCol, type: 'wakering' });
-                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: _ibR * 0.6, color: '#fff', type: 'wakering' });
-                    for (let _ibi = 0; _ibi < 14; _ibi++) {
-                      const _iba = Math.random()*Math.PI*2, _ibs = 3+Math.random()*7;
-                      particles.push({ x: z.x, y: z.y, vx: Math.cos(_iba)*_ibs, vy: Math.sin(_iba)*_ibs,
-                        life: 10+Math.floor(Math.random()*4), maxLife: 14, size: 3+Math.random()*3,
-                        color: _ibi<4?'#fff':_ibCol, type: 'explosion' });
+                    // ---- THERMAL DETONATION VFX (much louder) ----
+                    // Layer 1: white-hot core flash — single bright pop the eye locks onto.
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: _ibR * 0.55, color: '#fff', type: 'explosion' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: _ibR * 0.40, color: '#ffd', type: 'explosion' });
+                    // Layer 2: triple shockwave rings — white core, orange mid, deep red outer.
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 8,  maxLife: 8,  size: _ibR * 0.55, color: '#fff', type: 'wakering' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: _ibR,        color: '#fa0', type: 'wakering' });
+                    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 20, maxLife: 20, size: _ibR * 1.30, color: '#f40', type: 'wakering' });
+                    // Layer 3: fireball — 24 orange/yellow/red embers fanning out fast.
+                    for (let _ibi = 0; _ibi < 24; _ibi++) {
+                      const _iba = Math.random()*Math.PI*2, _ibs = 4+Math.random()*8;
+                      particles.push({ x: z.x, y: z.y, vx: Math.cos(_iba)*_ibs, vy: Math.sin(_iba)*_ibs - 0.5,
+                        life: 18+Math.floor(Math.random()*8), maxLife: 26, size: 3+Math.random()*4,
+                        color: ['#fff','#ff0','#fa0','#f80','#f40'][_ibi % 5], type: 'explosion' });
                     }
-                    for (let _si = 0; _si < 3; _si++) {
-                      particles.push({ x: z.x+(Math.random()-0.5)*10, y: z.y+(Math.random()-0.5)*10,
-                        vx: (Math.random()-0.5)*3, vy: (Math.random()-0.5)*3,
-                        life: 14, maxLife: 14, size: 5+Math.random()*4, color: '#222', type: 'smoke', _smokeAlpha: 0.25 });
+                    // Layer 4: rising flame tongues — directional ember spray upward.
+                    for (let _fi = 0; _fi < 10; _fi++) {
+                      const _fa = -Math.PI/2 + (Math.random() - 0.5) * 1.6;
+                      const _fs = 3 + Math.random() * 4;
+                      particles.push({ x: z.x + (Math.random()-0.5)*8, y: z.y + (Math.random()-0.5)*4,
+                        vx: Math.cos(_fa)*_fs + (Math.random()-0.5)*1.2,
+                        vy: Math.sin(_fa)*_fs - 1.5 - Math.random()*1.5,
+                        life: 22+Math.floor(Math.random()*10), maxLife: 32,
+                        size: 2.5+Math.random()*2,
+                        color: ['#f80','#fa0','#ff0','#f40'][Math.floor(Math.random()*4)],
+                        type: 'spark' });
                     }
-                    screenShake.intensity = Math.max(screenShake.intensity, 4);
-                    playSound(200, 0.08, 'square', 0.05);
+                    // Layer 5: dark smoke plume — thick, slow, lingering.
+                    for (let _si = 0; _si < 7; _si++) {
+                      const _sa = Math.random()*Math.PI*2, _ss = 1+Math.random()*2.5;
+                      particles.push({ x: z.x + (Math.random()-0.5)*12, y: z.y + (Math.random()-0.5)*8,
+                        vx: Math.cos(_sa)*_ss, vy: Math.sin(_sa)*_ss - 1 - Math.random(),
+                        life: 36+Math.floor(Math.random()*14), maxLife: 50,
+                        size: 6+Math.random()*5, color: ['#322','#211','#433'][Math.floor(Math.random()*3)],
+                        type: 'smoke', _smokeAlpha: 0.32 });
+                    }
+                    // Layer 6: scorch decal on the floor.
+                    decals.push({ type: 'scorch', x: z.x, y: z.y, size: _ibR * 0.5,
+                      color: 'rgba(40,18,8,0.65)', alpha: 0.55 });
+                    for (let _di = 0; _di < 3; _di++) {
+                      const _dsa = Math.random()*Math.PI*2, _dsr = _ibR * (0.25 + Math.random()*0.35);
+                      decals.push({ type: 'scorch',
+                        x: z.x + Math.cos(_dsa)*_dsr, y: z.y + Math.sin(_dsa)*_dsr,
+                        size: 4 + Math.random()*4, color: 'rgba(28,14,6,0.55)', alpha: 0.40 });
+                    }
+                    screenShake.intensity = Math.max(screenShake.intensity, 7);
+                    // Custom thermal-blast sound — sharper, brighter than the default
+                    // sawtooth explosion. Triangle layer gives a metallic bite.
+                    playSound(420, 0.06, 'triangle', 0.16);
+                    playSound(180, 0.10, 'square', 0.12);
+                    playSound(70,  0.14, 'sine',    0.16);
                     b._impactBlasted = true;
                   }
                   // PARASITIC LINK: heal on hit vs compromised
@@ -33766,10 +33793,7 @@ function render() {
         // translate(sp.x, sp.y) from the parent block, so coords are
         // local. drawShockwave is absolute-space so we have to feed
         // (sp.x, sp.y) explicitly — undo the translation around the call.
-        // Echo pulses sit dormant during their _warmup window — don't paint
-        // anything so the player only sees one wave start at fire time.
-        if (sp._warmup > 0) { /* no draw during warmup */ }
-        else {
+        {
         const _isLinger = sp.phase === 'lingering';
         const _r = _isLinger ? sp._novaMaxR : sp._novaR;
         const _maxR = sp._novaMaxR;
@@ -33803,7 +33827,7 @@ function render() {
           }
         }
         ctx.globalAlpha = 1;
-        } // end !_warmup
+        }
       } else if (sp.classId === 'eruption' && sp.phase === 'armed') {
         // MINE: chunkier body + bigger blinking red light + faint danger ring
         // around the blast radius so the player can see the threat area at a
