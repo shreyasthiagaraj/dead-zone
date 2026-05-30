@@ -11835,19 +11835,50 @@ function generateShellRoom() {
   obstacles = [];
   for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c1830' }); rs = -1; } } }
   uploadDungeonGrid();
-  // Weapon racks along the TOP wall, columns 4 / 11 / 18 (22-cell room) so each
-  // has >=3 cells of padding from corners + the next rack.
   _shellWeaponRacks = [
     { col: 4,  weaponId: 'pistol',   color: PRIMARY_WEAPON_OPTIONS.pistol.color,   icon: PRIMARY_WEAPON_OPTIONS.pistol.icon,   name: 'SIDEARM' },
     { col: 11, weaponId: 'ripper',   color: PRIMARY_WEAPON_OPTIONS.ripper.color,   icon: PRIMARY_WEAPON_OPTIONS.ripper.icon,   name: 'RIPPER' },
     { col: 18, weaponId: 'deadshot', color: PRIMARY_WEAPON_OPTIONS.deadshot.color, icon: PRIMARY_WEAPON_OPTIONS.deadshot.icon, name: 'DEADSHOT' },
   ].map(r => ({ ...r, x: r.col * CELL_SIZE + CELL_SIZE/2, y: 2.4 * CELL_SIZE }));
   _shellDoor = { x: (SW - 1) * CELL_SIZE, y: _gateY * CELL_SIZE };
-  shellGatewayPos = _shellDoor; // legacy alias preserved for callers
+  shellGatewayPos = _shellDoor;
   shellPlayerSpawn = { x: Math.floor(SW / 2) * CELL_SIZE, y: (SH - 3.5) * CELL_SIZE };
-  shellTerminals = []; // no codex / signal lab / forge / checkpoint in the new Shell
+  shellTerminals = [];
   memoryFragments = [];
   hazeParticles = [];
+  // ---- DECOR ----
+  // Populate the global decor[] array using the same shapes as a normal stage,
+  // so renderDecor() draws them BEFORE the player. Server racks, CRT monitors,
+  // cables, and hazard stripes.
+  decor = [];
+  const _serverLeds = (n, speed) => { const arr = []; for (let i = 0; i < n; i++) arr.push({ phase: Math.random() * Math.PI * 2, speed: speed * (0.7 + Math.random() * 0.6) }); return arr; };
+  // Side-wall server racks
+  for (const rk of [
+    { x: 2.6 * CELL_SIZE, y: 5.0 * CELL_SIZE, color: '#0ff', accent: '#0ff' },
+    { x: 2.6 * CELL_SIZE, y: 8.5 * CELL_SIZE, color: '#5af', accent: '#5af' },
+    { x: (SW - 2.6) * CELL_SIZE, y: 8.5 * CELL_SIZE, color: '#fa0', accent: '#fa0' },
+    { x: (SW - 2.6) * CELL_SIZE, y: 11.0 * CELL_SIZE, color: '#f60', accent: '#f60' },
+  ]) decor.push({ type: 'server_rack', x: rk.x, y: rk.y, w: 26, h: 56, color: rk.color, accent: rk.accent, _leds: _serverLeds(6, 1.2) });
+  // Bottom-wall server-rack row (cols 4, 9, 13)
+  const _bottomY = (SH - 2.0) * CELL_SIZE;
+  for (const rk of [
+    { x: 4 * CELL_SIZE,  color: '#5af' },
+    { x: 9 * CELL_SIZE,  color: '#0ff' },
+    { x: 13 * CELL_SIZE, color: '#fc4' },
+  ]) decor.push({ type: 'server_rack', x: rk.x, y: _bottomY, w: 32, h: 50, color: rk.color, accent: rk.color, _leds: _serverLeds(5, 1.1) });
+  // CRT monitors — center pair + bottom-row pair
+  for (const m of [
+    { x: 7  * CELL_SIZE, y: 11 * CELL_SIZE, w: 36, h: 28, color: '#1a4a78', label: 'SYS:OK' },
+    { x: 15 * CELL_SIZE, y: 11 * CELL_SIZE, w: 36, h: 28, color: '#3a3a18', label: 'TELEM' },
+    { x: 6  * CELL_SIZE, y: _bottomY - 30,  w: 32, h: 22, color: '#1a4a78', label: 'CPU:38C' },
+    { x: 11 * CELL_SIZE, y: _bottomY - 30,  w: 32, h: 22, color: '#2a4c1a', label: 'NET:UP' },
+  ]) decor.push({ type: 'crt_monitor', x: m.x, y: m.y, w: m.w, h: m.h, color: m.color, label: m.label, _flicker: 0 });
+  // Hazard stripes near the door (right wall).
+  decor.push({ type: 'hazard_stripes', x: (SW - 2.4) * CELL_SIZE, y: SH/2 * CELL_SIZE, w: 60, h: 18, angle: -Math.PI/8 });
+  // Cables: three dangling from the ceiling area.
+  for (const cb of [{ x: 5*CELL_SIZE, y: 1.6*CELL_SIZE }, { x: 13*CELL_SIZE, y: 1.5*CELL_SIZE }, { x: 17*CELL_SIZE, y: 1.7*CELL_SIZE }]) {
+    decor.push({ type: 'cable', x: cb.x, y: cb.y, len: 28 + Math.random() * 12, color: '#26508a' });
+  }
 }
 
 // Legacy checkpoint branch removed \u2014 Shell no longer surfaces a checkpoint
@@ -14295,12 +14326,13 @@ document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootBu
 function enterShell(fromDeath) {
   initAudio(); loadSfx();
   isMultiplayer = false; isHost = true;
-  generateShellRoom();
-  // DON'T create the player yet — spawn sequence will materialize them
+  // Clear all run-state FIRST, then build the shell room (which populates
+  // decor[]). Previously the order was reversed and the decor was wiped.
   players = []; localPlayerIdx = 0;
   bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = [];
   floatingTexts = []; explosions = []; barrels = []; xpOrbs = [];
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; activeBeacon = null; _beacons = []; activeGrenade = null; _dischargeActive = false; _dischargeCharging = false; _dischargeCharge = 0; _dischargeWave = null; _deadshotCharging = false; _deadshotCharge = 0;
+  generateShellRoom();
   activeOrbital = null;
   // Clear run-specific state so old mods don't persist in the Shell
   runUpgrades = {}; runUpgradePower = {}; _resetMilestones(); rebuildRunMods();
@@ -14326,6 +14358,7 @@ function enterShell(fromDeath) {
   const _xpChip = document.getElementById('xp-chip');
   if (_xpChip) _xpChip.style.display = '';
   gameState = 'shell';
+  gameMode = 'shell'; // gates trench/survival/arcade-specific spawn/render paths
   _shellTransitioning = false;
   _shellNearTerminal = null;
   _shellInteractCooldown = 30; // brief cooldown to prevent instant terminal open
@@ -14660,11 +14693,10 @@ function _renderShellVoidBackground_LEGACY(vL, vR, vT, vB) {
 function renderShellOverlays() {
   const lp = getLocalPlayer();
   const t = performance.now();
-  // ---------------- IN-WORLD DECOR ----------------
-  // All drawn in world space (inside the parent ctx.translate). Walls are
-  // already drawn by the main floor pass; this layer dresses the room.
-  _renderShellDecor(t);
   // ---------------- WEAPON RACKS (top wall) ----------------
+  // (Decor — server racks, CRT monitors, cables, hazard stripes — lives in
+  // the global decor[] array now and is rendered by renderDecor() BEFORE the
+  // player, so the player walks IN FRONT of it.)
   _renderShellWeaponRacks(t);
   // ---------------- DOOR (right wall) ----------------
   _renderShellDoor(t, lp);
@@ -25638,8 +25670,12 @@ function update() {
     if (_comboTimer === 0) _comboCount = 0;
   }
   if (_comboPulse > 0) _comboPulse--;
-  if (gameState === 'shell') { updateShell(); return; }
+  // Shell uses the SAME update flow as a normal stage: player input + aim +
+  // shoot + dash + special + spike + discharge/payload/deadshot ticks all run
+  // through the regular pipeline below. Shell-specific bits (fade, weapon
+  // rack proximity, door trigger) run via _shellTickExtras() near the end.
   // Boss death dramatic freeze
+
   if (_bossDeathFreeze > 0) { _bossDeathFreeze--; return; }
   // Signal lab cooldown (prevents re-open spam in checkpoint room)
   if (_signalLabCooldown > 0) _signalLabCooldown--;
@@ -30679,7 +30715,48 @@ function update() {
     sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer, mdChoice });
   }
 
+  if (gameState === 'shell') _shellTickExtras();
   updateHUD();
+}
+
+// Shell-specific per-frame work that runs at the end of update() when the
+// player is in the staging room. Handles: fade transition, glitch-in
+// particles, weapon rack proximity (auto-equip on walk-up), and door
+// proximity (start run).
+function _shellTickExtras() {
+  if (_shellFadeDir !== 0) {
+    _shellFadeAlpha += _shellFadeDir * (1/15);
+    if (_shellFadeDir === 1 && _shellFadeAlpha >= 1) { _shellFadeAlpha = 1; _shellFadeDir = 0; _executeRunStart(); }
+    else if (_shellFadeDir === -1 && _shellFadeAlpha <= 0) { _shellFadeAlpha = 0; _shellFadeDir = 0; }
+  }
+  if (_shellGlitchInTimer > 0) {
+    _shellGlitchInTimer--;
+    const lp2 = getLocalPlayer();
+    if (lp2 && gameTime % 2 === 0) { const a = Math.random()*Math.PI*2, d = 15+Math.random()*30; particles.push({x:lp2.x+Math.cos(a)*d,y:lp2.y+Math.sin(a)*d,vx:-Math.cos(a)*2,vy:-Math.sin(a)*2,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()<0.5?'#0ff':'#f0f',type:'spark'}); }
+  }
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  // Weapon rack proximity: walk near a rack to equip the bundled loadout.
+  _shellNearRack = null;
+  if (Array.isArray(_shellWeaponRacks)) {
+    for (const rack of _shellWeaponRacks) {
+      const _rdx = lp.x - rack.x, _rdy = lp.y - rack.y;
+      if (_rdx*_rdx + _rdy*_rdy < 60*60) { _shellNearRack = rack; break; }
+    }
+  }
+  if (_shellNearRack && selectedPrimary !== _shellNearRack.weaponId) {
+    const _wid = _shellNearRack.weaponId;
+    _setPrimaryBundle(_wid);
+    const opt = PRIMARY_WEAPON_OPTIONS[_wid];
+    if (opt) addFloatingText(lp.x, lp.y - 32, 'EQUIPPED: ' + opt.name, opt.color);
+    playSfx('weapon_pickup', 0.3) || playSound(600, 0.08, 'square', 0.16);
+  }
+  // Door trigger.
+  _shellNearDoor = false;
+  if (_shellDoor && !_shellTransitioning) {
+    const _ddx = lp.x - _shellDoor.x, _ddy = lp.y - _shellDoor.y;
+    if (_ddx*_ddx + _ddy*_ddy < 50*50) { _shellNearDoor = true; startRunFromShell(); }
+  }
 }
 
 // ---- Apply host state (non-host client) ----
@@ -31696,9 +31773,10 @@ function render() {
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       const _px=cx*CELL_SIZE, _py=cy*CELL_SIZE, _CS=CELL_SIZE;
-      // Shell uses the checker pattern (Domain 2 style) for that real-stage read.
+      // Shell uses the default grid pattern (lines only, no alternating fills)
+      // so it looks like a normal stage's floor.
       const _fp = gameState === 'shell'
-        ? 'checker'
+        ? null
         : (gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern);
       if (_fp === 'checker') {
         const _isLight = (cx + cy) % 2 === 0;
@@ -31827,8 +31905,16 @@ function render() {
     ctx.stroke();
     ctx.globalAlpha = 1;
   } else {
-    ctx.globalAlpha = 0.4; // dim the grid lines
-    ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
+    // Shell: brighter, thicker grid lines so the checkbox pattern is obvious.
+    if (gameState === 'shell') {
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = '#3a7fd6';
+      ctx.lineWidth = 1.2;
+      ctx.stroke(_floorPath);
+    } else {
+      ctx.globalAlpha = 0.4;
+      ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
+    }
     ctx.globalAlpha = 1;
   }
   // Wireframe scan line (D4 only) — horizontal gold line sweeping down
