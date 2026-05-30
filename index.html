@@ -14409,12 +14409,24 @@ function updateShell() {
     screenShake.y = (Math.random()-0.5)*2*screenShake.intensity;
     screenShake.intensity *= screenShake.decay;
   } else { screenShake.x = 0; screenShake.y = 0; screenShake.intensity = 0; }
-  // Camera centered on the (one-screen) room.
-  camera.x = ARENA_W / 2;
-  camera.y = ARENA_H / 2;
 
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
+
+  // Camera follow with clamp — same model as a normal stage.
+  {
+    const _hw = canvas.width / 2, _hh = canvas.height / 2;
+    const _wiggleX = canvas.width * 0.18, _wiggleY = canvas.height * 0.18;
+    const _camTX = lp.x, _camTY = lp.y;
+    camera.x = lerp(camera.x, _camTX, isMobile ? 0.1 : 0.2);
+    camera.y = lerp(camera.y, _camTY, isMobile ? 0.1 : 0.2);
+    // Clamp to playable bounds (room interior) with wiggle so the camera can
+    // drift a bit past the edge instead of glueing the player off-center.
+    const _minX = CELL_SIZE,                _maxX = ARENA_W - CELL_SIZE;
+    const _minY = CELL_SIZE,                _maxY = ARENA_H - CELL_SIZE;
+    camera.x = Math.max(_minX + _hw - _wiggleX, Math.min(_maxX - _hw + _wiggleX, camera.x));
+    camera.y = Math.max(_minY + _hh - _wiggleY, Math.min(_maxY - _hh + _wiggleY, camera.y));
+  }
 
   // ---- Player input + movement (same speed + ramp as a normal stage) ----
   {
@@ -14439,8 +14451,23 @@ function updateShell() {
       const l = Math.sqrt(dx*dx + dy*dy); dx /= l; dy /= l;
     }
     lp.vx = dx * moveSpeed; lp.vy = dy * moveSpeed;
-    lp.x += lp.vx; lp.y += lp.vy;
-    pushOutOfObstacles(lp, PLAYER_RADIUS);
+    // Dash override: while dashing, force velocity to dash direction at
+    // DASH_SPEED so the dash actually moves the player. Mirrors the normal
+    // stage update().
+    if (lp._dashFrames && lp._dashFrames > 0) {
+      lp._dashFrames--;
+      lp.vx = (lp.dashDirX || Math.cos(lp.angle || 0)) * DASH_SPEED;
+      lp.vy = (lp.dashDirY || Math.sin(lp.angle || 0)) * DASH_SPEED;
+      // Substep so dash doesn't tunnel through walls in a single frame.
+      const _ds = Math.max(1, Math.ceil(Math.max(Math.abs(lp.vx), Math.abs(lp.vy)) / (PLAYER_RADIUS * 0.5)));
+      for (let _si = 0; _si < _ds; _si++) {
+        lp.x += lp.vx / _ds; lp.y += lp.vy / _ds;
+        pushOutOfObstacles(lp, PLAYER_RADIUS);
+      }
+    } else {
+      lp.x += lp.vx; lp.y += lp.vy;
+      pushOutOfObstacles(lp, PLAYER_RADIUS);
+    }
     lp.x = Math.max(PLAYER_RADIUS, Math.min(ARENA_W - PLAYER_RADIUS, lp.x));
     lp.y = Math.max(PLAYER_RADIUS, Math.min(ARENA_H - PLAYER_RADIUS, lp.y));
     // Aim: mouse on desktop, right joystick on mobile, fallback to move dir.
@@ -14745,6 +14772,32 @@ function _renderShellDecor(t) {
   };
   _drawMonitor(7 * CELL_SIZE,  11 * CELL_SIZE, 36, 28, '#1a4a78', 'SYS:OK');
   _drawMonitor(15 * CELL_SIZE, 11 * CELL_SIZE, 36, 28, '#3a3a18', 'TELEM');
+  // Bottom-wall row: 3 server racks + 2 monitors + a horizontal pipe running
+  // along the floor with bracket clamps. Gives the lower half real density
+  // instead of an empty void.
+  const _bottomRackY = (ARENA_H/CELL_SIZE - 1.9) * CELL_SIZE;
+  _drawRack( 4 * CELL_SIZE,    _bottomRackY, 30, 50, '#5af');
+  _drawRack( 9 * CELL_SIZE,    _bottomRackY, 30, 50, '#0ff');
+  _drawRack(13 * CELL_SIZE,    _bottomRackY, 30, 50, '#fc4');
+  _drawMonitor(11 * CELL_SIZE, _bottomRackY - 30, 32, 22, '#2a4c1a', 'NET:UP');
+  _drawMonitor( 6 * CELL_SIZE, _bottomRackY - 30, 32, 22, '#1a4a78', 'CPU:38C');
+  // Horizontal pipe along the floor (just above the bottom wall).
+  const _pipeY = (ARENA_H/CELL_SIZE - 1.4) * CELL_SIZE;
+  _drawPipe(3 * CELL_SIZE, _pipeY, 16 * CELL_SIZE, _pipeY);
+  // Stenciled BIOHAZARD/DATA-LINE label on the floor near the bottom-right.
+  ctx.save();
+  ctx.globalAlpha = 0.16; ctx.fillStyle = '#3a7fd6';
+  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('DATA-LINE 04A', 18 * CELL_SIZE, _pipeY - 8);
+  ctx.restore();
+  // A couple of small floor crates near the bottom-left.
+  for (const crate of [{x: 5 * CELL_SIZE, y: _pipeY - 22}, {x: 7.6 * CELL_SIZE, y: _pipeY - 18}]) {
+    ctx.fillStyle = '#0c1830'; ctx.fillRect(crate.x - 11, crate.y - 11, 22, 22);
+    ctx.strokeStyle = '#3a7fd6'; ctx.lineWidth = 1;
+    ctx.strokeRect(crate.x - 11 + 0.5, crate.y - 11 + 0.5, 21, 21);
+    ctx.strokeStyle = '#26508a'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(crate.x - 8, crate.y); ctx.lineTo(crate.x + 8, crate.y); ctx.stroke();
+  }
   // Cable bundles hanging from the ceiling
   ctx.strokeStyle = '#26508a'; ctx.lineWidth = 2; ctx.globalAlpha = 0.7;
   for (const _cb of [{x: 5*CELL_SIZE, drop: 32}, {x: 13*CELL_SIZE, drop: 24}, {x: 17*CELL_SIZE, drop: 36}]) {
@@ -16565,7 +16618,7 @@ function _spikeColor(sp) {
 // spike-class card transforms the mechanic entirely (Hades-style cast). All
 // 5 mechanics share a button + charges + per-class color scheme.
 function throwSpike() {
-  if (gameState !== 'playing') return;
+  if (gameState !== 'playing' && gameState !== 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   // MINE REMOTE DETONATION: thermal-mine class only — if ANY armed mines
@@ -31648,16 +31701,22 @@ function render() {
         ? 'checker'
         : (gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern);
       if (_fp === 'checker') {
-        // D2: Checker pattern — alternating dark/light tiles
         const _isLight = (cx + cy) % 2 === 0;
-        ctx.fillStyle = _isLight ? '#100808' : '#0c0606';
-        ctx.fillRect(_px, _py, _CS, _CS);
-        if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(_px, _py, _CS, _CS); }
-        if (_isLight) {
-          // Crack marks on lighter tiles
-          ctx.globalAlpha = 0.12; ctx.strokeStyle = '#f60'; ctx.lineWidth = 0.5;
-          ctx.beginPath(); ctx.moveTo(_px+2, _py+2); ctx.lineTo(_px+_CS-2, _py+_CS-2); ctx.stroke();
-          ctx.globalAlpha = 1;
+        if (gameState === 'shell') {
+          // Shell-specific checker: high-contrast cool blue tiles so the
+          // pattern reads at a glance.
+          ctx.fillStyle = _isLight ? '#0e1c34' : '#04081a';
+          ctx.fillRect(_px, _py, _CS, _CS);
+        } else {
+          // D2: Checker pattern — alternating dark/light tiles
+          ctx.fillStyle = _isLight ? '#100808' : '#0c0606';
+          ctx.fillRect(_px, _py, _CS, _CS);
+          if (_domainFloorTint) { ctx.fillStyle = _domainFloorTint; ctx.fillRect(_px, _py, _CS, _CS); }
+          if (_isLight) {
+            ctx.globalAlpha = 0.12; ctx.strokeStyle = '#f60'; ctx.lineWidth = 0.5;
+            ctx.beginPath(); ctx.moveTo(_px+2, _py+2); ctx.lineTo(_px+_CS-2, _py+_CS-2); ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
         }
         if (!_isLight) _floorPath.rect(_px, _py, _CS, _CS); // grid only on dark tiles
       } else if (_fp === 'frost') {
