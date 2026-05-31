@@ -2325,12 +2325,9 @@ const UPGRADE_POOL = [
   { id:'tracer_round', name:'TRACER ROUND', rarity:'rare', max:1, icon:'◎', color:'#0ff',
     descs:['DEADSHOT marks the first enemy hit. Marked enemies take +30% damage for 4s.'],
     flavor:'target acquisition lock' },
-  // RAILGUN disabled — cosmetic-only, didn't add meaningful mechanics.
-  // Render + fire-side code is kept dormant in case we re-enable with a real
-  // swept-beam hitbox later.
-  // { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#0ff',
-  //   descs:['DEADSHOT at full charge: wide piercing beam.'],
-  //   flavor:'electromagnetic acceleration — maximum yield' },
+  { id:'railgun', name:'RAILGUN', rarity:'epic', max:1, icon:'═', color:'#0ff',
+    descs:['+100% damage to distant foes (>=300px from you).'],
+    flavor:'electromagnetic acceleration — pressure builds with range' },
   { id:'chain_kill', name:'CHAIN KILL', rarity:'common', max:1, icon:'⚯', color:'#0ff',
     descs:['DEADSHOT kills fire a follow-up bolt at the nearest enemy (60% dmg).'], flavor:'execution protocol — one kill leads to another' },
   { id:'triple_tap', name:'TRIPLE TAP', rarity:'epic', max:1, icon:'⫶', color:'#0ff',
@@ -2590,7 +2587,7 @@ const _KEY_STATS = {
   quick_draw:     { label:'charge speed', base:30, step:5, unit:'%' },
   armor_pierce:   null, // toggle
   tracer_round:   { label:'mark damage', base:30, step:5, unit:'%' },
-  railgun:        { label:'beam width', base:200, step:25, unit:'%' },
+  railgun:        { label:'distance dmg', base:100, step:15, unit:'%' },
   chain_kill:     { label:'follow-up dmg', base:60, step:7, unit:'%' },
   triple_tap:     { label:'tap damage', base:70, step:5, unit:'%' },
   // ---- Utility ----
@@ -3166,8 +3163,10 @@ const _SPECIAL_CARD_MAP = {
 };
 
 // Cards that only apply when the player has DEADSHOT as their primary weapon.
+// RAILGUN removed from this list — its new effect (+100% damage at range)
+// applies to any weapon, so it's no longer deadshot-gated.
 const _DEADSHOT_CARDS = new Set([
-  'quick_draw', 'armor_pierce', 'tracer_round', 'railgun', 'chain_kill', 'triple_tap',
+  'quick_draw', 'armor_pierce', 'tracer_round', 'chain_kill', 'triple_tap',
 ]);
 
 // Cards that only apply to a HITSCAN (gun) primary weapon. When the player is
@@ -25108,6 +25107,14 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if ((runMods||{}).concussiveVuln && (runMods||{}).concussiveBlast > 0 && z.staggerTimer > 0) damage = Math.floor(damage * (1 + _modScale('concussive_vuln', 1.0, 0.15)));
   // CARD: EXECUTION — bonus damage vs enemies below 25% HP
   if ((runMods||{}).execution && z.maxHp > 0 && z.hp / z.maxHp < 0.25) damage = Math.floor(damage * (1 + _modScale('execution', 0.50, 0.08)));
+  // CARD: RAILGUN — +100% damage to distant foes (>=300px from the local player).
+  if ((runMods||{}).railgun) {
+    const _rlp = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
+    if (_rlp) {
+      const _rdx = z.x - _rlp.x, _rdy = z.y - _rlp.y;
+      if (_rdx*_rdx + _rdy*_rdy >= 300*300) damage = Math.floor(damage * 2);
+    }
+  }
   // CARD: MOMENTUM SHOT — first ATTACK after kill bonus damage (1s window, single-use)
   {
     const _msPlr = getLocalPlayer && getLocalPlayer();
