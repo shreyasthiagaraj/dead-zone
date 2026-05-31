@@ -19962,18 +19962,14 @@ function updatePayload() {
     const _plCol = gc2;
     const _plCol2 = _plCls === 'fire' ? '#fa0' : _plCls === 'ice' ? '#cff' : _plCls === 'chain' ? '#8ff' : _plCls === 'wind' ? '#eef' : _plCls === 'corrupt' ? '#f0f' : '#fa0';
     const _plSmoke = _plCls === 'fire' ? '#421' : _plCls === 'ice' ? '#235' : _plCls === 'chain' ? '#124' : _plCls === 'corrupt' ? '#201' : '#111';
-    // CANONICAL SHOCKWAVE — thin discharge-style expanding wave that
-    // expands fast then lingers as a hairline pulse before fading.
-    // Lifetimes ~36 frames with the default 0.65 linger split = ~12
-    // frames of expansion + ~12 frames of hairline linger. Class
-    // residuals (added below) fill the area while the rim lingers.
+    // CANONICAL SHOCKWAVE — fast expansion with a long hairline linger.
+    // _lingerStart 0.25 means the wave reaches max in the first 25% of
+    // life and hangs as a hairline pulse for the remaining 75%. Life
+    // bumped so the trailing linger has time to breathe.
     const _swMul = _plCls === 'wind' ? 1.75 : _plCls === 'fire' ? 1.60 : _plCls === 'chain' ? 1.50 : _plCls === 'ice' ? 1.40 : _plCls === 'corrupt' ? 1.50 : 1.45;
-    // Snappier expansion + brief linger (discharge-style timing). Expansion
-    // takes ~60% of life and the ease-out curve naturally decelerates at the
-    // end. Linger is ~40% of life, with the back 60% of that fading to 0.
-    const _swLife = _plCls === 'wind' ? 38 : _plCls === 'ice' ? 30 : _plCls === 'chain' ? 32 : 34;
+    const _swLife = _plCls === 'wind' ? 60 : _plCls === 'ice' ? 48 : _plCls === 'chain' ? 50 : 54;
     particles.push({ x:g.x, y:g.y, vx:0, vy:0, life:_swLife, maxLife:_swLife, size:radius*_swMul,
-      color:_plCol, type:'shockwave', _rimColor:'#fff', _lingerStart: 0.6 });
+      color:_plCol, type:'shockwave', _rimColor:'#fff', _lingerStart: 0.25 });
     // (irregular blob ring removed — the canonical thin shockwave reads
     // closer to the discharge weapon now.)
     // Bright center flash
@@ -36959,10 +36955,16 @@ function render() {
         //   _alphaScale        — multiplier on alpha
         //   _lingerStart       — fraction of life at which linger kicks in (default 0.65)
         const _prog = 1 - p.life / p.maxLife; // 0 → 1 over the particle's lifetime
-        // Ease-out radius: fast initial expansion, settles toward maxR.
-        const _radius = p.size * (1 - Math.pow(1 - _prog, 2.5));
         const _lingerStart = (p._lingerStart !== undefined) ? p._lingerStart : 0.65;
         const _isLinger = _prog >= _lingerStart;
+        // Ease-out radius: expansion compresses into the first _lingerStart
+        // fraction of life so the wave actually REACHES max by the time
+        // linger begins. Before this fix radius kept growing through the
+        // linger phase, which made low _lingerStart values (faster expand)
+        // pointless. Now: small _lingerStart = snappier expansion + longer
+        // hairline linger tail.
+        const _expandProg = Math.min(1, _prog / Math.max(0.01, _lingerStart));
+        const _radius = p.size * (1 - Math.pow(1 - _expandProg, 2.5));
         // lingerFrames = current count remaining inside linger window.
         // Drives the rim brightness pulse inside drawShockwave.
         const _lingerFrames = _isLinger ? Math.max(0, Math.floor(p.life)) : 0;
