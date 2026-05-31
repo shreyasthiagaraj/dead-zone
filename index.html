@@ -2157,7 +2157,7 @@ const UPGRADE_POOL = [
   // same velocity. Each stack adds +50% distance; the wake itself is
   // unchanged (it just runs for longer because the dash does).
   { id:'kinetic_glide', name:'KINETIC GLIDE', rarity:'common', max:3, icon:'💨', color:'#cef',
-    descs:['+50% dash distance.', '+100% dash distance.', '+150% dash distance.'],
+    descs:['+100% dash distance.', '+200% dash distance.', '+300% dash distance.'],
     flavor:'momentum bleeds off slower.' },
   { id:'shockfront', name:'SHOCKFRONT', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['EXPOSED kills emit a 60px knockback burst.'],
@@ -2592,7 +2592,7 @@ const _KEY_STATS = {
   triple_tap:     { label:'tap damage', base:70, step:5, unit:'%' },
   // ---- Utility ----
   swift:          { label:'move speed', base:12, step:3, unit:'%' },
-  kinetic_glide:  { label:'dash distance', base:0, step:50, unit:'%' },
+  kinetic_glide:  { label:'dash distance', base:0, step:100, unit:'%' },
   magnet:         { label:'pickup radius', base:60, step:10, unit:'%' },
   // ---- Extracted Lv2 — thermal ----
   thermal_detonation:{label:'AoE radius', base:80, step:12, unit:'px' },
@@ -17537,14 +17537,18 @@ function _updateTorpedoSpike(sp, _radBoost) {
       vx: -sp.vx*0.1, vy: -sp.vy*0.1, life: 18, maxLife: 18,
       size: 4+Math.random()*3, color: '#245', type: 'smoke', _smokeAlpha: 0.15 });
   }
-  // Wall hit / max travel / out of bounds → detonate
-  const _shouldDetonate = obstacleCollision(sp.x, sp.y, 6, true)
-    || sp.travel >= 364
-    || sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H;
+  // Wall hit / max travel / out of bounds → detonate. Travel range bumped
+  // 364 → 455 (+25%) so the torpedo carries enemies further before popping.
+  const _hitWall = obstacleCollision(sp.x, sp.y, 6, true);
+  const _hitOOB = sp.x < 0 || sp.x > ARENA_W || sp.y < 0 || sp.y > ARENA_H;
+  const _shouldDetonate = _hitWall || _hitOOB || sp.travel >= 455;
   if (_shouldDetonate) {
-    if (obstacleCollision(sp.x, sp.y, 6, true)) { sp.x -= sp.vx; sp.y -= sp.vy; }
-    // Carried enemy takes massive wall-slam damage
-    if (sp._carrying && sp._carrying.hp > 0) {
+    if (_hitWall) { sp.x -= sp.vx; sp.y -= sp.vy; }
+    // Carried enemy takes massive wall-slam damage ONLY if we actually
+    // hit a wall (or arena edge). Max-travel detonation just releases
+    // the enemy without the WALL SLAM text/bonus damage.
+    const _isWallSlam = _hitWall || _hitOOB;
+    if (sp._carrying && sp._carrying.hp > 0 && _isWallSlam) {
       damageZombie(sp._carrying, 35, nx * 6, ny * 6);
       addFloatingText(sp._carrying.x, sp._carrying.y - 20, 'WALL SLAM', '#fff');
     }
@@ -19246,7 +19250,11 @@ function updateDischarge() {
   if (w._collapsePhase) {
     w._collapseTimer--;
     w.radius = Math.max(0, w.radius - w.maxRadius / 25); // shrink over ~25 frames
-    // Pull enemies toward origin
+    // Pull enemies toward origin. We OVERRIDE outward velocity (from the
+    // initial discharge push) on the first collapse frame so the pull
+    // actually wins — without this, an enemy launched outward at vx 28
+    // would resist the +4-8 pull for its entire flight and never get
+    // sucked in. After the override, each frame nudges them inward.
     if (isHost) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
@@ -19256,6 +19264,18 @@ function updateDischarge() {
         let da = a - w.angle; while (da > Math.PI) da -= Math.PI * 2; while (da < -Math.PI) da += Math.PI * 2;
         const halfA = (w.waveAngle || DISCHARGE_ANGLE) * 0.5;
         if (Math.abs(da) > halfA) continue;
+        // First time we see this enemy in the collapse: cancel its
+        // outward velocity from the discharge wave's initial push and
+        // seed an inward velocity scaled by distance. Without this, an
+        // enemy launched outward at vx ~28 would resist the +4-8 pull
+        // and never reach the center.
+        if (!w._pulledSet) w._pulledSet = new Set();
+        if (!w._pulledSet.has(z.zid)) {
+          const _seed = 6 + (1 - d / w.maxRadius) * 4;
+          z.vx = -(dx / d) * _seed;
+          z.vy = -(dy / d) * _seed;
+          w._pulledSet.add(z.zid);
+        }
         const pull = 4 + (1 - d / w.maxRadius) * 4;
         z.vx -= (dx / d) * pull; z.vy -= (dy / d) * pull;
         // Damage on return wave band
@@ -19285,6 +19305,20 @@ function updateDischarge() {
             z.staggerTimer = Math.max(z.staggerTimer || 0, 40);
           }
         }
+      }
+      // CENTER EXPLOSION — bright white-core flash + canonical shockwave
+      // anchoring the implosion. Without this the singularity vanished
+      // with just a few sparks; now it pops as a real detonation moment.
+      particles.push({ x: w.x, y: w.y, vx: 0, vy: 0,
+        life: 30, maxLife: 30, size: 140,
+        color: w.color, type: 'shockwave', _rimColor: '#fff' });
+      // Hot white core that fades fast — gives the implosion its punch.
+      for (let _ci = 0; _ci < 14; _ci++) {
+        const _ca = Math.random() * Math.PI * 2, _cs = 2 + Math.random() * 4;
+        particles.push({ x: w.x, y: w.y,
+          vx: Math.cos(_ca) * _cs, vy: Math.sin(_ca) * _cs,
+          life: 10 + Math.floor(Math.random() * 4), maxLife: 14,
+          size: 4 + Math.random() * 5, color: '#fff', type: 'explosion' });
       }
       // Implosion burst VFX
       for (let i = 0; i < 20; i++) {
@@ -20455,6 +20489,16 @@ function _runJabFlurry(p, def) {
 
 function _runComboStep(p, def, step, idx) {
   const a = p.angle, c = Math.cos(a), s = Math.sin(a);
+  // Swing bob — visual-only forward-then-back motion to sell the effort
+  // of a swing. Ticks down each frame in the player render and offsets
+  // the body position via sin(t * PI) so it moves forward then back to
+  // neutral. No physics or hit detection involvement. Finisher swings
+  // already have their own committed lunge so skip the bob there.
+  if (!step.finisher) {
+    p._rSwingBob = 12;
+    p._rSwingBobMax = 12;
+    p._rSwingBobAng = a;
+  }
   // When a class is dominant, the WHOLE strike takes its color (beam,
   // tip rings, sparks) so a thermal swing reads thermal end to end.
   // Falls back to the step's own color when no class is active.
@@ -22147,7 +22191,7 @@ function dash() {
   // Dash duration in motion frames. Base 7 (= +16.7% over the previous 6
   // frames). KINETIC GLIDE (pulse mod card) extends this +50% per stack
   // (+50%/+100%/+150% across its 3 max). Distance only, speed unchanged.
-  const _glideBonus = ((runMods || {}).dashDistance > 0) ? _modScale('kinetic_glide', 0, 0.50) : 0;
+  const _glideBonus = ((runMods || {}).dashDistance > 0) ? _modScale('kinetic_glide', 0, 1.00) : 0;
   lp._dashFrames = Math.max(1, Math.round(DASH_FRAMES * (1 + _glideBonus)));
   // Dash-strike window: melee swings within ~280 ms of dashing fire as a
   // beefier lunging attack instead of the next combo step.
@@ -24922,6 +24966,12 @@ function _setTele(z, kind, t, opts) {
     ang: opts.ang || 0,
     col: opts.col || z.color || '#f44',
   };
+  // Stamp the frame this telegraph was set. If a render frame finds the
+  // stamp is stale (>1 frame old), the telegraph is cleared — prevents
+  // "endless flashing" when an enemy's AI branch changes mid-windup and
+  // forgets to call _clearTele (e.g. snipers leaving aim state, mortars
+  // stunned mid-charge).
+  z._teleSetFrame = gameTime;
 }
 function _clearTele(z) { if (z) z._tele = null; }
 // Per-frame body shake offset for the windup. Stable-random per zombie+frame
@@ -24951,6 +25001,12 @@ function _teleBodyScale(z) {
 }
 function _drawTelegraph(z, _zr) {
   const te = z._tele; if (!te) return;
+  // Auto-clear stale telegraphs: if this telegraph wasn't refreshed in the
+  // last 2 frames, the enemy's AI moved on without calling _clearTele.
+  // Drop it now so we don't flash endlessly.
+  if (z._teleSetFrame === undefined || (gameTime - z._teleSetFrame) > 2) {
+    z._tele = null; return;
+  }
   // Suppress when CC'd — the attack isn't happening this frame.
   if (z.staggerTimer > 0 || z._shocked > 0 || z._frozen || z._frozenTimer > 0) return;
   const tt = te.t, col = te.col;
@@ -25650,6 +25706,18 @@ function damagePlayerObj(p,damage,attacker) {
     damage -= p.barrier; p.barrier = 0;
   }
   p.hp-=damage;p.damageFlash=15;p.invincible=6; // brief flash only, no real i-frames
+  // Brief hit-stop + steady white-body flash overlay so the hit always
+  // reads as a punch. _hurtFlash is the steady-white silhouette pulse
+  // rendered on the player body; ticks down in the local-player update.
+  if (p === getLocalPlayer()) {
+    p._hurtFlash = 5;
+    // Cap hit-stop at 50ms — over the user's "no slowdowns over ~60ms"
+    // memory threshold for the heavier hits, while still letting smaller
+    // hits feel snappy.
+    if (typeof triggerHitStop === 'function' && _slowMoTimer === 0 && hitStopMs === 0) {
+      triggerHitStop(Math.min(50, 24 + Math.floor(damage / 4)));
+    }
+  }
   // ARCADE: mark the wave's "perfect" flag dirty so the wave-clear check
   // knows the player took damage. Only fires once per wave clear; reset
   // happens in startArcadeWave for the next wave.
@@ -26657,7 +26725,7 @@ function update() {
     if(!isMobile){mouse.worldX=mouse.x-canvas.width/2+camera.x;mouse.worldY=mouse.y-canvas.height/2+camera.y;}
     // Track movement angle for the direction dot (desktop only — mobile uses joystick directly)
     if(!isMobile&&(Math.abs(lp.vx)>0.1||Math.abs(lp.vy)>0.1)) lp.moveAngle=Math.atan2(lp.vy,lp.vx);
-    if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;
+    if(lp.dashCooldown>0){lp.dashCooldown-=16.67;if(lp.dashCooldown<=0){lp.dashCooldown=0;lp._dashCharges=lp._dashChargesMax||1;}}if(lp.invincible>0)lp.invincible-=16.67;if(lp.damageFlash>0)lp.damageFlash--;if(lp._hurtFlash>0)lp._hurtFlash--;
     // ---- Ripper sword dispersal tick: once the player hasn't swung for
     // a while, scatter the blade into particles so it isn't always hovering.
     if (lp._rSwordOn) {
@@ -30128,8 +30196,29 @@ function update() {
       }
       // Push zombies out of players — prevent visual overlap.
       // Skip for any player who is mid-dash (they ghost through enemies).
-      // Full separation (1.0x) so zombies can't clip inside the player sprite.
-      for(const p of players){if(!p.alive)continue;if(p._dashFrames>0||p.dashTimer>100)continue;const sx=z.x-p.x,sy=z.y-p.y,sd2=sx*sx+sy*sy,md2=z.radius+PLAYER_RADIUS,md22=md2*md2;if(sd2<md22&&sd2>0.01){const sd=Math.sqrt(sd2);const push=(md2-sd)/sd;z.x+=sx*push;z.y+=sy*push;}}
+      // RECIPROCAL: pushes the zombie outward AND nudges the player out
+      // by the same overlap amount. Without the player side, a player
+      // walking into a stunned/frozen/pinned zombie would still slide
+      // INSIDE the enemy because the zombie can't move away.
+      for(const p of players){
+        if(!p.alive)continue;
+        if(p._dashFrames>0||p.dashTimer>100)continue;
+        const sx=z.x-p.x,sy=z.y-p.y;
+        const sd2=sx*sx+sy*sy;
+        const md2=z.radius+PLAYER_RADIUS;
+        if(sd2<md2*md2&&sd2>0.01){
+          const sd=Math.sqrt(sd2);
+          const overlap=md2-sd;
+          const nx=sx/sd, ny=sy/sd;
+          // Split the push: zombie 60%, player 40% — keeps zombies feeling
+          // hefty (they barely budge) while ensuring the player never
+          // ends up inside the zombie.
+          z.x += nx * overlap * 0.6;
+          z.y += ny * overlap * 0.6;
+          p.x -= nx * overlap * 0.4;
+          p.y -= ny * overlap * 0.4;
+        }
+      }
       // Melee all players — contact damage at the boundary (zombies don't enter the player).
       for(const p of players){if(!p.alive)continue;
         const pdx=p.x-z.x,pdy=p.y-z.y,pd=Math.sqrt(pdx*pdx+pdy*pdy);
@@ -36375,6 +36464,18 @@ function render() {
     }
     // Body (not rotated with gun)
     ctx.save();ctx.translate(p.x,p.y);
+    // Sword swing bob — render-only forward/back offset. sin(t * PI)
+    // peaks mid-swing then returns to 0, so the body visibly leans
+    // into the strike and rebounds. Ticked down here too so the bob
+    // expires after its 12-frame window.
+    if (p._rSwingBob > 0) {
+      const _bobMax = p._rSwingBobMax || 12;
+      const _bobT = (_bobMax - p._rSwingBob) / _bobMax; // 0 → 1
+      const _bobAmt = Math.sin(_bobT * Math.PI) * 6;
+      const _bobAng = p._rSwingBobAng || 0;
+      ctx.translate(Math.cos(_bobAng) * _bobAmt, Math.sin(_bobAng) * _bobAmt);
+      p._rSwingBob--;
+    }
     const _isDashing = (p._dashFrames && p._dashFrames > 0);
     if(p.invincible>0&&Math.floor(p.invincible/50)%2===0&&!_isDashing)ctx.globalAlpha=0.5;
     // ---- DASH DISTORTION: compressed body + steady translucency ----
@@ -36413,6 +36514,17 @@ function render() {
       ctx.globalAlpha = 1;
     }
     ctx.strokeStyle=_bodyColor;ctx.lineWidth=_isDashing?3:(_elemColor||_rageActive?3:2.5);ctx.stroke();ctx.shadowBlur=0;
+    // White hurt flash — solid silhouette overlay during the first ~5
+    // frames after taking damage. Combined with the brief hit-stop in
+    // damagePlayerObj this reads as a clear punch.
+    if (p._hurtFlash > 0) {
+      ctx.globalAlpha = Math.min(1, p._hurtFlash / 5);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(0, 0, PLAYER_RADIUS, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, PLAYER_RADIUS, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     // Reload arc: orange ring that fills clockwise as reload progresses
     if (_gunReloading && _gunReloadTimer > 0 && p === getLocalPlayer()) {
       const reloadPct = 1 - (_gunReloadTimer / GUN_RELOAD_TIME);
