@@ -16159,6 +16159,15 @@ function fireWeaponForPlayer(p) {
   _gunAmmo--;
   _gunIdleTimer = 0;
   hapticShot();
+  // SHOT BOB — small forward/back lean per shot (mirrors the sword bob).
+  // Snappier than melee because guns fire fast; 5px / 7f stays under the
+  // pistol's 10-frame interval so successive shots don't pile bobs.
+  if (p === getLocalPlayer()) {
+    p._rSwingBob = 7;
+    p._rSwingBobMax = 7;
+    p._rSwingBobAng = p.angle;
+    p._rSwingBobAmp = 5;
+  }
   // DASH STRIKE — consume the post-dash kinetic-cone window on the first shot.
   if (p === getLocalPlayer()) _fireDashStrikeCone(p);
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
@@ -19598,6 +19607,66 @@ function updateDischarge() {
       // fall through — damage logic below still runs at the boundary
     }
   }
+  // ---- SINGULARITY GRAVITY WELL ----
+  // Runs every frame during expansion + linger (collapse handles its own
+  // pull separately and returns earlier). Borrows the gravity_well mod's
+  // approach: continuous inward pull + outward-velocity dampening so
+  // anything caught inside the wave's maxRadius cannot escape before the
+  // collapse fires. Paired with the reduced wave-hit knockback above, the
+  // result is "the discharge captures, then the singularity crushes."
+  if (w._singularity) {
+    const _gwR = w.maxRadius;
+    const _gwR2 = _gwR * _gwR;
+    const _pullStr = 2.4;
+    const _escapeDamp = 0.78;
+    if (isHost) {
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const _gdx = w.x - z.x, _gdy = w.y - z.y;
+        const _gd2 = _gdx*_gdx + _gdy*_gdy;
+        if (_gd2 >= _gwR2 || _gd2 < 25) continue;
+        const _gd = Math.sqrt(_gd2);
+        const _gnx = _gdx / _gd, _gny = _gdy / _gd;
+        // Pull: 25% at the edge → 75% at center (matches gravity_well curve).
+        const _gt = 1 - _gd / _gwR;
+        const _gf = _pullStr * (0.25 + 0.5 * _gt);
+        z.vx += _gnx * _gf; z.vy += _gny * _gf;
+        // Outward escape dampening — anything moving away from center gets
+        // its radial component reeled back in.
+        const _vRad = z.vx * _gnx + z.vy * _gny; // >0 means heading INTO the well
+        if (_vRad < 0) { z.vx -= _gnx * _vRad * _escapeDamp; z.vy -= _gny * _vRad * _escapeDamp; }
+      }
+    }
+    // VFX: inward-spiraling sparks from the boundary inward + rotating
+    // boundary markers (same look as the beacon GRAVITY WELL mod).
+    if (gameTime % 2 === 0) {
+      for (let _gpi = 0; _gpi < 4; _gpi++) {
+        const _gpa = Math.random() * Math.PI * 2;
+        const _gpr = _gwR * (0.5 + Math.random() * 0.5);
+        const _inward = -2.5 - Math.random() * 2;
+        const _tangent = (Math.random() < 0.5 ? 1 : -1) * (1 + Math.random());
+        particles.push({
+          x: w.x + Math.cos(_gpa) * _gpr, y: w.y + Math.sin(_gpa) * _gpr,
+          vx: Math.cos(_gpa) * _inward + Math.cos(_gpa + Math.PI/2) * _tangent,
+          vy: Math.sin(_gpa) * _inward + Math.sin(_gpa + Math.PI/2) * _tangent,
+          life: 16, maxLife: 16, size: 2 + Math.random() * 1.5,
+          color: w.color, type: 'spark',
+        });
+      }
+    }
+    if (gameTime % 3 === 0) {
+      const _gra = (gameTime * 0.05) % (Math.PI * 2);
+      for (let _gri = 0; _gri < 3; _gri++) {
+        const _grA = _gra + (_gri / 3) * Math.PI * 2;
+        particles.push({
+          x: w.x + Math.cos(_grA) * _gwR, y: w.y + Math.sin(_grA) * _gwR,
+          vx: -Math.cos(_grA) * 1.5, vy: -Math.sin(_grA) * 1.5,
+          life: 12, maxLife: 12, size: 3, color: w.color, type: 'spark',
+        });
+      }
+    }
+  }
+
   // ---- INTERIOR PARTICLES ----
   // Helper: pick a random position inside the wave's swept area (arc cone
   // from origin out to current radius). Uniform-ish density across the area.
@@ -19750,8 +19819,12 @@ function updateDischarge() {
       // Silent — wave has its own per-hit ring + sparks below, and big wave
       // VFX is already loud. Skipping the 50-particle impact storm prevents
       // FPS drops when the wave sweeps a cluster.
-      damageZombie(z, baseDmg, pushX*0.5, pushY*0.5, true);
-      z.vx += pushX * 1.5; z.vy += pushY * 1.5;
+      // SINGULARITY: cut outward knockback to 15% so the gravity-well pull
+      // keeps enemies inside maxRadius. Without this the wave's own push
+      // could fling enemies past the well's reach before the collapse fires.
+      const _pushMul = w._singularity ? 0.15 : 1.0;
+      damageZombie(z, baseDmg, pushX*0.5*_pushMul, pushY*0.5*_pushMul, true);
+      z.vx += pushX * 1.5 * _pushMul; z.vy += pushY * 1.5 * _pushMul;
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -19773,7 +19846,9 @@ function updateDischarge() {
         // PULSE PROTOCOL on discharge: heavy outward shove on top of the
         // base wave push so enemies actually fly back from the kinetic
         // shockwave (matches the protocol's identity).
-        z.vx += pushX * 2.0; z.vy += pushY * 2.0;
+        // Suppressed under SINGULARITY — the well wants enemies STAYING
+        // in, not catapulting past the boundary.
+        if (!w._singularity) { z.vx += pushX * 2.0; z.vy += pushY * 2.0; }
         z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
       }
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
@@ -20803,9 +20878,12 @@ function _runComboStep(p, def, step, idx) {
   // neutral. No physics or hit detection involvement. Finisher swings
   // already have their own committed lunge so skip the bob there.
   if (!step.finisher) {
-    p._rSwingBob = 12;
-    p._rSwingBobMax = 12;
+    // Bumped from 12f/6px → 14f/9px so the lean is more committed without
+    // overlapping the next combo step.
+    p._rSwingBob = 14;
+    p._rSwingBobMax = 14;
     p._rSwingBobAng = a;
+    p._rSwingBobAmp = 9;
   }
   // When a class is dominant, the WHOLE strike takes its color (beam,
   // tip rings, sparks) so a thermal swing reads thermal end to end.
@@ -22383,6 +22461,14 @@ function _fireDeadshot(lp) {
   if (lp === getLocalPlayer()) _fireDashStrikeCone(lp);
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
+  // SHOT BOB — heavier lean than the sidearm because this is a single
+  // committed shot with massive knockback. 8-13px, scales with charge.
+  if (lp === getLocalPlayer()) {
+    lp._rSwingBob = 14;
+    lp._rSwingBobMax = 14;
+    lp._rSwingBobAng = lp.angle;
+    lp._rSwingBobAmp = 8 + Math.floor(chargePct * 5);
+  }
   // OVERDRAW — extra-hold past max gives up to +60% damage on release.
   const _m = runMods || {};
   const _overAmt = Math.max(0, _deadshotCharge - DEADSHOT_MAX_CHARGE);
@@ -22858,15 +22944,29 @@ function applyDashTrailEffects(lp) {
         }
         playSound(900 + Math.random() * 500, 0.07, 'sawtooth', 0.08);
         playSound(1500, 0.04, 'sine', 0.05); // bright crack on top of the buzz
-        // (4) IMPACT — 3 nested rings + bright center flash on the enemy
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6,
-          size: (z.radius || 14) + 10, color: '#fff', type: 'spark' });
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12,
-          size: (z.radius || 14) * 1.4, color: '#fff', type: 'wakering' });
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16,
-          size: (z.radius || 14) * 2.2, color: '#fe6', type: 'wakering' });
-        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 22, maxLife: 22,
-          size: (z.radius || 14) * 3.0, color: '#fe6', type: 'wakering' });
+        // (4) IMPACT — lightning strike detonation: hot bright center +
+        // mini shockwave. Center is much brighter than the rim so the read
+        // is "bolt grounded HERE". Uses the canonical drawShockwave (via
+        // type:'shockwave') so it shares visual identity with discharge.
+        // White-hot core flash — single bright pop the eye locks onto
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 5, maxLife: 5,
+          size: (z.radius || 14) + 16, color: '#fff', type: 'spark' });
+        // Yellow hot heart — lingers a beat longer so the strike feels electric
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
+          size: (z.radius || 14) + 8, color: '#fe6', type: 'spark' });
+        // Inner ring of bright pin-prick sparks fanning from the center
+        for (let _isI = 0; _isI < 6; _isI++) {
+          const _isA = (_isI / 6) * Math.PI * 2;
+          particles.push({ x: z.x, y: z.y,
+            vx: Math.cos(_isA) * 1.2, vy: Math.sin(_isA) * 1.2,
+            life: 7, maxLife: 7, size: 2.4, color: '#fff', type: 'spark' });
+        }
+        // MINI LIGHTNING SHOCKWAVE — small + snappy expand, hairline yellow
+        // linger. Bright white rim, arc-yellow color body.
+        particles.push({ x: z.x, y: z.y, vx: 0, vy: 0,
+          life: 22, maxLife: 22, size: (z.radius || 14) * 2.6,
+          color: '#fe6', type: 'shockwave', _rimColor: '#fff',
+          _lingerStart: 0.30, _alphaScale: 1.25 });
         // (5) Impact radial sparks — denser than the old 6
         for (let si = 0; si < 14; si++) {
           const sa = Math.random() * Math.PI * 2, ss = 3 + Math.random() * 4.5;
@@ -25864,8 +25964,8 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       // Bright white core flash overlay (renderer also reads z.hitFlash —
       // bump that briefly so the body whitens for a frame.)
       z.hitFlash = Math.max(z.hitFlash || 0, 10);
-      // "STAGGERED" label so the proc is impossible to miss
-      addFloatingText(z.x, z.y - (z.radius || 14) - 22, 'STAGGERED', '#ffd');
+      // STAGGERED label removed — the yellow X eyes carry the read on
+      // their own, the floating text was redundant noise.
       // Big bright stagger ring + 2 nested rings around the enemy body
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
         size: (z.radius || 14) + 22, color: '#fff', type: 'wakering' });
@@ -37011,9 +37111,10 @@ function render() {
     // into the strike and rebounds. Ticked down here too so the bob
     // expires after its 12-frame window.
     if (p._rSwingBob > 0) {
-      const _bobMax = p._rSwingBobMax || 12;
+      const _bobMax = p._rSwingBobMax || 14;
       const _bobT = (_bobMax - p._rSwingBob) / _bobMax; // 0 → 1
-      const _bobAmt = Math.sin(_bobT * Math.PI) * 6;
+      const _bobAmp = p._rSwingBobAmp || 9;
+      const _bobAmt = Math.sin(_bobT * Math.PI) * _bobAmp;
       const _bobAng = p._rSwingBobAng || 0;
       ctx.translate(Math.cos(_bobAng) * _bobAmt, Math.sin(_bobAng) * _bobAmt);
       p._rSwingBob--;
@@ -38407,12 +38508,29 @@ function render() {
       for (const p of players) { if (!p.alive) continue; const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2); if (d < spotRadius*0.6) { inLight = true; break; } }
       if (!inLight) {
         ctx.save(); ctx.translate(z.x + ox2, z.y + oy2); ctx.rotate(z.angle);
-        const eyeColor = !z.aware ? '#aa4' : (z.type==='spitter' ? '#5fa' : '#f44');
-        ctx.shadowColor = eyeColor; ctx.shadowBlur = 10;
-        ctx.fillStyle = eyeColor;
-        ctx.beginPath(); ctx.arc(z.radius*0.4, -z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(z.radius*0.4, z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
-        ctx.shadowBlur = 0; ctx.restore();
+        // Stunned (Shocked or Staggered): yellow X eyes only — match the
+        // in-light render so red circles never bleed back over the X.
+        const _stunnedFog = !z.boss && z.type !== 'boss' && ((z.staggerTimer > 0) || (z._shocked > 0));
+        if (_stunnedFog) {
+          const _xR = 3.6, _eyeX = z.radius*0.4, _eyeY1 = -z.radius*0.3, _eyeY2 = z.radius*0.3;
+          ctx.shadowColor = '#ff4'; ctx.shadowBlur = 8;
+          ctx.strokeStyle = '#ff4'; ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(_eyeX - _xR, _eyeY1 - _xR); ctx.lineTo(_eyeX + _xR, _eyeY1 + _xR);
+          ctx.moveTo(_eyeX - _xR, _eyeY1 + _xR); ctx.lineTo(_eyeX + _xR, _eyeY1 - _xR);
+          ctx.moveTo(_eyeX - _xR, _eyeY2 - _xR); ctx.lineTo(_eyeX + _xR, _eyeY2 + _xR);
+          ctx.moveTo(_eyeX - _xR, _eyeY2 + _xR); ctx.lineTo(_eyeX + _xR, _eyeY2 - _xR);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        } else {
+          const eyeColor = !z.aware ? '#aa4' : (z.type==='spitter' ? '#5fa' : '#f44');
+          ctx.shadowColor = eyeColor; ctx.shadowBlur = 10;
+          ctx.fillStyle = eyeColor;
+          ctx.beginPath(); ctx.arc(z.radius*0.4, -z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(z.radius*0.4, z.radius*0.3, 3, 0, Math.PI*2); ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+        ctx.restore();
       }
     }
   } // end lighting block (skipped in shell)
@@ -38482,17 +38600,40 @@ function render() {
       // Trailing particles
       if(gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*b.size,y:b.y+(Math.random()-0.5)*b.size,vx:(Math.random()-0.5)*1,vy:(Math.random()-0.5)*1,life:12,maxLife:12,size:2+Math.random()*2,color:b.color,type:'spark'});
     }else{ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;}}
-  // Redraw zombie eyes on top of fog — always glowing
+  // Redraw zombie eyes on top of fog — always glowing.
+  // Stunned (Shocked/Staggered) zombies get the yellow X instead, matching
+  // the in-body render so the X stays visible through fog instead of being
+  // covered by red circles.
   for(const z of zombies){
     ctx.save();ctx.translate(z.x,z.y);ctx.rotate(z.angle);
-    const eyeC2=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
-    ctx.globalAlpha=0.35;ctx.fillStyle=eyeC2;
-    ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,5,0,Math.PI*2);ctx.fill();
-    ctx.globalAlpha=1;ctx.shadowColor=eyeC2;ctx.shadowBlur=12;ctx.fillStyle=eyeC2;
-    ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
-    ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
-    ctx.shadowBlur=0;ctx.restore();
+    const _stunnedFog2 = !z.boss && z.type !== 'boss' && ((z.staggerTimer > 0) || (z._shocked > 0));
+    if (_stunnedFog2) {
+      const _xR = 4.2, _eyeX = z.radius*0.4, _eyeY1 = -z.radius*0.3, _eyeY2 = z.radius*0.3;
+      // Soft halo behind each X (matches main render)
+      ctx.globalAlpha = 0.35; ctx.fillStyle = '#ff4';
+      ctx.beginPath(); ctx.arc(_eyeX, _eyeY1, _xR + 2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(_eyeX, _eyeY2, _xR + 2, 0, Math.PI*2); ctx.fill();
+      // Bright X strokes
+      ctx.globalAlpha = 1; ctx.shadowColor = '#ff4'; ctx.shadowBlur = 8;
+      ctx.strokeStyle = '#ff4'; ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(_eyeX - _xR, _eyeY1 - _xR); ctx.lineTo(_eyeX + _xR, _eyeY1 + _xR);
+      ctx.moveTo(_eyeX - _xR, _eyeY1 + _xR); ctx.lineTo(_eyeX + _xR, _eyeY1 - _xR);
+      ctx.moveTo(_eyeX - _xR, _eyeY2 - _xR); ctx.lineTo(_eyeX + _xR, _eyeY2 + _xR);
+      ctx.moveTo(_eyeX - _xR, _eyeY2 + _xR); ctx.lineTo(_eyeX + _xR, _eyeY2 - _xR);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else {
+      const eyeC2=!z.aware?'#aa4':(z.type==='spitter'?'#5fa':'#f44');
+      ctx.globalAlpha=0.35;ctx.fillStyle=eyeC2;
+      ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,5,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,5,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=1;ctx.shadowColor=eyeC2;ctx.shadowBlur=12;ctx.fillStyle=eyeC2;
+      ctx.beginPath();ctx.arc(z.radius*0.4,-z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(z.radius*0.4,z.radius*0.3,2.5,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;
+    }
+    ctx.restore();
   }
   ctx.restore();}
 
