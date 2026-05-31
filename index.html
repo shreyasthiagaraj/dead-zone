@@ -12487,6 +12487,10 @@ function showDeathScreen() {
   // check. Force a massive glitch surge + corrupt HUD + screen flash.
   gameState = 'dying';
   stopSunbeamLoop(); stopWeaponLoop();
+  // Dramatic hit-stop + focus vignette — see showDeathToShell for details.
+  triggerHitStop(900);
+  window._deathFocusFrames = 0;
+  window._deathFocusMax = 150;
   triggerGlitchSurge(0.55, 96);
   window._hudGlitchFrames = 80;
   screenShake.intensity = Math.max(screenShake.intensity, 14);
@@ -15620,8 +15624,14 @@ function showDeathToShell() {
   stopSunbeamLoop(); stopWeaponLoop();
   if (score > highScore) { highScore = score; localStorage.setItem('deadzone_highscore', highScore.toString()); }
   _shellDeathStats = calculateDeathStats();
-  // ---- PHASE 1: FREEZE + GLITCH OUT (1.5s) ----
-  // Stage freezes, player glitches and dissolves
+  // ---- PHASE 1: DRAMATIC HIT-STOP + FOCUS VIGNETTE (1.2s) ----
+  // Death is the end of the run — override the usual 60ms hit-stop ceiling
+  // for a real dramatic freeze. Combined with the focus vignette (rendered
+  // in the draw pass), the world dims to black around the player while
+  // they hang in that final dying moment.
+  triggerHitStop(900);
+  window._deathFocusFrames = 0;
+  window._deathFocusMax = 150; // ~2.5s of vignette
   triggerGlitchSurge(0.7, 120);
   window._hudGlitchFrames = 100;
   screenShake.intensity = Math.max(screenShake.intensity, 16);
@@ -15654,7 +15664,10 @@ function showDeathToShell() {
     if (subEl) { subEl.textContent = 'process terminated'; subEl.style.color = '#f88'; }
     wa.style.opacity = '1';
   }
-  // ---- PHASE 2: FADE TO BLACK (0.5s after 1.5s) ----
+  // ---- PHASE 2: FADE TO BLACK ----
+  // Delay bumped 1500ms → 2800ms so the dramatic focus vignette holds
+  // for ~2.5s before the screen wipe begins. The vignette fades out as
+  // _deathFocusFrames hits its max, right around when this fade starts.
   setTimeout(() => {
     if (wa) wa.style.opacity = '0';
     let _deathFade = 0;
@@ -15667,7 +15680,7 @@ function showDeathToShell() {
         _showRebootScreen();
       }
     }, 16);
-  }, 1500);
+  }, 2800);
 }
 
 function _showRebootScreen() {
@@ -38313,6 +38326,33 @@ function render() {
   if(gameMode==='trench'&&trenchFadeAlpha>0){
     ctx.fillStyle=`rgba(0,0,0,${Math.min(1,trenchFadeAlpha)})`;
     ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+  // ---- DEATH FOCUS VIGNETTE ----
+  // Hold on the dying player — black overlay everywhere except a radial
+  // hole around the local player. Alpha ramps 0 → 0.85 over the focus
+  // window. Drawn BEFORE the shell fade so the eventual fade-to-black
+  // still completes the transition.
+  if (window._deathFocusFrames !== undefined) {
+    const _dfMax = window._deathFocusMax || 90;
+    const _dfRamp = Math.min(1, window._deathFocusFrames / 18); // ramp in ~0.3s
+    const _dfAlpha = 0.88 * _dfRamp;
+    const lp4 = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
+    if (lp4 && _dfAlpha > 0.01) {
+      const _fox = -camera.x + canvas.width/2 + screenShake.x;
+      const _foy = -camera.y + canvas.height/2 + screenShake.y;
+      const _sx = lp4.x + _fox, _sy = lp4.y + _foy;
+      const _holeR = PLAYER_RADIUS + 24; // tight halo around the body
+      const _outR = Math.max(canvas.width, canvas.height); // ensure coverage
+      const _grad = ctx.createRadialGradient(_sx, _sy, _holeR * 0.6, _sx, _sy, _outR);
+      _grad.addColorStop(0, 'rgba(0,0,0,0)');
+      _grad.addColorStop(_holeR / _outR, `rgba(0,0,0,${(_dfAlpha * 0.4).toFixed(3)})`);
+      _grad.addColorStop(Math.min(1, (_holeR * 2) / _outR), `rgba(0,0,0,${_dfAlpha.toFixed(3)})`);
+      _grad.addColorStop(1, `rgba(0,0,0,${_dfAlpha.toFixed(3)})`);
+      ctx.fillStyle = _grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    window._deathFocusFrames++;
+    if (window._deathFocusFrames > _dfMax) window._deathFocusFrames = undefined;
   }
   // Shell fade overlay (enter/exit transitions)
   if(_shellFadeAlpha>0){
