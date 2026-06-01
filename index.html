@@ -16209,14 +16209,18 @@ function fireWeaponForPlayer(p) {
   _gunAmmo--;
   _gunIdleTimer = 0;
   hapticShot();
-  // SHOT BOB — small forward/back lean per shot (mirrors the sword bob).
-  // Snappier than melee because guns fire fast; 5px / 7f stays under the
-  // pistol's 10-frame interval so successive shots don't pile bobs.
+  // SHOT BOB — small forward lean per shot. Sidearm stays FORWARD (not
+  // recoil) — fast cadence means a recoil snap would jitter the body.
+  // Explicitly clear the recoil flag in case the player switched from
+  // deadshot/ripper (which set it) to a sidearm.
+  // 5px / 7f stays under the pistol's 10-frame interval so successive
+  // shots don't pile bobs.
   if (p === getLocalPlayer()) {
     p._rSwingBob = 7;
     p._rSwingBobMax = 7;
     p._rSwingBobAng = p.angle;
     p._rSwingBobAmp = 5;
+    p._rSwingBobRecoil = false;
   }
   // DASH STRIKE — consume the post-dash kinetic-cone window on the first shot.
   if (p === getLocalPlayer()) _fireDashStrikeCone(p);
@@ -20946,11 +20950,14 @@ function _runComboStep(p, def, step, idx) {
   // already have their own committed lunge so skip the bob there.
   if (!step.finisher) {
     // Bumped from 12f/6px → 14f/9px so the lean is more committed without
-    // overlapping the next combo step.
+    // overlapping the next combo step. Recoil curve = sharp BACKWARD snap
+    // then spring back — sells the swing as "weight pulls the body back
+    // after committing forward."
     p._rSwingBob = 14;
     p._rSwingBobMax = 14;
     p._rSwingBobAng = a;
     p._rSwingBobAmp = 9;
+    p._rSwingBobRecoil = true;
   }
   // When a class is dominant, the WHOLE strike takes its color (beam,
   // tip rings, sparks) so a thermal swing reads thermal end to end.
@@ -22528,13 +22535,16 @@ function _fireDeadshot(lp) {
   if (lp === getLocalPlayer()) _fireDashStrikeCone(lp);
   _deadshotCharging = false;
   const chargePct = Math.min(1, _deadshotCharge / DEADSHOT_MAX_CHARGE);
-  // SHOT BOB — heavier lean than the sidearm because this is a single
-  // committed shot with massive knockback. 8-13px, scales with charge.
+  // SHOT BOB — heavier RECOIL than the sidearm because this is a single
+  // committed shot with massive knockback. 8-13px scales with charge.
+  // Recoil curve: sharp BACKWARD snap, spring forward back to neutral —
+  // sells the kick of releasing a full-charge railgun round.
   if (lp === getLocalPlayer()) {
     lp._rSwingBob = 14;
     lp._rSwingBobMax = 14;
     lp._rSwingBobAng = lp.angle;
     lp._rSwingBobAmp = 8 + Math.floor(chargePct * 5);
+    lp._rSwingBobRecoil = true;
   }
   // OVERDRAW — extra-hold past max gives up to +60% damage on release.
   const _m = runMods || {};
@@ -37220,7 +37230,23 @@ function render() {
       const _bobMax = p._rSwingBobMax || 14;
       const _bobT = (_bobMax - p._rSwingBob) / _bobMax; // 0 → 1
       const _bobAmp = p._rSwingBobAmp || 9;
-      const _bobAmt = Math.sin(_bobT * Math.PI) * _bobAmp;
+      let _bobAmt;
+      if (p._rSwingBobRecoil) {
+        // RECOIL curve — asymmetric for ripper + deadshot. Body kicks
+        // BACKWARD fast (first 30% of frames is a linear snap to -amp),
+        // then springs forward back to neutral over the remaining 70%
+        // (ease-out via (1-rt)^1.5). Reads as "the weapon's force kicked
+        // me back, body absorbs and settles."
+        if (_bobT < 0.30) {
+          _bobAmt = -_bobAmp * (_bobT / 0.30);
+        } else {
+          const _rt = (_bobT - 0.30) / 0.70;
+          _bobAmt = -_bobAmp * Math.pow(1 - _rt, 1.5);
+        }
+      } else {
+        // Standard symmetric LEAN — forward then back. Used by sidearm.
+        _bobAmt = Math.sin(_bobT * Math.PI) * _bobAmp;
+      }
       const _bobAng = p._rSwingBobAng || 0;
       ctx.translate(Math.cos(_bobAng) * _bobAmt, Math.sin(_bobAng) * _bobAmt);
       p._rSwingBob--;
