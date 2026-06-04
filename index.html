@@ -2089,7 +2089,7 @@ const UPGRADE_POOL = [
   { id:'kinetic_wake', name:'KINETIC WAKE', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Dash shoves enemies aside (SLIDE, 18 dmg). Endpoint shockwave +30 dmg.'], flavor:'the air bends around you.' },
   { id:'slipstream', name:'SLIPSTREAM', rarity:'common', max:1, icon:'»', color:'#0ff',
-    descs:['+25% move speed for 1.5s after dash.'], flavor:'momentum carries forward.', prereqs:['pulse_shot|kinetic_wake'] },
+    descs:['+60% move speed for 1.5s after dash.'], flavor:'momentum carries forward.', prereqs:['pulse_shot|kinetic_wake'] },
   // ---- DASH: CORRUPT ----
   { id:'glitch_wake', name:'BLIGHT ZONE', rarity:'common', max:1, icon:'☣', color:'#a4f',
     descs:['Dash endpoint drops a 4s corruption pool. Applies CORRUPT inside.'], flavor:'you poison where you land.' },
@@ -2555,7 +2555,7 @@ const _KEY_STATS = {
   discharge_burst:{ label:'chain jumps', base:2, step:1, unit:'' },
   // ---- Dash pulse ----
   kinetic_wake:   { label:'shockwave dmg', base:30, step:5, unit:' dmg' },
-  slipstream:     { label:'move speed', base:25, step:5, unit:'%' },
+  slipstream:     { label:'move speed', base:60, step:8, unit:'%' },
   // ---- Dash corrupt ----
   glitch_wake:    { label:'pool duration', base:4, step:0.7, unit:'s' },
   fatal_exception:{ label:'damage', base:50, step:8, unit:'%' },
@@ -20067,10 +20067,12 @@ function updateDischarge() {
       // never fires on the most common case: the discharge killing the enemy.
       z._hitByDischarge = true;
       damageZombie(z, baseDmg, pushX*0.5*_pushMul, pushY*0.5*_pushMul, true);
-      // Base wave push is a LIGHT nudge for every element (was 1.5 — that was
-      // pulse-level knockback leaking onto arc/fire/ice/corrupt discharges).
-      // Only PULSE PROTOCOL (wind, below) gets the heavy fling now.
-      z.vx += pushX * 0.4 * _pushMul; z.vy += pushY * 0.4 * _pushMul;
+      // Base wave push — restored to original strength for every element. The
+      // arc-protocol "head and shoulders" knockback was NOT this push: it was
+      // SHOCKED enemies sliding on 0.85 friction for ~1s (vs a 0.7/25f stagger),
+      // so the same push flung them far further. That's damped in the chain
+      // branch below instead.
+      z.vx += pushX * 1.5 * _pushMul; z.vy += pushY * 1.5 * _pushMul;
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -20085,7 +20087,14 @@ function updateDischarge() {
       // (_hitByDischarge already set above, before the damage call)
       if (w.classId === 'fire') applyOverheat(z, 8, 1);
       if (w.classId === 'ice') applyChill(z, 2);
-      if (w.classId === 'chain') applyCharged(z);
+      if (w.classId === 'chain') {
+        applyCharged(z);
+        // SHOCKED enemies slide on low friction for ~1s, so the same push
+        // flings them FAR further than a staggered enemy. Halve the discharge's
+        // imparted velocity so ARC discharge knockback ≈ default discharge,
+        // not the pulse-level fling the user reported.
+        z.vx *= 0.5; z.vy *= 0.5;
+      }
       if (w.classId === 'wind') {
         applyExposed(z);
         // PULSE PROTOCOL on discharge: heavy outward shove on top of the
@@ -20093,7 +20102,7 @@ function updateDischarge() {
         // shockwave (matches the protocol's identity).
         // Suppressed under SINGULARITY — the well wants enemies STAYING
         // in, not catapulting past the boundary.
-        if (!w._singularity) { z.vx += pushX * 3.0; z.vy += pushY * 3.0; }
+        if (!w._singularity) { z.vx += pushX * 2.0; z.vy += pushY * 2.0; }
         z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
       }
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
@@ -26952,7 +26961,21 @@ function update() {
       // RAGE power-up: +30% move speed in addition to attack speed / damage.
       if (playerHasPowerUp(lp, 'rage')) moveSpeed *= 1.3;
       // Slipstream: speed boost after dash
-      if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) moveSpeed *= (1 + _modScale('slipstream', 0.25, 0.05));
+      if (lp._postDashTimer > 0 && runMods && runMods.slipstream > 0) {
+        moveSpeed *= (1 + _modScale('slipstream', 0.60, 0.08));
+        // Modified trail — cyan slip-streaks peeling off the player's sides
+        // (alternating) so the speed boost reads. Direction = actual movement.
+        const _ssdx = lp.x - (lp._ssPrevX != null ? lp._ssPrevX : lp.x);
+        const _ssdy = lp.y - (lp._ssPrevY != null ? lp._ssPrevY : lp.y);
+        if ((_ssdx*_ssdx + _ssdy*_ssdy) > 0.4 && gameTime % 2 === 0) {
+          const _ssa = Math.atan2(_ssdy, _ssdx), _sspx = -Math.sin(_ssa), _sspy = Math.cos(_ssa);
+          const _ssSide = (gameTime % 4 < 2) ? 1 : -1;
+          particles.push({ x: lp.x - Math.cos(_ssa)*PLAYER_RADIUS + _sspx*5*_ssSide, y: lp.y - Math.sin(_ssa)*PLAYER_RADIUS + _sspy*5*_ssSide,
+            vx: -Math.cos(_ssa)*1.6 + _sspx*1.3*_ssSide, vy: -Math.sin(_ssa)*1.6 + _sspy*1.3*_ssSide,
+            life: 13, maxLife: 13, size: 2.5+Math.random()*1.5, color: Math.random()>0.5?'#0ff':'#cef', type: 'spark' });
+        }
+      }
+      lp._ssPrevX = lp.x; lp._ssPrevY = lp.y;
       // CARD: DODGE INSTINCT — +30% move speed for 1s after taking damage
       if (lp._dodgeBoostTimer > 0) { moveSpeed *= (1 + (lp._dodgeBoostMult || 0.30)); lp._dodgeBoostTimer--; }
       // CARD: WHIRLWIND — tick down kill-streak window
