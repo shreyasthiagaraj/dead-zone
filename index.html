@@ -2036,7 +2036,7 @@ const UPGRADE_POOL = [
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Your ATTACK applies EXPOSED with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
-    descs:['Your ATTACK applies CORRUPT. Corrupted enemies ROT for heavy damage over time. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
+    descs:['Your ATTACK applies CORRUPT — corrupted enemies take escalating bonus damage from ALL sources. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 1) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:1, icon:'🔥', color:'#f60',
     descs:['OVERHEAT cap +1. +33% DoT damage. +50% MELTDOWN radius.'], flavor:'thermal runaway. the reactor goes critical.', prereqs:['thermal_rounds|burnout_wake'] },
@@ -2301,7 +2301,7 @@ const UPGRADE_POOL = [
     descs:['Your SPECIAL applies SHOCKED. +10% damage.'],
     flavor:'electrified killzone.' },
   { id:'beacon_corrupt', name:'CORRUPT PROTOCOL', rarity:'rare', max:1, icon:'☣', color:'#a4f',
-    descs:['Your SPECIAL applies CORRUPT, ROTTING enemies for heavy damage over time. +18% damage.'],
+    descs:['Your SPECIAL applies CORRUPT — corrupted enemies take bonus damage from ALL sources. +18% damage.'],
     flavor:'infection spreader deployed.' },
   { id:'beacon_pulse', name:'PULSE PROTOCOL', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['Your SPECIAL applies EXPOSED. +20% damage.'],
@@ -2762,8 +2762,8 @@ const _TERM_GLOSSARY = {
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   SHOCKED:      { color: '#ff4', desc: 'Arc conduit mark. Stuns the enemy for 1 second. Arc procs chain through Shocked enemies at longer range.' },
   EXPOSED:      { color: '#cef', desc: 'Pulse vulnerability. +20% damage taken, 3.2x knockback, wall collision damage, +15% crit chance.' },
-  COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes +50% damage. Enemies deal 40% less while active.' },
-  CORRUPT:      { color: '#a4f', desc: 'Stacking poison (0-5). At threshold, becomes COMPROMISED for 5 seconds.' },
+  COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes ~2x damage from all sources. Enemies deal 40% less while active.' },
+  CORRUPT:      { color: '#a4f', desc: 'Stacking vulnerability (0-5). Each stack = more damage taken. At threshold, becomes COMPROMISED.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
   DASH:         { color: '#0ff', desc: 'Short directional burst with brief invincibility. Can cross gaps. Cooldown: 800ms.' },
   PIERCE:       { color: '#8cf', desc: 'Bullet passes through an enemy and hits the next one behind it.' },
@@ -25923,10 +25923,21 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // existing 2x knockback + wall-impact damage so EXPOSED is meaningful both
   // as a setup status AND as a direct damage amp.
   if (z._exposed) damage = Math.floor(damage * 1.20);
-  // CORRUPT VULNERABILITY: each stack = +12% damage taken, caps at 5 (+60%).
-  // Applies to all sources. Corrupt is the damage class — its vuln is the
-  // strongest of any element so a corrupt build shreds everything.
-  if (z._corrupt > 0) damage = Math.floor(damage * (1 + 0.12 * Math.min(z._corrupt, 5)));
+  // CORRUPT (amplifier class): corrupted enemies take escalating bonus damage
+  // from ALL sources — CORRUPT deals no damage of its own, it multiplies yours.
+  // Each stack ramps the vuln; at COMPROMISED the system is wide open (~2x).
+  // VIRAL INFUSION / CORRUPT PROTOCOL investment widens the amp further.
+  // NOTE: like EXPOSED but stacking — the overlap with EXPOSED is intentional
+  // for now; pulse/EXPOSED is being reworked next to differentiate the two.
+  if (z._compromised) {
+    const _cm = runMods || {};
+    const _cAmp = 2.0 + (_cm.viralPayloadLv || 0) * 0.25 + (_cm.beaconElement === 'corrupt' ? 0.20 : 0);
+    damage = Math.floor(damage * _cAmp);
+  } else if (z._corrupt > 0) {
+    const _cm = runMods || {};
+    const _perStack = 0.10 + (_cm.viralPayloadLv || 0) * 0.02 + (_cm.beaconElement === 'corrupt' ? 0.015 : 0);
+    damage = Math.floor(damage * (1 + _perStack * Math.min(5, z._corrupt)));
+  }
   // CARD: AFTERSHOCK VULN — staggered enemies take +25% damage for 2s
   if ((runMods||{}).aftershockVuln2 && (z._aftershockVuln > 0 || z.staggerTimer > 0)) damage = Math.floor(damage * (1 + _modScale('aftershock_vuln', 0.25, 0.05)));
   // CARD: CONCUSSIVE VULN — stunned/staggered enemies take bonus damage
@@ -29272,25 +29283,11 @@ function update() {
       if(z._slamCooldown>0)z._slamCooldown--;
       // COMPROMISED: tick down, emit glitch particles (spawn halved from every 5 to every 10 frames)
       if(z._compromised&&z._compromisedTimer>0){z._compromisedTimer--;if(z._compromisedTimer<=0){z._compromised=false;z._corrupt=0;}if(((gameTime+z.zid)%10===0)&&_statusParticleBudget>0){_statusParticleBudget--;particles.push({x:z.x+(Math.random()-0.5)*z.radius*2,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*1.5,vy:-1,life:12,maxLife:12,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});}}
-      // ---- CORRUPT DoT — corrupt is the DAMAGE class ----
-      // Corrupted enemies ROT, taking damage over time that clearly out-paces
-      // every other element's tick (fire burns ~4×stacks every 30f; this hits
-      // far harder and ticks faster). VIRAL INFUSION (viralPayloadLv) and
-      // CORRUPT PROTOCOL (beaconElement==='corrupt') crank it up further.
-      // COMPROMISED enemies take a heavy flat tick PLUS a % of their max HP so
-      // even tanks and bosses dissolve.
-      if ((z._corrupt > 0 || z._compromised) && ((gameTime + z.zid) % 16 === 0)) {
-        const _cdm = runMods || {};
-        const _viralLv = _cdm.viralPayloadLv || 0;
-        const _corruptProto = _cdm.beaconElement === 'corrupt' ? 1 : 0;
-        let _rot = 14 * Math.min(5, z._corrupt || 1);
-        if (z._compromised) {
-          _rot += 45 + Math.min(90, Math.floor((z.maxHp || 100) * 0.05));
-        }
-        // Infusion / Protocol amp — the corrupt mods the player invested in.
-        _rot = Math.floor(_rot * (1 + _viralLv * 0.6 + _corruptProto * 0.5));
-        if (_rot > 0) damageZombie(z, _rot, 0, 0, true);
-      }
+      // ---- CORRUPT (amplifier class) — no DoT ----
+      // CORRUPT deals no damage on its own. It amplifies all damage the enemy
+      // takes (see the damage-taken modifier in damageZombie): the per-stack
+      // ramp + the COMPROMISED ~2x breakpoint ARE the payoff. Status particles
+      // for the stacks are emitted just below.
       // (Live Wire & Viral Burn passive single-status DoTs removed — both
       // synergies now only fire as on-hit / on-death dual-status combos.)
       // Corrupt stacks (not yet Compromised): shed purple particles so status is visible
