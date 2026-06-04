@@ -26055,7 +26055,8 @@ function _slideBallCollide(z, spd) {
     o.vx += _nx * (spd * 0.6) + z.vx * 0.25;
     o.vy += _ny * (spd * 0.6) + z.vy * 0.25;
     o.staggerTimer = Math.max(o.staggerTimer || 0, 12);
-    z.vx -= _nx * (spd * 0.28); z.vy -= _ny * (spd * 0.28);
+    // Ball loses 60% momentum on impact (retains 40%) + a small deflection.
+    z.vx = z.vx * 0.4 - _nx * (spd * 0.1); z.vy = z.vy * 0.4 - _ny * (spd * 0.1);
     if (_m.impactEcho) applyExposed(o); // SLIDE spreads ONLY with IMPACT ECHO
     z._bumpCd = 9; o._bumpCd = 9;
     _emitSlideCollisionVFX(z, o, spd);
@@ -26068,7 +26069,7 @@ function _slideBallCollide(z, spd) {
     if (_pd2 >= _pr*_pr) continue;
     const _pdmg = Math.min(28, 8 + Math.floor(spd * 0.9));
     damagePlayerObj(p, _pdmg, z);
-    z.vx *= -0.5; z.vy *= -0.5; // ricochet off the player
+    z.vx *= -0.4; z.vy *= -0.4; // ricochet off the player, lose 60% momentum
     z._bumpCd = 12;
     _emitSlideCollisionVFX(z, p, spd);
     break;
@@ -26166,7 +26167,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // EXPOSED: 3.2x knockback + track pre-knockback speed for wall collision
   // damage. Heavier than the old 2x so the status reads as "they go FLYING"
   // — supports the "wall slam = bonus damage" loop the card promises.
-  const _exposedKbMult = z._exposed ? 3.2 : 1.0;
+  const _exposedKbMult = z._exposed ? 2.6 : 1.0;
   // FROZEN: ice block resists knockback. Without this, a pulse-shoved
   // enemy that froze mid-flight (or one shot while frozen) would slide
   // for many frames since the frozen movement path has no chase override
@@ -26196,7 +26197,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // scales with kbScale so heavy bosses still resist.
   if (z._exposed && !silent && !(z._frozen || z._frozenTimer > 0)) {
     const _kbMag = Math.sqrt(kbx*kbx + kby*kby) * kbScale * _exposedKbMult;
-    const _kbFloor = 10 * kbScale;
+    const _kbFloor = 8 * kbScale;
     if (_kbMag < _kbFloor) {
       let _kdx = kbx, _kdy = kby;
       if (kbx*kbx + kby*kby < 0.01) { const _ksp = getLocalPlayer(); if (_ksp) { _kdx = z.x - _ksp.x; _kdy = z.y - _ksp.y; } }
@@ -29568,14 +29569,14 @@ function update() {
             const _boX = _bcx !== _btx, _boY = _bcy !== _bty;
             const _bObs = obstacleCollision(_bcx, _bcy, z.radius, false);
             if (_boX || _boY || _bObs) {
-              // Reflect off the wall, then bleed ~50% momentum and deflect at a
-              // slightly varied angle so balls don't rocket straight back at
-              // the player who launched them.
+              // Reflect off the wall, then bleed 60% momentum (retain 40%) and
+              // deflect at a slightly varied angle so balls don't rocket
+              // straight back at the player who launched them.
               if (_boX) z.vx = -z.vx;
               if (_boY) z.vy = -z.vy;
               if (_bObs && !_boX && !_boY) { z.vx = -z.vx; z.vy = -z.vy; }
               const _ba = Math.atan2(z.vy, z.vx) + (Math.random() - 0.5) * 0.5;
-              const _bm = Math.sqrt(z.vx*z.vx + z.vy*z.vy) * 0.5;
+              const _bm = Math.sqrt(z.vx*z.vx + z.vy*z.vy) * 0.4;
               z.vx = Math.cos(_ba) * _bm; z.vy = Math.sin(_ba) * _bm;
               z.x = _bcx; z.y = _bcy; _bWall = true; break;
             }
@@ -37266,14 +37267,15 @@ function render() {
         // Idle breathing bob.
         _bodyOY += Math.sin(performance.now() * 0.004) * 1.0;
       } else if (!(p._dashFrames > 0)) {
-        // MOVE WOBBLE — body sways side-to-side (perpendicular to movement)
-        // with a slight vertical bounce, so it looks like the character is
-        // putting in effort to move. Phase advances with movement speed.
-        p._wPhase = (p._wPhase || 0) + Math.min(0.6, 0.22 + _vMag2 * 0.04);
+        // MOVE WOBBLE — pronounced side-to-side waddle (perpendicular to
+        // movement) + a vertical bob per step, so the character visibly works
+        // to move. Slower cadence + bigger amplitude than before so it reads.
+        p._wPhase = (p._wPhase || 0) + Math.min(0.34, 0.20 + _vMag2 * 0.02);
         const _wmA = Math.atan2(p.vy || 0, p.vx || 0);
-        const _wsway = Math.sin(p._wPhase) * 2.2;
+        const _wsway = Math.sin(p._wPhase) * 5;            // side-to-side waddle
+        const _wbob = Math.abs(Math.sin(p._wPhase)) * 2.5; // vertical bob per step
         _bodyOX += -Math.sin(_wmA) * _wsway;
-        _bodyOY += Math.cos(_wmA) * _wsway - Math.abs(Math.cos(p._wPhase)) * 1.4;
+        _bodyOY += Math.cos(_wmA) * _wsway - _wbob;
       }
       if (p === getLocalPlayer() && p.damageFlash > 12) {
         _bodyOX -= Math.cos(_lastHitAngle) * 2;
