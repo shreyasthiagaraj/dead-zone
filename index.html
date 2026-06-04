@@ -6774,7 +6774,7 @@ function initTrenchSections() {
     const _isExpedition = !isBoss && _sectionThemes[i] === 'EXPEDITION';
     if (isBoss) { waveCount = 1; }
     else if (_isExpedition) { waveCount = 3; }                                   // EXPEDITION: 3 sub-room beats
-    else if (domainIdx === 0) { waveCount = i < 2 ? 2 : (r < 0.45 ? 3 : 2); } // D1: 2-3
+    else if (domainIdx === 0) { waveCount = i < 2 ? 1 : (r < 0.45 ? 3 : 2); } // D1: stages 1-2 single wave, stage 3+ 2-3
     else if (domainIdx === 1) { waveCount = r < 0.35 ? 3 : 2; }                 // D2: 2-3
     else if (domainIdx === 2) { waveCount = r < 0.60 ? 2 : 1; }                 // D3: 1-2
     else { waveCount = r < 0.40 ? 2 : 1; }                                       // D4: 1-2
@@ -8990,10 +8990,13 @@ function updateBurnoutPuddles() {
       // ~2.5s instead of 0.5s. Damage per tick 6 → 4.
       if (isHost && gameTime % 30 === 0) {
         const r2 = p.radius * p.radius;
+        // OVERHEAT applies half as often as the damage tick (1 stack/1s) so
+        // lingering enemies don't pile up OVERHEAT stacks too quickly.
+        const _ohTick = gameTime % 60 === 0;
         for (const z of zombies) {
           if (z.hp <= 0) continue;
           const dx = z.x - p.x, dy = z.y - p.y;
-          if (dx*dx + dy*dy < r2) { damageZombie(z, 4, 0, 0, true); applyOverheat(z, 1, 1); }
+          if (dx*dx + dy*dy < r2) { damageZombie(z, 4, 0, 0, true); if (_ohTick) applyOverheat(z, 1, 1); }
         }
       }
       // CARD: NAPALM VORTEX — pull enemies toward center of fire zones
@@ -17802,6 +17805,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
         sp._carrying = z;
         damageZombie(z, 15, nx * 4, ny * 4);
         applyExposed(z);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 40); // cancel any attack in progress
         // Grab VFX
         for (let i = 0; i < 8; i++) {
           const pa = Math.random() * Math.PI * 2;
@@ -17817,6 +17821,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
         z.vx += (-ny) * 9 * side + nx * 4;
         z.vy += nx * 9 * side + ny * 4;
         damageZombie(z, 8, (-ny) * 3 * side, nx * 3 * side);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 24); // interrupt attack
         // Side-swipe spark
         for (let j = 0; j < 4; j++) {
           const ja = Math.random() * Math.PI * 2;
@@ -17869,6 +17874,7 @@ function _updateTorpedoSpike(sp, _radBoost) {
         const _psDmg = _modScale('pulse_spike', 1.0, 0.20);
         damageZombie(z, Math.floor((25 * _close + 8) * _psDmg), dx / d * 6, dy / d * 6);
         applyExposed(z);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 35); // cancel attacks in the blast
       }
     }
     screenShake.intensity = Math.max(screenShake.intensity, 14);
@@ -19987,7 +19993,7 @@ function updateDischarge() {
       // Damage ramps with charge (30 base → 45 at full), then a discrete
       // +40% MAX-CHARGE payoff for topping the bar all the way off.
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
-      const _maxChargeBonus = (w.chargePct || 0) >= 0.95 ? 1.4 : 1;
+      const _maxChargeBonus = (w.chargePct || 0) >= 0.95 ? 1.3 : 1;
       const baseDmg = Math.floor(30 * _dmgMult * _chargeDmgMult * _maxChargeBonus);
       // Silent — wave has its own per-hit ring + sparks below, and big wave
       // VFX is already loud. Skipping the 50-particle impact storm prevents
@@ -21387,6 +21393,21 @@ function _runComboStep(p, def, step, idx) {
     const za = Math.atan2(dy, dx);
     let da = za - a; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
     if (Math.abs(da) > halfCone) continue;
+    // A cryo blast wall BLOCKS the swing — skip enemies behind an erupted wall
+    // segment (same line-vs-segment test bullets use to be stopped by it).
+    if (typeof spikes !== 'undefined' && typeof lineCircleHit === 'function') {
+      let _swingBlocked = false;
+      for (const _sp of spikes) {
+        if (!_sp._wallSegs) continue;
+        if (!_sp._wall && _sp.phase !== 'wall' && _sp.phase !== 'growing') continue;
+        for (const _seg of _sp._wallSegs) {
+          if (_seg.hp <= 0 || !_seg.erupted) continue;
+          if (lineCircleHit(p.x, p.y, z.x, z.y, _seg.x, _seg.y, 20) >= 0) { _swingBlocked = true; break; }
+        }
+        if (_swingBlocked) break;
+      }
+      if (_swingBlocked) continue;
+    }
     const isCrit = _executionerOn || (Math.random() < _critChance);
     let dmg = isCrit ? Math.floor(_scaledBase * 2) : _scaledBase;
     // CARD: BLOODLETTER — crits restore 1 HP
@@ -26459,8 +26480,8 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
       if ((runMods||{}).whirlwind && _wlp && _wlp.alive) {
         if ((_wlp._whirlwindTimer || 0) <= 0) _wlp._whirlwindKills = 0;
         _wlp._whirlwindKills = (_wlp._whirlwindKills || 0) + 1;
-        _wlp._whirlwindTimer = 120; // 2s window (decremented in update)
-        if (_wlp._whirlwindKills >= 3) { _wlp._whirlwindReady = true; _wlp._whirlwindKills = 0; }
+        _wlp._whirlwindTimer = 180; // 3s window (decremented in update)
+        if (_wlp._whirlwindKills >= 2) { _wlp._whirlwindReady = true; _wlp._whirlwindKills = 0; }
       }
     }
     // ---- CARD: MOMENTUM SHOT — first ATTACK after kill +40% damage (1s window) ----
@@ -29415,9 +29436,15 @@ function update() {
             const _boX = _bcx !== _btx, _boY = _bcy !== _bty;
             const _bObs = obstacleCollision(_bcx, _bcy, z.radius, false);
             if (_boX || _boY || _bObs) {
-              if (_boX) z.vx = -z.vx * 0.9;
-              if (_boY) z.vy = -z.vy * 0.9;
-              if (_bObs && !_boX && !_boY) { z.vx = -z.vx * 0.9; z.vy = -z.vy * 0.9; }
+              // Reflect off the wall, then bleed ~50% momentum and deflect at a
+              // slightly varied angle so balls don't rocket straight back at
+              // the player who launched them.
+              if (_boX) z.vx = -z.vx;
+              if (_boY) z.vy = -z.vy;
+              if (_bObs && !_boX && !_boY) { z.vx = -z.vx; z.vy = -z.vy; }
+              const _ba = Math.atan2(z.vy, z.vx) + (Math.random() - 0.5) * 0.5;
+              const _bm = Math.sqrt(z.vx*z.vx + z.vy*z.vy) * 0.5;
+              z.vx = Math.cos(_ba) * _bm; z.vy = Math.sin(_ba) * _bm;
               z.x = _bcx; z.y = _bcy; _bWall = true; break;
             }
             z.x = _bcx; z.y = _bcy;
@@ -29439,6 +29466,13 @@ function update() {
       }
       if(z.staggerTimer>0){
         z.staggerTimer--;
+        // Stagger INTERRUPTS the attack: cancel any wind-up / strike / charge /
+        // leap telegraph in progress so a staggered enemy can't land the hit it
+        // was committing to. Re-inits cleanly when stagger ends.
+        if (z._meleeState && z._meleeState !== 'approach' && z._meleeState !== 'recover') { z._meleeState = 'approach'; z._meleeTimer = 0; }
+        if (z._chargeState === 'wind') { z._chargeState = 'approach'; z._chargeTimer = 0; }
+        if (z._leapState === 'windup') { z._leapState = null; z._leapTimer = 0; if (typeof _clearTele === 'function') _clearTele(z); }
+        z.attackCooldown = Math.max(z.attackCooldown || 0, 10);
         // PULSE SLIDE: pulse-pushed enemies get slightly lighter friction
         // (0.80 vs 0.7) for a brief glide.
         const _pulseFric = (z._pulseSlide && z._pulseSlide > 0) ? 0.80 : 0.7;
@@ -36860,7 +36894,8 @@ function render() {
     // get the stunned-eye look.
     const _stunned = !z.boss && z.type !== 'boss' && ((z.staggerTimer > 0) || (z._shocked > 0));
     if (_stunned) {
-      const _stunC = '#ff4';
+      // Stagger X is RED; SHOCKED keeps the electric yellow.
+      const _stunC = (z._shocked > 0) ? '#ff4' : '#f44';
       const _xR = 4.2;
       const _eyeY1 = -z.radius*0.3, _eyeY2 = z.radius*0.3, _eyeX = z.radius*0.4;
       // Yellow CROSS eyes only — no halo circle behind them.
