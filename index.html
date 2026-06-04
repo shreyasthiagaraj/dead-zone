@@ -2179,6 +2179,9 @@ const UPGRADE_POOL = [
   { id:'impact_echo', name:'IMPACT ECHO', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['SLIDE enemies pass SLIDE to enemies they collide with.'],
     flavor:'the impact keeps spreading.', prereqs:['pulse_shot|kinetic_wake'] },
+  { id:'slide_duration', name:'KINETIC HOLD', rarity:'common', max:1, icon:'💨', color:'#cef',
+    descs:['SLIDE lasts +3s longer — enemies stay launchable & bounceable far longer.'],
+    flavor:'the momentum just won\'t quit.', prereqs:['pulse_shot|kinetic_wake'] },
   { id:'long_reach', name:'LONG REACH', rarity:'common', max:1, icon:'↔', color:'#cef',
     descs:['+40% gun range.'], flavor:'extended targeting field.', prereqs:['pulse_shot|kinetic_wake'] },
   // ---- CLASS PASSIVES — Corrupt ----
@@ -2585,6 +2588,7 @@ const _KEY_STATS = {
   momentum:       { label:'move speed', base:4, step:1, unit:'%' },
   shockfront:     { label:'knockback radius', base:60, step:10, unit:'px' },
   impact_echo:    null, // toggle propagation — no continuous scale
+  slide_duration: { label:'duration', base:3, step:1, unit:'s' },
   long_reach:     { label:'gun range', base:40, step:8, unit:'%' },
   // ---- Class passives — corrupt ----
   dark_harvest:   { label:'bits bonus', base:50, step:10, unit:'%' },
@@ -2862,7 +2866,7 @@ function rebuildRunMods() {
     pyromaniac: 0, thermalRunaway: 0, scorchedEarth: 0,
     coldBlood: 0, hypothermia: 0, deepFreeze: 0,
     voltaicArmor: 0, superconductor: 0, lightningRod: 0,
-    momentum: 0, shockfront: 0, impactEcho: 0, longReach: 0,
+    momentum: 0, shockfront: 0, impactEcho: 0, slideDurBonus: 0, longReach: 0,
     darkHarvest: 0, siphon: 0, infectionVector: 0,
     // Crit windows
     precisionBreach: 0, shatterpoint: 0, meltdown: 0, surgeBreak: 0, killSwitch: 0,
@@ -2940,6 +2944,7 @@ function rebuildRunMods() {
       case 'kinetic_glide':     m.dashDistance      = n; break;
       case 'shockfront':        m.shockfront        = n; break;
       case 'impact_echo':       m.impactEcho        = n; break;
+      case 'slide_duration':    m.slideDurBonus     = Math.round(_modScale('slide_duration', 180, 60)); break;
       case 'long_reach':        m.longReach         += n; break;
       case 'dark_harvest':      m.darkHarvest       = n; break;
       case 'viral_extraction':  m.viralExtraction   = n; break;
@@ -3249,7 +3254,7 @@ const _CARD_CLASS_MAP = {};
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring','wide_spread'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
   const _arc = ['arc_rounds','static_chain','static_wake','overcharge','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','arc_spike','discharge_ring'];
-  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','long_reach','pulse_spike','impact_ring','kinetic_glide'];
+  const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','slide_duration','long_reach','pulse_spike','impact_ring','kinetic_glide'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring','viral_extraction'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
   for (const id of _cryo)    _CARD_CLASS_MAP[id] = 'cryo';
@@ -9271,7 +9276,8 @@ function applyExposed(z) {
   const _m = runMods || {};
   const _wasExposed = z._exposed;
   z._exposed = true;
-  z._exposedTimer = Math.max(z._exposedTimer || 0, 180); // 3s
+  // SLIDE base duration doubled to 6s (was 3s). KINETIC HOLD card extends it.
+  z._exposedTimer = Math.max(z._exposedTimer || 0, 360 + (_m.slideDurBonus || 0));
   if (!_wasExposed) {
     particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});
     floatingTexts.push({x:z.x, y:z.y - z.radius - 14, text:'SLIDE', color:'#cef', vx:0, vy:-1.2, life:24, maxLife:24});
@@ -19996,7 +20002,10 @@ function updateDischarge() {
       // never fires on the most common case: the discharge killing the enemy.
       z._hitByDischarge = true;
       damageZombie(z, baseDmg, pushX*0.5*_pushMul, pushY*0.5*_pushMul, true);
-      z.vx += pushX * 1.5 * _pushMul; z.vy += pushY * 1.5 * _pushMul;
+      // Base wave push is a LIGHT nudge for every element (was 1.5 — that was
+      // pulse-level knockback leaking onto arc/fire/ice/corrupt discharges).
+      // Only PULSE PROTOCOL (wind, below) gets the heavy fling now.
+      z.vx += pushX * 0.4 * _pushMul; z.vy += pushY * 0.4 * _pushMul;
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -20019,7 +20028,7 @@ function updateDischarge() {
         // shockwave (matches the protocol's identity).
         // Suppressed under SINGULARITY — the well wants enemies STAYING
         // in, not catapulting past the boundary.
-        if (!w._singularity) { z.vx += pushX * 2.0; z.vy += pushY * 2.0; }
+        if (!w._singularity) { z.vx += pushX * 3.0; z.vy += pushY * 3.0; }
         z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
       }
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
@@ -23633,7 +23642,7 @@ function triggerShockwaveDash(lp) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30 + 10 * _mods.kineticWake);
       if (_mods.kineticWake >= 3) {
         z._exposed = true;
-        z._exposedTimer = Math.max(z._exposedTimer || 0, 180);
+        z._exposedTimer = Math.max(z._exposedTimer || 0, 360 + ((runMods && runMods.slideDurBonus) || 0));
       }
     }
   }
@@ -25919,6 +25928,47 @@ function _emitSlideCollisionVFX(a, b, spd) {
   screenShake.intensity = Math.max(screenShake.intensity, Math.min(6, 2 + spd * 0.18));
 }
 
+// A fast-moving SLID "ball" crashes into nearby enemies + players. Host-only
+// (caller guards isHost). Damages both bodies, launches the struck enemy, and
+// recoils the ball so it keeps ricocheting (pinball). SLIDE only SPREADS to
+// the struck enemy if IMPACT ECHO is equipped — by default it does not spread.
+function _slideBallCollide(z, spd) {
+  const _ballR = z.radius;
+  const _m = runMods || {};
+  _forZombiesNear(z.x, z.y, _ballR + 48, (o) => {
+    if (o === z || o.hp <= 0 || z._bumpCd || o._bumpCd) return;
+    const _ex = o.x - z.x, _ey = o.y - z.y, _e2 = _ex*_ex + _ey*_ey;
+    const _contact = _ballR + o.radius + 4;
+    if (_e2 >= _contact*_contact || _e2 < 0.01) return;
+    const _ed = Math.sqrt(_e2);
+    const _cdmg = Math.min(36, 10 + Math.floor(spd * 1.1));
+    damageZombie(o, _cdmg, 0, 0, true);
+    damageZombie(z, Math.floor(_cdmg * 0.5), 0, 0, true); // the ball takes half
+    const _nx = _ex/_ed, _ny = _ey/_ed;
+    // Launch the struck enemy; recoil the ball off it so it keeps bouncing.
+    o.vx += _nx * (spd * 0.6) + z.vx * 0.25;
+    o.vy += _ny * (spd * 0.6) + z.vy * 0.25;
+    o.staggerTimer = Math.max(o.staggerTimer || 0, 12);
+    z.vx -= _nx * (spd * 0.28); z.vy -= _ny * (spd * 0.28);
+    if (_m.impactEcho) applyExposed(o); // SLIDE spreads ONLY with IMPACT ECHO
+    z._bumpCd = 9; o._bumpCd = 9;
+    _emitSlideCollisionVFX(z, o, spd);
+  });
+  if (z._bumpCd) return;
+  for (const p of players) {
+    if (!p.alive || p.invincible > 0) continue;
+    const _pdx = p.x - z.x, _pdy = p.y - z.y, _pd2 = _pdx*_pdx + _pdy*_pdy;
+    const _pr = _ballR + PLAYER_RADIUS + 2;
+    if (_pd2 >= _pr*_pr) continue;
+    const _pdmg = Math.min(28, 8 + Math.floor(spd * 0.9));
+    damagePlayerObj(p, _pdmg, z);
+    z.vx *= -0.5; z.vy *= -0.5; // ricochet off the player
+    z._bumpCd = 12;
+    _emitSlideCollisionVFX(z, p, spd);
+    break;
+  }
+}
+
 function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if (z.hp <= 0) return; // already dead — prevent cascading death effects
   // NaN guard — if hp somehow became NaN, force-kill the zombie so it doesn't become invincible
@@ -26033,6 +26083,22 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // window for every hit type so the flash is consistent.
   z._hfPulse = 3;
   z.vx+=kbx*kbScale*_exposedKbMult*_frozenKbMult;z.vy+=kby*kbScale*_exposedKbMult*_frozenKbMult;
+  // SLIDE: every hit launches a SLID enemy. Enforce a knockback FLOOR so even
+  // low-knockback weapons send them flying (pulse "push class" identity). Tops
+  // the applied knockback up to the floor; strong pulse hits already exceed it.
+  // Skips silent hits (DoT/collision damage) so it can't feedback-loop, and
+  // scales with kbScale so heavy bosses still resist.
+  if (z._exposed && !silent && !(z._frozen || z._frozenTimer > 0)) {
+    const _kbMag = Math.sqrt(kbx*kbx + kby*kby) * kbScale * _exposedKbMult;
+    const _kbFloor = 10 * kbScale;
+    if (_kbMag < _kbFloor) {
+      let _kdx = kbx, _kdy = kby;
+      if (kbx*kbx + kby*kby < 0.01) { const _ksp = getLocalPlayer(); if (_ksp) { _kdx = z.x - _ksp.x; _kdy = z.y - _ksp.y; } }
+      const _kdl = Math.sqrt(_kdx*_kdx + _kdy*_kdy) || 1;
+      const _kAdd = _kbFloor - _kbMag;
+      z.vx += (_kdx/_kdl) * _kAdd; z.vy += (_kdy/_kdl) * _kAdd;
+    }
+  }
   // Arcade mode: every death (bullet, DoT, AoE, explosion) routes through here
   // so we award points + spawn the flashy "+X" label exactly once per kill.
   // _arcadeScored flag dedupes against the bullet-block score path below.
@@ -29325,6 +29391,52 @@ function update() {
       if (z._hitByDischarge && !_dischargeActive) { z._hitByDischargeTimer = (z._hitByDischargeTimer || 180) - 1; if (z._hitByDischargeTimer <= 0) z._hitByDischarge = false; }
       // PULSE SLIDE: smooth knockback that decays over time (like ice physics)
       if(z._slideTimer>0){z._slideTimer--;z._slideVx*=0.92;z._slideVy*=0.92;z.x+=z._slideVx;z.y+=z._slideVy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._slideTimer<=0){z._slideVx=0;z._slideVy=0;}if(Math.abs(z._slideVx)+Math.abs(z._slideVy)>2)continue;}
+      // ---- SLIDE BALL MODE (pinball) ----
+      // A SLID (_exposed) enemy carrying real speed becomes a free physics
+      // object: it ignores chase AI, glides with low friction, BOUNCES off
+      // walls + obstacles at high retention, and crashes through other enemies
+      // and players (see _slideBallCollide). It stays a "ball" until friction
+      // bleeds its speed below threshold, then falls through to normal logic.
+      // Movement runs on host + client (positions reconcile via sync); damage
+      // is host-only inside.
+      if (z._exposed && !z._frozen && !(z._frozenTimer > 0)) {
+        const _bSpd = Math.sqrt(z.vx*z.vx + z.vy*z.vy);
+        if (_bSpd > 4) {
+          z.staggerTimer = Math.max(z.staggerTimer || 0, 6); // no attacks while flying
+          z.vx *= 0.96; z.vy *= 0.96;                        // low friction = long glide
+          // Substep move with wall/obstacle BOUNCE (0.9 retention = ricochet).
+          const _bStep = 20, _bN = Math.max(1, Math.ceil(_bSpd / _bStep));
+          const _bsx = z.vx / _bN, _bsy = z.vy / _bN;
+          let _bWall = false;
+          for (let _bk = 0; _bk < _bN; _bk++) {
+            const _btx = z.x + _bsx, _bty = z.y + _bsy;
+            const _bcx = clamp(_btx, z.radius, ARENA_W - z.radius);
+            const _bcy = clamp(_bty, z.radius, ARENA_H - z.radius);
+            const _boX = _bcx !== _btx, _boY = _bcy !== _bty;
+            const _bObs = obstacleCollision(_bcx, _bcy, z.radius, false);
+            if (_boX || _boY || _bObs) {
+              if (_boX) z.vx = -z.vx * 0.9;
+              if (_boY) z.vy = -z.vy * 0.9;
+              if (_bObs && !_boX && !_boY) { z.vx = -z.vx * 0.9; z.vy = -z.vy * 0.9; }
+              z.x = _bcx; z.y = _bcy; _bWall = true; break;
+            }
+            z.x = _bcx; z.y = _bcy;
+          }
+          pushOutOfObstacles(z, z.radius);
+          if (isHost) {
+            if (_bWall && !z._slamCooldown) {
+              const _bslam = Math.min(50, 20 + Math.floor(_bSpd * 1.5));
+              damageZombie(z, _bslam, 0, 0, true);
+              addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
+              _emitWallSlamVFX(z, _bSpd);
+              z._slamCooldown = 16;
+            }
+            if (!z._bumpCd) _slideBallCollide(z, _bSpd);
+          }
+          if (gameTime % 2 === 0) particles.push({ x: z.x, y: z.y, vx: (Math.random()-0.5)*1.4, vy: (Math.random()-0.5)*1.4, life: 8, maxLife: 8, size: 2, color: '#cef', type: 'spark' });
+          continue;
+        }
+      }
       if(z.staggerTimer>0){
         z.staggerTimer--;
         // PULSE SLIDE: pulse-pushed enemies get slightly lighter friction
@@ -30999,58 +31111,9 @@ function update() {
         _emitWallSlamVFX(z, _mvSpd);
         z._slamCooldown = 22;
       }
-      // IMPACT ECHO card — SLID enemies moving at speed spread SLIDE on bump
-      if ((runMods||{}).impactEcho && z._exposed && _mvSpd > 3) {
-        for (const oz of zombies) {
-          if (oz === z || oz.hp <= 0 || oz._exposed) continue;
-          const edx = oz.x-z.x, edy = oz.y-z.y;
-          if (edx*edx + edy*edy < (z.radius + oz.radius + 4)**2) { applyExposed(oz); }
-        }
-      }
-      // ---- SLIDE collision (pinball) — flashy kinetic BONUS on top of the
-      // knockback that's already there. Only SLIDE (_exposed) enemies are
-      // "balls": when one is shoved fast enough, crashing into another enemy
-      // damages BOTH, launches the struck one (+spreads SLIDE so the chain
-      // continues), and a ball that plows into a player hurts them. Host-
-      // authoritative; per-enemy _bumpCd stops multi-tick per slide.
-      if (isHost && z._exposed && _mvSpd > 4 && !z._bumpCd) {
-        const _ballR = z.radius;
-        // Enemy-vs-enemy crash (grid-local lookup, not an O(n^2) scan).
-        _forZombiesNear(z.x, z.y, _ballR + 48, (o) => {
-          if (o === z || o.hp <= 0 || z._bumpCd || o._bumpCd) return;
-          const _ex = o.x - z.x, _ey = o.y - z.y, _e2 = _ex*_ex + _ey*_ey;
-          const _contact = _ballR + o.radius + 4;
-          if (_e2 >= _contact*_contact || _e2 < 0.01) return;
-          const _ed = Math.sqrt(_e2);
-          const _cdmg = Math.min(36, 10 + Math.floor(_mvSpd * 1.1));
-          damageZombie(o, _cdmg, 0, 0, true);
-          damageZombie(z, Math.floor(_cdmg * 0.5), 0, 0, true); // the ball takes half
-          // Launch the struck enemy along the impact normal + inherit momentum.
-          const _nx = _ex/_ed, _ny = _ey/_ed;
-          o.vx += _nx * (_mvSpd * 0.6) + z.vx * 0.25;
-          o.vy += _ny * (_mvSpd * 0.6) + z.vy * 0.25;
-          o.staggerTimer = Math.max(o.staggerTimer || 0, 12);
-          applyExposed(o); // struck enemy becomes a ball too -> chain reaction
-          z._bumpCd = 9; o._bumpCd = 9;
-          _emitSlideCollisionVFX(z, o, _mvSpd);
-        });
-        // Ball-vs-player: a SLID enemy plowing into a player hurts them and
-        // ricochets off (damagePlayerObj self-throttles via p.invincible).
-        if (!z._bumpCd) {
-          for (const p of players) {
-            if (!p.alive || p.invincible > 0) continue;
-            const _pdx = p.x - z.x, _pdy = p.y - z.y, _pd2 = _pdx*_pdx + _pdy*_pdy;
-            const _pr = _ballR + PLAYER_RADIUS + 2;
-            if (_pd2 >= _pr*_pr) continue;
-            const _pdmg = Math.min(28, 8 + Math.floor(_mvSpd * 0.9));
-            damagePlayerObj(p, _pdmg, z);
-            z.vx *= -0.4; z.vy *= -0.4;
-            z._bumpCd = 12;
-            _emitSlideCollisionVFX(z, p, _mvSpd);
-            break;
-          }
-        }
-      }
+      // (SLIDE collision + spread now handled in SLIDE BALL MODE earlier in
+      // this loop — see _slideBallCollide. Fast SLID enemies `continue` from
+      // ball mode and never reach here.)
       if (z.aware && _mv2 > 0.5 && !_hitWallThisFrame) {
         const _moved2 = (z.x - _prevX) * (z.x - _prevX) + (z.y - _prevY) * (z.y - _prevY);
         const _wanted2 = _mv2;
