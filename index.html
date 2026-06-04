@@ -16375,18 +16375,15 @@ function fireWeaponForPlayer(p) {
   _gunAmmo--;
   _gunIdleTimer = 0;
   hapticShot();
-  // SHOT BOB — small forward lean per shot. Sidearm stays FORWARD (not
-  // recoil) — fast cadence means a recoil snap would jitter the body.
-  // Explicitly clear the recoil flag in case the player switched from
-  // deadshot/ripper (which set it) to a sidearm.
-  // 5px / 7f stays under the pistol's 10-frame interval so successive
-  // shots don't pile bobs.
+  // SHOT BOB — small BACKWARD recoil kick per shot (sidearm), so the body
+  // visibly absorbs the shot's recoil. Amp/window kept small (5px / 7f, under
+  // the pistol's ~10f interval) so the rapid cadence doesn't jitter.
   if (p === getLocalPlayer()) {
     p._rSwingBob = 7;
     p._rSwingBobMax = 7;
     p._rSwingBobAng = p.angle;
     p._rSwingBobAmp = 5;
-    p._rSwingBobRecoil = false;
+    p._rSwingBobRecoil = true;
   }
   // DASH STRIKE — consume the post-dash kinetic-cone window on the first shot.
   if (p === getLocalPlayer()) _fireDashStrikeCone(p);
@@ -21139,15 +21136,14 @@ function _runComboStep(p, def, step, idx) {
   // neutral. No physics or hit detection involvement. Finisher swings
   // already have their own committed lunge so skip the bob there.
   if (!step.finisher) {
-    // Bumped from 12f/6px → 14f/9px so the lean is more committed without
-    // overlapping the next combo step. Recoil curve = sharp BACKWARD snap
-    // then spring back — sells the swing as "weight pulls the body back
-    // after committing forward."
+    // FORWARD lunge curve — the body leans INTO the strike (forward then
+    // settles), selling the ripper's aggressive commit toward the target.
+    // (Was a backward recoil; reversed per design — melee drives forward.)
     p._rSwingBob = 14;
     p._rSwingBobMax = 14;
     p._rSwingBobAng = a;
     p._rSwingBobAmp = 9;
-    p._rSwingBobRecoil = true;
+    p._rSwingBobRecoil = false;
   }
   // When a class is dominant, the WHOLE strike takes its color (beam,
   // tip rings, sparks) so a thermal swing reads thermal end to end.
@@ -26707,6 +26703,14 @@ function damagePlayerObj(p,damage,attacker) {
     damage -= p.barrier; p.barrier = 0;
   }
   p.hp-=damage;p.damageFlash=15;p.invincible=6; // brief flash only, no real i-frames
+  // Hit-knockback — shove the player back a little from the attacker so the
+  // strike has weight. Decaying impulse, applied in the local-player movement.
+  if (attacker && typeof attacker.x === 'number') {
+    const _hkx = p.x - attacker.x, _hky = p.y - attacker.y;
+    const _hkd = Math.sqrt(_hkx*_hkx + _hky*_hky) || 1;
+    const _hkMag = 5;
+    p._hitKbVx = (_hkx/_hkd) * _hkMag; p._hitKbVy = (_hky/_hkd) * _hkMag;
+  }
   // Brief hit-stop + steady white-body flash overlay so the hit always
   // reads as a punch. _hurtFlash is the steady-white silhouette pulse
   // rendered on the player body; ticks down in the local-player update.
@@ -27507,6 +27511,14 @@ function update() {
         // Buffered dash: if player pressed dash during the previous dash, auto-fire now
         if (lp._dashBuffer) { lp._dashBuffer = false; setTimeout(dash, 0); }
       }
+    }
+    // Hit-knockback impulse — fold the decaying shove (set in damagePlayerObj
+    // when struck) into the movement velocity so it collides with walls. Skip
+    // during a dash (dash velocity owns lp.vx those frames).
+    if (!(lp._dashFrames > 0) && (lp._hitKbVx || lp._hitKbVy)) {
+      lp.vx += lp._hitKbVx; lp.vy += lp._hitKbVy;
+      lp._hitKbVx *= 0.7; lp._hitKbVy *= 0.7;
+      if (Math.abs(lp._hitKbVx) + Math.abs(lp._hitKbVy) < 0.3) { lp._hitKbVx = 0; lp._hitKbVy = 0; }
     }
     // Substep collision so a dash (DASH_SPEED=16, >= player radius) can't
     // tunnel through walls in a single frame. Split the translation into
@@ -37251,7 +37263,17 @@ function render() {
     {
       const _vMag2 = Math.hypot(p.vx || 0, p.vy || 0);
       if (_vMag2 < 0.3) {
+        // Idle breathing bob.
         _bodyOY += Math.sin(performance.now() * 0.004) * 1.0;
+      } else if (!(p._dashFrames > 0)) {
+        // MOVE WOBBLE — body sways side-to-side (perpendicular to movement)
+        // with a slight vertical bounce, so it looks like the character is
+        // putting in effort to move. Phase advances with movement speed.
+        p._wPhase = (p._wPhase || 0) + Math.min(0.6, 0.22 + _vMag2 * 0.04);
+        const _wmA = Math.atan2(p.vy || 0, p.vx || 0);
+        const _wsway = Math.sin(p._wPhase) * 2.2;
+        _bodyOX += -Math.sin(_wmA) * _wsway;
+        _bodyOY += Math.cos(_wmA) * _wsway - Math.abs(Math.cos(p._wPhase)) * 1.4;
       }
       if (p === getLocalPlayer() && p.damageFlash > 12) {
         _bodyOX -= Math.cos(_lastHitAngle) * 2;
