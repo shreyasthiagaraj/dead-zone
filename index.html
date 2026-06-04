@@ -2084,7 +2084,7 @@ const UPGRADE_POOL = [
   { id:'overcharge', name:'OVERCHARGE', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
     descs:['Lightning effects (Storm Dash, Beacon Arc, Hot Wire, Tesla Orb) apply SHOCKED on hit.'], flavor:'every spark conducts.', prereqs:['arc_rounds|static_wake'] },
   { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
-    descs:['Dash endpoint chains arc through SHOCKED enemies.'], flavor:'endpoint discharge. arcs fly.', prereqs:['arc_rounds|static_wake'] },
+    descs:['Dash endpoint fires an arc that chains to nearby enemies, SHOCKING each.'], flavor:'endpoint discharge. arcs fly.', prereqs:['arc_rounds|static_wake'] },
   // ---- DASH: PULSE ----
   { id:'kinetic_wake', name:'KINETIC WAKE', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Dash shoves enemies aside (SLIDE, 18 dmg). Endpoint shockwave +30 dmg.'], flavor:'the air bends around you.' },
@@ -7670,6 +7670,7 @@ const ELEMENT_TYPES = [
 let elementZones = []; // { x, y, radius, element, life }
 let activeElement = null; // { id, timer }
 let burnoutPuddles = []; // { x, y, radius, life, maxLife } — Burnout Wake Lv2 fire trail
+let _vacuumBlasts = []; // VACUUM WAVE: {x,y,radius,kbLv,timer} — pull enemies IN, then blast OUT
 
 // ============================================================
 // ============================================================
@@ -8921,6 +8922,52 @@ function spawnAmbientParticles() {
 function spawnElementZone() {}
 
 // Burnout Wake Lv2+ fire trail — ticks damage + Overheat on anything standing in a puddle.
+// VACUUM WAVE: a KINETIC WAKE endpoint that first INHALES (pulls enemies into
+// the center over ~14 frames) then EXHALES (a hard outward blast + shockwave).
+// Host-only (applies damage + knockback).
+function _updateVacuumBlasts() {
+  if (!isHost) return;
+  for (let i = _vacuumBlasts.length - 1; i >= 0; i--) {
+    const v = _vacuumBlasts[i];
+    v.timer--;
+    if (v.timer > 0) {
+      // INHALE — pull enemies toward the center (wider than the blast radius).
+      const pullR = v.radius * 1.5, pullR2 = pullR * pullR;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = v.x - z.x, dy = v.y - z.y, d2 = dx*dx + dy*dy;
+        if (d2 > pullR2 || d2 < 1) continue;
+        const d = Math.sqrt(d2);
+        const pull = 3.5 + 4 * (1 - d / pullR);
+        z.vx += (dx/d) * pull; z.vy += (dy/d) * pull;
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 6);
+      }
+      if (gameTime % 2 === 0) {
+        const a = Math.random()*Math.PI*2, r = pullR*(0.55+Math.random()*0.45);
+        particles.push({x:v.x+Math.cos(a)*r,y:v.y+Math.sin(a)*r,vx:-Math.cos(a)*4,vy:-Math.sin(a)*4,life:12,maxLife:12,size:2+Math.random()*2,color:'#cef',type:'spark'});
+      }
+    } else {
+      // EXHALE — hard outward blast.
+      const r2 = v.radius * v.radius;
+      for (const z of zombies) {
+        if (z.hp <= 0) continue;
+        const dx = z.x - v.x, dy = z.y - v.y, d2 = dx*dx + dy*dy;
+        if (d2 > r2) continue;
+        const d = Math.sqrt(d2) || 1;
+        const closeness = 1 - d / v.radius;
+        const kb = 30 + 70 * closeness + 22 * v.kbLv * closeness;
+        z.vx += (dx/d) * kb; z.vy += (dy/d) * kb;
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 28);
+        damageZombie(z, Math.floor(45 * closeness), 0, 0, true);
+        applyExposed(z);
+      }
+      particles.push({x:v.x,y:v.y,vx:0,vy:0,life:24,maxLife:24,size:v.radius*1.2,color:'#cef',type:'shockwave',_rimColor:'#fff',_lingerStart:0.3,_alphaScale:1.3});
+      screenShake.intensity = Math.max(screenShake.intensity, 9);
+      playSound(60, 0.14, 'sawtooth', 0.13);
+      _vacuumBlasts.splice(i, 1);
+    }
+  }
+}
 // Puddles are seeded at the player's dash path and decay over ~2 seconds.
 function updateBurnoutPuddles() {
   for (let i = burnoutPuddles.length - 1; i >= 0; i--) {
@@ -22536,6 +22583,7 @@ let _deadshotPostFireTimer = 0;   // ticks down each frame; >0 blocks new charge
 let _deadshotCharging = false;
 let _deadshotCharge = 0;
 let _deadshotMaxFlashed = false; // max-charge ready cue fired once per charge
+let _deadshotOverdrawnFlashed = false; // OVERDRAWN! label fired once per charge
 // (Deadshot auto-aim removed — every shot is free-aim regardless of
 // tap vs hold. The HOLD freeze + left-stick aim override in the input
 // block is the only aim mechanism.)
@@ -22639,23 +22687,27 @@ function updateDeadshot() {
       const _overAmt = _deadshotCharge - DEADSHOT_MAX_CHARGE;
       if (_overAmt > 0) {
         const _odPct = Math.min(1, _overAmt / DEADSHOT_OVERDRAW_MAX);
-        if (gameTime % 6 === 0) {
-          particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 26 + _odPct * 30, color: '#fa0', type: 'wakering' });
+        // Toned-down VFX: sparser + duller amber so it doesn't scream.
+        if (gameTime % 10 === 0) {
+          particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 22 + _odPct * 20, color: '#c83', type: 'wakering' });
         }
-        for (let _odi = 0; _odi < 2; _odi++) {
+        if (gameTime % 4 === 0) {
           const _oa = Math.random()*Math.PI*2;
-          const _or = 18 + Math.random() * 24;
+          const _or = 16 + Math.random() * 18;
           particles.push({ x: mx + Math.cos(_oa)*_or, y: my + Math.sin(_oa)*_or,
-            vx: -Math.cos(_oa) * (2 + _odPct * 3), vy: -Math.sin(_oa) * (2 + _odPct * 3),
-            life: 10, maxLife: 10, size: 1.5 + _odPct * 2, color: '#fa0', type: 'spark' });
+            vx: -Math.cos(_oa) * (1.5 + _odPct * 2), vy: -Math.sin(_oa) * (1.5 + _odPct * 2),
+            life: 10, maxLife: 10, size: 1.5 + _odPct * 1.5, color: '#c83', type: 'spark' });
         }
-        if (_odPct >= 1 && gameTime % 12 === 0) {
-          addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 30, 'OVERDRAWN!', '#fa0');
+        // OVERDRAWN! label fires ONCE per charge (was repeating every 12 frames).
+        if (_odPct >= 1 && !_deadshotOverdrawnFlashed) {
+          _deadshotOverdrawnFlashed = true;
+          addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 30, 'OVERDRAWN!', '#fb4');
         }
       }
     }
   } else {
     _deadshotMaxFlashed = false;
+    _deadshotOverdrawnFlashed = false;
   }
   if (_deadshotCharge % 15 === 0) playSound(300 + _deadshotCharge * 8, 0.04, 'sine', 0.05);
 }
@@ -23611,6 +23663,7 @@ function triggerShockwaveDash(lp) {
     }
   }
   const _hitZombies = []; // track for lightning chain arcs
+  const _vac = !!(_mods && _mods.vacuumWave); // VACUUM WAVE: pull in, then blast out
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
     const dx = z.x - lp.x, dy = z.y - lp.y;
@@ -23624,9 +23677,15 @@ function triggerShockwaveDash(lp) {
     // Knockback scales with KINETIC WAKE level — the headline stat of the merged card.
     // Cranked: was 10+25*c+8*lv*c (~43 at center w/ lv1). Now 22+55*c+22*lv*c
     // (~99 at center w/ lv1, ~143 at lv3) — enemies launch.
-    const kb = 22 + 55 * closeness + 22 * _mods.kineticWake * closeness;
-    z.vx += (dx / d) * kb;
-    z.vy += (dy / d) * kb;
+    if (_vac) {
+      // VACUUM WAVE: only a gentle inward tug here; the real INHALE→EXHALE is
+      // the deferred vacuum pulse pushed after this loop.
+      z.vx -= (dx / d) * 4; z.vy -= (dy / d) * 4;
+    } else {
+      const kb = 22 + 55 * closeness + 22 * _mods.kineticWake * closeness;
+      z.vx += (dx / d) * kb;
+      z.vy += (dy / d) * kb;
+    }
     z.staggerTimer = Math.max(z.staggerTimer || 0, 25);
     _hitZombies.push(z);
     // Element trail procs on everything the shockwave touches
@@ -23667,6 +23726,8 @@ function triggerShockwaveDash(lp) {
       }
     }
   }
+  // VACUUM WAVE: schedule the inhale→exhale pulse at the dash endpoint.
+  if (_vac && isHost) _vacuumBlasts.push({ x: lp.x, y: lp.y, radius, kbLv: _mods.kineticWake || 0, timer: 14 });
   // Lightning blast: chain arcs between hit zombies (nearest-neighbor chain)
   if (blastElem === 'chain' && _hitZombies.length > 1) {
     let lastZ = _hitZombies[0];
@@ -26369,9 +26430,13 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
             oz._cascadeDepth = _casDepth + 1;
           }
         }
-        // Visible expanding ring + sparks
-        particles.push({x:z.x,y:z.y,vx:0,vy:0,life:12,maxLife:12,size:_casR,color:'#f60',type:'wakering'});
-        for (let ci = 0; ci < 12; ci++) { const ca = (ci/12)*Math.PI*2, cs = 3+Math.random()*5; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:14,maxLife:14,size:3+Math.random()*2,color:Math.random()>0.5?'#f60':'#fa0',type:'spark'}); }
+        // Canonical SHOCKWAVE VFX (drawShockwave) — big, bright, with shake +
+        // thump so each cascade link is unmistakable.
+        particles.push({x:z.x,y:z.y,vx:0,vy:0,life:24,maxLife:24,size:_casR*1.15,color:'#f60',type:'shockwave',_rimColor:'#fff',_lingerStart:0.3,_alphaScale:1.3});
+        for (let ci = 0; ci < 16; ci++) { const ca = (ci/16)*Math.PI*2, cs = 4+Math.random()*6; particles.push({x:z.x,y:z.y,vx:Math.cos(ca)*cs,vy:Math.sin(ca)*cs,life:16+Math.random()*8,maxLife:24,size:3+Math.random()*3,color:Math.random()>0.5?'#f60':'#fa0',type:'spark'}); }
+        addFloatingText(z.x, z.y - z.radius - 10, 'CASCADE', '#fa0');
+        screenShake.intensity = Math.max(screenShake.intensity, 6);
+        playSound(70, 0.12, 'sawtooth', 0.12);
       }
     }
     // ---- CARD: SHATTER KILL — FROZEN kills explode in a 70px ice AoE ----
@@ -27367,7 +27432,10 @@ function update() {
             for (let j = 0; j < maxJ; j++) {
               let bD2 = _dbR2, bZ = null;
               for (const cz of zombies) {
-                if (cz.hp <= 0 || !cz._charged || hitS.has(cz.zid)) continue;
+                // Arc to ANY nearby enemy (was charged-only — that made the mod
+                // do nothing without a pre-existing SHOCK source). The bolt
+                // SHOCKS each one it jumps to (applyCharged below).
+                if (cz.hp <= 0 || hitS.has(cz.zid)) continue;
                 const d2 = (cz.x - lastP.x) ** 2 + (cz.y - lastP.y) ** 2;
                 if (d2 < bD2) { bD2 = d2; bZ = cz; }
               }
@@ -27913,6 +27981,7 @@ function update() {
     updateStreak();
     updateElementZones();
     updateBurnoutPuddles();
+    _updateVacuumBlasts();
     updateDecor();
     spawnAmbientParticles();
     updateOrbital();
