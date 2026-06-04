@@ -2785,6 +2785,11 @@ function _formatCardDesc(text) {
   if (!text) return '';
   // Escape any existing HTML first
   text = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Values — bold + bright yellow so stat changes pop (+200%, 0.5s, 90px, 2x).
+  // MUST run before any span is inserted so it never matches digits that live
+  // inside style attributes (e.g. "0 0 5px", "font-weight:900").
+  text = text.replace(/[+\-]?\d+(?:\.\d+)?(?:%|×)|[+\-]?\d+(?:\.\d+)?\s?(?:px|dmg|HP|s|x)\b|[+\-]\d+(?:\.\d+)?\b/g,
+    '<b style="color:#ff5;font-weight:900">$&</b>');
   // LEVEL N header in crisp white
   text = text.replace(/\bLEVEL\s+(\d)\b/g, '<span style="color:#fff;font-weight:900;letter-spacing:1px;text-shadow:0 0 4px #fff">LEVEL $1</span>');
   // Status keywords — colored + bold + glow
@@ -2798,6 +2803,11 @@ function _formatCardDesc(text) {
     if (!g) continue;
     text = text.replace(new RegExp('\\b' + term.replace(/\s+/g, '\\s+') + '\\b', 'g'),
       `<span style="color:${g.color};font-weight:bold;border-bottom:1px dotted ${g.color}66">${term}</span>`);
+  }
+  // Action-source keywords — bold cyan so it's clear WHAT triggers the mod.
+  for (const term of ['SPECIAL','ATTACK','SPIKE']) {
+    text = text.replace(new RegExp('\\b' + term + '\\b', 'g'),
+      `<span style="color:#dff;font-weight:900;letter-spacing:0.5px">${term}</span>`);
   }
   return text;
 }
@@ -17410,7 +17420,9 @@ function throwSpike() {
       // trails BEHIND the outer (primary) leading edge. Each pulse fades
       // as it expands — no more mid-radius pop-in for the echo.
       const _twinR = _twin ? 1.28 : 1;
-      const _maxR = _modScale('impact_ring', 200, 25) * 0.6 * _radW * _twinR;
+      // Effective radius widened (0.6 -> 0.85) so the hit area matches the
+      // visual ring instead of falling short inside it.
+      const _maxR = _modScale('impact_ring', 200, 25) * 0.85 * _radW * _twinR;
       // Primary pulse — full damage, full radius, expands normally.
       spikes.push({
         x: px, y: py, ownerId: lp.id, classId: 'impact',
@@ -17442,7 +17454,7 @@ function throwSpike() {
       }
       particles.push({ x: px, y: py, vx: 0, vy: 0, life: 6, maxLife: 6, size: 36, color: '#fff', type: 'wakering' });
       decals.push({ type: 'scorch', x: px, y: py, size: 18, color: 'rgba(200,230,255,0.4)', alpha: 0.45, _fade: 0.001 });
-      screenShake.intensity = Math.max(screenShake.intensity, 18);
+      screenShake.intensity = Math.max(screenShake.intensity, 24);
       triggerGlitchSurge(0.5, 26);
       // Pulse-wave sound (not explosion): layered sines that sweep down
       // — sub thump + mid pulse + airy whoosh tail. No sawtooth crunch.
@@ -18395,7 +18407,7 @@ function _updateRingZone(sp, _radBoost) {
         if (z.hp <= 0 || sp._hitSet.has(z.zid)) continue;
         const dx = z.x - sp.x, dy = z.y - sp.y;
         const d = Math.sqrt(dx*dx + dy*dy);
-        if (d <= _r) {
+        if (d <= _r + z.radius) { // include the enemy's body so edge-touches count (matches the visual ring)
           sp._hitSet.add(z.zid);
           const _dn = d || 1;
           // Heavier knockback: 30-90 (was 18-56). Reads as a real shove
@@ -20636,13 +20648,14 @@ function updatePayload() {
     }
     screenShake.intensity = Math.max(screenShake.intensity, 16);
     triggerGlitchSurge(0.4, 16);
-    // Bomb detonation audio — overall ~45% quieter (was overwhelming on
-    // mobile speakers, especially with cluster bomb's secondary layers).
-    playSound(20, 0.40, 'sawtooth', 0.12);
-    playSound(50, 0.30, 'square', 0.09);
-    playSound(100, 0.18, 'square', 0.06);
+    // Bomb detonation audio — a real BOOM: the standard explosion sample
+    // layered over the procedural sub-bass so the detonation actually lands
+    // (was nearly inaudible). Falls back to procedural if the sample is absent.
+    if (!playSfx('explosion', 0.6, 0.04)) playSound(55, 0.30, 'sawtooth', 0.16);
+    playSound(20, 0.45, 'sawtooth', 0.16);
+    playSound(50, 0.32, 'square', 0.11);
+    playSound(100, 0.20, 'square', 0.07);
     setTimeout(() => playSound(150, 0.10, 'sawtooth', 0.05), 50);
-    setTimeout(() => playSound(400, 0.05, 'sine', 0.03), 100);
     // CLUSTER BOMB: 3 or 5 EQUAL explosions around the main impact
     if (_m.clusterBomb > 0) {
       const count = Math.min(8, _modScale('cluster_bomb', 3, 1));
@@ -20669,7 +20682,7 @@ function updatePayload() {
           decals.push({x:cx,y:cy,size:_cRadius*0.5,alpha:0.4,color:'#333'});
           // NAPALM ZONE: fire puddle at each cluster explosion too
           if (_napLv > 0) {
-            const _nR = Math.floor(_cRadius * (0.40 + Math.min(0.20, _modLevel('napalm_zone') * 0.02)));
+            const _nR = Math.floor(_cRadius * (0.65 + Math.min(0.25, _modLevel('napalm_zone') * 0.03)));
             const _nL = Math.floor(_modScale('napalm_zone', 3, 0.5) * 60);
             burnoutPuddles.push({ x: cx, y: cy, radius: _nR, life: _nL, maxLife: _nL });
           }
@@ -20681,7 +20694,7 @@ function updatePayload() {
     // NAPALM ZONE: leave a fire puddle
     if (_m.napalmZone > 0) {
       const napLife = Math.floor(_modScale('napalm_zone', 3, 0.5) * 60);
-      const napRadius = Math.floor(radius * (0.40 + Math.min(0.20, _modLevel('napalm_zone') * 0.02)));
+      const napRadius = Math.floor(radius * (0.65 + Math.min(0.25, _modLevel('napalm_zone') * 0.03)));
       burnoutPuddles.push({ x: g.x, y: g.y, radius: napRadius, life: napLife, maxLife: napLife });
     }
     // (Homing payload has no detonation-phase effect — tracking happens in flight)
@@ -20692,8 +20705,8 @@ function updatePayload() {
 }
 
 // TRIPLE PAYLOAD lite-detonation. Each extra grenade flies independently
-// and produces a smaller, lower-overhead blast on detonation. Skips
-// cluster cascade, napalm fields, and class-extras to avoid layered chaos.
+// and produces a smaller, lower-overhead blast on detonation. Leaves a NAPALM
+// zone (if equipped); still skips cluster cascade to avoid layered chaos.
 function _updateExtraGrenades() {
   if (!_extraGrenades || _extraGrenades.length === 0) return;
   const _m = runMods || {};
@@ -20782,6 +20795,12 @@ function _updateExtraGrenades() {
           color: i < 4 ? '#fff' : gc, type: 'explosion' });
       }
       decals.push({ x: g.x, y: g.y, size: radius*0.55, alpha: 0.35, color: '#222' });
+      // NAPALM ZONE: side payloads leave fire too (was main-payload-only).
+      if (_m.napalmZone > 0) {
+        const _enL = Math.floor(_modScale('napalm_zone', 3, 0.5) * 60);
+        const _enR = Math.floor(radius * (0.65 + Math.min(0.25, _modLevel('napalm_zone') * 0.03)));
+        burnoutPuddles.push({ x: g.x, y: g.y, radius: _enR, life: _enL, maxLife: _enL });
+      }
       screenShake.intensity = Math.max(screenShake.intensity, 8);
       playSound(40, 0.18, 'sawtooth', 0.06);
       playSound(80, 0.12, 'square', 0.04);
@@ -28412,7 +28431,16 @@ function update() {
       }
     }
     if(b._element==='lightning'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:6+Math.random()*4,maxLife:10,size:1.5+Math.random()*2,color:Math.random()>0.5?'#fe6':'#fff',type:'spark'});
-    if(b._element==='wind'&&gameTime%3===0)particles.push({x:b.x-b.vx*0.3+(Math.random()-0.5)*4,y:b.y-b.vy*0.3+(Math.random()-0.5)*4,vx:-b.vx*0.05,vy:-b.vy*0.05,life:8,maxLife:8,size:2+Math.random()*1.5,color:'#cef',type:'spark'});
+    if(b._element==='wind'&&gameTime%2===0){
+      // SLIPSTREAM: paired air-vortex streaks peel off the sides of the wake
+      // and curl outward (alternating sides) + a faint white core streak, so
+      // the shot reads as moving AIR rather than a couple of stray sparks.
+      const _wa=Math.atan2(b.vy,b.vx), _wpx=-Math.sin(_wa), _wpy=Math.cos(_wa);
+      const _wside=(gameTime%4<2)?1:-1;
+      const _wbx=b.x-b.vx*0.25, _wby=b.y-b.vy*0.25;
+      particles.push({x:_wbx+_wpx*3*_wside,y:_wby+_wpy*3*_wside,vx:-b.vx*0.06+_wpx*1.6*_wside,vy:-b.vy*0.06+_wpy*1.6*_wside,life:11,maxLife:11,size:2+Math.random()*1.5,color:Math.random()>0.5?'#cef':'#dff',type:'spark'});
+      particles.push({x:_wbx+(Math.random()-0.5)*2,y:_wby+(Math.random()-0.5)*2,vx:-b.vx*0.04,vy:-b.vy*0.04,life:7,maxLife:7,size:1.2+Math.random(),color:'#fff',type:'spark'});
+    }
     if(b._element==='corrupt'&&gameTime%2===0)particles.push({x:b.x+(Math.random()-0.5)*6,y:b.y+(Math.random()-0.5)*6,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:10,maxLife:10,size:2+Math.random()*2,color:Math.random()>0.5?'#a4f':'#f0f',type:'spark'});
     // Homing behavior: curve toward nearest zombie
     if(b._homing&&b.owner==='player'){let bestD2=90000,bestZ=null;for(const z of zombies){const _hdx=z.x-b.x,_hdy=z.y-b.y,_hd2=_hdx*_hdx+_hdy*_hdy;if(_hd2<bestD2){bestD2=_hd2;bestZ=z;}}if(bestZ){const ta=Math.atan2(bestZ.y-b.y,bestZ.x-b.x),ba=Math.atan2(b.vy,b.vx);let da=ta-ba;while(da>Math.PI)da-=Math.PI*2;while(da<-Math.PI)da+=Math.PI*2;const turn=0.08;const na=ba+da*turn;const spd=Math.sqrt(b.vx*b.vx+b.vy*b.vy);b.vx=Math.cos(na)*spd;b.vy=Math.sin(na)*spd;}}
@@ -34857,6 +34885,26 @@ function render() {
     ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     ctx.restore();
   }
+  // TRIPLE PAYLOAD: render the side payloads as full missiles too. They were
+  // spawned + simulated but never drawn — so it looked like one central
+  // missile with two faint dots. Fake-glow (no shadowBlur) for perf.
+  if (_extraGrenades && _extraGrenades.length) {
+    const _egt = performance.now();
+    for (const _eg of _extraGrenades) {
+      if (!_eg) continue;
+      const _egc = _eg.classId ? (_ELEM_COLOR[_eg.classId] || '#fa0') : '#fa0';
+      ctx.globalAlpha = 0.22; ctx.fillStyle = _egc;
+      ctx.beginPath(); ctx.arc(_eg.x, _eg.y, 13, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.arc(_eg.x, _eg.y, 7, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.7;
+      ctx.beginPath(); ctx.arc(_eg.x, _eg.y, 3.5, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 0.3 + Math.sin(_egt * 0.02 + _eg.x) * 0.15;
+      ctx.strokeStyle = _egc; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(_eg.x, _eg.y, 12, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
   // Deadshot charge indicator + aim line — fades in/out
   _deadshotAimAlpha = lerp(_deadshotAimAlpha, _deadshotCharging ? 1 : 0, 0.15);
   if (_deadshotAimAlpha > 0.01) {
@@ -37879,6 +37927,29 @@ function render() {
     ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.strokeStyle='#000';ctx.lineWidth=3;
     ctx.strokeText(p.name,0,-PLAYER_RADIUS-10);ctx.fillStyle='#888';ctx.fillText(p.name,0,-PLAYER_RADIUS-10);
     ctx.restore();
+  }
+
+  // Beacon TOP-MARKER — drawn AFTER the zombie bodies so enemies can't hide the
+  // beacon. A bright floating diamond + thin up-beam at each beacon position.
+  {
+    const _rbm = _beacons.length > 0 ? _beacons : (activeBeacon ? [activeBeacon] : []);
+    for (const ab of _rbm) {
+      if (!ab) continue;
+      const _bmc = ab.classId === 'fire' ? '#f60' : ab.classId === 'ice' ? '#8ef' : ab.classId === 'chain' ? '#fe6' : ab.classId === 'corrupt' ? '#a4f' : '#0ff';
+      const _bmt = performance.now();
+      const _bmp = 0.7 + Math.sin(_bmt * 0.006) * 0.3;
+      const _bmy = ab.y - 26 - Math.sin(_bmt * 0.004) * 3; // floats above the beacon
+      ctx.save();
+      ctx.globalAlpha = 0.25 * _bmp; ctx.strokeStyle = _bmc; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(ab.x, ab.y); ctx.lineTo(ab.x, _bmy); ctx.stroke();
+      ctx.globalAlpha = 0.22; ctx.fillStyle = _bmc; // fake-glow (no shadowBlur)
+      ctx.beginPath(); ctx.moveTo(ab.x, _bmy-9); ctx.lineTo(ab.x+7, _bmy); ctx.lineTo(ab.x, _bmy+9); ctx.lineTo(ab.x-7, _bmy); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 0.9 * _bmp;
+      ctx.beginPath(); ctx.moveTo(ab.x, _bmy-6); ctx.lineTo(ab.x+4.5, _bmy); ctx.lineTo(ab.x, _bmy+6); ctx.lineTo(ab.x-4.5, _bmy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.8 * _bmp;
+      ctx.beginPath(); ctx.arc(ab.x, _bmy, 2, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
   }
 
   // Particles — offscreen cull + shadowBlur only when worth it.
