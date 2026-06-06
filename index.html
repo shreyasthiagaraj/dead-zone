@@ -2451,6 +2451,8 @@ const UPGRADE_POOL = [
     descs:['Taking damage readies your next ATTACK + makes it deal 3x damage (2s window).'], flavor:'they hit you. you hit harder.' },
   { id:'extended_reach', name:'EXTENDED REACH', rarity:'common', max:1, icon:'↔', color:'#fe6',
     descs:['Your ATTACK reaches 35% farther.'], flavor:'a longer blade ends it sooner.' },
+  { id:'rising_blade', name:'RISING EDGE', rarity:'rare', max:1, icon:'⟋', color:'#fe6',
+    descs:['Each combo swing extends the blade dramatically farther (+18% reach per step, on top of the base growth).'], flavor:'momentum lengthens the cut.' },
   { id:'detonator', name:'DETONATOR', rarity:'epic', max:1, icon:'✸', color:'#fe6',
     descs:['Your finisher triggers a massive explosion.'], flavor:'end every combo with a bang.' },
   // ---- CROSS-WEAPON (universal) ----
@@ -2703,6 +2705,7 @@ const _KEY_STATS = {
   // ---- Ripper-native ----
   cleave:         { label:'cone width', base:30, step:5, unit:'%' },
   lunge:          { label:'lunge distance', base:60, step:8, unit:'%' },
+  rising_blade:   { label:'reach per step', base:18, step:5, unit:'%' },
   executioner:    { label:'finisher dmg', base:75, step:10, unit:'%' },
   bloodletter:    { label:'HP per crit', base:5, step:2, unit:' HP' },
   whirlwind:      null, // mechanic toggle (3 kills → 360 spin)
@@ -3079,6 +3082,7 @@ function rebuildRunMods() {
       case 'whirlwind':          m.whirlwind = true; break;
       case 'riposte':            m.riposte = true; break;
       case 'extended_reach':     m.extendedReach = true; break;
+      case 'rising_blade':       m.risingBlade = true; break;
       case 'detonator':          m.detonator = true; break;
       // Cross-weapon
       case 'stagger_strike':     m.staggerStrike = true; break;
@@ -3333,7 +3337,7 @@ const _PERSIST_BENEFIT_CLASSES = new Set([
 // Cards that only apply when the player has RIPPER as their primary weapon.
 const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
-  'extended_reach', 'detonator',
+  'extended_reach', 'rising_blade', 'detonator',
   // 2026-05: new ripper mods
   'world_splitter', 'vorpal_finisher', 'flurry_slash',
 ]);
@@ -20937,6 +20941,10 @@ function _swingMelee(p, def) {
   p._rSwingAngle = p.angle;
   p._rSwingStep = idx;
   p._rSwingCooldown = step.cooldown;
+  // Ripper swings grant brief I-FRAMES: invulnerable through ~65% of the swing
+  // (the strike + follow-through), then vulnerable again in the gap before the
+  // next swing. Lets the player trade safely mid-combo but not stand in a swarm.
+  p._swingInvulnUntil = now + (step.cooldown || 280) * 0.65;
   p._rSwingDir = step.dir;
   p._rSwingKind = step.kind;
   p._rSwingJab = step.kind === 'jab' || step.kind === 'forwardlunge';
@@ -20948,7 +20956,8 @@ function _swingMelee(p, def) {
   // range by 10% (1.0x / 1.1x / 1.2x / 1.3x / 1.4x across the 5-step combo).
   // Resets to 1.0x when the combo window expires or the combo finishes
   // (idx wraps back to 0). Incentivizes keeping the chain going.
-  const _comboReachBonus = 1 + 0.1 * Math.max(0, idx);
+  const _stepGrow = 0.12 + (((runMods||{}).risingBlade) ? _modScale('rising_blade', 0.18, 0.05) : 0);
+  const _comboReachBonus = 1 + _stepGrow * Math.max(0, idx);
   p._rSwingRange = step.range * (((runMods||{}).extendedReach) ? 1.35 : 1) * _comboReachBonus;
   // Capture explicit start/end angles for the swing animation. The renderer
   // interpolates between these with no lerp catch-up — clean, decisive
@@ -21076,8 +21085,9 @@ function _meleeApproachVel(p, a, range, cone, opts) {
   const dx = _bestZ.x - p.x, dy = _bestZ.y - p.y;
   const d = Math.hypot(dx, dy) || 1;
   const _zr = _bestZ.radius || 14;
-  // Stop just at the strike edge — well outside the enemy's body.
-  const _gap = d - (range * 0.9 + _zr);
+  // Close in so the enemy ends up COMFORTABLY within reach (~60% of range),
+  // not just at the very tip of the blade.
+  const _gap = d - (range * 0.6 + _zr);
   if (_gap <= 3) return null;
   const _v = Math.min(_maxStep, _gap * 0.26 * _speedMult); // 0.26 = (1-decay) - safety; no overshoot
   return { vx: (dx / d) * _v, vy: (dy / d) * _v };
@@ -21155,7 +21165,8 @@ function _runComboStep(p, def, step, idx) {
   // idx 4). Mirrors p._rSwingRange in _swingMelee so hit detection lines up
   // with the visual swing length. Dash-strike (idx -1) and jab (idx -2)
   // don't get the bonus — they're standalone strikes, not combo steps.
-  const _comboReachBonus = 1 + 0.1 * Math.max(0, idx);
+  const _stepGrow = 0.12 + (_rmCombo.risingBlade ? _modScale('rising_blade', 0.18, 0.05) : 0);
+  const _comboReachBonus = 1 + _stepGrow * Math.max(0, idx);
   const range = step.range * (_rmCombo.extendedReach ? 1.35 : 1) * _comboReachBonus;
   // CARD: WHIRLWIND — after 3 kills in 2s, next swing is 360°
   const _wwActive = _rmCombo.whirlwind && p._whirlwindReady;
@@ -21173,7 +21184,9 @@ function _runComboStep(p, def, step, idx) {
   // just out of reach to close on. No enemy / already in range → the
   // player stays put (no walking into the enemy). LUNGE card extends
   // both the chase range and the closing speed.
-  if (idx === 0 && isLocal) {
+  // Apply on EVERY combo step (not just the opener): if the nearest in-cone
+  // enemy is just outside reach, close the gap so the swing connects.
+  if (isLocal) {
     const _av = _meleeApproachVel(p, a, range, damageCone, {
       reachMult: _rmCombo.lunge ? (1 + _modScale('lunge', 0.60, 0.08) * 0.5) : 1.0,
       speedMult: _rmCombo.lunge ? 1.1 : 1.0,
@@ -26621,6 +26634,8 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
 }
 function damagePlayerObj(p,damage,attacker) {
   if(p.invincible>0) return;
+  // Ripper swing I-frames — invulnerable through the active part of a swing.
+  if (p._swingInvulnUntil && performance.now() < p._swingInvulnUntil) return;
   // COMPROMISED: enemies deal 40% less damage when Compromised
   if (attacker && attacker._compromised) damage = Math.floor(damage * 0.6);
   // Shield power-up blocks all damage (works for any player)
