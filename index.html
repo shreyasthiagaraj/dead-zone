@@ -2158,6 +2158,9 @@ const UPGRADE_POOL = [
       'On SHOCKED applied: chain bolt hops to 5 nearby enemies (64 dmg each).',
     ],
     flavor:'the mark conducts.', prereqs:['arc_rounds|static_wake'] },
+  { id:'tesla_coil', name:'TESLA COIL', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
+    descs:['SHOCKED enemies crackle: each one arcs a lightning bolt at a nearby enemy a few times a second.'],
+    flavor:'every stunned host becomes a node.', prereqs:['arc_rounds|static_wake'] },
   // ---- CLASS PASSIVES — Pulse ----
   { id:'momentum', name:'MOMENTUM', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['+4% move speed per SLIDE enemy on screen.'],
@@ -2264,11 +2267,11 @@ const UPGRADE_POOL = [
     flavor:'freeze the lane. wall it off.' },
   { id:'discharge_ring', name:'CHAIN BOLT', rarity:'epic', max:3, icon:'\u26A1', color:'#fe6',
     descs:[
-      'Your SPIKE becomes a chain bolt that bounces off 6 enemies. Applies SHOCKED.',
-      'Chain bolt bounces off 8 enemies.',
-      'Chain bolt bounces off 10 enemies.',
+      'Your SPIKE becomes a chain bolt that arcs through up to 4 enemies, applying SHOCKED. Higher levels bounce off walls more.',
+      'Chain bolt ricochets off walls more (still up to 4 enemies).',
+      'Chain bolt ricochets off walls even more (still up to 4 enemies).',
     ],
-    flavor:'one bolt. every target. total coverage.' },
+    flavor:'one bolt. four targets. precise.' },
   { id:'impact_ring', name:'KINETIC NOVA', rarity:'rare', max:1, icon:'\uD83D\uDCA8', color:'#cef',
     descs:['Your SPIKE becomes a 360\u00B0 kinetic nova. Knockback + SLIDE.'],
     flavor:'get. off. me.' },
@@ -2584,6 +2587,7 @@ const _KEY_STATS = {
   superconductor: { label:'chain range', base:15, step:3, unit:'%' },
   lightning_rod:  { label:'zap damage', base:10, step:2.5, unit:' dmg' },
   chain_conduit:  { label:'chain hops', base:2, step:1, unit:'' },
+  tesla_coil:     { label:'bolt damage', base:20, step:6, unit:' dmg' },
   // ---- Class passives — pulse ----
   momentum:       { label:'move speed', base:4, step:1, unit:'%' },
   shockfront:     { label:'knockback radius', base:60, step:10, unit:'px' },
@@ -2951,6 +2955,7 @@ function rebuildRunMods() {
       case 'superconductor':    m.superconductor    = n; break;
       case 'lightning_rod':     m.lightningRod      = n; break;
       case 'chain_conduit':     m.chainConduit      = n; break;
+      case 'tesla_coil':        m.teslaCoil         = true; break;
       case 'momentum':          m.momentum          = n; break;
       case 'kinetic_glide':     m.dashDistance      = n; break;
       case 'shockfront':        m.shockfront        = n; break;
@@ -3265,7 +3270,7 @@ const _CARD_CLASS_MAP = {};
 {
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring','wide_spread'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
-  const _arc = ['arc_rounds','static_chain','static_wake','overcharge','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','arc_spike','discharge_ring'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','tesla_coil','arc_spike','discharge_ring'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','slide_duration','long_reach','pulse_spike','impact_ring','kinetic_glide'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring','viral_extraction'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
@@ -18366,6 +18371,9 @@ function _updateRingZone(sp, _radBoost) {
         sp._chainedSet.add(z.zid);
         damageZombie(z, 25, 0, 0);
         applyCharged(z);
+        // Limit CHAIN BOLT to 4 enemies total — kill the bolt after the 4th hit
+        // (the hit VFX below still plays; it's removed next frame).
+        if (sp._chainedSet.size >= 4) sp.lifetime = 0;
         // Redirect bolt toward next uncharged enemy
         let _next = null, _nd2 = 180*180;
         for (const oz of zombies) {
@@ -20096,7 +20104,7 @@ function updateDischarge() {
       // SHOCKED enemies sliding on 0.85 friction for ~1s (vs a 0.7/25f stagger),
       // so the same push flung them far further. That's damped in the chain
       // branch below instead.
-      z.vx += pushX * 1.5 * _pushMul * _kbSizeScale(z); z.vy += pushY * 1.5 * _pushMul * _kbSizeScale(z);
+      z.vx += pushX * 2.6 * _pushMul * _kbSizeScale(z); z.vy += pushY * 2.6 * _pushMul * _kbSizeScale(z);
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -20111,14 +20119,7 @@ function updateDischarge() {
       // (_hitByDischarge already set above, before the damage call)
       if (w.classId === 'fire') applyOverheat(z, 8, 1);
       if (w.classId === 'ice') applyChill(z, 2);
-      if (w.classId === 'chain') {
-        applyCharged(z);
-        // SHOCKED enemies slide on low friction for ~1s, so the same push
-        // flings them FAR further than a staggered enemy. Halve the discharge's
-        // imparted velocity so ARC discharge knockback ≈ default discharge,
-        // not the pulse-level fling the user reported.
-        z.vx *= 0.5; z.vy *= 0.5;
-      }
+      if (w.classId === 'chain') applyCharged(z); // SHOCKED is now plain stun (0.7 friction) — no over-slide, so no damp needed
       if (w.classId === 'wind') {
         applyExposed(z);
         // PULSE PROTOCOL on discharge: heavy outward shove on top of the
@@ -20126,7 +20127,7 @@ function updateDischarge() {
         // shockwave (matches the protocol's identity).
         // Suppressed under SINGULARITY — the well wants enemies STAYING
         // in, not catapulting past the boundary.
-        if (!w._singularity) { z.vx += pushX * 2.0 * _kbSizeScale(z); z.vy += pushY * 2.0 * _kbSizeScale(z); }
+        if (!w._singularity) { z.vx += pushX * 3.0 * _kbSizeScale(z); z.vy += pushY * 3.0 * _kbSizeScale(z); }
         z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
       }
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
@@ -26131,6 +26132,19 @@ function _kbSizeScale(z) {
   return Math.max(0.15, Math.pow(13 / ((z && z.radius) || 13), 2));
 }
 
+// True if a player at (x,y) would overlap any LIVING enemy body. Used to give
+// enemies a HARD boundary the player can't walk through (grid-accelerated).
+function _playerHitsEnemy(x, y) {
+  if (typeof _forZombiesNear !== 'function' || typeof zombies === 'undefined') return false;
+  let hit = false;
+  _forZombiesNear(x, y, PLAYER_RADIUS + 64, (z) => {
+    if (hit || !z || z.hp <= 0) return;
+    const dx = z.x - x, dy = z.y - y, rr = PLAYER_RADIUS + z.radius;
+    if (dx*dx + dy*dy < rr*rr) hit = true;
+  });
+  return hit;
+}
+
 function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   if (z.hp <= 0) return; // already dead — prevent cascading death effects
   // NaN guard — if hp somehow became NaN, force-kill the zombie so it doesn't become invincible
@@ -27589,15 +27603,19 @@ function update() {
       let _sx = lp.vx / _steps, _sy = lp.vy / _steps;
       // Dashing players can cross gaps (phase over pits)
       const _dashCrossGaps = !!(lp._dashFrames && lp._dashFrames > 0);
+      // HARD ENEMY BOUNDARY: block movement that would newly overlap an enemy
+      // body (slide along it). Dashing ghosts through. If the player is already
+      // inside an enemy (pushed in), allow the move so they can escape.
+      const _enemySolid = !_dashCrossGaps && !_playerHitsEnemy(lp.x, lp.y);
       for (let _si = 0; _si < _steps; _si++) {
         if (_sx !== 0) {
           const _nx = lp.x + _sx;
-          if (!obstacleCollision(_nx, lp.y, PLAYER_RADIUS, _dashCrossGaps)) lp.x = _nx;
+          if (!obstacleCollision(_nx, lp.y, PLAYER_RADIUS, _dashCrossGaps) && (!_enemySolid || !_playerHitsEnemy(_nx, lp.y))) lp.x = _nx;
           else { lp.vx = 0; _sx = 0; }
         }
         if (_sy !== 0) {
           const _ny = lp.y + _sy;
-          if (!obstacleCollision(lp.x, _ny, PLAYER_RADIUS, _dashCrossGaps)) lp.y = _ny;
+          if (!obstacleCollision(lp.x, _ny, PLAYER_RADIUS, _dashCrossGaps) && (!_enemySolid || !_playerHitsEnemy(lp.x, _ny))) lp.y = _ny;
           else { lp.vy = 0; _sy = 0; }
         }
         if (_sx === 0 && _sy === 0) break;
@@ -29551,7 +29569,12 @@ function update() {
       // SHOCKED: visual + brief stun only — instant-damage status; no DoT.
       // (Removed the periodic 10 dmg / 20 frames tick — shocking should be
       // an instant strike effect, not a damage-over-time.)
-      if(z._shocked>0){z._shocked--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.85;z.vy*=0.85;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);pushOutOfObstacles(z,z.radius);if(z._shocked<=0){z._shocked=0;}continue;}
+      // TESLA COIL mod: a SHOCKED enemy arcs a damage-only bolt at a nearby
+      // enemy a few times/sec (no re-shock, so it can't cascade).
+      if (isHost && z._shocked > 0 && (runMods||{}).teslaCoil && (gameTime + z.zid) % 22 === 0 && typeof fireArcBolt === 'function') {
+        fireArcBolt(z.x, z.y, { damage: _modScale('tesla_coil', 20, 6), range: 170, applyCharged: false, sourceZid: z.zid, color: '#fe6' });
+      }
+      if(z._shocked>0){z._shocked--;z.x+=z.vx;z.y+=z.vy;z.vx*=0.7;z.vy*=0.7;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);z.staggerTimer=Math.max(z.staggerTimer,2);z.attackCooldown=Math.max(z.attackCooldown,10);pushOutOfObstacles(z,z.radius);if(z._shocked<=0){z._shocked=0;}continue;}
       // Enraged: revert after timer expires
       if(z._enraged>0){z._enraged--;if(z._enraged<=0){z.speed=ZOMBIE_TYPES[z.type]?.speed||2;z.color=ZOMBIE_TYPES[z.type]?.color||'#5a5';}}
       // ---- STATUS EFFECT TICKS (v2) ----
@@ -39088,18 +39111,23 @@ function render() {
     // matches the zombie's current status tint (frozen blue, burning orange, etc.) so
     // the silhouette also telegraphs status at a glance.
     if (lp3 && lp3.alive) {
-      const _rox = -camera.x + canvas.width/2 + screenShake.x;
-      const _roy = -camera.y + canvas.height/2 + screenShake.y;
       const _vL = camera.x - canvas.width/2 - 40, _vR = camera.x + canvas.width/2 + 40;
       const _vT = camera.y - canvas.height/2 - 40, _vB = camera.y + canvas.height/2 + 40;
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
+      // Use the SAME world transform as the main render (INCLUDING cameraZoom)
+      // so the rim outline stays glued to the body. Drawing it with a
+      // zoom-less screen offset caused a doubled/offset outline when the
+      // deadshot zoom kicked in — worse the farther the enemy was from center.
+      ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
+      if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+      ctx.translate(-camera.x, -camera.y);
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
         if (z.x < _vL || z.x > _vR || z.y < _vT || z.y > _vB) continue;
         const rc = z._frozen?'#adf':z._frozenTimer>0?'#adf':z._charged?'#bff':z._compromised?'#c8f':z._overheat>0?_overheatBodyColor(z._overheat):z._exposed?'#cef':z.color;
         ctx.save();
-        ctx.translate(z.x + _rox, z.y + _roy);
+        ctx.translate(z.x, z.y);
         ctx.rotate(z.angle || 0);
         ctx.globalAlpha = 0.6;
         ctx.strokeStyle = rc;
@@ -39109,6 +39137,40 @@ function render() {
         _drawZombieShape(ctx, z.type, z.radius + 1);
         ctx.stroke();
         ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    // ---- PERSISTENT STATUS LABELS above enemies (CHILL x3, OVERHEAT x5, ...) ----
+    // Drawn in the world transform (matches body + zoom). One small colored
+    // line per active status, stacked above the enemy; bosses excluded.
+    if (lp3 && lp3.alive) {
+      const _svL = camera.x - canvas.width/2 - 40, _svR = camera.x + canvas.width/2 + 40;
+      const _svT = camera.y - canvas.height/2 - 40, _svB = camera.y + canvas.height/2 + 40;
+      ctx.save();
+      ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
+      if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+      ctx.translate(-camera.x, -camera.y);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 9px "Courier New", monospace';
+      for (const z of zombies) {
+        if (!z || z.hp <= 0 || z.boss) continue;
+        if (z.x < _svL || z.x > _svR || z.y < _svT || z.y > _svB) continue;
+        const _sl = [];
+        if (z._overheat > 0) _sl.push(['OVERHEAT x' + z._overheat, '#f60']);
+        if (z._frozen || z._frozenTimer > 0) _sl.push(['FROZEN', '#adf']);
+        else if (z._chill > 0) _sl.push(['CHILL x' + z._chill, '#8ef']);
+        if (z._charged || z._shocked > 0) _sl.push(['SHOCKED', '#fe6']);
+        if (z._compromised) _sl.push(['COMPROMISED', '#c8f']);
+        else if (z._corrupt > 0) _sl.push(['CORRUPT x' + z._corrupt, '#a4f']);
+        if (z._exposed) _sl.push(['SLIDE', '#cef']);
+        if (!_sl.length) continue;
+        let _ly = z.y - z.radius - 10;
+        for (let _i = 0; _i < _sl.length; _i++) {
+          ctx.fillStyle = _sl[_i][1];
+          ctx.fillText(_sl[_i][0], z.x, _ly);
+          _ly -= 10;
+        }
       }
       ctx.restore();
     }
