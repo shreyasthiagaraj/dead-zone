@@ -2083,8 +2083,7 @@ const UPGRADE_POOL = [
     descs:['Dash strikes 2 random nearby enemies (25 dmg). Pair with OVERCHARGE to SHOCK on hit.'], flavor:'you become the lightning.' },
   { id:'overcharge', name:'OVERCHARGE', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
     descs:['Lightning effects (Storm Dash, Beacon Arc, Hot Wire, Tesla Orb) apply SHOCKED on hit.'], flavor:'every spark conducts.', prereqs:['arc_rounds|static_wake'] },
-  { id:'discharge_burst', name:'DISCHARGE BURST', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
-    descs:['Dash endpoint fires an arc that chains to nearby enemies, SHOCKING each.'], flavor:'endpoint discharge. arcs fly.', prereqs:['arc_rounds|static_wake'] },
+  // (DISCHARGE BURST removed from the pool)
   // ---- DASH: PULSE ----
   { id:'kinetic_wake', name:'KINETIC WAKE', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Dash shoves enemies aside (SLIDE, 18 dmg). Endpoint shockwave +30 dmg.'], flavor:'the air bends around you.' },
@@ -2278,7 +2277,7 @@ const UPGRADE_POOL = [
     flavor:'the fog eats everything.' },
   // ---- BEACON MODS ----
   { id:'trap_mine', name:'TRAP MINE', rarity:'rare', max:1, icon:'💣', color:'#fa0',
-    descs:['Press SPECIAL again to detonate the beacon (150px, 150 dmg).'], flavor:'beacon doubles as an explosive charge.' },
+    descs:['Beacon becomes a mine: auto-detonates when an enemy gets close, or press SPECIAL again to set it off (200px, 450 dmg).'], flavor:'beacon doubles as an explosive charge.' },
   { id:'gravity_well', name:'GRAVITY WELL', rarity:'epic', max:1, icon:'◎', color:'#a4f',
     descs:['Beacon pulls enemies in and stuns at center.'], flavor:'singularity field. everything falls inward.' },
   { id:'hazard_zone', name:'HAZARD ZONE', rarity:'rare', max:1, icon:'⬡', color:'#f60',
@@ -2390,8 +2389,7 @@ const UPGRADE_POOL = [
     descs:['Hits on SLIDE knock back nearby enemies (60px).'], flavor:'every hit ripples.', prereqs:['pulse_shot'] },
   { id:'vulnerability_pulse', name:'VULNERABILITY PULSE', rarity:'rare', max:1, icon:'◈', color:'#cef',
     descs:['Hits on SLIDE knock back ALL enemies in 90px.'], flavor:'weakness spreads through force.', prereqs:['vector_snap'] },
-  { id:'vacuum_wave', name:'VACUUM WAVE', rarity:'rare', max:1, icon:'💨', color:'#cef',
-    descs:['KINETIC WAKE pulls enemies in before blasting out.'], flavor:'inhale. exhale.', prereqs:['kinetic_wake'] },
+  // (VACUUM WAVE removed from the pool)
   // ---- EXTRACTED Lv2 — Corrupt ----
   { id:'corrupt_spread', name:'CORRUPT SPREAD', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['Hits on COMPROMISED spread CORRUPT to enemies in 80px.'], flavor:'one touch infects them all.', prereqs:['viral_payload'] },
@@ -2623,7 +2621,7 @@ const _KEY_STATS = {
   impact_ring:    { label:'nova radius', base:200, step:25, unit:'px' },
   plague_ring:    { label:'fog radius', base:250, step:25, unit:'px' },
   // ---- Beacon mods ----
-  trap_mine:      { label:'detonation dmg', base:150, step:20, unit:' dmg' },
+  trap_mine:      { label:'detonation dmg', base:450, step:50, unit:' dmg' },
   gravity_well:   { label:'pull radius', base:160, step:15, unit:'px' },
   hazard_zone:    { label:'field damage', base:5, step:2, unit:' dmg' },
   extended_uptime:{ label:'uptime', base:3, step:1, unit:'s' },
@@ -3263,7 +3261,7 @@ const _CARD_CLASS_MAP = {};
 {
   const _thermal = ['thermal_rounds','reactor_bloom','burnout_wake','flashpoint','beacon_thermal','meltdown','extended_clip','heavy_caliber','pyromaniac','thermal_runaway','scorched_earth','thermal_spike','eruption_ring','wide_spread'];
   const _cryo = ['cryo_rounds','cold_snap','cryo_wake','shatter_step','beacon_cryo','shatterpoint','emergency_buffer','shield_dash','cold_blood','hypothermia','deep_freeze','cryo_dome'];
-  const _arc = ['arc_rounds','static_chain','static_wake','overcharge','discharge_burst','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','arc_spike','discharge_ring'];
+  const _arc = ['arc_rounds','static_chain','static_wake','overcharge','beacon_arc','surge_break','rapid_cycle','piercing_shot','voltaic_armor','superconductor','lightning_rod','chain_conduit','arc_spike','discharge_ring'];
   const _pulse = ['pulse_shot','vector_snap','slipstream','kinetic_wake','precision_breach','beacon_pulse','extra_charge','predator_round','swift','momentum','shockfront','impact_echo','slide_duration','long_reach','pulse_spike','impact_ring','kinetic_glide'];
   const _corrupt = ['viral_payload','compromised_core','glitch_wake','fatal_exception','beacon_corrupt','kill_switch','recovery_loop','parasitic_link','dark_harvest','siphon','infection_vector','corrupt_spike','plague_ring','viral_extraction'];
   for (const id of _thermal) _CARD_CLASS_MAP[id] = 'thermal';
@@ -18954,7 +18952,7 @@ function deployBeacon() {
       }
     }
   }
-  const _newBeacon = { x: _bx, y: _by, timer: _beaconDur, maxTimer: _beaconDur, angle: 0, fireCd: 0, classId, _armTimer: 60, _recall: _isRecall };
+  const _newBeacon = { x: _bx, y: _by, timer: _beaconDur, maxTimer: _beaconDur, angle: 0, fireCd: 0, classId, _armTimer: 24, _recall: _isRecall };
   _beacons.push(_newBeacon);
   activeBeacon = _beacons[0];
   const _deployColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
@@ -19006,14 +19004,15 @@ function deployBeacon() {
 // choice meaningfully colors the blast, not just the turret bullets.
 function _triggerTrapDetonate(b, bColor) {
   const _m = runMods || {};
-  const mineR = 150 + Math.min(80, _modLevel('trap_mine') * 8);
-  const mineD = _modScale('trap_mine', 150, 20);
+  const mineR = 200 + Math.min(90, _modLevel('trap_mine') * 8);
+  const mineD = _modScale('trap_mine', 450, 50);
   if (isHost) {
     for (const oz of zombies) { if (oz.hp <= 0) continue;
       const odx = oz.x - b.x, ody = oz.y - b.y, od = Math.sqrt(odx*odx + ody*ody);
       if (od < mineR && od > 0.1) {
         const closeness = 1 - od / mineR;
-        damageZombie(oz, Math.floor(mineD * closeness), (odx/od)*8, (ody/od)*8);
+        // Softer falloff so edge hits still hurt (50% min instead of ~0).
+        damageZombie(oz, Math.floor(mineD * (0.5 + 0.5 * closeness)), (odx/od)*8, (ody/od)*8);
         oz.vx += (odx/od) * 12 * closeness; oz.vy += (ody/od) * 12 * closeness;
         oz.staggerTimer = Math.max(oz.staggerTimer || 0, 30);
         if (b.classId === 'fire')    applyOverheat(oz, Math.floor(18 * closeness), 1.5);
@@ -19148,9 +19147,9 @@ function updateBeacon() {
   if (best) b.angle = Math.atan2(best.y - b.y, best.x - b.x);
   // Arm timer (beacon needs 1 second after placement before trap can be detonated)
   if (b._armTimer > 0) b._armTimer--;
-  // TRAP MINE: auto-detonate when any enemy is within ~60px (after arm timer)
+  // TRAP MINE: auto-detonate when any enemy is within ~100px (after arm timer)
   if (_bm.trapMine > 0 && !b._recall && b._armTimer <= 0) {
-    for (const _tz of zombies) { if (_tz.hp <= 0) continue; const _td = Math.sqrt((_tz.x-b.x)**2+(_tz.y-b.y)**2); if (_td < 60) {
+    for (const _tz of zombies) { if (_tz.hp <= 0) continue; const _td = Math.sqrt((_tz.x-b.x)**2+(_tz.y-b.y)**2); if (_td < 100) {
       const _tbc = b.classId==='fire'?'#f60':b.classId==='ice'?'#8ef':b.classId==='chain'?'#fe6':b.classId==='corrupt'?'#a4f':b.classId==='wind'?'#cef':'#fa0';
       _triggerTrapDetonate(b, _tbc); _beacons.splice(_bi, 1); activeBeacon = _beacons[0] || null;
       // Start cooldown when all mines/beacons are gone
@@ -22761,7 +22760,7 @@ function _fireDeadshot(lp) {
   // Lock out new charges briefly so the player can't spam-fire taps.
   _deadshotPostFireTimer = DEADSHOT_POST_FIRE_LOCK;
   if (DEADSHOT_COOLDOWN > 0) lp._beaconCooldown = DEADSHOT_COOLDOWN;
-  const classId = _m.beaconElement || null; // beacon element cards apply to deadshot
+  const classId = _m.dominantClass || null; // deadshot color follows the MAIN-attack infusion, not the special/protocol
   const bColor = classId ? (_ELEM_COLOR[classId] || '#0ff') : '#0ff';
   // Base 30 → full charge 4× (120). Linear ramp: 30 + chargePct * 90.
   // Class build scales the special up to +100% via specialDmgMult.
@@ -22859,6 +22858,11 @@ function _fireDeadshot(lp) {
     particles.push({ x: lp.x+Math.cos(a)*24, y: lp.y+Math.sin(a)*24, vx:0, vy:0, life:40, maxLife:40, size:2, color:bColor, type:'lightning', tx:lp.x+Math.cos(a)*_beamEnd, ty:lp.y+Math.sin(a)*_beamEnd });
     particles.push({ x: lp.x+Math.cos(a)*24, y: lp.y+Math.sin(a)*24, vx:0, vy:0, life:50, maxLife:50, size:1, color:'#fff', type:'lightning', tx:lp.x+Math.cos(a)*_beamEnd, ty:lp.y+Math.sin(a)*_beamEnd });
     screenShake.intensity = Math.max(screenShake.intensity, 12);
+    // RAILGUN report — deep electromagnetic charge snapping into a sharp crack.
+    playSound(70, 0.24, 'sawtooth', 0.18);
+    playSound(180, 0.15, 'sawtooth', 0.10);
+    playSound(1300, 0.11, 'square', 0.05);
+    setTimeout(() => playSound(900 + Math.random()*200, 0.07, 'sine', 0.05), 40);
   } else {
     screenShake.intensity = Math.max(screenShake.intensity, 6 + chargePct*8);
   }
@@ -27350,7 +27354,6 @@ function update() {
         // Visible cue that the mod is equipped: white core flash + nested
         // rings + radial bolts + cage of crackle arcs hugging the player.
         if (_rm.overcharge > 0) {
-          addFloatingText(lp.x, lp.y - 32, '⚡ ARC OVERCHARGED ⚡', '#fe6');
           // Bright white core flash + 3 expanding rings (white → cyan → cyan)
           particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: 24, color: '#fff', type: 'spark' });
           particles.push({ x: lp.x, y: lp.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 50, color: '#fff', type: 'wakering' });
