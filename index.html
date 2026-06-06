@@ -21488,7 +21488,10 @@ function _runComboStep(p, def, step, idx) {
     // status procs that can change kb/stagger (Pulse Shot).
     dmg = _applyMeleeAttackPreHit(p, z, dmg, a);
     const _nd = d || 1;
-    const _kb = step.knockback; // flat kb — lunge strike applies full force at any reach
+    // Pulse-infused ripper hits SOFTER: it already applies SLIDE, which
+    // amplifies knockback 3x, so the raw swing kb is scaled down to avoid
+    // flinging enemies across the room on every pulse swing.
+    const _kb = step.knockback * (_rmCombo.dominantClass === 'pulse' ? 0.4 : 1);
     if (isHost) {
       const _prevHp = z.hp;
       damageZombie(z, dmg, dx/_nd * _kb, dy/_nd * _kb, false);
@@ -22635,6 +22638,9 @@ function updateDeadshot() {
   if (!_deadshotCharging) return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) { _deadshotCharging = false; _deadshotCharge = 0; return; }
+  // Zoom the camera OUT slightly while aiming for a wider field of view.
+  // Re-asserted every frame; auto-eases back to 1.0 when charging stops.
+  if (typeof triggerCameraZoom === 'function') triggerCameraZoom(0.9, 200);
   const _m = runMods || {};
   // QUICK DRAW: charge faster. RAGE: 1.3× charge speed (matches gun fireRate boost).
   let chargeSpeed = 1 + (_m.quickDraw > 0 ? _modScale('quick_draw', 0.30, 0.05) : 0);
@@ -26179,7 +26185,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // EXPOSED: 3.2x knockback + track pre-knockback speed for wall collision
   // damage. Heavier than the old 2x so the status reads as "they go FLYING"
   // — supports the "wall slam = bonus damage" loop the card promises.
-  const _exposedKbMult = z._exposed ? 1.8 : 1.0;
+  const _exposedKbMult = z._exposed ? 3.0 : 1.0;
   // FROZEN: ice block resists knockback. Without this, a pulse-shoved
   // enemy that froze mid-flight (or one shot while frozen) would slide
   // for many frames since the frozen movement path has no chase override
@@ -26209,7 +26215,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // scales with kbScale so heavy bosses still resist.
   if (z._exposed && !silent && !(z._frozen || z._frozenTimer > 0)) {
     const _kbMag = Math.sqrt(kbx*kbx + kby*kby) * kbScale * _exposedKbMult;
-    const _kbFloor = 4 * kbScale;
+    const _kbFloor = 12 * kbScale;
     if (_kbMag < _kbFloor) {
       let _kdx = kbx, _kdy = kby;
       if (kbx*kbx + kby*kby < 0.01) { const _ksp = getLocalPlayer(); if (_ksp) { _kdx = z.x - _ksp.x; _kdy = z.y - _ksp.y; } }
@@ -29580,14 +29586,14 @@ function update() {
             const _boX = _bcx !== _btx, _boY = _bcy !== _bty;
             const _bObs = obstacleCollision(_bcx, _bcy, z.radius, false);
             if (_boX || _boY || _bObs) {
-              // Reflect off the wall, then bleed 60% momentum (retain 40%) and
+              // Reflect off the wall, then bleed 75% momentum (retain 25%) and
               // deflect at a slightly varied angle so balls don't rocket
               // straight back at the player who launched them.
               if (_boX) z.vx = -z.vx;
               if (_boY) z.vy = -z.vy;
               if (_bObs && !_boX && !_boY) { z.vx = -z.vx; z.vy = -z.vy; }
               const _ba = Math.atan2(z.vy, z.vx) + (Math.random() - 0.5) * 0.5;
-              const _bm = Math.sqrt(z.vx*z.vx + z.vy*z.vy) * 0.4;
+              const _bm = Math.sqrt(z.vx*z.vx + z.vy*z.vy) * 0.25;
               z.vx = Math.cos(_ba) * _bm; z.vy = Math.sin(_ba) * _bm;
               z.x = _bcx; z.y = _bcy; _bWall = true; break;
             }
@@ -31369,13 +31375,14 @@ function update() {
           const sd=Math.sqrt(sd2);
           const overlap=md2-sd;
           const nx=sx/sd, ny=sy/sd;
-          // Split the push: zombie 60%, player 40% — keeps zombies feeling
-          // hefty (they barely budge) while ensuring the player never
-          // ends up inside the zombie.
-          z.x += nx * overlap * 0.6;
-          z.y += ny * overlap * 0.6;
-          p.x -= nx * overlap * 0.4;
-          p.y -= ny * overlap * 0.4;
+          // HARD BOUNDARY: push the player FULLY out of the enemy every frame
+          // (plus a small enemy nudge for heft) so the player can never end up
+          // inside an enemy body — even against a frozen/pinned one that can't
+          // move away. The enemy is solid; the player stops at its edge.
+          z.x += nx * overlap * 0.25;
+          z.y += ny * overlap * 0.25;
+          p.x -= nx * overlap;
+          p.y -= ny * overlap;
         }
       }
       // Melee all players — contact damage at the boundary (zombies don't enter the player).
