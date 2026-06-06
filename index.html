@@ -6767,6 +6767,11 @@ function initTrenchSections() {
     let _cumX = 0;
     for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) { _sectionXPositions.push(_cumX); _cumX += _sectionWidths[i]; }
   }
+  // LEARNING STAGES: track which enemy types have appeared so the FIRST section
+  // that would introduce a brand-new type becomes a solo "learn this enemy"
+  // stage. Baseline normal/fast are pre-seeded (the gentle opener already
+  // teaches them), so they never trigger a solo stage.
+  const _introSeen = new Set(['normal','fast']);
   for (let i = 0; i < TRENCH_NUM_SECTIONS; i++) {
     const sectionX = _sectionXPositions[i] * CELL_SIZE;
     const sectionY = (_sectionYPositions[i] || 0) * CELL_SIZE;
@@ -6838,6 +6843,16 @@ function initTrenchSections() {
       waves.push(comp ? comp.enemies.length : 4);
     }
     if (modifier && modifier.id === 'doubletime') { for (let w = 0; w < waves.length; w++) waves[w] = Math.floor(waves[w] * 1.5); }
+    // ---- LEARNING STAGE: if this section is the first to introduce a brand-
+    // new enemy type, make it a SOLO stage that spawns only that type so the
+    // player learns it before it gets mixed with others. ----
+    let _soloType = null;
+    if (!isBoss && !_isExpedition) {
+      const _secTypes = new Set();
+      for (const _k of _waveComps) { const _c = WAVE_COMPOSITIONS[_k]; if (_c) for (const _e of _c.enemies) _secTypes.add(_e); }
+      for (const _t of _secTypes) { if (!_introSeen.has(_t)) { _soloType = _t; break; } }
+      for (const _t of _secTypes) _introSeen.add(_t);
+    }
     // types is kept as fallback for the spawn system
     let types = ['normal','fast','drone'];
     const hazards = [];
@@ -6881,6 +6896,7 @@ function initTrenchSections() {
       height: (_sectionHeights[i] || TRENCH_HEIGHT) * CELL_SIZE,
       waves,
       waveComps: _waveComps,
+      _soloType, // LEARNING STAGE: if set, spawn only this enemy type
       currentWave: 0,
       waveSpawnTimer: 0,
       types,
@@ -6929,6 +6945,11 @@ function spawnTrenchWave(idx, waveIdx) {
   if (!sec) return;
   const TW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE;
   const enemyCount = sec.waves[waveIdx];
+  // LEARNING STAGE: announce the solo enemy on the first wave so the player
+  // knows this section is a "learn this one enemy" beat.
+  if (sec._soloType && waveIdx === 0 && isHost && typeof addFloatingText === 'function') {
+    addFloatingText(sec.x + TW / 2, (sec.y || 0) + 80, 'NEW: ' + String(sec._soloType).toUpperCase(), '#ff0');
+  }
   // Per-section difficulty scaling — threat-per-unit curve. Wave counts shrink
   // in late domains (D3 1-2 waves, D4 1-2 waves with tiny comps), so each
   // individual enemy carries more weight. HP bumps harder so D4 archetypes
@@ -6968,14 +6989,17 @@ function spawnTrenchWave(idx, waveIdx) {
   const _compEnemies = _compKey && WAVE_COMPOSITIONS[_compKey] ? WAVE_COMPOSITIONS[_compKey].enemies : null;
   for (let ei = 0; ei < enemyCount; ei++) {
     let tk = _compEnemies && ei < _compEnemies.length ? _compEnemies[ei] : sec.types[Math.floor(Math.random() * sec.types.length)];
-    // If we've hit the ranged cap, reroll to a non-ranged type
-    if (_rangedTypes.has(tk) && _rangedCount >= _maxRanged) {
+    // LEARNING STAGE: spawn only the introduced type so the player learns it solo.
+    if (sec._soloType) tk = sec._soloType;
+    // If we've hit the ranged cap, reroll to a non-ranged type (skip for solo
+    // learning stages — they must stay pure to the introduced type).
+    if (!sec._soloType && _rangedTypes.has(tk) && _rangedCount >= _maxRanged) {
       const nonRanged = (_compEnemies || sec.types).filter(t => !_rangedTypes.has(t));
       if (nonRanged.length > 0) tk = nonRanged[Math.floor(Math.random() * nonRanged.length)];
       else tk = _meleeFillers[Math.floor(Math.random() * _meleeFillers.length)];
     }
-    // If we've hit the elite cap, reroll to a non-elite type
-    if (_eliteTypes.has(tk) && _eliteCount >= _maxElite) {
+    // If we've hit the elite cap, reroll to a non-elite type (skip for solo).
+    if (!sec._soloType && _eliteTypes.has(tk) && _eliteCount >= _maxElite) {
       const nonElite = sec.types.filter(t => !_eliteTypes.has(t));
       if (nonElite.length > 0) tk = nonElite[Math.floor(Math.random() * nonElite.length)];
       else tk = _meleeFillers[Math.floor(Math.random() * _meleeFillers.length)];
