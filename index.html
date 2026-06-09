@@ -2043,7 +2043,7 @@ const UPGRADE_POOL = [
   { id:'cold_snap', name:'BRITTLE', rarity:'rare', max:1, icon:'❆', color:'#8ef',
     descs:['+100% damage vs FROZEN enemies.'], flavor:'frozen things break easily.', prereqs:['cryo_rounds|cryo_wake'] },
   { id:'static_chain', name:'CONDUCTOR', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
-    descs:['Hits on SHOCKED fire 2 extra arc bolts (30 dmg each, +1 pierce).'], flavor:'every hit propagates.', prereqs:['arc_rounds|static_wake'] },
+    descs:['Hitting a SHOCKED enemy fires arc bolts that chain to nearby enemies (30 dmg each, +1 pierce).'], flavor:'the mark conducts. every hit propagates.', prereqs:['arc_rounds|static_wake'] },
   { id:'vector_snap', name:'VULNERABILITY EXPLOIT', rarity:'rare', max:1, icon:'◈', color:'#cef',
     descs:['+40% damage and +20% crit vs SLIDE.'], flavor:'target acquired. weakness confirmed.', prereqs:['pulse_shot|kinetic_wake'] },
   { id:'compromised_core', name:'MIASMA', rarity:'rare', max:1, icon:'☣', color:'#a4f',
@@ -2260,18 +2260,14 @@ const UPGRADE_POOL = [
     flavor:'parallel processes. both stick.' },
   // ---- SPIKE RING CLASSES (AoE centered on player — no projectile) ----
   { id:'eruption_ring', name:'THERMAL MINE', rarity:'rare', max:1, icon:'\uD83D\uDCA3', color:'#f60',
-    descs:['Your SPIKE becomes a fire mine. Press SPIKE again to detonate all.'],
-    flavor:'plant. bait. detonate.' },
+    descs:['Your SPIKE drops a fire mine. Enemies that get close trigger it; it also goes off after 6s.'],
+    flavor:'plant. bait. wait.' },
   { id:'cryo_dome', name:'CRYO BLAST', rarity:'rare', max:1, icon:'\uD83E\uDDCA', color:'#8ef',
     descs:['Your SPIKE becomes a CHILL gas burst that leaves a 2s ice wall.'],
     flavor:'freeze the lane. wall it off.' },
-  { id:'discharge_ring', name:'CHAIN BOLT', rarity:'epic', max:3, icon:'\u26A1', color:'#fe6',
-    descs:[
-      'Your SPIKE becomes a chain bolt that arcs through up to 4 enemies, applying SHOCKED. Higher levels bounce off walls more.',
-      'Chain bolt ricochets off walls more (still up to 4 enemies).',
-      'Chain bolt ricochets off walls even more (still up to 4 enemies).',
-    ],
-    flavor:'one bolt. four targets. precise.' },
+  { id:'discharge_ring', name:'CHAIN BOLT', rarity:'epic', max:1, icon:'\u26A1', color:'#fe6',
+    descs:['Your SPIKE becomes a chain bolt that arcs through nearby enemies, applying SHOCKED. Reforge for more bounces.'],
+    flavor:'one bolt. many targets. precise.' },
   { id:'impact_ring', name:'KINETIC NOVA', rarity:'rare', max:1, icon:'\uD83D\uDCA8', color:'#cef',
     descs:['Your SPIKE becomes a 360\u00B0 kinetic nova. Knockback + SLIDE.'],
     flavor:'get. off. me.' },
@@ -2573,7 +2569,7 @@ const _KEY_STATS = {
   heavy_caliber:  { label:'damage', base:60, step:8, unit:'%' },
   // ---- Dash universal ----
   extra_charge:   { label:'dash charges', base:1, step:1, unit:'' },
-  shield_dash:    { label:'shield duration', base:1.0, step:0.3, unit:'s' },
+  shield_dash:    { label:'shield duration', base:1.5, step:0.3, unit:'s' },
   predator_round: { label:'damage', base:40, step:7, unit:'%' },
   // ---- Dash thermal ----
   burnout_wake:   { label:'puddle duration', base:2, step:0.4, unit:'s' },
@@ -4191,7 +4187,7 @@ function _renderShopCards() {
       <div style="padding-top:5px;border-top:1px solid rgba(0,255,255,0.15);text-align:center">
         <span style="color:${canAfford?'#ff0':'#555'};font-size:13px;font-weight:bold;letter-spacing:1px;text-shadow:${canAfford?'0 0 6px rgba(255,255,0,0.5)':'none'}">◆ ${cost}</span>
       </div>
-      ${(_hasInfo && isSelected) ? `<button class="card-info-badge" data-card-id="${u.id}" aria-label="More info" style="position:absolute;top:-10px;right:-10px;width:36px;height:36px;border-radius:50%;background:#fc0;color:#000;border:2px solid #000;font-size:20px;font-weight:bold;line-height:1;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;box-shadow:0 0 12px rgba(255,200,0,0.7),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;padding:0">?</button>` : ''}
+      ${(_hasInfo && isSelected) ? `<button class="card-info-badge" data-card-id="${u.id}" aria-label="More info" style="position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:50%;background:#fc0;color:#000;border:2px solid #000;font-size:20px;font-weight:bold;line-height:1;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;box-shadow:0 0 12px rgba(255,200,0,0.7),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;padding:0">?</button>` : ''}
     `;
     // Card body click selects (no flip). The ? badge stops propagation and opens the modal.
     const _selectHandler = (ev) => {
@@ -9143,7 +9139,7 @@ function updateBurnoutPuddles() {
         for (const z of zombies) {
           if (z.hp <= 0) continue;
           const dx = z.x - p.x, dy = z.y - p.y;
-          if (dx*dx + dy*dy < r2) { damageZombie(z, 4, 0, 0, true); if (_ohTick) applyOverheat(z, 1, 1); }
+          if (dx*dx + dy*dy < r2) { damageZombie(z, 4, 0, 0, true); if (_ohTick && !(z._trailOhCd > 0)) { applyOverheat(z, 1, 1); z._trailOhCd = _TRAIL_OH_CD; } }
         }
       }
       // CARD: NAPALM VORTEX — pull enemies toward center of fire zones
@@ -9214,6 +9210,11 @@ function _overheatBodyColor(stacks) {
 // counter that gates re-application until enough time has passed.
 // Decremented in the per-zombie status tick (see line ~22152 area).
 const _STATUS_APPLY_CD = 14; // ~233 ms between applications
+// Longer, dedicated cooldown for OVERHEAT applied by the ignition trail
+// (dash fire puddles). The generic 14f gate let the trail pile stacks to the
+// cap almost instantly; this throttles trail overheat to ~once per 1.5s per
+// enemy so lingering in fire ramps the burn instead of snapping it to max.
+const _TRAIL_OH_CD = 90; // 1.5 s between trail overheat applications per enemy
 
 function applyOverheat(z, stacks, force) {
   if (!isHost) return;
@@ -13840,7 +13841,7 @@ function renderPauseContent() {
         // Fixed-width card (flex:0 0 200px) so cards don't stretch/shrink
         // in the horizontal scroller. scroll-snap-align:start lines each
         // card up cleanly when swiping.
-        html += `<div class="pause-mod-card" style="position:relative;flex:0 0 220px;width:220px;max-height:380px;min-height:220px;box-sizing:border-box;padding:16px 14px;border:2px solid ${u.color};border-radius:14px;background:rgba(3,3,12,0.94);box-shadow:${rarityGlow},inset 0 0 12px rgba(0,0,0,0.7);display:flex;flex-direction:column;gap:6px;font-family:'Courier New',monospace;color:#fff;overflow:visible;scroll-snap-align:start">`;
+        html += `<div class="pause-mod-card" style="position:relative;flex:0 0 220px;width:220px;height:100%;min-height:0;max-height:100%;box-sizing:border-box;padding:16px 14px;border:2px solid ${u.color};border-radius:14px;background:rgba(3,3,12,0.94);box-shadow:${rarityGlow},inset 0 0 12px rgba(0,0,0,0.7);display:flex;flex-direction:column;gap:6px;font-family:'Courier New',monospace;color:#fff;overflow:visible;scroll-snap-align:start">`;
         html += `<div style="font-size:30px; line-height:1; color:${u.color}; text-shadow:0 0 10px ${u.color}, 0 0 18px ${u.color}; margin-bottom:4px; text-align:center; flex-shrink:0">${u.icon}</div>`;
         html += `<div style="font-size:13px; font-weight:bold; letter-spacing:1.5px; color:${u.color}; text-shadow:0 0 6px ${u.color}; text-align:center; flex-shrink:0">${u.name}</div>`;
         html += `<div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase; text-align:center; flex-shrink:0">${_isSyn ? 'SYNERGY' : u.rarity}${u.max > 1 ? ' · LV ' + lv + (lv < u.max ? ' → ' + (lv + 1) : ' MAX') : ''}</div>`;
@@ -14792,7 +14793,7 @@ function updateShell() {
   // ---- Particles ----
   { let _pw = 0;
     for (let i = 0; i < particles.length; i++) { const p = particles[i]; p.x += p.vx; p.y += p.vy; if (p.gravity) p.vy += p.gravity; const drag = p.type === 'blood' ? 0.985 : 0.95; p.vx *= drag; p.vy *= drag; p.life--; if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; } }
-    particles.length = _pw; if (particles.length > 300) particles.splice(0, particles.length - 300);
+    const _shellCap = isMobile ? 180 : 300; particles.length = _pw; if (particles.length > _shellCap) particles.splice(0, particles.length - _shellCap);
   }
   // ---- Floating text ----
   { let _tw = 0; for (let i = 0; i < floatingTexts.length; i++) { const t = floatingTexts[i]; if (t._follow && t._follow.x !== undefined) { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); } else { t.x += (t.vx||0); t.y += (t.vy||0); } t.life--; if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; } } floatingTexts.length = _tw; }
@@ -17195,22 +17196,9 @@ function throwSpike() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
-  // MINE REMOTE DETONATION: thermal-mine class only — if ANY armed mines
-  // exist when the player presses Spike again, detonate them all. (Was
-  // gated to "no charges left", which felt inconsistent; the natural
-  // mental model is press = detonate the mines you've placed.)
-  if (_spikeClass() === 'eruption') {
-    const _mines = spikes.filter(s => s.classId === 'eruption' && s.phase === 'armed');
-    if (_mines.length > 0) {
-      for (const mine of _mines) { mine._detonate = true; }
-      addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 16, '☢ DETONATE ☢', '#f60');
-      screenShake.intensity = Math.max(screenShake.intensity, 8);
-      playSound(220, 0.10, 'sawtooth', 0.16);
-      playSound(80, 0.18, 'sawtooth', 0.18);
-      setTimeout(() => playSound(900, 0.05, 'square', 0.08), 30);
-      return;
-    }
-  }
+  // THERMAL MINE: no manual detonation — pressing Spike just drops another
+  // mine. Mines arm on the ground and trigger when an enemy steps into the
+  // proximity zone (or when they expire). Bait-and-wait, not click-to-pop.
   if ((lp._spikeCharges || 0) <= 0) return;
   lp._spikeCharges--;
   if (lp._spikeRecharge <= 0) lp._spikeRecharge = SPIKE_RECHARGE_FRAMES;
@@ -17406,7 +17394,7 @@ function throwSpike() {
         spikes.push({ x: ox, y: oy, ownerId: lp.id, classId: 'eruption',
           phase: 'armed', _ring: true, _ringR: _erR,
           _erDmg: _modScale('eruption_ring', 100, 15) * _dmgMult,
-          _overload, lifetime: Math.floor(600 * _persist), maxLife: 600, _pulseTimer: 0 });
+          _overload, lifetime: Math.floor(360 * _persist), maxLife: 360, _pulseTimer: 0 });
       };
       _placeMine(px, py);
       // TWIN SPIKE: drop a second mine 40px ahead so the player can frame
@@ -18262,8 +18250,9 @@ function _updateRingZone(sp, _radBoost) {
         const dx = z.x - sp.x, dy = z.y - sp.y;
         if (dx * dx + dy * dy < _trigR2) { sp._detonate = true; break; }
       }
-      // Remote detonation flag
-      if (sp._detonate) { _detonateMine(sp); return; }
+      // Proximity / expiry detonation. The mine expires after ~6s; rather
+      // than fizzle as a dud it goes off on expiry too.
+      if (sp._detonate || sp.lifetime <= 0) { _detonateMine(sp); return; }
       // Armed idle VFX — louder pulsing ring + embers so the mine reads as
       // "there is a thing on the ground". Pulse cadence matches a heartbeat.
       if (sp._pulseTimer % 30 === 0) {
@@ -20157,8 +20146,8 @@ function updateDischarge() {
         if (!playSfx('zombie_hit', 0.45, 0.07)) playSound(220, 0.07, 'square', 0.10, 0.07);
       }
       const pushDir = d > 0.1 ? 1 : 0;
-      const pushX = pushDir ? (dx/d)*28 : Math.cos(w.angle)*28;
-      const pushY = pushDir ? (dy/d)*28 : Math.sin(w.angle)*28;
+      const pushX = pushDir ? (dx/d)*38 : Math.cos(w.angle)*38;
+      const pushY = pushDir ? (dy/d)*38 : Math.sin(w.angle)*38;
       // Damage ramps with charge (30 base → 45 at full), then a discrete
       // +40% MAX-CHARGE payoff for topping the bar all the way off.
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
@@ -20176,13 +20165,13 @@ function updateDischarge() {
       // and the CASCADE shockwave (checked inside damageZombie's death block)
       // never fires on the most common case: the discharge killing the enemy.
       z._hitByDischarge = true;
-      damageZombie(z, baseDmg, pushX*0.5*_pushMul, pushY*0.5*_pushMul, true);
+      damageZombie(z, baseDmg, pushX*0.7*_pushMul, pushY*0.7*_pushMul, true);
       // Base wave push — restored to original strength for every element. The
       // arc-protocol "head and shoulders" knockback was NOT this push: it was
       // SHOCKED enemies sliding on 0.85 friction for ~1s (vs a 0.7/25f stagger),
       // so the same push flung them far further. That's damped in the chain
       // branch below instead.
-      z.vx += pushX * 2.6 * _pushMul * _kbSizeScale(z); z.vy += pushY * 2.6 * _pushMul * _kbSizeScale(z);
+      z.vx += pushX * 3.8 * _pushMul * _kbSizeScale(z); z.vy += pushY * 3.8 * _pushMul * _kbSizeScale(z);
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -20195,7 +20184,7 @@ function updateDischarge() {
       if (_m.aftershock > 0) staggerDur = Math.floor(staggerDur * _modScale('aftershock', 2, 0.3));
       z.staggerTimer = Math.max(z.staggerTimer || 0, staggerDur);
       // (_hitByDischarge already set above, before the damage call)
-      if (w.classId === 'fire') applyOverheat(z, 8, 1);
+      if (w.classId === 'fire') applyOverheat(z, 2, 1);
       if (w.classId === 'ice') applyChill(z, 2);
       if (w.classId === 'chain') applyCharged(z); // SHOCKED is now plain stun (0.7 friction) — no over-slide, so no damp needed
       if (w.classId === 'wind') {
@@ -22452,11 +22441,12 @@ function _applyMeleeAttackPostHit(p, z, dmg) {
       }
     }
   }
-  // UNIVERSAL CHAIN: any hit on a Shocked enemy fires arc bolt projectiles.
-  // Each bolt picks the nearest Shocked-eligible enemy (else any enemy, else
-  // a random direction) and travels with limited range. CONDUCTOR adds
-  // bolts and pierce so chains naturally arc through more enemies.
-  if (z._charged) {
+  // CONDUCTOR CHAIN: gated behind the CONDUCTOR (static_chain) mod — a hit on
+  // a SHOCKED enemy fires arc bolt projectiles. SHOCKED on its own is just a
+  // stun; the chain reaction must be unlocked. Each bolt picks the nearest
+  // Shocked-eligible enemy (else any enemy, else a random direction) and
+  // travels with limited range.
+  if (z._charged && (runMods||{}).staticChain > 0) {
     const arcLv = _m.arcRoundsLv || 0;
     const baseBolts = Math.max(1, arcLv);
     // Chain lightning rarity dialed back — was up to 6 bonus bolts per hit
@@ -23245,7 +23235,9 @@ function applyDashTrailEffects(lp) {
       if ((z.x-px)**2+(z.y-py)**2 < pudR*pudR) {
         hitSet.add(z.zid);
         damageZombie(z, 12 + _bwLv * 2, 0, 0);
-        applyOverheat(z, 2, 1);
+        // Gate the dash-through overheat on the shared trail cooldown so the
+        // dash + lingering puddle don't snap an enemy to the cap together.
+        if (!(z._trailOhCd > 0)) { applyOverheat(z, 2, 1); z._trailOhCd = _TRAIL_OH_CD; }
       }
     }
     // VFX: fire particles at puddle point
@@ -27411,7 +27403,7 @@ function update() {
         // Tracked as a frame counter independent of lp.barrier so nothing
         // else gets consumed.
         if (_rm.shieldDash > 0) {
-          const _shDur = Math.floor(_modScale('shield_dash', 1.0, 0.3) * 60);
+          const _shDur = Math.floor(_modScale('shield_dash', 1.5, 0.3) * 60);
           lp._sdShieldTimer = _shDur;
           for(let bi=0;bi<20;bi++){const ba=(bi/20)*Math.PI*2;particles.push({x:lp.x+Math.cos(ba)*10,y:lp.y+Math.sin(ba)*10,vx:Math.cos(ba)*4,vy:Math.sin(ba)*4,life:18,maxLife:18,size:3+Math.random()*2,color:Math.random()>0.3?'#fe6':'#fff',type:'spark'});}
           for(let bi=0;bi<8;bi++){const ba=Math.random()*Math.PI*2;particles.push({x:lp.x,y:lp.y,vx:Math.cos(ba)*1.5,vy:Math.sin(ba)*1.5-1,life:22,maxLife:22,size:4+Math.random()*3,color:'#fe6',type:'spark'});}
@@ -28597,7 +28589,7 @@ function update() {
     // visually carry over the correct element. Indexes: [fire, ice, chain, wind, shock]
     const _sm = runMods || {};
     const smLvs = [_sm.fireSmashLv||0, _sm.iceSmashLv||0, _sm.chainSmashLv||0, _sm.windSmashLv||0, _sm.shockDashLv||0];
-    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (keys['a'] || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, smLvs, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
+    sendMsg({ type: 'player_input', input: { _seq: gameTime, x: lp.x, y: lp.y, vx: lp.vx, vy: lp.vy, angle: lp.angle, moveAngle: lp.moveAngle||0, firing: isMobile ? rightJoystick.firing : (keys['a'] || gamepad.fire), weapon: lp.currentWeapon, weaponTypes: lp.weapons.map(w=>w.type), weaponAmmo: lp.weapons.map(w=>({ammo:w.ammo,reserveAmmo:w.reserveAmmo})), dashTimer: lp.dashTimer||0, dashAngle: lp.dashAngle||0, dashCooldown: lp.dashCooldown||0, sdShieldTimer: lp._sdShieldTimer||0, reloading: lp.weapons[lp.currentWeapon]?.reloading||false, perks: playerPerks, maxHp: lp.maxHp, powerUp: activePowerUp ? activePowerUp.id : null, smLvs, siegeRepair: gameMode === 'siege' && siegeRepairHeld } });
   }
 
   // ---- Host: process remote player inputs ----
@@ -28624,6 +28616,9 @@ function update() {
         // HP and alive are HOST-AUTHORITATIVE — never accept from client input
         // Sync dash, reload, maxHp, and perk state from remote player
         p.dashTimer = inp.dashTimer||0; p.dashAngle = inp.dashAngle||0;
+        // Shield Dash bubble — host needs this to block damage + absorb
+        // projectiles for remote players (damage is host-authoritative).
+        p._sdShieldTimer = inp.sdShieldTimer||0;
         // Remote player's siege repair button state
         p._siegeRepair = !!inp.siegeRepair;
         // Detect remote player dash — apply brief invincibility + spawn a cyan
@@ -29362,7 +29357,7 @@ function update() {
                     // sniper apply the same per-hit status — the strategic
                     // choice is between damage and stack throughput.
                     if (_m.thermalRoundsLv > 0) {
-                      const ch = 0.20 + 0.15 * _m.thermalRoundsLv; // 35%/50%/65%
+                      const ch = 0.35 + 0.15 * _m.thermalRoundsLv; // 50%/65%/80%
                       if (Math.random() < ch) applyOverheat(z, 1, _sf);
                     }
                     // CRYO ROUNDS: apply Chill + snowflake burst on hit.
@@ -29371,7 +29366,7 @@ function update() {
                     // crystal weight; sidearm gets the dense long-lived
                     // shower so the impact reads as a real ice strike.
                     if (_m.cryoRoundsLv > 0) {
-                      const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
+                      const ch = 0.35 + 0.15 * _m.cryoRoundsLv; // 50%/65%/80%
                       if (Math.random() < ch) applyChill(z, 1, _sf);
                       const _bIsDS = !!b._deadshotRound;
                       const _bsfN = _bIsDS ? 3 : 5;
@@ -29423,7 +29418,7 @@ function update() {
                     }
                     // VIRAL PAYLOAD: apply Corrupt stacks. Lv2+ applies 2 stacks; Lv3 spreads to neighbors on Compromised hit.
                     if (_m.viralPayloadLv > 0) {
-                      const ch = 0.20 + 0.15 * _m.viralPayloadLv; // 35%/50%/65%
+                      const ch = 0.35 + 0.15 * _m.viralPayloadLv; // 50%/65%/80%
                       if (Math.random() < ch) {
                         const stacks = _m.corruptSpread ? 2 : 1;
                         applyCorrupt(z, stacks);
@@ -29531,13 +29526,14 @@ function update() {
                       }
                     }
                   }
-                  // UNIVERSAL CHAIN: any bullet hitting a Shocked enemy fires
-                  // arc bolt projectiles. Each bolt travels and seeks the next
-                  // target (or random direction if none in range). CONDUCTOR
-                  // adds extra bolts + pierce.
+                  // CONDUCTOR CHAIN: gated behind the CONDUCTOR (static_chain)
+                  // mod — hitting a SHOCKED enemy fires arc bolt projectiles.
+                  // SHOCKED on its own is just a stun; the chain reaction must
+                  // be unlocked. Each bolt travels and seeks the next target
+                  // (or random direction if none in range).
                   // (Arc bolts themselves don't enter the bullet hit handler
                   // anymore — they're spikes — so no cascade gate needed here.)
-                  if (_isLocal && z._charged) {
+                  if (_isLocal && z._charged && _m.staticChain > 0) {
                     const arcLv = _m.arcRoundsLv || 0;
                     const baseBolts = Math.max(1, arcLv);
                     const bonusBolts = Math.min(3, (_m.staticChain || 0));
@@ -29652,10 +29648,12 @@ function update() {
           if(!hitWall) _checkWall(siegeWallRight,siegeWallRightX);
           if(hitWall)continue;
         }
-        // Shield blocks projectiles (destroys them on contact, no reflection)
+        // Shield blocks projectiles (destroys them on contact, no reflection).
+        // Both the SHIELD power-up bubble and the Shield Dash bubble absorb
+        // incoming projectiles at the bubble radius so they don't pass through.
         let shieldBlocked=false;
         for(const p of players){if(!p.alive)continue;
-          if(playerHasPowerUp(p,'shield')&&dist(b,p)<60+b.size){
+          if((playerHasPowerUp(p,'shield')||p._sdShieldTimer>0)&&dist(b,p)<60+b.size){
             for(let si=0;si<4;si++){particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:8,maxLife:8,size:2,color:'#fe6',type:'spark'});}
             bullets[i]=bullets[bullets.length-1],bullets.pop();shieldBlocked=true;break;
           }
@@ -30132,6 +30130,7 @@ function update() {
         // fire puddle, etc.) can't max stacks instantly — there's a small
         // delay between applications.
         if (z._overheatApplyCd > 0) z._overheatApplyCd--;
+        if (z._trailOhCd > 0) z._trailOhCd--;
         if (z._chillApplyCd > 0) z._chillApplyCd--;
         if (z._corruptApplyCd > 0) z._corruptApplyCd--;
         if (z._exposedApplyCd > 0) z._exposedApplyCd--;
@@ -38332,7 +38331,10 @@ function render() {
       // entry to the fake-glow path; otherwise leftover state from a previous
       // particle that DID use shadowBlur compounds with the extra stroke and
       // makes fake-glow MORE expensive than the original (a real bug we hit).
-      const _useBlur = !p._noBlur;
+      // PERF: lightning now uses the fake-glow path by DEFAULT (was shadowBlur=10
+      // per segment — the #1 Canvas2D perf killer, with 50-100 segments/frame on
+      // electric builds). _highBlur left as an opt-in hook; nothing sets it today.
+      const _useBlur = !!p._highBlur;
       if (_useBlur) {
         ctx.strokeStyle=p.color||'#fe6';ctx.lineWidth=_lw;ctx.shadowColor=p.color||'#fe6';ctx.shadowBlur=10;
       } else {
@@ -39438,14 +39440,19 @@ function render() {
       }
     }
 
-    // Glowing zombie eyes visible through darkness
-    const ox2 = -camera.x + canvas.width/2 + screenShake.x;
-    const oy2 = -camera.y + canvas.height/2 + screenShake.y;
+    // Glowing zombie eyes visible through darkness. Drawn with the SAME world
+    // transform as the main render (INCLUDING cameraZoom) so the eyes stay
+    // glued to the body — a zoom-less screen offset doubled the eyes against
+    // the body's zoomed eyes once the deadshot zoom kicked in.
+    ctx.save();
+    ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
+    if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+    ctx.translate(-camera.x, -camera.y);
     for (const z of zombies) {
       let inLight = false;
       for (const p of players) { if (!p.alive) continue; const d = Math.sqrt((z.x-p.x)**2+(z.y-p.y)**2); if (d < spotRadius*0.6) { inLight = true; break; } }
       if (!inLight) {
-        ctx.save(); ctx.translate(z.x + ox2, z.y + oy2); ctx.rotate(z.angle);
+        ctx.save(); ctx.translate(z.x, z.y); ctx.rotate(z.angle);
         // Stunned (Shocked or Staggered): yellow X eyes only — match the
         // in-light render so red circles never bleed back over the X.
         const _stunnedFog = !z.boss && z.type !== 'boss' && ((z.staggerTimer > 0) || (z._shocked > 0));
@@ -39471,6 +39478,7 @@ function render() {
         ctx.restore();
       }
     }
+    ctx.restore();
   } // end lighting block (skipped in shell)
 
   // Room flickering lights — draw dark overlay on flickering rooms
@@ -39516,9 +39524,14 @@ function render() {
     ctx.save();ctx.translate(fsx,fsy);ctx.fillRect(-60,-60,120,120);ctx.restore();}}
   ctx.restore();}
 
-  // Redraw bullets on top of fog so they're always visible
-  {const bx=-camera.x+canvas.width/2+screenShake.x,by=-camera.y+canvas.height/2+screenShake.y;
-  ctx.save();ctx.translate(bx,by);
+  // Redraw bullets on top of fog so they're always visible. Uses the SAME
+  // world transform as the main render (INCLUDING cameraZoom) so bullets and
+  // the eye redraw below stay glued to the zoomed world — a zoom-less screen
+  // offset doubled both against their main-render copies during deadshot zoom.
+  {ctx.save();
+  ctx.translate(canvas.width/2+screenShake.x, canvas.height/2+screenShake.y);
+  if(cameraZoom!==1.0)ctx.scale(cameraZoom,cameraZoom);
+  ctx.translate(-camera.x,-camera.y);
   for(const b of bullets){if(b.tracer&&b.trail.length>1){ctx.strokeStyle=b.color;ctx.lineWidth=2;ctx.globalAlpha=0.6;ctx.beginPath();ctx.moveTo(b.trail[0].x,b.trail[0].y);for(let j=1;j<b.trail.length;j++)ctx.lineTo(b.trail[j].x,b.trail[j].y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.globalAlpha=1;}if(b.grenade){ctx.fillStyle='#555';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f60';ctx.fillRect(b.x-1.5,b.y-8,3,4);}else if(b.flame){ctx.globalAlpha=Math.min(1,b.life/20);const gr=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.size);gr.addColorStop(0,'#ff4');gr.addColorStop(0.5,'#f60');gr.addColorStop(1,'rgba(255,0,0,0)');ctx.fillStyle=gr;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}else if(b.chain&&b.trail.length>1){
     ctx.strokeStyle=b.color;ctx.lineWidth=3;ctx.shadowColor='#fe6';ctx.shadowBlur=12;ctx.beginPath();
     const t0=b.trail[Math.max(0,b.trail.length-4)];ctx.moveTo(t0.x,t0.y);
@@ -39740,13 +39753,20 @@ function render() {
       _rg.addColorStop(1, `rgba(255,160,0,${_ragePulse * 1.2})`);
       ctx.fillStyle = _rg; ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
-    if(hasPowerUp('triple')){ctx.fillStyle='rgba(255,160,0,0.03)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    // (overcharge powerup tint removed — Overcharge is an arc mod now.)
-    if(hasPowerUp('shield')){ctx.fillStyle='rgba(0,200,255,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    if(hasPowerUp('giant')){ctx.fillStyle='rgba(0,200,0,0.04)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    if(hasPowerUp('freeze')){ctx.fillStyle='rgba(150,200,255,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    if(hasPowerUp('frenzy')){ctx.fillStyle='rgba(255,100,0,0.15)';ctx.fillRect(0,0,canvas.width,canvas.height);}
-    if(hasPowerUp('ghost')){ctx.fillStyle='rgba(200,220,255,0.06)';ctx.fillRect(0,0,canvas.width,canvas.height);}
+    // Powerup screen tints — merged into ONE full-canvas fill (was up to 6
+    // stacked fillRects). Accumulate premultiplied color so the combined tint
+    // matches the old stacked look for these subtle low-alpha overlays.
+    {
+      let _tr=0,_tg=0,_tb=0,_ta=0;
+      const _addTint=(r,g,b,a)=>{_tr+=r*a;_tg+=g*a;_tb+=b*a;_ta+=a;};
+      if(hasPowerUp('triple')) _addTint(255,160,0,0.03);
+      if(hasPowerUp('shield')) _addTint(0,200,255,0.04);
+      if(hasPowerUp('giant'))  _addTint(0,200,0,0.04);
+      if(hasPowerUp('freeze')) _addTint(150,200,255,0.06);
+      if(hasPowerUp('frenzy')) _addTint(255,100,0,0.15);
+      if(hasPowerUp('ghost'))  _addTint(200,220,255,0.06);
+      if(_ta>0.005){ ctx.fillStyle=`rgba(${Math.round(_tr/_ta)},${Math.round(_tg/_ta)},${Math.round(_tb/_ta)},${Math.min(1,_ta)})`; ctx.fillRect(0,0,canvas.width,canvas.height); }
+    }
   }
 
   // ---- BOSS PROXIMITY AURA ----
@@ -39804,13 +39824,14 @@ function render() {
     sctx.fillStyle='rgba(0,0,0,0.35)';
     sctx.fillRect(0,2,1,1);
     window._crtGlitch=0;window._crtGlitchTimer=0;
+    window._scanlinePattern=ctx.createPattern(window._scanlineCanvas,'repeat'); // PERF: build once, reuse every frame
   }
   // Random glitch surges — brief moments of heavy scanlines
   if(window._crtGlitchTimer>0){window._crtGlitchTimer--;window._crtGlitch*=0.92;}
   else if(Math.random()<0.002){window._crtGlitch=0.1+Math.random()*0.15;window._crtGlitchTimer=6+Math.floor(Math.random()*12);}
   const _crtBase=0.03+Math.sin(performance.now()*0.0008)*0.01;
   const _crtAlpha=Math.min(0.2,_crtBase+window._crtGlitch);
-  ctx.save();ctx.globalAlpha=_crtAlpha;ctx.fillStyle=ctx.createPattern(window._scanlineCanvas,'repeat');
+  ctx.save();ctx.globalAlpha=_crtAlpha;ctx.fillStyle=window._scanlinePattern;
   ctx.fillRect(0,0,canvas.width,canvas.height);
   // Glitch: horizontal color shift band
   if(window._crtGlitch>0.15){
@@ -40075,6 +40096,17 @@ function renderMinimap(){
 const _FIXED_DT_MS = 1000 / 60;
 let _loopLastTime = 0;
 let _loopAccumMs = 0;
+// RENDER FPS CAP: the simulation is a fixed 60Hz with no interpolation, so
+// rendering more than 60x/sec (e.g. 120Hz ProMotion) just paints duplicate
+// frames — pure GPU/battery waste. Cap render to ~60fps. 1000/61 leaves slack
+// so a true 60Hz panel never straddles the threshold and drops to 30. Battery
+// Saver can raise this to 1000/30. Wall-clock gated, so slow-mo/hit-stop are
+// unaffected and freezes still paint.
+let _RENDER_MIN_MS = 1000 / 61;
+let _lastRenderTime = 0;
+function _maybeRender(t) {
+  if (t - _lastRenderTime >= _RENDER_MIN_MS) { _lastRenderTime = t; render(); }
+}
 function gameLoop(now) {
   if (!_loopLastTime) _loopLastTime = now || performance.now();
   const t = now || performance.now();
@@ -40086,7 +40118,7 @@ function gameLoop(now) {
   // ---- HIT-STOP: freeze simulation, keep rendering ----
   if (hitStopMs > 0) {
     hitStopMs = Math.max(0, hitStopMs - delta);
-    render();
+    _maybeRender(t);
     requestAnimationFrame(gameLoop);
     return;
   }
@@ -40114,7 +40146,7 @@ function gameLoop(now) {
     steps++;
   }
   if (steps === 4) _loopAccumMs = 0; // drop the rest to recover cleanly
-  render();
+  _maybeRender(t);
   requestAnimationFrame(gameLoop);
 }
 // Preload audio on page load so the very first user interaction can play music immediately.
