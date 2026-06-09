@@ -15858,7 +15858,10 @@ function restartArcade() {
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   isMultiplayer = false;
   gameMode = 'arcade';
-  startSoloGame();
+  // Retry re-opens the weapon picker so the player can choose a fresh loadout
+  // instead of being silently re-equipped. The picker calls _beginArcadeRun()
+  // (→ startSoloGame) once a weapon is selected.
+  _openArcadeWeaponPicker();
 }
 
 // Wire the death-screen buttons once on load (idempotent guard via _wired flag).
@@ -31587,6 +31590,7 @@ function update() {
       const _mv2 = z.vx*z.vx + z.vy*z.vy;
       const _mvSpd = Math.sqrt(_mv2);
       let _hitWallThisFrame = false;
+      let _hitBoundaryThisFrame = false; // arena edge specifically (not internal obstacles)
       // EXPOSED enemies (the status pulse knockback applies) enter the
       // substep wall-bounce path at a much lower threshold so even modestly-
       // shoved enemies still wall-slam. Without this, tanks/bosses with
@@ -31611,6 +31615,7 @@ function update() {
             // Internal obstacle without axis-clamp signal — reflect both
             if (_inObs && !_outX && !_outY) { z.vx *= -0.45; z.vy *= -0.45; }
             _hitWallThisFrame = true;
+            if (_outX || _outY) _hitBoundaryThisFrame = true;
             break;
           } else {
             z.x = _cX; z.y = _cY;
@@ -31626,6 +31631,7 @@ function update() {
         // pulse-shoved enemies that don't quite hit the fast-path threshold
         // would silently stop at the wall with no damage.
         const _wasClamped = (_preX !== z.x) || (_preY !== z.y);
+        if (_wasClamped) _hitBoundaryThisFrame = true;
         const _beforePushX = z.x, _beforePushY = z.y;
         pushOutOfObstacles(z, z.radius);
         const _wasPushedFromObs = (z.x !== _beforePushX) || (z.y !== _beforePushY);
@@ -31639,12 +31645,32 @@ function update() {
       // another zombie. Damage scales with impact speed (capped) so a
       // routine shove doesn't one-shot a boss.
       if (_hitWallThisFrame && isHost && !z._slamCooldown) {
-        const _slamFloor = z._exposed ? 20 : 8;
-        const _slamDmg = Math.min(50, _slamFloor + Math.floor(_mvSpd * 1.5));
-        damageZombie(z, _slamDmg, 0, 0, true);
-        addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
-        _emitWallSlamVFX(z, _mvSpd);
-        z._slamCooldown = 22;
+        // ARCADE RING-OUT: an enemy flung HARD into the arena boundary gets
+        // knocked clean off the map — instant kill with a launch VFX. Only on
+        // genuine knockbacks (fast) at the edge, never bosses, never internal
+        // obstacles or normal walking into the wall.
+        if (gameMode === 'arcade' && _hitBoundaryThisFrame && !z.boss && _mvSpd > 11) {
+          const _roA = Math.atan2(z.vy || 0, z.vx || 0);
+          for (let _ri = 0; _ri < 18; _ri++) {
+            const _ra = _roA + (Math.random() - 0.5) * 1.4, _rs = 5 + Math.random() * 7;
+            particles.push({ x: z.x, y: z.y, vx: Math.cos(_ra) * _rs, vy: Math.sin(_ra) * _rs - 1,
+              life: 22 + Math.floor(Math.random() * 10), maxLife: 32, size: 3 + Math.random() * 3,
+              color: Math.random() > 0.5 ? '#cef' : '#fff', type: 'spark', _pixel: true, gravity: 0.12 });
+          }
+          particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: z.radius + 24, color: '#cef', type: 'wakering' });
+          addFloatingText(z.x, z.y - z.radius - 8, 'RING OUT!', '#cef');
+          screenShake.intensity = Math.max(screenShake.intensity, 6);
+          playSound(180, 0.12, 'sawtooth', 0.12);
+          damageZombie(z, z.hp + 9999, 0, 0, true); // off the map = dead
+          z._slamCooldown = 22;
+        } else {
+          const _slamFloor = z._exposed ? 20 : 8;
+          const _slamDmg = Math.min(50, _slamFloor + Math.floor(_mvSpd * 1.5));
+          damageZombie(z, _slamDmg, 0, 0, true);
+          addFloatingText(z.x, z.y - z.radius - 8, 'WALL SLAM', '#cef');
+          _emitWallSlamVFX(z, _mvSpd);
+          z._slamCooldown = 22;
+        }
       }
       // (SLIDE collision + spread now handled in SLIDE BALL MODE earlier in
       // this loop — see _slideBallCollide. Fast SLID enemies `continue` from
@@ -32268,11 +32294,13 @@ function update() {
     camera.x = lerp(camera.x, camTarget.x + cameraOffset.x, 0.1);
     camera.y = lerp(camera.y, camTarget.y + cameraOffset.y, 0.1);
   } else {
-    // Desktop: camera follows player in trench (variable room sizes need
-    // free camera). Other modes center on arena.
+    // Desktop: camera follows the player in trench AND arcade (the arcade
+    // arena is bigger than the screen, so a fixed arena-center camera lets the
+    // player drift to the edge — keep them centered instead). Other modes
+    // center on the arena.
     let _camTX = ARENA_W / 2, _camTY = ARENA_H / 2;
-    if (gameMode === 'trench') {
-      // Follow player like mobile does — rooms can be larger than the screen
+    if (gameMode === 'trench' || gameMode === 'arcade') {
+      // Follow player like mobile does — the playfield is larger than the screen
       _camTX = camTarget.x + cameraOffset.x;
       _camTY = camTarget.y + cameraOffset.y;
     } else if (gameMode === 'descent' && descentSections && descentSections[descentSection]) {
