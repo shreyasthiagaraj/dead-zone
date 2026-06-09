@@ -2233,6 +2233,15 @@ const UPGRADE_POOL = [
   { id:'syn_breach_protocol', name:'BREACH PROTOCOL', rarity:'epic', max:1, icon:'⚠', color:'#c8f',
     descs:['+100% damage vs SLIDE + COMPROMISED. Kills release a corruption wave.'],
     flavor:'every vulnerability compounds.', prereqs:['pulse_shot|kinetic_wake','viral_payload|glitch_wake'] },
+  // THERMAL + CORRUPT — tag an enemy on hit; a delayed charge cooks on it and
+  // detonates after ~1s for an AoE that applies OVERHEAT + CORRUPT.
+  { id:'syn_delayed_charge', name:'DELAYED CHARGE', rarity:'epic', max:1, icon:'☢', color:'#f86',
+    descs:['Hits plant a charge that detonates after ~1s: 70px blast + OVERHEAT + CORRUPT.'],
+    flavor:'tag it. walk away. it cooks.', prereqs:['thermal_rounds|burnout_wake','viral_payload|glitch_wake'] },
+  // PULSE + THERMAL — enemies shoved into one another grind out OVERHEAT.
+  { id:'syn_friction', name:'FRICTION', rarity:'epic', max:1, icon:'🔥', color:'#fa6',
+    descs:['Enemies knocked into each other build OVERHEAT from the friction.'],
+    flavor:'pack them tight. let them grind.', prereqs:['pulse_shot|kinetic_wake','thermal_rounds|burnout_wake'] },
   // ---- SPIKE CLASS (mutually exclusive) ----
   { id:'thermal_spike', name:'METEOR', rarity:'rare', max:1, icon:'🔥', color:'#f60',
     descs:['Your SPIKE arcs in as a meteor. 90px crater + 3s OVERHEAT pulse.'],
@@ -2627,6 +2636,7 @@ const _KEY_STATS = {
   syn_flash_boil: { label:'AoE radius', base:100, step:12, unit:'px' },
   syn_live_wire:  { label:'burst damage', base:40, step:5, unit:'%' },
   syn_heat_wave:  { label:'shockwave radius', base:130, step:12, unit:'px' },
+  syn_delayed_charge: { label:'blast damage', base:50, step:12, unit:' dmg' },
   syn_viral_burn: { label:'eruption radius', base:90, step:10, unit:'px' },
   syn_permafrost: { label:'nova damage', base:25, step:5, unit:'% maxHP' },
   syn_shatter_force:{label:'damage', base:200, step:25, unit:'%' },
@@ -2914,6 +2924,7 @@ function rebuildRunMods() {
     synFlashBoil: false, synLiveWire: false, synHeatWave: false, synViralBurn: false,
     synPermafrost: false, synShatterForce: false, synFrozenCorrupt: false,
     synStormSurge: false, synFaultLine: false, synBreachProtocol: false,
+    synDelayedCharge: false, synFriction: false,
     // Spike (4th-button daemon): one class flavor + universal enhancements
     spikeClass: null, spikeTwin: 0, spikeRapid: 0, spikeOverload: 0, spikePersist: 0, spikeExtraCharge: 0,
     // Utility
@@ -3021,6 +3032,8 @@ function rebuildRunMods() {
       case 'syn_storm_surge':     m.synStormSurge = true; break;
       case 'syn_fault_line':      m.synFaultLine = true; break;
       case 'syn_breach_protocol': m.synBreachProtocol = true; break;
+      case 'syn_delayed_charge':  m.synDelayedCharge = true; break;
+      case 'syn_friction':        m.synFriction = true; break;
       // Spike class cards (mutually exclusive — handled in shop logic)
       case 'thermal_spike':   m.spikeClass = 'thermal'; break;
       case 'arc_spike':       m.spikeClass = 'arc'; break;
@@ -29397,6 +29410,13 @@ function update() {
                   } else if (_isLocal) {
                     // ---- CLASS PROCS ----
                     const _sf = _m.statusForce || 1;
+                    // SYNERGY: DELAYED CHARGE (thermal+corrupt) — plant/refresh a
+                    // charge on the struck enemy that detonates after ~1s (see the
+                    // per-zombie tick in the update loop). Damage snapshotted now.
+                    if (_m.synDelayedCharge && z.hp > 0 && !(z._delayedChargeTimer > 0)) {
+                      z._delayedChargeTimer = 60; // arm once; detonates ~1s later even under fire
+                      z._delayedChargeDmg = Math.floor(_modScale('syn_delayed_charge', 50, 12));
+                    }
                     // THERMAL ROUNDS: each hit adds 1 OVERHEAT stack.
                     // Stack-based DoT means a low-damage SMG and a high-damage
                     // sniper apply the same per-hit status — the strategic
@@ -30179,6 +30199,33 @@ function update() {
         if (z._chillApplyCd > 0) z._chillApplyCd--;
         if (z._corruptApplyCd > 0) z._corruptApplyCd--;
         if (z._exposedApplyCd > 0) z._exposedApplyCd--;
+        // ---- SYNERGY: DELAYED CHARGE (thermal+corrupt) tick + detonation ----
+        if (z._delayedChargeTimer > 0 && isHost) {
+          z._delayedChargeTimer--;
+          // Cooking fuse: rising fire/corrupt smoke while it counts down.
+          if (z._delayedChargeTimer % 6 === 0) {
+            particles.push({ x: z.x + (Math.random()-0.5)*z.radius, y: z.y - z.radius*0.4, vx:(Math.random()-0.5)*0.6, vy:-1-Math.random(), life:14, maxLife:14, size:2+Math.random()*2, color: Math.random()>0.5?'#f86':'#a4f', type:'smoke', _smokeAlpha:0.3 });
+          }
+          if (z._delayedChargeTimer <= 0) {
+            const _dcDmg = z._delayedChargeDmg || 50;
+            const _dcR = 70, _dcR2 = _dcR*_dcR;
+            for (const oz of zombies) {
+              if (oz.hp <= 0) continue;
+              const _ddx = oz.x - z.x, _ddy = oz.y - z.y;
+              if (_ddx*_ddx + _ddy*_ddy < _dcR2) {
+                damageZombie(oz, _dcDmg, 0, 0, true);
+                applyOverheat(oz, 2, 1);
+                applyCorrupt(oz, 1);
+              }
+            }
+            particles.push({ x:z.x, y:z.y, vx:0,vy:0, life:16, maxLife:16, size:_dcR, color:'#f86', type:'wakering' });
+            particles.push({ x:z.x, y:z.y, vx:0,vy:0, life:20, maxLife:20, size:_dcR*0.7, color:'#a4f', type:'wakering' });
+            for (let _dci=0; _dci<18; _dci++){ const _dca=(_dci/18)*Math.PI*2, _dcs=3+Math.random()*5; particles.push({x:z.x,y:z.y,vx:Math.cos(_dca)*_dcs,vy:Math.sin(_dca)*_dcs,life:18,maxLife:18,size:3+Math.random()*2,color:Math.random()>0.5?'#f86':'#a4f',type:'explosion'}); }
+            screenShake.intensity = Math.max(screenShake.intensity, 4);
+            if (typeof playExplosionSound === 'function') playExplosionSound();
+            z._delayedChargeDmg = 0;
+          }
+        }
         // ---- VULNERABILITY HANDLING (all bosses) ----
         // Tick the vuln timer + detect HP thresholds (75/50/25%) for cross-boss
         // staggers. Bosses with no vuln state run their normal AI below.
@@ -31712,6 +31759,11 @@ function update() {
       // 9 cells around this zombie; precise overlap test is unchanged.
       {
         const _zr = z.radius;
+        // FRICTION synergy (pulse+thermal): a zombie moving FAST (knocked) that
+        // overlaps another grinds OVERHEAT into itself. The applyOverheat 14f
+        // cooldown throttles it; the speed gate means only knockbacks ignite,
+        // not a standing crowd. Host-only (applyOverheat early-returns otherwise).
+        const _frictionOn = (runMods||{}).synFriction && (z.vx*z.vx + z.vy*z.vy) > 4;
         const _searchR = _zr + 64; // 64 = max plausible other-zombie radius
         const _minGx = Math.max(0, ((z.x - _searchR) / _ZG_CELL) | 0);
         const _maxGx = Math.min(_zgW - 1, ((z.x + _searchR) / _ZG_CELL) | 0);
@@ -31731,6 +31783,7 @@ function update() {
                 const sd = Math.sqrt(sd2);
                 const p = (md2 - sd) / sd * 0.3;
                 z.x += sx * p; z.y += sy * p;
+                if (_frictionOn) applyOverheat(z, 1, 1);
               }
             }
           }
