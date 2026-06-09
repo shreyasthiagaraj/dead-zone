@@ -17194,7 +17194,7 @@ function drawLobShadow(ctx, gx, gy, altitudeFrac, baseSize) {
 function _spikeColor(sp) {
   if (!sp || !sp.classId) return '#f44';
   // OVERLOAD SPIKE: tint gold so the overload variant is visually obvious.
-  if (sp._overload) return '#fc0';
+  if (sp._overload) return '#ff0';
   return sp.classId === 'thermal' || sp.classId === 'eruption' ? '#f60'
     : sp.classId === 'cryo' || sp.classId === 'cryodome' ? '#8ef'
     : sp.classId === 'arc' || sp.classId === 'discharge' ? '#fe6'
@@ -21189,8 +21189,11 @@ function _meleeApproachVel(p, a, range, cone, opts) {
   const _reachMult = opts.reachMult || 1.0;
   const _speedMult = opts.speedMult || 1.0;
   const _maxStep = opts.maxStep || Infinity;
-  const _halfC = cone / 2;
-  const _checkR = range * 1.55 * _reachMult;
+  // Acquisition is more forgiving than the damage cone — a slightly wider arc
+  // and longer reach so the lunge reliably snaps onto a real target instead of
+  // firing a blind fixed lunge into empty space (or into a crowd).
+  const _halfC = Math.min(Math.PI, (cone / 2) * 1.4);
+  const _checkR = range * 1.85 * _reachMult;
   let _bestZ = null, _bestD = Infinity;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
@@ -21469,7 +21472,12 @@ function _runComboStep(p, def, step, idx) {
       if (_av) {
         p._rLungeVx = _av.vx; p._rLungeVy = _av.vy;
       } else {
-        const _lungeD = step.lungeDistance || 100;
+        // No target acquired — do a SMALL repositioning hop instead of the
+        // full blind forward lunge, so the finisher doesn't fling the player
+        // across the room into a crowd when swung at empty space (lunge was
+        // "hurting" the user). With a real target, the chase above snaps the
+        // player to a safe stand-off distance instead.
+        const _lungeD = Math.min(step.lungeDistance || 100, 40);
         const _initV = _lungeD * 0.28;
         p._rLungeVx = c * _initV;
         p._rLungeVy = s * _initV;
@@ -28277,11 +28285,15 @@ function update() {
           addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 22, 'HOT WIRE', '#fe6');
         }
       }
-      // MOMENTUM: move speed based on exposed count (applied in movement code)
+      // MOMENTUM: move speed based on SLIDE count (applied in movement code).
+      // The bonus snaps UP to the current target but DECAYS slowly when SLIDE
+      // enemies leave, so the speed boost lingers for a window (~2s to bleed
+      // off a full stack) instead of vanishing the instant the last one dies.
       if (_pm2.momentum) {
         let _exCount = 0;
         for (const z of zombies) { if (z.hp > 0 && z._exposed) _exCount++; }
-        lp._momentumBonus = _exCount * _modScale('momentum', 0.04, 0.01);
+        const _momTarget = _exCount * _modScale('momentum', 0.04, 0.01);
+        lp._momentumBonus = Math.max(_momTarget, (lp._momentumBonus || 0) - 0.0015);
       }
       // LEGENDARY: TESLA WEB — while attacking, pulse a web through the 8 nearest
       // SHOCKED enemies (damage scales with build); refresh SHOCKED so it stays lit.
@@ -35771,6 +35783,15 @@ function render() {
     // hardcoded body radii across all class branches without per-class edits.
     const _isOvr = !!sp._overload;
     if (_isOvr) {
+      // Overload aura — pulsing bright-yellow ring so an overloaded spike reads
+      // as charged/yellow at a glance (not just bigger). Drawn unscaled.
+      const _ovP = 0.6 + Math.sin(_spt * 0.02) * 0.4;
+      const _ovR = (sp.radius || 22) * 1.5 + 8;
+      ctx.globalAlpha = 0.18 * _ovP; ctx.fillStyle = '#ff0';
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, _ovR, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.55 * _ovP; ctx.strokeStyle = '#ff0'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, _ovR, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.save();
       ctx.translate(sp.x, sp.y);
       ctx.scale(1.3, 1.3);
