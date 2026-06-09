@@ -33098,7 +33098,7 @@ function renderMenuBackground() {
   ctx.fillStyle=vg;ctx.fillRect(0,0,w,h);
 
   // Scanlines
-  if(window._scanlineCanvas){ctx.globalAlpha=0.04;ctx.fillStyle=ctx.createPattern(window._scanlineCanvas,'repeat');ctx.fillRect(0,0,w,h);}
+  if(window._scanlinePattern){ctx.globalAlpha=0.04;ctx.fillStyle=window._scanlinePattern;ctx.fillRect(0,0,w,h);}
   ctx.globalAlpha=1;
 }
 
@@ -39651,10 +39651,16 @@ function render() {
     } else if (_lastHitFlash > 0) {
       _lastHitFlash = 0;
     }
-    // Synthwave vignette — purple/blue edges with subtle color shift
-    {const svg=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
-    svg.addColorStop(0,'rgba(0,0,0,0)');svg.addColorStop(0.7,'rgba(10,0,20,0.2)');svg.addColorStop(1,'rgba(20,0,40,0.45)');
-    ctx.fillStyle=svg;ctx.fillRect(0,0,canvas.width,canvas.height);}
+    // Synthwave vignette — purple/blue edges. Static gradient: build once,
+    // cache keyed by canvas size (auto-rebuilds on resize). Was allocated +
+    // filled EVERY frame, always-on.
+    if(!window._svGrad||window._svGradW!==canvas.width||window._svGradH!==canvas.height){
+      window._svGradW=canvas.width;window._svGradH=canvas.height;
+      const g=ctx.createRadialGradient(canvas.width/2,canvas.height/2,canvas.width*0.3,canvas.width/2,canvas.height/2,canvas.width*0.7);
+      g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(0.7,'rgba(10,0,20,0.2)');g.addColorStop(1,'rgba(20,0,40,0.45)');
+      window._svGrad=g;
+    }
+    ctx.fillStyle=window._svGrad;ctx.fillRect(0,0,canvas.width,canvas.height);
     // Low HP vignette — dark edges that intensify as health drops
     if(hpRatio<0.5&&lp2.alive){
       const vigAlpha=Math.min(0.6,(0.5-hpRatio)*1.2);
@@ -39978,6 +39984,7 @@ function render() {
     ctx.fillStyle=`rgba(0,0,0,${Math.min(1,_shellFadeAlpha)})`;
     ctx.fillRect(0,0,canvas.width,canvas.height);
   }
+  _drawPerfHud(); // temporary on-device perf overlay (?perf)
 }
 
 function renderJoysticks(){
@@ -40104,9 +40111,53 @@ let _loopAccumMs = 0;
 // unaffected and freezes still paint.
 let _RENDER_MIN_MS = 1000 / 61;
 let _lastRenderTime = 0;
+// ---- PERF HUD (temporary, on-device A/B) — enable with ?perf in the URL or
+// window._perfHud=true in the console. Shows FPS (actual render rate), the
+// requestAnimationFrame rate, and avg update/render ms. After the 120->60 cap,
+// "rAF" should read ~120 on ProMotion while "fps" reads ~60 (we skip the dupes).
+let _perfHud = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search || '');
+let _perfRafCount = 0, _perfRenderCount = 0, _perfUpdSum = 0, _perfRndSum = 0, _perfWindowStart = 0;
+let _perfFps = 0, _perfRaf = 0, _perfUpdMs = 0, _perfRndMs = 0;
 function _maybeRender(t) {
-  if (t - _lastRenderTime >= _RENDER_MIN_MS) { _lastRenderTime = t; render(); }
+  if (t - _lastRenderTime >= _RENDER_MIN_MS) {
+    _lastRenderTime = t;
+    if (_perfHud) { const _r0 = performance.now(); render(); _perfRndSum += performance.now() - _r0; _perfRenderCount++; }
+    else render();
+  }
 }
+function _perfTick(t, updMs) {
+  if (!_perfHud) return;
+  _perfRafCount++; _perfUpdSum += updMs;
+  if (!_perfWindowStart) _perfWindowStart = t;
+  const _el = t - _perfWindowStart;
+  if (_el >= 500) {
+    _perfFps = _perfRenderCount * 1000 / _el;
+    _perfRaf = _perfRafCount * 1000 / _el;
+    _perfUpdMs = _perfUpdSum / Math.max(1, _perfRafCount);
+    _perfRndMs = _perfRndSum / Math.max(1, _perfRenderCount);
+    _perfRafCount = _perfRenderCount = 0; _perfUpdSum = _perfRndSum = 0; _perfWindowStart = t;
+  }
+}
+function _drawPerfHud() {
+  if (!_perfHud || typeof ctx === 'undefined') return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(6, 6, 184, 60);
+  ctx.font = 'bold 11px "Courier New", monospace'; ctx.textAlign = 'left'; ctx.fillStyle = '#0f0';
+  ctx.fillText(`${Math.round(_perfFps)} fps   rAF ${Math.round(_perfRaf)}`, 12, 22);
+  ctx.fillText(`render ${_perfRndMs.toFixed(1)}ms  upd ${_perfUpdMs.toFixed(1)}ms`, 12, 36);
+  ctx.fillText(`part ${particles.length} z ${zombies.length} b ${bullets.length}`, 12, 50);
+  ctx.fillText(_RENDER_MIN_MS < 20 ? 'cap 60fps' : 'cap 30fps (saver)', 12, 62);
+  ctx.restore();
+}
+// On-device toggle for the perf HUD: a 3-finger tap flips it on/off (no URL/
+// console needed inside the Capacitor app). Temporary diagnostic.
+try {
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches && e.touches.length >= 3) { _perfHud = !_perfHud; _perfWindowStart = 0; }
+  }, { passive: true });
+} catch (_e) {}
 function gameLoop(now) {
   if (!_loopLastTime) _loopLastTime = now || performance.now();
   const t = now || performance.now();
@@ -40140,12 +40191,14 @@ function gameLoop(now) {
   _loopAccumMs += delta * gameTimeScale;
   // Hard cap at 4 updates per render so a spike can't cascade into a hang.
   let steps = 0;
+  const _uStart = _perfHud ? performance.now() : 0;
   while (_loopAccumMs >= _FIXED_DT_MS && steps < 4) {
     try { update(); } catch(e) { console.error('UPDATE ERROR:', e); }
     _loopAccumMs -= _FIXED_DT_MS;
     steps++;
   }
   if (steps === 4) _loopAccumMs = 0; // drop the rest to recover cleanly
+  if (_perfHud) _perfTick(t, performance.now() - _uStart);
   _maybeRender(t);
   requestAnimationFrame(gameLoop);
 }
