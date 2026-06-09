@@ -2328,7 +2328,7 @@ const UPGRADE_POOL = [
     descs:['Your SPECIAL at full charge collapses inward for an implosion detonation.'],
     flavor:'gravitational reversal — nothing escapes' },
   { id:'residual_field', name:'RESIDUAL FIELD', rarity:'rare', max:1, icon:'◌', color:'#f60',
-    descs:['Your SPECIAL leaves a 2s damage zone (30% dmg + stagger).'], flavor:'energy dissipates slowly — the field remains' },
+    descs:['Your SPECIAL leaves a 2s damage zone (30% dmg + stagger). The blast knockback is softened so enemies stay inside the zone and cook.'], flavor:'energy dissipates slowly — the field remains' },
   // ---- PAYLOAD MODS ----
   { id:'cluster_bomb', name:'CLUSTER BOMB', rarity:'epic', max:1, icon:'⁂', color:'#fa0',
     descs:['Your SPECIAL spawns 3 mini-blasts around the impact.'], flavor:'fragmentation munition loaded' },
@@ -2456,7 +2456,7 @@ const UPGRADE_POOL = [
   { id:'whirlwind', name:'WHIRLWIND', rarity:'epic', max:1, icon:'⟳', color:'#fe6',
     descs:['After 3 kills in 2s: your next ATTACK is a full 360° spin.'], flavor:'momentum overflows.' },
   { id:'riposte', name:'RIPOSTE', rarity:'epic', max:1, icon:'⊕', color:'#fe6',
-    descs:['Taking damage readies your next ATTACK + makes it deal 3x damage (2s window).'], flavor:'they hit you. you hit harder.' },
+    descs:['Taking damage readies a PARRY: your next ATTACK becomes a full 360° spin counter that hits everything around you (3x damage). 2s window.'], flavor:'they hit you. you hit everything back.' },
   { id:'extended_reach', name:'EXTENDED REACH', rarity:'common', max:1, icon:'↔', color:'#fe6',
     descs:['Your ATTACK reaches 35% farther.'], flavor:'a longer blade ends it sooner.' },
   { id:'rising_blade', name:'RISING EDGE', rarity:'rare', max:1, icon:'⟋', color:'#fe6',
@@ -14049,10 +14049,17 @@ function _renderLevelupCards() {
     // count — most cards have a flavor line and it's not "info worth
     // tapping for more."
     const _hasInfo = _glossaryTerms.length > 0;
+    // Prominent rarity badge — calls out the actual rarity VALUE (not just the
+    // card's glow color) so the tier is unmistakable in the mod picker.
+    const _isSyn = u.id.startsWith('syn_');
+    const _rarLabel = _isSyn ? 'SYNERGY' : String(u.rarity || 'common').toUpperCase();
+    const _rarCol = _isSyn ? '#fc0' : rarityColor;
+    const _rarBg = _isSyn ? 'rgba(255,200,0,0.16)' : u.rarity==='legendary'?'rgba(255,255,0,0.16)':u.rarity==='epic'?'rgba(168,136,255,0.16)':u.rarity==='rare'?'rgba(0,204,255,0.16)':'rgba(255,255,255,0.1)';
     card.innerHTML = `
+      <div style="align-self:center; font-size:11px; font-weight:bold; letter-spacing:2px; color:${_rarCol}; background:${_rarBg}; border:1px solid ${_rarCol}; border-radius:10px; padding:2px 12px; margin-bottom:2px; text-shadow:0 0 6px ${_rarCol}">${_rarLabel}</div>
       <div style="font-size:30px; line-height:1; color:${u.color}; text-shadow:0 0 10px ${u.color}, 0 0 18px ${u.color}; margin-bottom:4px">${u.icon}</div>
       <div style="font-size:13px; font-weight:bold; letter-spacing:1.5px; color:${u.color}; text-shadow:0 0 6px ${u.color}">${u.name}</div>
-      <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${u.rarity}${owned?` · LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}`:''}</div>
+      <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${owned?`LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}`:'NEW'}</div>
       ${_replaces ? `<div style="font-size:10px; letter-spacing:1px; color:#fa0; text-transform:uppercase; font-weight:bold">↻ Replaces ${_replaces.name}</div>` : ''}
       <div style="font-size:12px; color:#fff; line-height:1.45; margin-top:2px; text-align:left; font-weight:700">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
       ${''/* flavor subtext removed from mod cards per design — description only */}
@@ -20177,8 +20184,8 @@ function updateDischarge() {
         if (!playSfx('zombie_hit', 0.45, 0.07)) playSound(220, 0.07, 'square', 0.10, 0.07);
       }
       const pushDir = d > 0.1 ? 1 : 0;
-      const pushX = pushDir ? (dx/d)*38 : Math.cos(w.angle)*38;
-      const pushY = pushDir ? (dy/d)*38 : Math.sin(w.angle)*38;
+      const pushX = pushDir ? (dx/d)*48 : Math.cos(w.angle)*48;
+      const pushY = pushDir ? (dy/d)*48 : Math.sin(w.angle)*48;
       // Damage ramps with charge (30 base → 45 at full), then a discrete
       // +40% MAX-CHARGE payoff for topping the bar all the way off.
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
@@ -20190,7 +20197,9 @@ function updateDischarge() {
       // SINGULARITY: cut outward knockback to 15% so the gravity-well pull
       // keeps enemies inside maxRadius. Without this the wave's own push
       // could fling enemies past the well's reach before the collapse fires.
-      const _pushMul = w._singularity ? 0.15 : 1.0;
+      // RESIDUAL FIELD: damp knockback to 35% so enemies don't get flung clear
+      // of the lingering damage zone — they stay put and cook in the field.
+      const _pushMul = w._singularity ? 0.15 : (_m.residualField > 0 ? 0.35 : 1.0);
       // Mark enemy as hit by discharge (for CASCADE) BEFORE applying damage —
       // otherwise the discharge's own kill happens with the flag still unset
       // and the CASCADE shockwave (checked inside damageZombie's death block)
@@ -20202,7 +20211,7 @@ function updateDischarge() {
       // SHOCKED enemies sliding on 0.85 friction for ~1s (vs a 0.7/25f stagger),
       // so the same push flung them far further. That's damped in the chain
       // branch below instead.
-      z.vx += pushX * 3.8 * _pushMul * _kbSizeScale(z); z.vy += pushY * 3.8 * _pushMul * _kbSizeScale(z);
+      z.vx += pushX * 4.5 * _pushMul * _kbSizeScale(z); z.vy += pushY * 4.5 * _pushMul * _kbSizeScale(z);
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -21299,6 +21308,12 @@ function _runComboStep(p, def, step, idx) {
   // CARD: CLEAVE — cone +30%
   let cone = step.cone * (_rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1);
   if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#fe6'); }
+  // CARD: RIPOSTE — a parry (took damage in the last 2s) turns the counter
+  // into a full 360° spin that hits everything around you. The 3x damage on
+  // the first hit is applied (and the readiness consumed) in the melee pre-hit
+  // hook, so we only widen the cone here — don't consume the window.
+  const _riposteSpin = _rmCombo.riposte && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil;
+  if (_riposteSpin) { cone = Math.PI * 2; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'RIPOSTE SPIN!', '#fe6'); }
   // Damage / approach cone — narrower than the visual swing arc.
   // Approach uses this so the auto-lunge only chases enemies the strike
   // will actually hit.
@@ -21584,7 +21599,10 @@ function _runComboStep(p, def, step, idx) {
   // cones than the cap, so they're unaffected.
   // CARD: WORLD SPLITTER — finisher swings wider (cap relaxed by +50%)
   const _worldSplitterOn = _rmCombo.worldSplitter && step.finisher;
-  const _halfConeCap = _worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 : MELEE_DAMAGE_HALF_CONE;
+  // CARD: RIPOSTE — the parry counter opens the damage cone to a FULL circle
+  // so the 360° spin actually hits everything around the player (the normal
+  // forward-sector cap would limit even a visual 360 to ~110°).
+  const _halfConeCap = _riposteSpin ? Math.PI : (_worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 : MELEE_DAMAGE_HALF_CONE);
   const halfCone = Math.min(cone / 2, _halfConeCap);
   const _critChance = 0.18;
   // Damage scale from run-wide mods: damageMult + adrenaline + meta power.
@@ -23673,36 +23691,51 @@ function _fireDashStrikeCone(lp) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30);
     }
   }
-  // VFX — origin burst + cone sweep particles + endpoint flash.
-  for (let i = 0; i < 14; i++) {
-    const off = (i / 14 - 0.5) * (halfCone * 2);
+  // VFX — origin burst + cone sweep particles + endpoint flash. Lifetimes are
+  // longer than before (the strike was vanishing in ~0.2s) and a set of bright
+  // arc slash-marks linger across the cone so the sweep actually reads.
+  // (1) Lingering arc slash-marks fanned across the cone — these carry the
+  //     "energy fan" silhouette and persist long enough to see.
+  for (let _ai = 0; _ai < 5; _ai++) {
+    const off = (_ai / 4 - 0.5) * (halfCone * 2);
+    const ang = a + off;
+    const _adist = range * (0.45 + 0.1 * (_ai % 2));
+    particles.push({
+      x: lp.x + Math.cos(ang) * _adist, y: lp.y + Math.sin(ang) * _adist,
+      vx: 0, vy: 0, life: 20, maxLife: 20, size: 34, color: _ai % 2 === 0 ? '#0ff' : '#fff',
+      type: 'slash_mark', _angle: ang, _priority: true,
+    });
+  }
+  for (let i = 0; i < 16; i++) {
+    const off = (i / 16 - 0.5) * (halfCone * 2);
     const ang = a + off;
     const sp = 6 + Math.random() * 4;
     const dist = 30 + Math.random() * (range - 30);
     particles.push({
       x: lp.x + Math.cos(ang) * 24, y: lp.y + Math.sin(ang) * 24,
       vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
-      life: 14, maxLife: 14, size: 2.5 + Math.random() * 2,
-      color: i < 4 ? '#fff' : '#0ff', type: 'spark',
+      life: 24 + Math.floor(Math.random() * 8), maxLife: 32, size: 2.5 + Math.random() * 2,
+      color: i < 5 ? '#fff' : '#0ff', type: 'spark',
     });
+    // Beam dash along the cone — longer + longer-lived so the sweep lingers.
     particles.push({
       x: lp.x + Math.cos(ang) * dist, y: lp.y + Math.sin(ang) * dist,
-      vx: 0, vy: 0, life: 5, maxLife: 5, size: 1, color: '#fff', type: 'lightning',
-      tx: lp.x + Math.cos(ang) * (dist + 22), ty: lp.y + Math.sin(ang) * (dist + 22),
+      vx: 0, vy: 0, life: 13, maxLife: 13, size: 2, color: i % 2 ? '#0ff' : '#fff', type: 'lightning',
+      tx: lp.x + Math.cos(ang) * (dist + 40), ty: lp.y + Math.sin(ang) * (dist + 40),
     });
   }
   particles.push({ x: lp.x + c*40, y: lp.y + s*40, vx: 0, vy: 0,
-    life: 10, maxLife: 10, size: 70, color: '#0ff', type: 'wakering' });
+    life: 20, maxLife: 20, size: 84, color: '#0ff', type: 'wakering' });
   particles.push({ x: lp.x + c*40, y: lp.y + s*40, vx: 0, vy: 0,
-    life: 7, maxLife: 7, size: 40, color: '#fff', type: 'wakering' });
+    life: 14, maxLife: 14, size: 52, color: '#fff', type: 'wakering' });
   // Class-tinted smoke
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const off = (Math.random()-0.5) * halfCone * 2;
     particles.push({
-      x: lp.x + Math.cos(a + off) * (40 + Math.random()*40),
-      y: lp.y + Math.sin(a + off) * (40 + Math.random()*40),
+      x: lp.x + Math.cos(a + off) * (40 + Math.random()*60),
+      y: lp.y + Math.sin(a + off) * (40 + Math.random()*60),
       vx: (Math.random()-0.5)*1.5, vy: (Math.random()-0.5)*1.5 - 0.4,
-      life: 22, maxLife: 22, size: 6 + Math.random()*5, color: '#013', type: 'smoke',
+      life: 34, maxLife: 34, size: 6 + Math.random()*5, color: '#013', type: 'smoke',
       _smokeAlpha: 0.3 + Math.random()*0.2,
     });
   }
