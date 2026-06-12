@@ -3,7 +3,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Game Description
-- This is a top down zombie survival shooter game. The game is meant to be easy to pick up and play with minimal setup. it should be fun, challenging, and frantic real time shooting survival game with elements of horror and gore. Gameplay involves navigating a maze of hallways looking for a way out while gunning down zombies with a variety of weapon types. It should be dark, gory, and fun. 
+- **NECROWAVE** is a top-down arcade roguelike shooter with a cyber-horror setting: the player fights corrupted digital entities through the domains of a hostile system (Entry Cache → Corrupted Subnet → Deep Storage → The Core). It is meant to be easy to pick up and play with minimal setup — fun, challenging, frantic real-time shooting with neon gore and glitch-horror atmosphere. Mobile-first, 10-20 minute sessions.
+- The two front-door modes are **TRENCH** (the 40-section campaign: fight → shop → fight, boss at each domain boundary, checkpoint resume) and **ARCADE** (wave-based score chase with multikill streaks and a local leaderboard). Runs start from **The Shell**, a staging room with weapon racks and meta terminals (FORGE permanent upgrades bought with BITS).
+- The build system is the heart of the game: mod cards across 4 rarities (common/rare/epic/legendary, 8 legendary capstones) feed 5 elemental classes — Thermal, Cryo, Arc, Pulse, Corrupt — each with its own status effect and qualitative payoffs at higher investment.
 
 ## Shell Commands
 - Never chain commands when the `cd` command is involved, Use separate parallel Bash tool calls instead — they run concurrently and don't trigger permission prompts.
@@ -21,19 +23,26 @@ Open `http://localhost:3000` in a browser. No build step — the game is a singl
 
 **Single-file browser game** with a Node.js WebSocket relay server.
 
-- `index.html` — Complete game: HTML, CSS, and all JavaScript in one file (~1400 lines). Canvas-based 2D renderer, procedural dungeon generation, weapon system, zombie AI, fog-of-war lighting, mobile touch controls, and multiplayer client.
+- `index.html` — Complete game: HTML, CSS, and all JavaScript in one file (~40,000 lines). Canvas-based 2D renderer (WebGL lighting with canvas fallback), procedural map generation, weapon/mod/class systems, enemy AI, mobile touch controls, PWA support, and multiplayer client.
 - `server.js` — Stateless WebSocket server using `ws`. Handles lobby creation/joining (4-char codes, max 4 players) and relays messages between clients. Also serves static files over HTTP.
+- `sw.js` / `manifest.json` — PWA service worker + installable fullscreen manifest.
+- `ios/` + `capacitor.config.ts` + `build-mobile.sh` — Capacitor iOS wrapper (native haptics, audio session handling). Build with `npm run build:mobile`.
 - `Context/` — Archived Unity project assets (not used by the live game, gitignored).
+
+**Game modes** (set via `gameMode`): `trench` (main campaign) and `arcade` are the modes exposed on the main menu today. `survival`, `gauntlet`, `descent`, `siege`, `horde`, and `dungeon` exist in code from earlier eras — some are reachable via hidden/secondary menus, all are lightly maintained. The MULTI menu button is currently hidden (`display:none`) on the prototype branch, but the multiplayer code paths are live and all the multiplayer rules below still apply.
 
 ## Game Architecture (inside index.html)
 
 **Host-authoritative multiplayer**: The host runs all game simulation (zombie AI, damage, spawning, level transitions). Non-host clients send input and receive authoritative game state. Zombies, pickups, and barrels are synced from host to clients every 3 frames. Player bullets are rendered locally on each client (not synced) — only zombie projectiles are transmitted. HP and alive state are host-authoritative.
 
 **Key systems:**
-- **Dungeon generation**: Seeded RNG for deterministic maps across clients. Rooms connected in a winding chain via greedy nearest-neighbor, with the exit forced last. Corridors are L-shaped.
-- **Weapons**: Defined in `WEAPON_DEFS` object. Players carry max 3 guns (configurable via `MAX_WEAPONS`). Dropping a weapon spawns a pickup with a cooldown timer to prevent re-pickup loops.
-- **Fog of war**: Offscreen canvas with `destination-out` compositing. Each player has an ambient glow + directional flashlight beam that respects line-of-sight.
-- **Mobile controls**: Dual virtual joysticks (left=move, right=aim/shoot). Platform detected via user agent; CSS classes `mobile`/`desktop` toggle layouts.
+- **Trench generation** (`generateTrenchMap`): Seeded RNG for deterministic maps across clients. 40 sections across 4 domains (`TRENCH_DOMAINS`), each section built from a layout template chosen to fit its enemy roster. Encounters are designed compositions (`WAVE_COMPOSITIONS`) capped at ≤3 distinct enemy types per wave.
+- **Loadout**: Player picks a PRIMARY in the Shell/arcade picker (`PRIMARY_WEAPON_OPTIONS`: Sidearm / Ripper / Deadshot); each primary is bundled with a paired SPECIAL (`SPECIAL_DEFS`: Beacon turret / Discharge wave / Payload grenade). The full legacy arsenal still lives in `WEAPON_DEFS` (used by arcade pickups and older modes; `MAX_WEAPONS = 3`).
+- **Build system** (`UPGRADE_POOL`): mod cards bought in the shop, drafted by rarity weight. 5 classes (Thermal/Cryo/Arc/Pulse/Corrupt), 6 statuses (Overheat, Chill, Frozen, Shocked, Exposed/SLIDE — kinetic knockback state, Compromised — the damage amp). Active mods live in `runMods`.
+- **Enemies** (`ZOMBIE_TYPES`): ~30 archetypes + 4 boss types (firewall, archivist, watchdog, summoner). Telegraph system (`z._tele`, `_drawTelegraph`) drives windup poses/shake; hit reactions (`triggerHitReact`/`_hitReactVisual`) drive recoil + jelly squash on damage.
+- **Meta progression**: BITS currency + THE FORGE (permanent stat boosts), arcade local leaderboard, mid-run checkpoint save/resume (`hasMidRunSession`).
+- **Fog of war**: Offscreen canvas with `destination-out` compositing (WebGL path with canvas fallback). Each player has an ambient glow + directional flashlight beam that respects line-of-sight. The Core domain disables fog.
+- **Mobile controls**: Dual virtual joysticks (left=move, right=aim/shoot) + action buttons (dash, special, mark). Platform detected via user agent; CSS classes `mobile`/`desktop` toggle layouts.
 
 ## Multiplayer Protocol
 
@@ -71,12 +80,11 @@ These principles govern ALL stage generation, layout, hazard placement, and visu
 
 6. **Progressive complexity.** Sections 1-3: open arenas. Sections 4-8: one strategic structure. Sections 9+: multi-element layouts with paths and cover. Complexity ramps with skill, never front-loads.
 
-### Visual Domains (sections → themes)
-- **Domain 1 (1-5):** Entry Cache — purple/magenta/cyan, clean, sterile
-- **Domain 2 (6-10):** Corrupted Subnet — red/orange, cracked, sparking
-- **Domain 3 (11-15):** Deep Storage — blue/teal, ice/frost, eerie calm
-- **Domain 4 (16-20):** Kernel Boundary — hot magenta/red, burning, hostile
-- **Domain 5 (21+):** The Core — white/gold on black, wireframe, self-lit, no fog
+### Visual Domains (sections → themes, see `TRENCH_DOMAINS`)
+- **Domain 1 (sections 0-9):** Entry Cache — magenta (#b06), clean grid floor, dust ambient
+- **Domain 2 (sections 10-19):** Corrupted Subnet — orange (#f60), checker floor, embers, 1.5x glitch
+- **Domain 3 (sections 20-29):** Deep Storage — cyan (#4ef), frost floor, ice ambient, eerie calm
+- **Domain 4 (sections 30+):** The Core — white/gold on black, wireframe, self-lit, no fog, 2.5x glitch
 
 ### Layout Templates
 Arena, Crossroads, Corridor, Pillars, L-Shape, Split, Islands, Bunker, Gauntlet — each designed for specific enemy compositions. Template is selected based on the section's enemy types, not randomly.
@@ -176,6 +184,8 @@ When a class (Thermal/Cryo/Arc/Pulse/Corrupt) is active, it must transform the E
 ## Development Notes
 
 - No test suite or linter configured.
-- All game logic is in a single `<script>` tag — search by function name (e.g., `generateDungeon`, `fireWeaponForPlayer`, `applyHostState`).
-- Syntax check: `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"` — validates JS without running the game.
+- All game logic is in a single `<script>` tag (~40,000 lines) — search by function/constant name (e.g., `generateTrenchMap`, `fireWeaponForPlayer`, `damageZombie`, `applyHostState`, `UPGRADE_POOL`, `ZOMBIE_TYPES`, `TRENCH_DOMAINS`).
+- Syntax check: `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"` — validates JS without running the game. Run this after every change.
 - The game auto-detects mobile via user agent and exposes different control schemes and CSS layouts accordingly.
+- Performance is a hard constraint (mobile/iOS heat): 60fps cap, no `shadowBlur` in hot paths (use fake glow), no hit-stops/slow-mo over ~60ms. The game must stay buttery smooth.
+- Active development branch is `prototype`. `main` and `experimental` are older eras of the design (see `BACKGROUND.md`).

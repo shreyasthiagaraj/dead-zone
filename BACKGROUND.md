@@ -1,25 +1,27 @@
 # NECROWAVE — Background & Knowledge Dump
 
-This document captures everything a future Claude Code session needs to understand the game, its history, what works, what doesn't, and where it's headed. Read this alongside `CLAUDE.md` (technical architecture) and `IDEAS.md` (future plans).
+This document captures everything a future Claude Code session needs to understand the game, its history, what works, what doesn't, and where it's headed. Read this alongside `CLAUDE.md` (technical architecture + design principles) and `IDEAS.md` / `IDEAS_V2.md` (future plans).
+
+Last refreshed: June 2026, on the `prototype` branch.
 
 ---
 
 ## What Is This Game?
 
-**NECROWAVE** (necro + synthwave — zombies meet 80s neon) is a top-down zombie survival shooter built as a single HTML file. It runs in any browser, supports up to 4 players via WebSocket multiplayer, and has full mobile touch controls. The vibe is dark, gory, frantic arcade action — pick up and play, no install, no tutorial. Think Vampire Survivors meets Hotline Miami meets Left 4 Dead, but in a browser.
+**NECROWAVE** (necro + synthwave) is a top-down arcade roguelike shooter built as a single HTML file (~40,000 lines of JS in one `<script>` tag). It runs in any browser, supports up to 4 players via WebSocket multiplayer, has full mobile touch controls, ships as a PWA, and has a Capacitor iOS wrapper for App Store packaging. The server (`server.js`) is a stateless WebSocket relay that handles lobbies and message passing — zero game logic on the server.
 
-The entire game lives in `index.html` (~5000+ lines of JS in a single `<script>` tag). The server (`server.js`) is a stateless WebSocket relay that handles lobbies and message passing — zero game logic on the server.
+The setting has evolved from literal zombies into **cyber-horror**: you fight corrupted digital entities through the domains of a hostile system — ENTRY CACHE (magenta) → CORRUPTED SUBNET (orange) → DEEP STORAGE (cyan) → THE CORE (white wireframe). Enemies read as hostile processes; the elemental classes read as attack vectors (thermal overload, cryo lock, electrical cascade, kinetic shear, viral payload). Think Vampire Survivors meets Hotline Miami, in a browser, wearing a glitch aesthetic.
 
 ---
 
 ## The Vibe
 
-- **Dark and atmospheric** — fog of war, flashlight beams, zombie eyes glowing through darkness
-- **Gory and violent** — directional blood bursts, gore chunks with gravity, blood pools, splatter trails
-- **Frantic and fast** — enemies come in waves, the gun gets stronger as you kill, streaks reward aggression
-- **Arcade-style progression** — no inventory management, no complex menus. Kill zombies, get stronger, survive longer
-- **Multiplayer-first** — the game is primarily played with friends. Solo is fun but co-op is the main event
-- **Horror undertones** — dark corridors, ambient drips, zombie groans through fog, sudden sprinter charges
+- **Neon glitch-horror** — scanlined enemies, chromatic aberration, glitch chars, domain-shifting palettes
+- **Gory and violent** — directional burst particles, gibs, decals, splatter trails (now neon-tinted)
+- **Frantic and fast** — designed wave compositions, multikill streaks, telegraphed elite attacks
+- **Arcade-style progression** — no inventory management. Kill, level, draft cards, get visibly stronger
+- **Mobile-first** — thumbs only, 10-20 minute sessions, auto-fire at full stick extension
+- **The power fantasy is the product** — by mid-run your build should be clearing rooms that would have killed you at the start
 
 The game should never feel slow or strategic. It should feel like controlled chaos.
 
@@ -27,154 +29,130 @@ The game should never feel slow or strategic. It should feel like controlled cha
 
 ## Evolution of the Game Design
 
-### Phase 1: Traditional Shooter (early commits)
-Started as a dungeon crawler with multiple weapons (pistol, shotgun, SMG, rifle, Tesla, etc.), ammo management, and room-by-room progression. Players found weapons on the ground and managed a 3-weapon inventory.
+### Phase 1: Traditional Shooter (`main` branch)
+Dungeon crawler with multiple weapons (pistol, shotgun, SMG, rifle, Tesla, etc.), ammo management, 3-weapon inventory, room-by-room progression, fog of war + flashlight.
 
-**What worked:** Core feel was good — movement, shooting, fog of war, flashlight all felt right from early on.
+**What worked:** Core feel — movement, shooting, fog, flashlight — was right from early on.
+**What didn't:** Weapon balance problems; ammo management was tedious; players managed inventory instead of shooting.
 
-**What didn't work:** Weapon variety created balance problems. Some guns were clearly better. Ammo management was tedious, not fun. Players spent more time managing inventory than shooting.
+### Phase 2: Perks & Synergies
+Perk system (vampire, second wind, etc.) with synergy combos.
 
-### Phase 2: Perks & Synergies (middle commits)
-Added a perk system (vampire, second wind, etc.) with synergy combos between perks. Tried to add depth through build variety.
+**What worked:** Vampire and Second Wind felt good.
+**What didn't:** Too complex for the arcade vibe; synergies were invisible; a roguelite without the meta-progression to support it.
 
-**What worked:** Vampire (heal on kill) and Second Wind (revive once) felt good.
+### Phase 3: Arcade Escalation (`experimental` branch)
+Complete redesign: one smoothly-scaling gun, kill streaks, element floor zones (fire/ice/lightning), orbital companions, shockwave blast replacing the dash, power-ups (Rage, Shield, Triple Shot, Nuke).
 
-**What didn't work:** Perk system was too complex for the arcade vibe. Players didn't want to read perk descriptions mid-combat. Synergies were invisible — you couldn't tell when they were active. The game was trying to be a roguelite without the meta-progression to support it.
+**What worked:** Smooth scaling created a natural curve; streaks rewarded aggression; elements added variety without menus.
+**What didn't:** No build identity between runs; element zones were situational rather than a build; the single gun capped the fantasy.
 
-### Phase 3: Arcade Escalation System (current — `experimental` branch)
-Complete redesign. Stripped out multiple weapons and complex perks. Replaced with:
+### Phase 4: NECROWAVE Build System v2 (`prototype` branch — CURRENT)
+The current game. Key pillars:
 
-- **One gun that scales smoothly** — damage, fire rate, and bullet size grow with kills. No tiers, no transitions, just a gun that gradually becomes a monster. Color shifts yellow → orange → red. Caps at 150 kills (+80% damage, +35% fire rate, +30% bullet size).
-- **Kill streaks** — 5 kills = health drop, 10 = power-up, 15 = power-up, 20 = orbital companion. Encourages aggression.
-- **Element zones** — fire/ice/lightning floor zones that imbue your bullets for 12 seconds. Each element has distinct effects (see below).
-- **Orbital companions** — flame ring, lightning drone, ice shield, shadow clone. 20-second duration, dropped at 20-kill streaks.
-- **Shockwave blast** — replaced the dash. 250px radius explosion that inherits your active element. Brief invincibility. Detonates barrels.
-- **Power-ups** — Rage (damage boost), Shield (150HP force field that deflects projectiles), Triple Shot (3 bullets at 50% each), Sunbeam (flashlight damages zombies), Nuke (kills everything).
+- **TRENCH campaign** — 40 sections across 4 domains, designed wave compositions (≤3 enemy types per encounter, each comp has a role), layout templates chosen per enemy roster, shop after sections, boss at each domain boundary, checkpoint resume.
+- **ARCADE mode** — wave-based score chase: streak multipliers (Double → Godlike), themed special waves (Swarm, Heavy Metal, Runner Storm, Showdown), boss every 5 waves, bonus rounds, local top-10 leaderboard. No mods — pure weapon sandbox.
+- **The Shell** — staging room between runs: weapon racks (pick a PRIMARY: Sidearm / Ripper / Deadshot, each bundled with a paired SPECIAL: Beacon / Discharge / Payload), and meta terminals — THE FORGE (permanent stat boosts bought with BITS).
+- **Class/card build system** — `UPGRADE_POOL`: cards across common/rare/epic/legendary feeding 5 classes (Thermal, Cryo, Arc, Pulse, Corrupt) and 6 statuses (Overheat, Chill, Frozen, Shocked, Exposed/SLIDE, Compromised). 8 legendary capstones (RUNAWAY CORE, ABSOLUTE ZERO, TESLA WEB, SINGULARITY CORE, GREY GOO, OVERDRIVE PROTOCOL, BLADESTORM, DEAD EYE), max 1 per run, with a pickup ceremony.
+- **The dash is back** — 1-2 charges, i-frames, class-imbued trails/effects; a core build tool, not just a dodge.
+- **Telegraph + reaction language** — elite attacks have windup poses (squash/stretch, shake, halos via `z._tele`); damage has physical hit reactions (recoil + jelly squash via `triggerHitReact`).
 
-**What works:** This system feels right. The smooth gun scaling creates a natural difficulty curve. Kill streaks make you *want* to be aggressive. Elements add variety without complexity — you walk into a zone, your bullets change, simple. The shockwave blast is satisfying and tactical.
-
-**What doesn't work yet:** Balance is ongoing. Lightning chains were too powerful (nerfed from 70% to 20% damage with shorter range). Sunbeam range was too far (nerfed from 400 to 250px). Shield needed to be breakable (added 150 HP pool) and needed to deflect projectiles (added).
-
----
-
-## Element System — What Each Does
-
-**Fire** — DoT damage. Burns spread between nearby zombies. Lights up the area (visual glow). Best for crowd control and area denial. Shockwave blast = fire explosion.
-
-**Ice** — Movement control. Slows zombies, freezes them solid at 3 stacks (can't move or attack for 2.5s). Ice crystals appear as fixed diamond shapes at impact. Shockwave blast = ice burst.
-
-**Lightning** — Brief stun. 0.75 seconds of full paralysis (can't move or attack), then back to normal. Chains between nearby enemies at 20% of bullet damage with 120-150px range. Shockwave blast = chain arcs between enemies + radiating bolts. Lightning was reworked several times — originally it was too similar to ice (both slowed). Making it a brief full stun gave it a distinct identity: ice = sustained slow, lightning = brief lockdown.
+Older modes (`survival`, `gauntlet`, `descent`, `siege`, `horde`, `dungeon`) still exist in code and partially work, but trench + arcade are the front door and get the polish.
 
 ---
 
-## Zombie Types & What We Learned
+## Class & Status System — What Each Does
 
-| Type | HP | Behavior | Notes |
-|------|-----|----------|-------|
-| Shambler | 180 | Walks toward player | Bread and butter. Gets enraged (faster, red) when nearby zombie dies |
-| Sprinter | 110 | Charge attack: wind up → dash → rest | Scary in groups. The charge creates tension. |
-| Bruiser | 500 | Walk → windup(shake) → leap → ground pound | Originally just a slow walker — boring. Leap attack made it a real threat. Ground pound does 30 dmg in 100px radius. |
-| Spitter | 140 | Keeps distance, fires 3-spread projectile | Backpedals when you get close. Creates zoning pressure. |
-| Bomber | 100 | Throws arcing bombs, explodes on death | Explosion radius forces movement. |
-| Shielder | 200 | Front shield blocks bullets, must be flanked | Shield faces player. Forces positioning. |
-| Sniper | 90 | Stays far, charges laser line (dashed), fires fast shot | Laser telegraph gives you time to dodge. Retreats when you approach. |
-| Boss | 700 | Retreats, summons 2 shamblers every few seconds | Summoner archetype. You have to rush it or get overwhelmed. |
+- **Thermal** — OVERHEAT stacks: DoT, detonation at high stacks, heat spreads on kill at high investment. Crowd damage.
+- **Cryo** — CHILL slows; 3 stacks = FROZEN (immobilized ice block, resists knockback). Control. ABSOLUTE ZERO executes frozen enemies below 20% HP.
+- **Arc** — SHOCKED chains lightning between enemies; storm-dash and conductor mods widen the web. Multi-target.
+- **Pulse** — kinetic class. SLIDE/Exposed is a knockback amp state (~3x) with wall-slam bonus damage, not a damage amp. Spacing and slams.
+- **Corrupt** — the amplifier. CORRUPT stacks escalate damage taken from ALL sources; at COMPROMISED the target takes ~2x. Spreads on death with investment.
 
-**Key lesson:** Every zombie needs a distinct silhouette AND a distinct behavior. Slow damage sponges are boring. The Bruiser was terrible until it got the leap attack. The Sniper was boring until it got the visible laser telegraph. Each zombie should force you to change your behavior.
+Design rule (from CLAUDE.md): at 3+ stacks of investment something QUALITATIVE must happen, not just bigger numbers.
 
 ---
 
-## Game Modes
+## Enemies & What We Learned
 
-### Dungeon (original mode, `main` branch focus)
-Procedurally generated maze of rooms connected by L-shaped corridors. Find the exit, go deeper. Seeded RNG for multiplayer determinism.
+`ZOMBIE_TYPES` has ~30 archetypes + 4 boss types (firewall, archivist, watchdog, summoner). Categories:
 
-### Survival
-Open circular arena, wave-based. Countdown between waves. Smaller map than dungeon. Wave summary screen between rounds.
+- **Melee pressure:** normal, fast, prowler, drone, leaper, stalker (ambusher)
+- **Heavies:** tank, brute, bull (charger), crusher, anchor, reaper, lash
+- **Ranged:** spitter, mini (sniper), strafe, scatter, disc, mortar, artillery, caster, splasher
+- **Special mechanics:** exploder, splitter, shieldbot (aura), phaser (teleports), lancer, grappler, beam (sweeping laser)
 
-### Horde (recently overhauled)
-Circular arena with a **defend circle** at the center. Two loss conditions: die, or let zombies claim the circle. 40% of zombies are "invaders" that path toward the circle instead of the player (switch to player if threatened). If zombies stay in the circle for 15 seconds, it's claimed — game over. Circle color shifts cyan → yellow → red as claim progresses. Items spawn in a ring around the arena (not center, to avoid stacking). Continuous spawning with escalating difficulty.
-
-### Gauntlet
-Sequence of rectangular rooms. Clear each room to advance. Boss rooms every 5 rooms. Room names and flavor text for atmosphere.
-
-### The Descent
-Vertical scrolling — tall grid divided into sections. Clear enemies in a section, gate opens, descend. Upper wall closes behind you. This was the hardest mode to implement due to the dynamic arena height (see "Hard Lessons" below).
+**Key lessons (still true):**
+- Every enemy needs a distinct silhouette AND a distinct forced response. Slow damage sponges are boring.
+- Telegraphs make threats fair: the windup pose/shake/halo language is what lets hard attacks feel earned.
+- ≤3 distinct enemy types per encounter, each comp reinforcing one role, beats random soup.
 
 ---
 
 ## Hard Lessons Learned
 
 ### 1. Arena dimensions must be mutable
-`ARENA_W` and `ARENA_H` were originally `const`. The Descent needed a 16960px tall arena instead of the default 3600px. This broke EVERYTHING — WebGL grid texture, obstacle collision, line-of-sight, bullet bounds, player clamping, zombie clamping, floor rendering. The fix was `setArenaDimensions(w, h)` that updates all dependent values. ~15 scattered ternary hacks had to be removed. **Never hardcode arena dimensions.**
+`ARENA_W`/`ARENA_H` were originally `const`. The Descent needed a 16960px tall arena and this broke everything — WebGL grid texture, collision, LOS, bullet bounds, clamping. Fixed with `setArenaDimensions(w, h)`. **Never hardcode arena dimensions.**
 
 ### 2. WebGL textures must be power-of-two on mobile
-The dungeon grid texture was 90x424 for The Descent. Mobile GPUs silently failed — no error, just black screen. Fixed by padding to next power-of-two (128x512). The `uploadDungeonGrid()` function now handles this.
+Non-POT grid textures silently fail on mobile GPUs — no error, just black. `uploadDungeonGrid()` pads to the next power of two.
 
 ### 3. Visual effects inside `if(isHost)` blocks are host-only
-This was the #1 source of multiplayer bugs. Any particle, floating text, or screen shake created inside host-only code paths won't appear on non-host clients. Effects need to either live in shared code paths or be replicated in `applyHostState`.
+The #1 source of multiplayer bugs. Effects need shared code paths or replication in `applyHostState`. Related: the non-host has TWO local damage signals — predicted bullet contact and the host-sync damage edge — and per-hit visuals (white pop, hit reaction) must fire from both without double-firing.
 
 ### 4. Elemental damage couldn't kill
-Burn/freeze/lightning DoT brought zombies to 0 HP but nothing processed the death because the damage happened outside the normal bullet collision loop. Had to add a "death sweep" at the end of the zombie AI loop that checks for 0 HP zombies.
+DoT brought enemies to 0 HP outside the bullet loop and nothing processed the death. A "death sweep" at the end of the enemy update catches 0-HP enemies.
 
 ### 5. Player bullets should NOT be synced
-Early versions tried to sync all bullets over WebSocket. This was laggy and wasteful. Solution: each client renders its own bullets locally based on firing state. Only zombie projectiles (spitters) are synced. Visually identical, much less bandwidth.
+Syncing bullets was laggy and wasteful. Each client renders its own bullets from firing state; only enemy projectiles sync. Visually identical, far less bandwidth.
 
-### 6. Shield balance is tricky
-Shield went through several iterations:
-- v1: Full invincibility → too powerful, no interaction
-- v2: Absorbs damage, breakable at 150 HP → better, but projectiles passing through looked wrong
-- v3: Force field that pushes zombies + deflects projectiles + breaks at 150 HP → feels right
+### 6. Performance is a design constraint, not an optimization pass
+iOS heat forced a 60fps cap and a `shadowBlur` ban (fake glow: bigger dimmer shape behind the bright one). Hit-stops/slow-mo over ~60ms feel like jank, not impact. Smoothness beats spectacle.
 
 ### 7. Slow zombie damage sponges are boring
-The Bruiser was originally just a high-HP slow walker. Players kited it trivially. Adding the leap attack (windup shake → airborne → ground pound) made it a genuine threat that forces reaction.
+The bruiser was trivially kited until it got a leap attack. Behavior, not HP, is difficulty.
+
+### 8. Invisible buffs don't exist
+If a card/status/synergy doesn't visibly change the screen (damage numbers, body tint, new particles, status label), players behave as if it isn't there. Phase 2 died of this; the status-effect VFX language exists because of it.
 
 ---
 
 ## Branches
 
-- **`main`** — Old weapon-based system. Stable but outdated. Has dungeon, survival, horde, gauntlet modes.
-- **`experimental`** — Current active branch. Arcade escalation system, element zones, orbitals, The Descent, all recent balance changes. This is the future of the game.
-
-The branches have diverged significantly. The experimental branch is the one to develop on.
+- **`prototype`** — CURRENT active branch. Phase 4: trench campaign, class/card system, Shell, arcade leaderboard, rarity redesign.
+- **`experimental`** — Phase 3 arcade-escalation era. Do NOT merge into it unless explicitly asked.
+- **`main`** — Phase 1 weapon-based system. Stable but ancient.
+- Various spike branches (`auto-aim`, `choice-build`, `crazy-design`, `music-shift`, `new-special`, `redesign`, etc.) — one-off experiments.
 
 ---
 
 ## Technical Gotchas
 
-- **Single file** — all game logic is in one `<script>` tag. Search by function name. The file is 5000+ lines.
-- **Syntax check** — `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"` — validates JS without running the game. Run this after every change.
-- **No build step** — `npm start` serves files. Open browser. That's it.
-- **Mobile detection** — user agent sniffing sets `mobile`/`desktop` CSS class. Touch controls (dual joysticks) activate on mobile. Keyboard + mouse on desktop.
-- **Seeded RNG** — `seededRandom(seed)` returns a deterministic random function. Critical for multiplayer — all clients generate the same map from the same seed.
-- **WebGL lighting with canvas fallback** — lighting system tries WebGL first, falls back to canvas 2D compositing. The WebGL path uses a grid texture for wall occlusion.
-- **Capacitor iOS project** — `ios/` directory contains a generated Xcode project for App Store packaging. Build with `npm run build:mobile`. `MULTIPLAYER_SERVER_URL` in index.html must be set to a public server URL for the native app (can't use `location.host`).
+- **Single file** — search by name: `generateTrenchMap`, `fireWeaponForPlayer`, `damageZombie`, `applyHostState`, `UPGRADE_POOL`, `ZOMBIE_TYPES`, `TRENCH_DOMAINS`, `WAVE_COMPOSITIONS`.
+- **Syntax check after every change** — `node -e "new Function(require('fs').readFileSync('index.html','utf8').match(/<script>([\s\S]*)<\/script>/)[1])"`.
+- **No build step** — `npm start`, open browser. `npm run build:mobile` for the iOS wrapper.
+- **Seeded RNG** — all clients generate identical maps from the synced seed. Critical for multiplayer.
+- **WebGL lighting with canvas fallback** — lighting tries WebGL first; The Core domain runs fog-free.
+- **Capacitor iOS** — `ios/` Xcode project; `MULTIPLAYER_SERVER_URL` must point at a public server for the native app (can't use `location.host`). Native haptics via Capacitor.Plugins.Haptics; a looping near-silent WAV forces the iOS "playback" audio category so sound works with the silent switch on.
+- **Mobile detection** — user agent sniffing toggles `mobile`/`desktop` CSS classes and control schemes.
+- **The MULTI menu button is currently hidden** on `prototype` (along with FORGE/CHALLENGES/CODEX buttons on the start screen — the Shell exposes Forge in-world). The multiplayer code is live; all multiplayer-first rules in CLAUDE.md still apply.
 
 ---
 
 ## What Needs Work
 
-### Balance (ongoing)
-- Difficulty curve in horde mode — currently uses hard caps on max zombies (8) which may feel sparse
-- Element balance — fire is strong (spreads), ice is solid (freeze), lightning has been nerfed hard (20% chain damage) and may need a buff to its niche
-- Power-up duration and impact — some feel impactful (nuke, shield), others are forgettable
-
-### Missing Features (see IDEAS.md for full list)
-- No meta-progression between runs (the single biggest gap vs being a roguelite)
-- No persistent unlocks, no currency, no upgrade screen
-- No daily runs or leaderboards
-- No character variety (everyone plays the same)
-
-### Polish
-- No sound design beyond procedural synth tones — no music, no ambient loops (there are combat music triggers but they're synth-generated)
-- No tutorial or onboarding — you just start shooting
-- Death screen could be more impactful
+- **Balance** (ongoing): the rarity redesign (8 legendary capstones + ceremony) shipped recently; numbers may still need tuning. Difficulty/economy audits live in the `/difficulty-audit` skill.
+- **Performance batch 2** (pending): the shadowBlur→fake-glow sweep needs on-device iOS verification.
+- **Legacy modes**: survival/gauntlet/descent/siege/horde are behind the trench/arcade quality bar — decide which to promote, kill, or fold in.
+- **Multiplayer re-exposure**: the MULTI button is hidden while the solo loop is polished; re-enabling needs a verification pass over phase-4 systems (cards, specials, telegraphs) in co-op.
+- **Sound**: still procedural synth + generated SFX files; no music or ambient loops.
+- **Onboarding**: no tutorial — you just start shooting (mostly fine for arcade; trench could use a soft intro).
 
 ---
 
 ## Monetization Direction
 
-**Free multiplayer, premium single player.** Multiplayer is the growth engine (play with friends, tell others). Single player is the deep, progression-rich experience worth $5-7. See `IDEAS.md` for the full plan.
+**Free multiplayer, premium single player.** Multiplayer is the growth engine (play with friends, tell others). Single player is the deep, progression-rich experience worth $5-7. See `IDEAS.md` / `IDEAS_V2.md` for the full plan.
 
 ---
 
@@ -182,14 +160,13 @@ The branches have diverged significantly. The experimental branch is the one to 
 
 | File | Purpose |
 |------|---------|
-| `index.html` | The entire game — HTML + CSS + JS |
+| `index.html` | The entire game — HTML + CSS + JS (~40,000 lines) |
 | `server.js` | WebSocket relay server + static file serving |
-| `CLAUDE.md` | Technical architecture guide for Claude Code |
-| `IDEAS.md` | Future features and monetization plans |
+| `CLAUDE.md` | Technical architecture + design principles for Claude Code |
 | `BACKGROUND.md` | This file — history, decisions, vibe |
-| `capacitor.config.ts` | Capacitor iOS config |
-| `build-mobile.sh` | Copies web assets to www/, syncs iOS |
-| `ios/` | Generated Xcode project (Capacitor) |
-| `sounds/` | Generated sound effect files |
-| `generate-sounds.js` | Script that generates sound files |
-| `Context/` | Archived Unity assets (gitignored, not used) |
+| `IDEAS.md` / `IDEAS_V2.md` | Future features and monetization plans |
+| `STEERABILITY.md`, `dash_system.md`, `build_system.md` | Deep-dive design notes for specific systems |
+| `manifest.json` / `sw.js` | PWA install + offline caching |
+| `capacitor.config.ts`, `build-mobile.sh`, `ios/`, `www/` | iOS wrapper build |
+| `sounds/`, `generate-sounds.js` | Generated sound effects |
+| `Context/` | Archived Unity assets (gitignored, unused) |
