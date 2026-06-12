@@ -2447,14 +2447,14 @@ const UPGRADE_POOL = [
   // ---- RIPPER (melee primary) — only offered when RIPPER is equipped ----
   { id:'cleave', name:'CLEAVE', rarity:'common', max:1, icon:'⚔', color:'#fe6',
     descs:['Your ATTACK cone is 30% wider.'], flavor:'wider arc. more meat.' },
-  { id:'lunge', name:'LUNGE', rarity:'rare', max:1, icon:'»', color:'#fe6',
-    descs:['Lunge distance +60%. +25% damage on the lunge strike.'], flavor:'close the gap, end the fight.' },
+  { id:'lunge', name:'DASH STRIKE', rarity:'rare', max:1, icon:'»', color:'#fe6',
+    descs:['Attacking right after a dash unleashes a powered DASH-STRIKE: +60% reach, +25% damage, and a longer window to trigger it.'], flavor:'dash in, end the fight.' },
   { id:'executioner', name:'EXECUTIONER', rarity:'rare', max:1, icon:'☥', color:'#fe6',
     descs:['Your finisher deals +75% damage and crits.'], flavor:'the last hit is the only hit.' },
   { id:'bloodletter', name:'BLOODLETTER', rarity:'common', max:1, icon:'❤', color:'#fe6',
     descs:['Crits restore 5 HP.'], flavor:'their blood is your fuel.' },
   { id:'whirlwind', name:'WHIRLWIND', rarity:'epic', max:1, icon:'⟳', color:'#fe6',
-    descs:['After 3 kills in 2s: your next ATTACK is a full 360° spin.'], flavor:'momentum overflows.' },
+    descs:['Landing a combo finisher — or 2 kills within 5s — primes your next ATTACK as a true 360° spin that hits everything around you.'], flavor:'momentum overflows.' },
   { id:'riposte', name:'RIPOSTE', rarity:'epic', max:1, icon:'⊕', color:'#fe6',
     descs:['Taking damage readies a PARRY: your next ATTACK becomes a full 360° spin counter that hits everything around you (3x damage). 2s window.'], flavor:'they hit you. you hit everything back.' },
   { id:'extended_reach', name:'EXTENDED REACH', rarity:'common', max:1, icon:'↔', color:'#fe6',
@@ -2743,7 +2743,7 @@ const _KEY_STATS = {
   quick_draw:     { label:'fire rate', base:30, step:5, unit:'%' },
   // ---- Ripper-native ----
   cleave:         { label:'cone width', base:30, step:5, unit:'%' },
-  lunge:          { label:'lunge distance', base:60, step:8, unit:'%' },
+  lunge:          { label:'dash-strike reach', base:60, step:8, unit:'%' },
   rising_blade:   { label:'reach per step', base:50, step:8, unit:'%' },
   executioner:    { label:'finisher dmg', base:75, step:10, unit:'%' },
   bloodletter:    { label:'HP per crit', base:5, step:2, unit:' HP' },
@@ -20363,16 +20363,25 @@ function updateDischarge() {
       // all get cleared out to roughly the wave radius. SLIDE (exposed) enemies,
       // and wind/PULSE discharges (which apply SLIDE), get a big extra launch:
       // the one case with real long-distance knockback. SURGE FORCE: edge +50%.
-      const _surge = _m.surgeAccel ? 1.5 : 1.0;
-      const _edge = w.maxRadius * _surge;
-      const _gap = Math.max(70, _edge - d);
-      const _shoveV = Math.min(30, _gap * 0.16) * _pushMul;
+      const _surge = _m.surgeAccel ? 1.4 : 1.0;
       const _isSlide = z._exposed || w.classId === 'wind';
       if (w._singularity) {
-        z.vx += _nx * _shoveV; z.vy += _ny * _shoveV;
+        // SINGULARITY pulls IN — the gravity well does the work; tiny nudge only.
+        const _sv = 4 * _pushMul;
+        z.vx += _nx * _sv; z.vy += _ny * _sv;
       } else {
-        z.vx = _nx * _shoveV; z.vy = _ny * _shoveV; // SET → uniform, weight-independent
-        if (_isSlide) { z.vx += _nx * _shoveV * 2.6; z.vy += _ny * _shoveV * 2.6; }
+        // "GET AWAY FROM ME": shove the enemy OUTWARD a reliable, weight-
+        // independent distance so it ALWAYS creates space (a charging brute and
+        // a drone both get cleared the same amount). Uses a direct outward
+        // DISPLACEMENT — friction/stagger can't eat it the way a pure velocity
+        // push did — plus a follow-through velocity so it reads as a shove. SLIDE
+        // enemies travel somewhat farther (not across the whole arena). SURGE
+        // FORCE extends the clearance.
+        let _clear = 92 * _pushMul * _surge;   // instant outward clearance (px)
+        let _follow = 16 * _pushMul * _surge;  // follow-through velocity
+        if (_isSlide) { _clear *= 1.6; _follow *= 1.8; }
+        z.x += _nx * _clear; z.y += _ny * _clear;
+        z.vx = _nx * _follow; z.vy = _ny * _follow;
       }
       damageZombie(z, baseDmg, 0, 0, true);
       // Per-enemy hit flash when wave passes through
@@ -21254,10 +21263,11 @@ function _swingMelee(p, def) {
   // Capture explicit start/end angles for the swing animation. The renderer
   // interpolates between these with no lerp catch-up — clean, decisive
   // motion that lingers at the END angle when the swing finishes.
-  // RIPOSTE: when the parry counter is armed, the swing VISUALLY sweeps a full
-  // 360° revolution (matches the full-circle damage cone) regardless of which
-  // combo step this is — so the counter actually reads as a spin, not a slash.
-  const _riposteSpinVis = ((runMods||{}).riposte) && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil;
+  // RIPOSTE / WHIRLWIND: when a 360° spin is armed, the swing VISUALLY sweeps a
+  // full revolution (matching the full-circle damage cone) regardless of which
+  // combo step this is — so it actually reads as a spin, not a slash.
+  const _riposteSpinVis = (((runMods||{}).riposte) && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil)
+    || (((runMods||{}).whirlwind) && p._whirlwindReady);
   if (_riposteSpinVis) {
     const _spinStart = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.5;
     p._rSwingStartAngle = _spinStart;
@@ -21476,6 +21486,10 @@ function _runComboStep(p, def, step, idx) {
   // CARD: CLEAVE — cone +30%
   let cone = step.cone * (_rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1);
   if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#fe6'); }
+  // WHIRLWIND also primes off a combo FINISHER — landing the finisher readies
+  // your NEXT attack as a 360° spin (reliable, not just kill-streak based).
+  // Skip if THIS swing already spun so it doesn't chain spins forever.
+  if (_rmCombo.whirlwind && step.finisher && !_wwActive) p._whirlwindReady = true;
   // CARD: RIPOSTE — a parry (took damage in the last 2s) turns the counter
   // into a full 360° spin that hits everything around you. The 3x damage on
   // the first hit is applied (and the readiness consumed) in the melee pre-hit
@@ -21770,7 +21784,9 @@ function _runComboStep(p, def, step, idx) {
   // CARD: RIPOSTE — the parry counter opens the damage cone to a FULL circle
   // so the 360° spin actually hits everything around the player (the normal
   // forward-sector cap would limit even a visual 360 to ~110°).
-  const _halfConeCap = _riposteSpin ? Math.PI : (_worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 : MELEE_DAMAGE_HALF_CONE);
+  // RIPOSTE and WHIRLWIND open the damage cone to a FULL circle so the 360°
+  // spin actually hits everything around the player (not just a ~110° sector).
+  const _halfConeCap = (_riposteSpin || _wwActive) ? Math.PI : (_worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 : MELEE_DAMAGE_HALF_CONE);
   const halfCone = Math.min(cone / 2, _halfConeCap);
   const _critChance = 0.18;
   // Damage scale from run-wide mods: damageMult + adrenaline + meta power.
@@ -23361,8 +23377,9 @@ function dash() {
   const _glideBonus = ((runMods || {}).dashDistance > 0) ? _modScale('kinetic_glide', 0, 1.00) : 0;
   lp._dashFrames = Math.max(1, Math.round(DASH_FRAMES * (1 + _glideBonus)));
   // Dash-strike window: melee swings within ~280 ms of dashing fire as a
-  // beefier lunging attack instead of the next combo step.
-  lp._dashStrikeWindow = performance.now() + 280;
+  // beefier lunging attack instead of the next combo step. The DASH STRIKE mod
+  // (id 'lunge') widens the window to 480 ms so it's far easier to trigger.
+  lp._dashStrikeWindow = performance.now() + (((runMods||{}).lunge) ? 480 : 280);
   // Invincible for the dash + a small recovery window. 350ms total — the
   // dash motion itself eats ~133ms, leaving ~217ms of post-dash i-frames
   // (roughly 13 frames at 60 Hz). Long enough to clear a grabber that
@@ -27065,13 +27082,16 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
         addFloatingText(_pklp.x, _pklp.y - 30, '+' + _pkAmt, '#a4f');
       }
     }
-    // ---- CARD: WHIRLWIND — 3 kills in 2s primes next ATTACK as 360° spin ----
+    // ---- CARD: WHIRLWIND — kills (or a combo finisher) prime a 360° spin ----
+    // Easier than before: just 2 kills within a generous 5s window primes the
+    // spin (and a combo finisher also primes it — see _runComboStep), so you
+    // reliably get a spin without needing a tight kill burst.
     {
       const _wlp = getLocalPlayer && getLocalPlayer();
       if ((runMods||{}).whirlwind && _wlp && _wlp.alive) {
         if ((_wlp._whirlwindTimer || 0) <= 0) _wlp._whirlwindKills = 0;
         _wlp._whirlwindKills = (_wlp._whirlwindKills || 0) + 1;
-        _wlp._whirlwindTimer = 180; // 3s window (decremented in update)
+        _wlp._whirlwindTimer = 300; // 5s window (decremented in update)
         if (_wlp._whirlwindKills >= 2) { _wlp._whirlwindReady = true; _wlp._whirlwindKills = 0; }
       }
     }
