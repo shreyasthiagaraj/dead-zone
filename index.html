@@ -10227,6 +10227,11 @@ function lerpAngle(from, to, t) {
 let camera = { x: 0, y: 0 };
 let cameraOffset = { x: 0, y: 0 }; // smooth aim-look-ahead offset
 let aimLineAlpha = 0; // smooth fade for aim line visibility
+// Base zoom: a slight permanent zoom-OUT so the player sees a bit more of the
+// field. Applied as a multiplier on top of cameraZoom at every world-transform
+// site, so transient zoom punches still work relative to it. 0.9 ≈ ~23% more
+// visible area without making things feel tiny.
+const _BASE_ZOOM = 0.9;
 // Camera zoom: world transform scales around screen center. Used for crit
 // punch-in (1.025x), section-clear punch (1.06x), and boss reveal (0.78x out).
 // Eases toward cameraZoomTarget; target auto-resets when cameraZoomReleaseMs
@@ -33572,11 +33577,14 @@ function render() {
   // other zoom values the world scales around screen center.
   ctx.save();
   ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
-  if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+  ctx.scale(_BASE_ZOOM * cameraZoom, _BASE_ZOOM * cameraZoom);
   ctx.translate(-camera.x, -camera.y);
 
   // Floor + walls with room themes
-  const vL=camera.x-canvas.width/2-CELL_SIZE,vR=camera.x+canvas.width/2+CELL_SIZE,vT=camera.y-canvas.height/2-CELL_SIZE,vB=camera.y+canvas.height/2+CELL_SIZE;
+  // Half-extents expanded by the base zoom-out so geometry near the (now wider)
+  // screen edge isn't culled and popping in/out.
+  const _vHW=canvas.width/(2*_BASE_ZOOM),_vHH=canvas.height/(2*_BASE_ZOOM);
+  const vL=camera.x-_vHW-CELL_SIZE,vR=camera.x+_vHW+CELL_SIZE,vT=camera.y-_vHH-CELL_SIZE,vB=camera.y+_vHH+CELL_SIZE;
   const _gridH=GRID_H;
   const mnx=Math.max(0,Math.floor(vL/CELL_SIZE)),mxx=Math.min(GRID_W-1,Math.floor(vR/CELL_SIZE)),mny=Math.max(0,Math.floor(vT/CELL_SIZE)),mxy=Math.min(_gridH-1,Math.floor(vB/CELL_SIZE));
   const _corridorTheme=ROOM_THEMES[0];
@@ -37092,9 +37100,12 @@ function render() {
   }
 
   // Zombies (shape helper is defined at module scope above)
-  // Viewport bounds for culling off-screen zombies (saves per-zombie work)
-  const _zvL = camera.x - canvas.width/2 - 80, _zvR = camera.x + canvas.width/2 + 80;
-  const _zvT = camera.y - canvas.height/2 - 80, _zvB = camera.y + canvas.height/2 + 80;
+  // Viewport bounds for culling off-screen zombies (saves per-zombie work).
+  // Half-extents expanded by the base zoom-out so enemies near the wider edge
+  // don't pop in/out on large screens.
+  const _zHW = canvas.width/(2*_BASE_ZOOM) + 80, _zHH = canvas.height/(2*_BASE_ZOOM) + 80;
+  const _zvL = camera.x - _zHW, _zvR = camera.x + _zHW;
+  const _zvT = camera.y - _zHH, _zvB = camera.y + _zHH;
   // Zombie shadows — separate pass so they render below all zombie bodies.
   // Uses cached z._np/z._npD from the zombie update loop — no per-zombie getNearestAlivePlayer call.
   for(const z of zombies){
@@ -38686,8 +38697,9 @@ function render() {
   // Renders the main array AND the Cold Front pool through the same
   // switch. Pool entries render AFTER the main array so cold gas sits
   // on top of e.g. dash trails when both are present.
-  const _pViewL = camera.x - canvas.width/2 - 40, _pViewR = camera.x + canvas.width/2 + 40;
-  const _pViewT = camera.y - canvas.height/2 - 40, _pViewB = camera.y + canvas.height/2 + 40;
+  const _pHW = canvas.width/(2*_BASE_ZOOM) + 40, _pHH = canvas.height/(2*_BASE_ZOOM) + 40;
+  const _pViewL = camera.x - _pHW, _pViewR = camera.x + _pHW;
+  const _pViewT = camera.y - _pHH, _pViewB = camera.y + _pHH;
   for (const _pArr of [particles, _coldFrontParticles])
   for(const p of _pArr){
     // Offscreen cull (skip lightning since it has separate endpoints)
@@ -39737,7 +39749,7 @@ function render() {
       // zoom-less screen offset caused a doubled/offset outline when the
       // deadshot zoom kicked in — worse the farther the enemy was from center.
       ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
-      if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+      ctx.scale(_BASE_ZOOM * cameraZoom, _BASE_ZOOM * cameraZoom);
       ctx.translate(-camera.x, -camera.y);
       for (const z of zombies) {
         if (!z || z.hp <= 0) continue;
@@ -39766,7 +39778,7 @@ function render() {
       const _svT = camera.y - canvas.height/2 - 40, _svB = camera.y + canvas.height/2 + 40;
       ctx.save();
       ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
-      if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+      ctx.scale(_BASE_ZOOM * cameraZoom, _BASE_ZOOM * cameraZoom);
       ctx.translate(-camera.x, -camera.y);
       ctx.textAlign = 'center';
       ctx.font = 'bold 9px "Courier New", monospace';
@@ -39819,7 +39831,7 @@ function render() {
     // the body's zoomed eyes once the deadshot zoom kicked in.
     ctx.save();
     ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
-    if (cameraZoom !== 1.0) ctx.scale(cameraZoom, cameraZoom);
+    ctx.scale(_BASE_ZOOM * cameraZoom, _BASE_ZOOM * cameraZoom);
     ctx.translate(-camera.x, -camera.y);
     for (const z of zombies) {
       let inLight = false;
@@ -39903,7 +39915,7 @@ function render() {
   // offset doubled both against their main-render copies during deadshot zoom.
   {ctx.save();
   ctx.translate(canvas.width/2+screenShake.x, canvas.height/2+screenShake.y);
-  if(cameraZoom!==1.0)ctx.scale(cameraZoom,cameraZoom);
+  ctx.scale(_BASE_ZOOM*cameraZoom,_BASE_ZOOM*cameraZoom);
   ctx.translate(-camera.x,-camera.y);
   for(const b of bullets){if(b.tracer&&b.trail.length>1){ctx.strokeStyle=b.color;ctx.lineWidth=2;ctx.globalAlpha=0.6;ctx.beginPath();ctx.moveTo(b.trail[0].x,b.trail[0].y);for(let j=1;j<b.trail.length;j++)ctx.lineTo(b.trail[j].x,b.trail[j].y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.globalAlpha=1;}if(b.grenade){ctx.fillStyle='#555';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#f60';ctx.fillRect(b.x-1.5,b.y-8,3,4);}else if(b.flame){ctx.globalAlpha=Math.min(1,b.life/20);const gr=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.size);gr.addColorStop(0,'#ff4');gr.addColorStop(0.5,'#f60');gr.addColorStop(1,'rgba(255,0,0,0)');ctx.fillStyle=gr;ctx.beginPath();ctx.arc(b.x,b.y,b.size,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}else if(b.chain&&b.trail.length>1){
     ctx.strokeStyle=b.color;ctx.lineWidth=3;ctx.shadowColor='#fe6';ctx.shadowBlur=12;ctx.beginPath();
