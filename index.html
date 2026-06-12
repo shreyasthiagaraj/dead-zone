@@ -2032,7 +2032,7 @@ const UPGRADE_POOL = [
   { id:'cryo_rounds', name:'CRYO INFUSION', rarity:'common', max:1, icon:'🧊', color:'#8ef',
     descs:['Your ATTACK applies CHILL. +22% damage.'], flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC INFUSION', rarity:'common', max:1, icon:'⚡', color:'#fe6',
-    descs:['Your ATTACK applies SHOCKED. +22% damage.'], flavor:'shared-bus signal jumps between nodes' },
+    descs:['Your hits call down a LIGHTNING STRIKE — heavy bonus damage + small splash (~1s cooldown). +22% damage.'], flavor:'overvoltage request granted. the grid answers from above.' },
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Your ATTACK applies SLIDE with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
@@ -2082,7 +2082,7 @@ const UPGRADE_POOL = [
   { id:'static_wake', name:'STORM DASH', rarity:'common', max:1, icon:'⚡', color:'#fe6',
     descs:['Dash strikes 2 random nearby enemies (25 dmg). Pair with OVERCHARGE to SHOCK on hit.'], flavor:'you become the lightning.' },
   { id:'overcharge', name:'OVERCHARGE', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
-    descs:['Lightning effects (Storm Dash, Beacon Arc, Hot Wire, Tesla Orb) apply SHOCKED on hit.'], flavor:'every spark conducts.', prereqs:['arc_rounds|static_wake'] },
+    descs:['Lightning effects (Lightning Strike, Storm Dash, Beacon Arc, Hot Wire, Tesla Orb) apply SHOCKED on hit.'], flavor:'every spark conducts.', prereqs:['arc_rounds|static_wake'] },
   // (DISCHARGE BURST removed from the pool)
   // ---- DASH: PULSE ----
   { id:'kinetic_wake', name:'KINETIC WAKE', rarity:'common', max:1, icon:'💨', color:'#cef',
@@ -9467,6 +9467,102 @@ function _triggerChainConduit(originZ, mods) {
     }
     if (_hit.size > 1) playSfx('zap', 0.18, 0.06);
   } finally { _conduitDepth--; }
+}
+// ---- ARC INFUSION: LIGHTNING STRIKE ----
+// Reworked from "applies SHOCKED on hit": the player's hits now call down a
+// lightning strike on the target for bonus damage + a small ground splash.
+// Internal cooldown so fast weapons (sidearm/SMG) don't strike every bullet —
+// the strike is punctuation, not a metronome. SHOCKED now comes from Storm
+// Dash / OVERCHARGE / CHAIN CONDUIT instead of the infusion.
+const ARC_STRIKE_ICD = 54;       // frames between strikes (~0.9s)
+const ARC_STRIKE_SPLASH_R = 80;  // ground splash radius around the impact
+let _arcStrikeLastFrame = -9999;
+function tryArcStrike(z, hitDmg) {
+  if (!z || z.hp <= 0) return false;
+  // Self-heal a stale timestamp from a previous run (gameTime resets per run)
+  if (_arcStrikeLastFrame > gameTime) _arcStrikeLastFrame = -9999;
+  if (gameTime - _arcStrikeLastFrame < ARC_STRIKE_ICD) return false;
+  _arcStrikeLastFrame = gameTime;
+  const _m = runMods || {};
+  // Bonus damage rides the triggering hit so the strike stays relevant as
+  // the build scales. Floor keeps it meaty on low-damage weapons.
+  const strikeDmg = Math.max(50, Math.floor((+hitDmg || 0) * 1.25));
+  arcStrikeVFX(z.x, z.y, z.radius || 13);
+  damageZombie(z, strikeDmg, 0, 0);
+  addFloatingText(z.x, z.y - (z.radius || 13) - 18, strikeDmg, '#fe6');
+  // OVERCHARGE: every lightning effect applies SHOCKED — the strike included.
+  if (_m.overcharge > 0 && z.hp > 0) applyCharged(z);
+  // Ground splash — 35% to enemies adjacent to the impact, brief flinch.
+  const _spDmg = Math.floor(strikeDmg * 0.35);
+  if (_spDmg > 0) {
+    const _r2 = ARC_STRIKE_SPLASH_R * ARC_STRIKE_SPLASH_R;
+    for (const oz of zombies) {
+      if (oz === z || oz.hp <= 0) continue;
+      const _dx = oz.x - z.x, _dy = oz.y - z.y;
+      if (_dx*_dx + _dy*_dy < _r2) {
+        damageZombie(oz, _spDmg, _dx * 0.02, _dy * 0.02, true);
+        oz.staggerTimer = Math.max(oz.staggerTimer || 0, 10);
+      }
+    }
+  }
+  return true;
+}
+// Strike VFX — three-point rule: the sky is the origin (bolt from screen-up
+// reads as "from above" in top-down), the bolt is the path, the ground
+// detonation is the impact. Deliberately louder than the storm-dash zap.
+function arcStrikeVFX(x, y, r) {
+  // (1) THE BOLT — three layered jagged strokes from a sky anchor with top
+  //     drift so it never reads as a plumb line; staggered lifetimes thin
+  //     the bolt as it dies (thick yellow → hot mid → white core).
+  const _topX = x + (Math.random() - 0.5) * 70;
+  const _topY = y - 380;
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 16, maxLife: 16, size: 5.5, color: '#fe6', type: 'lightning', tx: x, ty: y });
+  particles.push({ x: _topX + (Math.random() - 0.5) * 26, y: _topY + 30, vx: 0, vy: 0, life: 12, maxLife: 12, size: 3, color: '#ff9', type: 'lightning', tx: x, ty: y });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.6, color: '#fff', type: 'lightning', tx: x, ty: y });
+  // (2) Descent streaks — sparks racing DOWN the bolt line. Motion toward
+  //     the target is what sells "from above" in a top-down camera.
+  for (let _i = 0; _i < 4; _i++) {
+    const _t = 0.3 + Math.random() * 0.6;
+    particles.push({ x: x + (_topX - x) * _t, y: y + (_topY - y) * _t,
+      vx: (x - _topX) * 0.045, vy: (y - _topY) * 0.045,
+      life: 7 + Math.floor(Math.random() * 4), maxLife: 11, size: 2 + Math.random() * 1.5,
+      color: Math.random() > 0.5 ? '#fff' : '#fe6', type: 'spark' });
+  }
+  // (3) Impact pop — segmented hitflash ring + the YELLOW SHOCKWAVE
+  //     (bigger + brighter than the storm-dash one, white rim, long linger).
+  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 16, color: '#fe6', type: 'hitflash' });
+  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 110, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.45, _alphaScale: 1.15 });
+  // (4) Radial ground forks — lightning crawling outward from the impact
+  for (let _i = 0; _i < 5; _i++) {
+    const _a = (_i / 5) * Math.PI * 2 + Math.random() * 0.8;
+    const _len = 34 + Math.random() * 30;
+    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.8,
+      color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len });
+  }
+  // (5) Spark burst + slow rising ionization motes (post-strike residue)
+  for (let _i = 0; _i < 12; _i++) {
+    const _a = Math.random() * Math.PI * 2, _s = 3 + Math.random() * 6;
+    particles.push({ x, y, vx: Math.cos(_a) * _s, vy: Math.sin(_a) * _s,
+      life: 9 + Math.floor(Math.random() * 6), maxLife: 15, size: 2 + Math.random() * 2,
+      color: Math.random() > 0.45 ? '#fe6' : '#fff', type: 'spark' });
+  }
+  for (let _i = 0; _i < 3; _i++) {
+    particles.push({ x: x + (Math.random() - 0.5) * 20, y: y + (Math.random() - 0.5) * 12,
+      vx: (Math.random() - 0.5) * 0.6, vy: -0.8 - Math.random() * 0.8,
+      life: 26 + Math.floor(Math.random() * 10), maxLife: 36, size: 2 + Math.random() * 1.5,
+      color: Math.random() > 0.5 ? '#fe6' : '#ff9', type: 'spark' });
+  }
+  // (6) Glitch chars — NECROWAVE signature on big procs
+  for (let _i = 0; _i < 2; _i++) {
+    particles.push({ x: x + (Math.random() - 0.5) * 30, y: y - 8 - Math.random() * 16,
+      vx: (Math.random() - 0.5) * 1.2, vy: -0.6, life: 16, maxLife: 16,
+      size: 9 + Math.random() * 4, color: '#fe6', type: 'glitchtext', text: '⚡' });
+  }
+  // (7) Scorch decal + feel: shake, zap crack, low thump
+  decals.push({ x, y, size: 16 + Math.random() * 10, alpha: 0.3, color: '#231a04' });
+  screenShake.intensity = Math.max(screenShake.intensity, 7);
+  playSfx('zap', 0.22, 0.03) || playSound(880, 0.07, 'sawtooth', 0.12);
+  playSound(110, 0.12, 'sine', 0.16);
 }
 function applyExposed(z) {
   if (!isHost) return;
@@ -22403,9 +22499,10 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
       });
     }
   }
-  // ARC ROUNDS — electric sparks + short jagged offshoots shoot off the enemy
+  // ARC ROUNDS — hits call down a LIGHTNING STRIKE (internal cooldown, see
+  // tryArcStrike). Sparks + offshoots stay as the per-hit arc identity.
   if (_m.arcRoundsLv > 0) {
-    applyCharged(z);
+    tryArcStrike(z, dmg);
     for (let _ai = 0; _ai < 6; _ai++) {
       const _aa = Math.random() * Math.PI * 2;
       const _as = 4 + Math.random() * 4;
@@ -29617,9 +29714,20 @@ function update() {
                         });
                       }
                     }
-                    // ARC ROUNDS: applies Shocked on hit. Chain fires in the universal block below.
-                    // Shocked is the conduit — any bullet hitting a Shocked enemy discharges a chain.
-                    if (_m.arcRoundsLv > 0) applyCharged(z);
+                    // ARC ROUNDS: hits call down a LIGHTNING STRIKE on the
+                    // target (internal cooldown — see tryArcStrike). SHOCKED
+                    // now comes from Storm Dash / OVERCHARGE / CHAIN CONDUIT.
+                    if (_m.arcRoundsLv > 0) {
+                      tryArcStrike(z, _dmg);
+                      // Baseline per-hit arc identity between strikes
+                      if (Math.random() < 0.5) {
+                        for (let _ai = 0; _ai < 2; _ai++) {
+                          const _aa = Math.random() * Math.PI * 2, _as = 2.5 + Math.random() * 3;
+                          particles.push({ x: z.x, y: z.y, vx: Math.cos(_aa) * _as, vy: Math.sin(_aa) * _as,
+                            life: 8, maxLife: 8, size: 2, color: Math.random() > 0.4 ? '#fe6' : '#fff', type: 'spark' });
+                        }
+                      }
+                    }
                     // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
                     // Vector Snap rare card scales knockback force + stagger (no damage amp).
                     if (_m.pulseShotLv > 0) {
