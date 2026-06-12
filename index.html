@@ -22800,7 +22800,6 @@ function _meleeHitVFX(z, isCrit, mainCol, srcX, srcY) {
   screenShake.intensity = Math.max(screenShake.intensity, isCrit ? 9 : 6);
   // Force the hit-flash on the enemy body harder (visible white tint)
   z.hitFlash = Math.max(z.hitFlash || 0, isCrit ? 16 : 12);
-  if (typeof z._compressFrames !== 'undefined') z._compressFrames = 5;
   // Bigger knockback nudge that gets read as recoil even on small hits
   if (_hasDir) {
     z.vx += Math.cos(_dirA) * (isCrit ? 1.8 : 1.2);
@@ -26149,6 +26148,49 @@ function _teleBodyScale(z) {
   // 'tense' / 'point' / unknown — no morph
   return null;
 }
+// ---- HIT REACTION: recoil punch + jelly squash (visual only) ----
+// Physical "felt" response to damage: the body kicks back a few px along the
+// hit direction, compresses along that axis while bulging perpendicular
+// (bubble deform), then springs back through a damped oscillation. Pure
+// renderer state — never mutates z.x/z.y, so gameplay positions, collision,
+// and network sync are untouched. Each client triggers it from its own
+// damage signal (damageZombie on host, bullet contact + sync edge on
+// non-host) so it reads identically in multiplayer.
+function triggerHitReact(z, dx, dy, dmg) {
+  if (!z || z.hp <= 0) return;
+  let ang = z._hrAngle;
+  if (dx * dx + dy * dy > 0.0001) ang = Math.atan2(dy, dx);
+  else if (ang === undefined) {
+    // No direction (point-blank AoE etc.) — recoil away from the local player
+    const lp = (typeof getLocalPlayer === 'function') && getLocalPlayer();
+    ang = lp ? Math.atan2(z.y - lp.y, z.x - lp.x) : Math.random() * Math.PI * 2;
+  }
+  // Mass resist: small bodies really pop, tanks/bosses barely budge
+  const mass = Math.pow(13 / (z.radius || 13), 0.6);
+  const str = (0.6 + Math.min(0.8, (+dmg || 10) / 90)) * mass;
+  z._hrAngle = ang;
+  z._hrAmp = Math.min(1.5, Math.max(z._hrAmp || 0, str));
+  z._hrT = 0;
+}
+// Per-frame visual state for the hit reaction. Damped sine: punch out fast,
+// overshoot back past rest, settle — reads as jelly. Ticks its own timer
+// (called once per render frame per on-screen zombie). Returns null at rest.
+function _hitReactVisual(z) {
+  const amp = z._hrAmp || 0;
+  if (amp <= 0) return null;
+  const t = (z._hrT = (z._hrT || 0) + 1);
+  const env = Math.exp(-t * 0.13) * amp;
+  if (env < 0.04) { z._hrAmp = 0; return null; }
+  const osc = Math.sin(t * 0.62) * env;
+  const push = osc * Math.min((z.radius || 13) * 0.5, 12);
+  return {
+    ox: Math.cos(z._hrAngle) * push,
+    oy: Math.sin(z._hrAngle) * push,
+    ang: z._hrAngle,
+    sq: Math.max(0.6, 1 - osc * 0.34), // compress along hit axis
+    st: 1 + osc * 0.26,                // bulge perpendicular
+  };
+}
 function _drawTelegraph(z, _zr) {
   const te = z._tele; if (!te) return;
   // Auto-clear stale telegraphs: if this telegraph wasn't refreshed in the
@@ -26512,6 +26554,10 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // used by color blending / network sync. Reset to the same 3-frame
   // window for every hit type so the flash is consistent.
   z._hfPulse = 3;
+  // Physical hit reaction — recoil + jelly wobble (visual only). Silent hits
+  // (DoT ticks, collision chip damage) don't punch the body, matching the
+  // hit-stop/zoom policy above.
+  if (!silent) triggerHitReact(z, kbx, kby, damage);
   z.vx+=kbx*kbScale*_exposedKbMult*_frozenKbMult;z.vy+=kby*kbScale*_exposedKbMult*_frozenKbMult;
   // SLIDE: every hit launches a SLID enemy. Enforce a knockback FLOOR so even
   // low-knockback weapons send them flying (pulse "push class" identity). Tops
@@ -29840,12 +29886,19 @@ function update() {
         if(_vhit){
         // Per-bullet hit dedup — same enemy can't be hit twice as it pierces
         if (b._hitZombies && b._hitZombies.has(z.zid)) continue;
+        // Physical hit reaction on every locally-rendered bullet impact —
+        // covers my own predicted hits AND other players' bullets, so
+        // enemies visibly flinch on all clients without waiting for sync.
+        triggerHitReact(z, b.x - _bpx, b.y - _bpy, b.damage || 15);
         // Client-side hit prediction: speculative damage for immediate visual feedback
         // (host confirms on next sync — any mismatch self-corrects silently)
         const predDmg = b.damage || WEAPON_DEFS[getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon]?.type||'pistol']?.damage || 10;
         if(b.ownerId===myId && predDmg > 0) {
           const wasAlive = z.hp > 0;
-          z.hp -= predDmg; z.hitFlash = 6;
+          // _hfPulse alongside hitFlash so the instant white pop shows on
+          // predicted hits too (the sync edge can't fire — local hp already
+          // dropped, so nz.hp < oz.hp is false when the host state arrives).
+          z.hp -= predDmg; z.hitFlash = 6; z._hfPulse = 3;
           // Track weapon evolution kills on non-host via predicted kills
           if(wasAlive && z.hp <= 0){const _cw=getLocalPlayer()?.weapons[getLocalPlayer()?.currentWeapon];if(_cw)trackWeaponKill(_cw.type);}
           // Predicted blood splatter (immediate, not waiting for host sync)
@@ -32880,6 +32933,20 @@ function applyHostState(msg) {
       // Trigger the short white pop on non-host too — damageZombie does
       // this on host; here we mirror it via the damage edge.
       oz._hfPulse = 3;
+      // Mirror the physical hit reaction for damage we couldn't predict
+      // locally (host melee, DoT procs, explosions). Skip if a reaction is
+      // already in flight (local bullet contact) so one hit doesn't wobble
+      // twice. Direction is unknown here — guess away from the nearest
+      // alive player, the most likely damage source.
+      if (!(oz._hrAmp > 0 && (oz._hrT || 0) < 12)) {
+        let _hnp = null, _hnd = Infinity;
+        for (const _pp of players) {
+          if (!_pp.alive) continue;
+          const _pd = (oz.x - _pp.x) * (oz.x - _pp.x) + (oz.y - _pp.y) * (oz.y - _pp.y);
+          if (_pd < _hnd) { _hnd = _pd; _hnp = _pp; }
+        }
+        triggerHitReact(oz, _hnp ? oz.x - _hnp.x : 0, _hnp ? oz.y - _hnp.y : 0, dmg);
+      }
     }
   }
   // Generate death effects for zombies that were killed
@@ -37111,7 +37178,10 @@ function render() {
     // Apply telegraph shake to the body translate so the whole creature
     // jitters as it winds up (visuals only — z.x/z.y aren't mutated).
     const _tShk = _teleShakeOffset(z);
-    ctx.save();ctx.translate(z.x + _tShk.x, z.y + _tShk.y);ctx.rotate(z.angle);
+    // Hit reaction: world-space recoil offset on the translate, jelly squash
+    // after the rotate (axis-aligned to the hit direction).
+    const _hr = _hitReactVisual(z);
+    ctx.save();ctx.translate(z.x + _tShk.x + (_hr ? _hr.ox : 0), z.y + _tShk.y + (_hr ? _hr.oy : 0));ctx.rotate(z.angle);
     if(z._spawnAnim>0){
       const t=1-z._spawnAnim/(z._spawnAnimMax||30);
       const sc=0.25+t*0.75;
@@ -37122,6 +37192,12 @@ function render() {
     if (_tBs) {
       ctx.scale(_tBs.sx, _tBs.sy);
       if (_tBs.rot) ctx.rotate(_tBs.rot);
+    }
+    // Hit-reaction squash: compress along the hit axis, bulge perpendicular.
+    // The axis is world-space, so counter-rotate by the body angle first.
+    if (_hr) {
+      const _hla = _hr.ang - z.angle;
+      ctx.rotate(_hla); ctx.scale(_hr.sq, _hr.st); ctx.rotate(-_hla);
     }
     // ---- BOSS: CORRUPTED ADMIN PROCESS — complex geometric render ----
     // Multi-layered: outer rotating wireframe rings, inner pulsing tesseract core,
