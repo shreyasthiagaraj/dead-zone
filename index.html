@@ -31756,10 +31756,16 @@ function update() {
           const _inObs = obstacleCollision(_cX, _cY, z.radius, false);
           if (_outX || _outY || _inObs) {
             z.x = _cX; z.y = _cY;
-            if (_outX) z.vx *= -0.45;
-            if (_outY) z.vy *= -0.45;
-            // Internal obstacle without axis-clamp signal — reflect both
-            if (_inObs && !_outX && !_outY) { z.vx *= -0.45; z.vy *= -0.45; }
+            // Bounce retention scales with how DIRECTLY the enemy hits the wall:
+            // a head-on impact (velocity aligned with the wall normal) sheds
+            // most of its momentum so it doesn't rocket straight back into the
+            // player, while a glancing hit keeps more and slides along the wall.
+            const _bSpd = Math.hypot(z.vx, z.vy) || 1;
+            if (_outX) { const _dirX = Math.abs(z.vx) / _bSpd; z.vx *= -(0.45 * (1 - 0.8 * _dirX)); }
+            if (_outY) { const _dirY = Math.abs(z.vy) / _bSpd; z.vy *= -(0.45 * (1 - 0.8 * _dirY)); }
+            // Internal obstacle without axis-clamp signal — reflect both and
+            // damp hard (treated as a near head-on hit) so it doesn't ricochet.
+            if (_inObs && !_outX && !_outY) { z.vx *= -0.2; z.vy *= -0.2; }
             _hitWallThisFrame = true;
             if (_outX || _outY) _hitBoundaryThisFrame = true;
             break;
@@ -32471,7 +32477,9 @@ function update() {
   // player doesn't end up glued to the far side of the screen. Without wiggle the
   // camera hard-stops at the wall and the player slides off-center; with wiggle
   // the camera is allowed to drift a bit into the void past the edge.
-  {
+  // ARCADE: skip the clamp entirely — the player stays PERFECTLY centered at all
+  // times (even near the arena edge), so the view never pans away for visibility.
+  if (gameMode !== 'arcade') {
     const _hw = canvas.width / 2, _hh = canvas.height / 2;
     const _wiggleX = canvas.width * 0.18;  // up to ~18% of screen may show past edge
     const _wiggleY = canvas.height * 0.18;
