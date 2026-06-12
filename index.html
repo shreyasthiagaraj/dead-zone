@@ -2269,8 +2269,8 @@ const UPGRADE_POOL = [
     flavor:'parallel processes. both stick.' },
   // ---- SPIKE RING CLASSES (AoE centered on player — no projectile) ----
   { id:'eruption_ring', name:'THERMAL MINE', rarity:'rare', max:1, icon:'\uD83D\uDCA3', color:'#f60',
-    descs:['Your SPIKE drops a fire mine. Enemies that get close trigger it; it also goes off after 6s.'],
-    flavor:'plant. bait. wait.' },
+    descs:['Your SPIKE drops a fire mine. Enemies that get close trigger it; it expires after 6s. Out of charges? Press SPIKE to detonate all your mines at once.'],
+    flavor:'plant. bait. wait. (or blow them all at once.)' },
   { id:'cryo_dome', name:'CRYO BLAST', rarity:'rare', max:1, icon:'\uD83E\uDDCA', color:'#8ef',
     descs:['Your SPIKE becomes a CHILL gas burst that leaves a 2s ice wall.'],
     flavor:'freeze the lane. wall it off.' },
@@ -2428,8 +2428,8 @@ const UPGRADE_POOL = [
     descs:['Every 4th beacon shot fires a 3-burst.'], flavor:'controlled burst protocol.', prereqs:['rapid_turret'] },
   { id:'smart_turret', name:'SMART TURRET', rarity:'rare', max:1, icon:'◎', color:'#0ff',
     descs:['Beacon prioritizes the enemy you\'re attacking.'], flavor:'coordinated targeting.', prereqs:['beacon_range'] },
-  { id:'surge_accel', name:'SURGE ACCELERATE', rarity:'rare', max:1, icon:'↔', color:'#f60',
-    descs:['DISCHARGE wave accelerates as it travels.'], flavor:'the signal gains speed.', prereqs:['surge_range'] },
+  { id:'surge_accel', name:'SURGE FORCE', rarity:'rare', max:1, icon:'↔', color:'#f60',
+    descs:['DISCHARGE shoves enemies 50% farther — more breathing room.'], flavor:'put real distance between you and them.', prereqs:['surge_range'] },
   { id:'aftershock_vuln', name:'AFTERSHOCK VULN', rarity:'rare', max:1, icon:'◎', color:'#f60',
     descs:['Staggered enemies take +25% damage for 2s.'], flavor:'broken defenses stay broken.', prereqs:['aftershock'] },
   { id:'concussive_vuln', name:'CONCUSSIVE VULN', rarity:'rare', max:1, icon:'◯', color:'#fa0',
@@ -5336,6 +5336,25 @@ function maybeDropXPOrb(zombie) {
 // Expected totals per ~500-kill run (roughly):
 //   ~6 element drops, ~4 power-ups, ~9 health, ~6 ammo
 // That's rare-but-felt — notable drops every ~20-30 kills, not a flood.
+// Spawn a bits payout as a CLUSTER of low-value coins (capped per coin) rather
+// than a single high-value pickup — reads as a satisfying pile to sweep up and
+// keeps any one coin from being worth a lot. Count is capped for perf.
+function spawnBitsCluster(x, y, total) {
+  total = Math.max(0, Math.floor(total || 0));
+  if (total <= 0) return;
+  const MAX_COIN = 4;    // value cap per coin
+  const MAX_COINS = 14;  // count cap (perf)
+  const count = Math.min(MAX_COINS, Math.max(2, Math.ceil(total / MAX_COIN)));
+  const base = Math.floor(total / count);
+  let extra = total - base * count;
+  for (let i = 0; i < count; i++) {
+    let v = base; if (extra > 0) { v++; extra--; } if (v <= 0) v = 1;
+    const a = Math.random() * Math.PI * 2;
+    const d = 10 + Math.random() * 42;
+    pickups.push({ type: 'bits', amount: v, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, bobTimer: Math.random() * Math.PI * 2 });
+  }
+}
+
 function maybeDropPickup(zombie) {
   if (!zombie || !isHost) return;
   const t = zombie.type;
@@ -5412,7 +5431,7 @@ function maybeDropPickup(zombie) {
   } else if (kind === 'health') {
     pickups.push({ type: 'health', amount: 20, x, y, bobTimer: Math.random() * Math.PI * 2 });
   } else if (kind === 'bits') {
-    pickups.push({ type: 'bits', amount: 3 + Math.floor(Math.random() * 4), x, y, bobTimer: Math.random() * Math.PI * 2 });
+    spawnBitsCluster(x, y, 10 + Math.floor(Math.random() * 9)); // capped-value coin pile
   }
 }
 
@@ -10330,7 +10349,7 @@ const WEAPON_DEFS = {
   // Ripper: melee cone slash + forward lunge. No ammo, no reload, no projectiles.
   // Damage flat-ish so power scales with positioning, not stats. Risk premium of
   // closing the distance compensated by cleave + knockback.
-  ripper: { name: 'Ripper', color: '#4ff', bulletColor: '#4ff', damage: 80, fireRate: 320, bulletSpeed: 0, spread: 0, magSize: 999, bulletSize: 0, knockback: 12, pierce: 0, infinite: true, shakeIntensity: 4, aimLine: 'none', _melee: true, _coneAngle: Math.PI * 110 / 180, _coneRange: 80, _lungeDistance: 25, sound: { freq: 700, duration: 0.06, type: 'sawtooth' } },
+  ripper: { name: 'Ripper', color: '#4ff', bulletColor: '#4ff', damage: 80, fireRate: 320, bulletSpeed: 0, spread: 0, magSize: 999, bulletSize: 0, knockback: 12, pierce: 0, infinite: true, shakeIntensity: 4, aimLine: 'none', _melee: true, _coneAngle: Math.PI * 110 / 180, _coneRange: 105, _lungeDistance: 25, sound: { freq: 700, duration: 0.06, type: 'sawtooth' } },
   // Deadshot: charge weapon. Hold the trigger to charge, release to fire one
   // heavy shot. Damage and knockback scale with charge. Single-target unless
   // the OVERPENETRATE mod card is owned. _charge flag routes input handling.
@@ -14059,7 +14078,7 @@ function _renderLevelupCards() {
       <div style="align-self:center; font-size:11px; font-weight:bold; letter-spacing:2px; color:${_rarCol}; background:${_rarBg}; border:1px solid ${_rarCol}; border-radius:10px; padding:2px 12px; margin-bottom:2px; text-shadow:0 0 6px ${_rarCol}">${_rarLabel}</div>
       <div style="font-size:30px; line-height:1; color:${u.color}; text-shadow:0 0 10px ${u.color}, 0 0 18px ${u.color}; margin-bottom:4px">${u.icon}</div>
       <div style="font-size:13px; font-weight:bold; letter-spacing:1.5px; color:${u.color}; text-shadow:0 0 6px ${u.color}">${u.name}</div>
-      <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${owned?`LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}`:'NEW'}</div>
+      <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${owned?`LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}`:''}</div>
       ${_replaces ? `<div style="font-size:10px; letter-spacing:1px; color:#fa0; text-transform:uppercase; font-weight:bold">↻ Replaces ${_replaces.name}</div>` : ''}
       <div style="font-size:12px; color:#fff; line-height:1.45; margin-top:2px; text-align:left; font-weight:700">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
       ${''/* flavor subtext removed from mod cards per design — description only */}
@@ -17201,13 +17220,26 @@ function drawLobShadow(ctx, gx, gy, altitudeFrac, baseSize) {
 function _spikeColor(sp) {
   if (!sp || !sp.classId) return '#f44';
   // OVERLOAD SPIKE: tint gold so the overload variant is visually obvious.
-  if (sp._overload) return '#ff0';
+  if (sp._overload) return '#fd0'; // golden
   return sp.classId === 'thermal' || sp.classId === 'eruption' ? '#f60'
     : sp.classId === 'cryo' || sp.classId === 'cryodome' ? '#8ef'
     : sp.classId === 'arc' || sp.classId === 'discharge' ? '#fe6'
     : sp.classId === 'pulse' || sp.classId === 'impact' ? '#cef'
     : sp.classId === 'corrupt' || sp.classId === 'plague' ? '#a4f'
     : '#fff';
+}
+
+// Color of the equipped DASH-trail (wake) class, used to tint the player while
+// dashing so the dash reads as its element. Wakes are mutually exclusive, so at
+// most one is active; falls back to default cyan when no wake is equipped.
+function _dashClassColor() {
+  const ru = runUpgrades || {};
+  if (ru.burnout_wake) return '#f60'; // IGNITION TRAIL (thermal)
+  if (ru.cryo_wake)    return '#8ef'; // COLD FRONT (cryo)
+  if (ru.static_wake)  return '#fe6'; // STORM DASH (arc)
+  if (ru.kinetic_wake) return '#cef'; // KINETIC WAKE (pulse)
+  if (ru.glitch_wake)  return '#a4f'; // BLIGHT ZONE (corrupt)
+  return '#0ff';
 }
 
 // Throws a spike from the local player. The class flavor on the equipped
@@ -17217,10 +17249,24 @@ function throwSpike() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
-  // THERMAL MINE: no manual detonation — pressing Spike just drops another
-  // mine. Mines arm on the ground and trigger when an enemy steps into the
-  // proximity zone (or when they expire). Bait-and-wait, not click-to-pop.
-  if ((lp._spikeCharges || 0) <= 0) return;
+  // THERMAL MINE: pressing Spike lays a mine while you still have charges.
+  // Once you're OUT of charges, pressing Spike again DETONATES every laid mine
+  // at once. (Enemies also trigger mines by proximity, and mines expire after
+  // 6s, so the press is a manual "blow them all now" option.)
+  if ((lp._spikeCharges || 0) <= 0) {
+    if (_spikeClass() === 'eruption') {
+      const _armedMines = spikes.filter(s => s.classId === 'eruption' && s.phase === 'armed');
+      if (_armedMines.length > 0) {
+        for (const mine of _armedMines) mine._detonate = true;
+        addFloatingText(lp.x, lp.y - PLAYER_RADIUS - 16, '☢ DETONATE ☢', '#f60');
+        screenShake.intensity = Math.max(screenShake.intensity, 8);
+        playSound(220, 0.10, 'sawtooth', 0.16);
+        playSound(80, 0.18, 'sawtooth', 0.18);
+        setTimeout(() => playSound(900, 0.05, 'square', 0.08), 30);
+      }
+    }
+    return;
+  }
   lp._spikeCharges--;
   if (lp._spikeRecharge <= 0) lp._spikeRecharge = SPIKE_RECHARGE_FRAMES;
   const a = lp.angle || 0;
@@ -19873,10 +19919,9 @@ function updateDischarge() {
     // Ease-out: starts ~73 px/frame, decays via (1-pct)^1.3 so the shockwave
     // reads as losing energy as it spreads. Snappy: hits max in ~6-8 frames.
     const _expandPct = w.radius / w.maxRadius;
-    // CARD: SURGE ACCELERATE — invert the decel curve so the wave speeds up
-    const _speed = _m.surgeAccel
-      ? (15 + 80 * Math.pow(_expandPct, 1.2))
-      : (70 * Math.pow(1 - _expandPct, 1.3) + 3);
+    // Decel curve — wave reads as losing energy as it spreads. (SURGE FORCE,
+    // formerly the wave-accelerate card, now boosts shove distance instead.)
+    const _speed = (70 * Math.pow(1 - _expandPct, 1.3) + 3);
     w.radius = Math.min(w.maxRadius, w.radius + _speed);
 
     // Dust trail particles — emit every frame so the trail stays continuous
@@ -20183,35 +20228,36 @@ function updateDischarge() {
         w._lastHitSoundFrame = gameTime;
         if (!playSfx('zombie_hit', 0.45, 0.07)) playSound(220, 0.07, 'square', 0.10, 0.07);
       }
-      const pushDir = d > 0.1 ? 1 : 0;
-      const pushX = pushDir ? (dx/d)*48 : Math.cos(w.angle)*48;
-      const pushY = pushDir ? (dy/d)*48 : Math.sin(w.angle)*48;
+      const _nx = d > 0.1 ? (dx/d) : Math.cos(w.angle);
+      const _ny = d > 0.1 ? (dy/d) : Math.sin(w.angle);
       // Damage ramps with charge (30 base → 45 at full), then a discrete
       // +40% MAX-CHARGE payoff for topping the bar all the way off.
       const _chargeDmgMult = 1 + 0.5 * (w.chargePct || 0);
       const _maxChargeBonus = (w.chargePct || 0) >= 0.95 ? 1.3 : 1;
       const baseDmg = Math.floor(30 * _dmgMult * _chargeDmgMult * _maxChargeBonus);
-      // Silent — wave has its own per-hit ring + sparks below, and big wave
-      // VFX is already loud. Skipping the 50-particle impact storm prevents
-      // FPS drops when the wave sweeps a cluster.
-      // SINGULARITY: cut outward knockback to 15% so the gravity-well pull
-      // keeps enemies inside maxRadius. Without this the wave's own push
-      // could fling enemies past the well's reach before the collapse fires.
-      // RESIDUAL FIELD: damp knockback to 35% so enemies don't get flung clear
-      // of the lingering damage zone — they stay put and cook in the field.
-      const _pushMul = w._singularity ? 0.15 : (_m.residualField > 0 ? 0.35 : 1.0);
-      // Mark enemy as hit by discharge (for CASCADE) BEFORE applying damage —
-      // otherwise the discharge's own kill happens with the flag still unset
-      // and the CASCADE shockwave (checked inside damageZombie's death block)
-      // never fires on the most common case: the discharge killing the enemy.
+      // SINGULARITY pulls IN (the gravity well does the work) so the outward
+      // shove is minimal. RESIDUAL FIELD damps it so enemies stay in the zone.
+      const _pushMul = w._singularity ? 0.12 : (_m.residualField > 0 ? 0.4 : 1.0);
       z._hitByDischarge = true;
-      damageZombie(z, baseDmg, pushX*0.7*_pushMul, pushY*0.7*_pushMul, true);
-      // Base wave push — restored to original strength for every element. The
-      // arc-protocol "head and shoulders" knockback was NOT this push: it was
-      // SHOCKED enemies sliding on 0.85 friction for ~1s (vs a 0.7/25f stagger),
-      // so the same push flung them far further. That's damped in the chain
-      // branch below instead.
-      z.vx += pushX * 4.5 * _pushMul * _kbSizeScale(z); z.vy += pushY * 4.5 * _pushMul * _kbSizeScale(z);
+      // ---- "GET AWAY FROM ME" SHOVE ----
+      // Discharge clears space UNIFORMLY: every enemy is shoved outward toward
+      // the wave's bounds regardless of weight (no _kbSizeScale), so heavy
+      // enemies no longer shrug it off and light ones don't rocket away — they
+      // all get cleared out to roughly the wave radius. SLIDE (exposed) enemies,
+      // and wind/PULSE discharges (which apply SLIDE), get a big extra launch:
+      // the one case with real long-distance knockback. SURGE FORCE: edge +50%.
+      const _surge = _m.surgeAccel ? 1.5 : 1.0;
+      const _edge = w.maxRadius * _surge;
+      const _gap = Math.max(70, _edge - d);
+      const _shoveV = Math.min(30, _gap * 0.16) * _pushMul;
+      const _isSlide = z._exposed || w.classId === 'wind';
+      if (w._singularity) {
+        z.vx += _nx * _shoveV; z.vy += _ny * _shoveV;
+      } else {
+        z.vx = _nx * _shoveV; z.vy = _ny * _shoveV; // SET → uniform, weight-independent
+        if (_isSlide) { z.vx += _nx * _shoveV * 2.6; z.vy += _ny * _shoveV * 2.6; }
+      }
+      damageZombie(z, baseDmg, 0, 0, true);
       // Per-enemy hit flash when wave passes through
       particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 6, maxLife: 6, size: z.radius + 12, color: w.color, type: 'wakering' });
       for (let _wi = 0; _wi < 3; _wi++) {
@@ -20229,12 +20275,9 @@ function updateDischarge() {
       if (w.classId === 'chain') applyCharged(z); // SHOCKED is now plain stun (0.7 friction) — no over-slide, so no damp needed
       if (w.classId === 'wind') {
         applyExposed(z);
-        // PULSE PROTOCOL on discharge: heavy outward shove on top of the
-        // base wave push so enemies actually fly back from the kinetic
-        // shockwave (matches the protocol's identity).
-        // Suppressed under SINGULARITY — the well wants enemies STAYING
-        // in, not catapulting past the boundary.
-        if (!w._singularity) { z.vx += pushX * 3.0 * _kbSizeScale(z); z.vy += pushY * 3.0 * _kbSizeScale(z); }
+        // PULSE PROTOCOL discharge already got the big SLIDE launch above
+        // (_isSlide includes wind class). Just extend the stagger so the long
+        // slide reads as a kinetic catapult.
         z.staggerTimer = Math.max(z.staggerTimer || 0, 45);
       }
       if (w.classId === 'corrupt') applyCorrupt(z, 2);
@@ -20971,24 +21014,24 @@ const RIPPER_COMBO = [
   // 1. SLASH — quick light L->R cut opens the combo (no initial lunge;
   //    the dash-strike is the only way to start with a forward thrust).
   // Range tuned so the sword fights at close-to-mid distance.
-  { kind:'arcswipe',     range:  80, cone: Math.PI * 0.7,    damage: 12, knockback: 35, stagger:  8, cooldown:  95, color:'#fe6', tone: 820, dir:  1, label:'SLASH',
+  { kind:'arcswipe',     range: 105, cone: Math.PI * 0.7,    damage: 12, knockback: 35, stagger:  8, cooldown:  95, color:'#fe6', tone: 820, dir:  1, label:'SLASH',
     swingDelta: Math.PI * 0.7,  swingFollowPrev: true },
   // 3. 180 deg ARC SWIPE — the big half-circle middle of the combo
-  { kind:'arcswipe',     range:  98, cone: Math.PI,          damage: 18, knockback: 55, stagger: 12, cooldown: 125, color:'#fe6', tone: 720, dir: -1, label:'ARC',
+  { kind:'arcswipe',     range: 128, cone: Math.PI,          damage: 18, knockback: 55, stagger: 12, cooldown: 125, color:'#fe6', tone: 720, dir: -1, label:'ARC',
     swingDelta: Math.PI,       swingFollowPrev: true },
   // 4. CROSS — quick R->L counter slash (mirror of strike 2)
-  { kind:'arcswipe',     range:  86, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 10, cooldown:  95, color:'#fe6', tone: 680, dir:  1, label:'CROSS',
+  { kind:'arcswipe',     range: 112, cone: Math.PI * 0.7,    damage: 14, knockback: 42, stagger: 10, cooldown:  95, color:'#fe6', tone: 680, dir:  1, label:'CROSS',
     swingDelta: Math.PI * 0.75, swingFollowPrev: true },
   // 5. 270 deg SPIN — three-quarter revolution windup, continues out of the
   //    previous strike's end angle. Flows straight into the finisher lunge.
-  { kind:'arcswipe',     range: 104, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 22, cooldown: 130, color:'#fe6', tone: 480, dir: -1, label:'270 SPIN',
+  { kind:'arcswipe',     range: 135, cone: Math.PI * 1.5,    damage: 30, knockback: 90, stagger: 22, cooldown: 130, color:'#fe6', tone: 480, dir: -1, label:'270 SPIN',
     swingDelta: Math.PI * 1.5, swingFollowPrev: true },
   // 6. FINISHER LUNGE — the climax: a committed forward thrust that drives
   //    through whatever the spin opened up. Shorter reach than the spin
   //    (90 vs 104) but heavier knockback (175 vs 90) and an unconditional
   //    forward dash regardless of whether an enemy is in front — the
   //    motion IS the commitment.
-  { kind:'forwardlunge', range: 90, cone: Math.PI * 34/180, damage: 42, knockback: 175, stagger: 28, cooldown: 165, color:'#f60', tone: 540, dir:  0, label:'FINISHER!',
+  { kind:'forwardlunge', range: 118, cone: Math.PI * 34/180, damage: 42, knockback: 175, stagger: 28, cooldown: 165, color:'#f60', tone: 540, dir:  0, label:'FINISHER!',
     lungeDistance: 110, finisher: true },
 ];
 // Brief delay between one combo finishing and the next combo's first strike.
@@ -21094,7 +21137,15 @@ function _swingMelee(p, def) {
   // Capture explicit start/end angles for the swing animation. The renderer
   // interpolates between these with no lerp catch-up — clean, decisive
   // motion that lingers at the END angle when the swing finishes.
-  if (step.kind === 'forwardlunge' || step.kind === 'jab' || step.kind === 'lungestrike') {
+  // RIPOSTE: when the parry counter is armed, the swing VISUALLY sweeps a full
+  // 360° revolution (matches the full-circle damage cone) regardless of which
+  // combo step this is — so the counter actually reads as a spin, not a slash.
+  const _riposteSpinVis = ((runMods||{}).riposte) && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil;
+  if (_riposteSpinVis) {
+    const _spinStart = (p._rBladeAngle !== undefined) ? p._rBladeAngle : -Math.PI * 0.5;
+    p._rSwingStartAngle = _spinStart;
+    p._rSwingEndAngle = _spinStart + Math.PI * 2 * (step.dir >= 0 ? 1 : -1); // full revolution
+  } else if (step.kind === 'forwardlunge' || step.kind === 'jab' || step.kind === 'lungestrike') {
     // Thrust strikes — start from current pose, end pointing straight forward.
     // Clamp the start so thrust doesn't visibly windup from behind the player
     // if the previous swing left the blade off-axis.
@@ -25909,9 +25960,8 @@ function dropZombieLoot(z) {
     _bossDeathFreeze = 30;
     // 3 health pickups of 15 HP each
     for(let i=0;i<3;i++){const a=Math.random()*Math.PI*2,d=20+Math.random()*40;pickups.push({type:'health',amount:15,x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
-    // 6-8 bits pickups scattered outward
-    const _bitsCount=6+Math.floor(Math.random()*3);
-    for(let i=0;i<_bitsCount;i++){const a=(i/_bitsCount)*Math.PI*2+Math.random()*0.5,d=30+Math.random()*50;pickups.push({type:'bits',amount:5+Math.floor(Math.random()*4),x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
+    // Big bits payout as a capped-value coin pile (large group to sweep up).
+    spawnBitsCluster(z.x, z.y, 44 + Math.floor(Math.random() * 24));
     // Floating text
     addFloatingText(z.x,z.y-z.radius-30,'BOSS DEFEATED',_bossColor);
     // Checkpoint save + heal moved to checkpoint room (appears after walking through door)
@@ -32392,9 +32442,12 @@ function update() {
     cameraOffset.x = lerp(cameraOffset.x, targetOffX, 0.018);
     cameraOffset.y = lerp(cameraOffset.y, targetOffY, 0.018);
   }
+  // ARCADE keeps the player dead-centered (no aim look-ahead offset) so the
+  // arena reads symmetrically around them. Other modes keep the look-ahead.
+  const _camOff = (gameMode === 'arcade') ? 0 : 1;
   if (isMobile) {
-    camera.x = lerp(camera.x, camTarget.x + cameraOffset.x, 0.1);
-    camera.y = lerp(camera.y, camTarget.y + cameraOffset.y, 0.1);
+    camera.x = lerp(camera.x, camTarget.x + cameraOffset.x * _camOff, 0.1);
+    camera.y = lerp(camera.y, camTarget.y + cameraOffset.y * _camOff, 0.1);
   } else {
     // Desktop: camera follows the player in trench AND arcade (the arcade
     // arena is bigger than the screen, so a fixed arena-center camera lets the
@@ -32403,8 +32456,8 @@ function update() {
     let _camTX = ARENA_W / 2, _camTY = ARENA_H / 2;
     if (gameMode === 'trench' || gameMode === 'arcade') {
       // Follow player like mobile does — the playfield is larger than the screen
-      _camTX = camTarget.x + cameraOffset.x;
-      _camTY = camTarget.y + cameraOffset.y;
+      _camTX = camTarget.x + cameraOffset.x * _camOff;
+      _camTY = camTarget.y + cameraOffset.y * _camOff;
     } else if (gameMode === 'descent' && descentSections && descentSections[descentSection]) {
       const _sec = descentSections[descentSection];
       const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
@@ -35820,14 +35873,26 @@ function render() {
     // hardcoded body radii across all class branches without per-class edits.
     const _isOvr = !!sp._overload;
     if (_isOvr) {
-      // Overload aura — pulsing bright-yellow ring so an overloaded spike reads
-      // as charged/yellow at a glance (not just bigger). Drawn unscaled.
+      // Overload aura — pulsing GOLDEN ring + twinkling star sparkles so an
+      // overloaded spike reads as "golden / charged" at a glance. Drawn unscaled.
       const _ovP = 0.6 + Math.sin(_spt * 0.02) * 0.4;
       const _ovR = (sp.radius || 22) * 1.5 + 8;
-      ctx.globalAlpha = 0.18 * _ovP; ctx.fillStyle = '#ff0';
+      ctx.globalAlpha = 0.18 * _ovP; ctx.fillStyle = '#fd0';
       ctx.beginPath(); ctx.arc(sp.x, sp.y, _ovR, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 0.55 * _ovP; ctx.strokeStyle = '#ff0'; ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.6 * _ovP; ctx.strokeStyle = '#fe6'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(sp.x, sp.y, _ovR, 0, Math.PI * 2); ctx.stroke();
+      // Twinkling 4-point gold star sparkles orbiting the spike.
+      for (let _sk = 0; _sk < 5; _sk++) {
+        const _ska = (_spt * 0.0016) + _sk * (Math.PI * 2 / 5);
+        const _skTw = 0.35 + 0.65 * Math.abs(Math.sin(_spt * 0.012 + _sk * 1.7));
+        const _skx = sp.x + Math.cos(_ska) * (_ovR + 4);
+        const _sky = sp.y + Math.sin(_ska) * (_ovR + 4);
+        const _skR = 2 + _skTw * 3;
+        ctx.globalAlpha = _skTw; ctx.fillStyle = _sk % 2 ? '#fff' : '#fe6';
+        // 4-point star: two crossed thin rects
+        ctx.fillRect(_skx - _skR, _sky - 0.7, _skR * 2, 1.4);
+        ctx.fillRect(_skx - 0.7, _sky - _skR, 1.4, _skR * 2);
+      }
       ctx.globalAlpha = 1;
       ctx.save();
       ctx.translate(sp.x, sp.y);
@@ -38221,8 +38286,9 @@ function render() {
     const _ragePulse = _rageActive ? (0.85 + Math.sin(performance.now()*0.018)*0.15) : 1;
     const _rageColor = _rageActive ? (Math.sin(performance.now()*0.012) > 0 ? '#f44' : '#f60') : null;
     const _pc=p.damageFlash>0?'#f44':(_rageColor||_elemColor||p.color);
-    // Dash override: body glows bright cyan (or element color) during dash
-    const _dashColor = _isDashing ? '#0ff' : null;
+    // Dash override: body glows the equipped DASH-trail class color during dash
+    // (cyan default). Remote players keep cyan since their wake isn't synced.
+    const _dashColor = _isDashing ? (p === getLocalPlayer() ? _dashClassColor() : '#0ff') : null;
     const _bodyColor = _dashColor || _pc;
     ctx.shadowColor=_bodyColor;ctx.shadowBlur=_isDashing?30:(_elemColor?20:15);
     ctx.fillStyle=_bodyColor;ctx.globalAlpha=_isDashing?0.3:(_elemColor?0.18:0.12);ctx.beginPath();ctx.arc(0,0,PLAYER_RADIUS+(_isDashing?8:(_elemColor?5:3)),0,Math.PI*2);ctx.fill();
@@ -40359,13 +40425,9 @@ function _drawPerfHud() {
   ctx.fillText(_RENDER_MIN_MS < 20 ? 'cap 60fps' : 'cap 30fps (saver)', 12, 62);
   ctx.restore();
 }
-// On-device toggle for the perf HUD: a 3-finger tap flips it on/off (no URL/
-// console needed inside the Capacitor app). Temporary diagnostic.
-try {
-  document.addEventListener('touchstart', (e) => {
-    if (e.touches && e.touches.length >= 3) { _perfHud = !_perfHud; _perfWindowStart = 0; }
-  }, { passive: true });
-} catch (_e) {}
+// Perf HUD is dev-only now — enable via the ?perf URL flag. The on-device
+// 3-finger-tap toggle was removed: in-game multitouch (dual joysticks + fire)
+// kept flipping it on by accident, leaking debug numbers onto the screen.
 function gameLoop(now) {
   if (!_loopLastTime) _loopLastTime = now || performance.now();
   const t = now || performance.now();
