@@ -9492,10 +9492,10 @@ function tryArcStrike(z, hitDmg, src) {
   if (gameTime - _arcStrikeLast[_key] < ARC_STRIKE_ICD) return false;
   _arcStrikeLast[_key] = gameTime;
   const _m = runMods || {};
-  // Bonus damage rides the triggering hit so the strike stays relevant as
-  // the build scales. Floor keeps it meaty on low-damage weapons. Lower than
-  // before since strikes now fire far more often (frequency over per-hit size).
-  const strikeDmg = Math.max(35, Math.floor((+hitDmg || 0) * 0.9));
+  // Flat per-strike damage. Strikes fire constantly now (the spectacle is the
+  // point), so the headline number is intentionally small; splash + the +22%
+  // gun rider + (with OVERCHARGE) the SHOCK carry the rest.
+  const strikeDmg = 20;
   arcStrikeVFX(z.x, z.y, z.radius || 13);
   // The strike's own damage must NOT add a hit-stop — at up to ~7 strikes/sec
   // that would stutter the whole game. The jelly hit-react still fires.
@@ -13290,6 +13290,11 @@ function _beginArcadeRun() {
   ['hp-chip','minimap','btn-dash','btn-shoot','btn-mark','btn-spike'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = '';
   });
+  // The minimap's CSS default is display:none (unlike the other HUD chips,
+  // which default visible), so clearing its inline style above leaves it
+  // hidden. Show it explicitly — arcade uses it as an at-a-glance enemy radar
+  // (renderMinimap already plots zombie dots only in arcade mode).
+  const _mm = document.getElementById('minimap'); if (_mm) _mm.style.display = 'block';
   const _mb = document.getElementById('mobile-buttons'); if (_mb) _mb.style.display = '';
   gameMode = 'arcade';
   startSoloGame();
@@ -26398,9 +26403,9 @@ function triggerHitReact(z, dx, dy, dmg) {
   }
   // Mass resist: small bodies really pop, tanks/bosses barely budge
   const mass = Math.pow(13 / (z.radius || 13), 0.6);
-  const str = (0.85 + Math.min(1.05, (+dmg || 10) / 75)) * mass;
+  const str = (0.72 + Math.min(0.9, (+dmg || 10) / 82)) * mass;
   z._hrAngle = ang;
-  z._hrAmp = Math.min(2.1, Math.max(z._hrAmp || 0, str));
+  z._hrAmp = Math.min(1.7, Math.max(z._hrAmp || 0, str));
   z._hrT = 0;
 }
 // Per-frame visual state for the hit reaction. Damped sine: punch out fast,
@@ -26410,19 +26415,19 @@ function _hitReactVisual(z) {
   const amp = z._hrAmp || 0;
   if (amp <= 0) return null;
   const t = (z._hrT = (z._hrT || 0) + 1);
-  const env = Math.exp(-t * 0.105) * amp;
+  const env = Math.exp(-t * 0.11) * amp;
   if (env < 0.04) { z._hrAmp = 0; return null; }
   const osc = Math.sin(t * 0.62) * env;
-  const push = osc * Math.min((z.radius || 13) * 0.65, 17);
+  const push = osc * Math.min((z.radius || 13) * 0.55, 14);
   // Clamp osc so a big amp can't invert/over-squash the body; the deform is
   // exaggerated but still reads as the same creature.
-  const _o = Math.max(-1.1, Math.min(1.1, osc));
+  const _o = Math.max(-1.05, Math.min(1.05, osc));
   return {
     ox: Math.cos(z._hrAngle) * push,
     oy: Math.sin(z._hrAngle) * push,
     ang: z._hrAngle,
-    sq: Math.max(0.34, 1 - _o * 0.74), // compress along hit axis (jellier)
-    st: 1 + _o * 0.58,                 // bulge perpendicular
+    sq: Math.max(0.42, 1 - _o * 0.58), // compress along hit axis
+    st: 1 + _o * 0.46,                 // bulge perpendicular
   };
 }
 function _drawTelegraph(z, _zr) {
@@ -37639,18 +37644,27 @@ function render() {
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
-    // PERF: fake glow — larger dimmer shape instead of shadowBlur
-    ctx.fillStyle=_zc;ctx.globalAlpha=0.1 + _zt * 0.03;
+    // PERF: fake glow — larger dimmer shapes instead of shadowBlur. Three
+    // stacked halos (wide soft → mid → tight bright) give a strong neon bloom.
+    ctx.fillStyle=_zc;
+    ctx.globalAlpha=0.09 + _zt * 0.025;
+    _drawZombieShape(ctx, z.type, _zr+12+_zt*3);
+    ctx.fill();
+    ctx.globalAlpha=0.18 + _zt * 0.04;
     _drawZombieShape(ctx, z.type, _zr+6+_zt*2);
     ctx.fill();
-    ctx.globalAlpha=0.22 + _zt * 0.06;
+    ctx.globalAlpha=0.34 + _zt * 0.07;
     _drawZombieShape(ctx, z.type, _zr+2+_zt);
     ctx.fill();
     // Solid body
     ctx.globalAlpha=1;ctx.fillStyle=_zt >= 2 ? '#222' : '#1a1a1a';
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
-    ctx.strokeStyle=_zc;ctx.lineWidth=_zlw;ctx.stroke();
+    // Neon outline — a wider, soft under-stroke behind the crisp outline makes
+    // the edge read as "lit" (same path, drawn wide-dim then thin-bright).
+    ctx.strokeStyle=_zc;
+    ctx.globalAlpha=0.45;ctx.lineWidth=_zlw+3;ctx.stroke();
+    ctx.globalAlpha=1;ctx.lineWidth=_zlw;ctx.stroke();
     // ---- CORRUPTED-PROGRAM SCANLINES + GLITCH CHUNKS ----
     // Makes every zombie look like a broken signal rather than a plain shape.
     // Scanlines are clipped inside the body silhouette so the outline stays
