@@ -10177,6 +10177,10 @@ let _slowMoTimer = 0;
 // frequent lightning strike so its bonus-damage call doesn't pile micro-freezes
 // on top of the triggering hit (the strike fires up to ~7x/sec on fast weapons).
 let _suppressHitStopOnce = false;
+// Multiplier on the next damageZombie() hit-stop. The bullet-impact path sets
+// it from the bullet's _hitStopMul so specific weapons (sidearm, deadshot) get
+// a lighter freeze than the generic damage-proportional value.
+let _hitStopScaleOnce = 1;
 // Directional damage vignette: angle from player to damage source (world space).
 // _lastHitFlash decays each frame; 1.0 right after hit, 0 when faded.
 let _lastHitAngle = 0;
@@ -17090,6 +17094,8 @@ function fireWeaponForPlayer(p) {
       _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
       _angVel: (Math.random() - 0.5) * 0.015,
       _originX: p.x + bc * 22, _originY: p.y + bs * 22,
+      // Sidearm fires rapidly — lighten its per-hit freeze so the cadence stays smooth.
+      _hitStopMul: 0.35,
     });
   }
   // Muzzle flash — punchy but lean
@@ -23271,6 +23277,8 @@ function _fireDeadshot(lp) {
       // PIN SHOT — only the FULL charge shot pins. Stun in seconds.
       _pinShot: (_m.pinShot && isFullCharge) ? _modScale('pin_shot', 1.2, 0.2) : 0,
       _headshotMult: _headRoll,
+      // Deadshot is a heavy hit — keep some punch but cut the freeze down.
+      _hitStopMul: 0.5,
     });
   };
   // TWIN VOLLEY — uncharged taps fire 2 bullets in a tight V.
@@ -26783,10 +26791,14 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // it always reads as a punch, never a freeze, and gated above chip damage so
   // fast weak weapons (SMG/laser/flamethrower) don't micro-stutter.
   if (!silent && !_suppressHitStopOnce && _slowMoTimer === 0 && hitStopMs === 0 && damage >= 22) {
-    const _hs = Math.min(60, Math.round(16 + damage * 0.45));
-    triggerHitStop(_hs);
+    // Cap the base at 60ms FIRST, then apply the per-weapon scale, so a heavy
+    // (already-capped) hit still freezes less when its weapon asks for it.
+    const _hs = Math.round(Math.min(60, 16 + damage * 0.45) * _hitStopScaleOnce);
+    if (_hs > 0) triggerHitStop(_hs);
     triggerCameraZoom(_critHit ? 1.025 : 1.015, _critHit ? 100 : 70);
   }
+  // Consume the one-shot hit-stop scale so it never leaks to the next hit.
+  _hitStopScaleOnce = 1;
   z.hp-=damage;
   // LEGENDARY: ABSOLUTE ZERO — a FROZEN enemy dropped below 20% HP shatters (execute).
   if (isHost && (runMods||{}).absoluteZero && z.hp > 0 && !z.boss && (z._frozen || z._frozenTimer > 0) && z.maxHp > 0 && z.hp <= z.maxHp * 0.20) {
@@ -29461,7 +29473,10 @@ function update() {
                       _dmg = Math.floor(_dmg * 2.5); // +150%
                     }
                   }
+                  // Per-weapon hit-stop scale (sidearm/deadshot freeze lighter).
+                  _hitStopScaleOnce = b._hitStopMul || 1;
                   damageZombie(z, _dmg, Math.cos(a)*b.knockback, Math.sin(a)*b.knockback);
+                  _hitStopScaleOnce = 1;
                   // LEGENDARY: OVERDRIVE PROTOCOL — pistol bullets ricochet once to a nearby enemy.
                   if (_isLocal && _m.overdriveProtocol && !b._ricocheted && !b._deadshotRound && !b._beaconBullet && b.owner === 'player') {
                     let _ovBest = null, _ovBestD2 = 180*180;
