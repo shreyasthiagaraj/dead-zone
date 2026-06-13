@@ -2032,7 +2032,7 @@ const UPGRADE_POOL = [
   { id:'cryo_rounds', name:'CRYO INFUSION', rarity:'common', max:1, icon:'🧊', color:'#8ef',
     descs:['Your ATTACK applies CHILL. +22% damage.'], flavor:'clock-cycle freeze. time slows for the target' },
   { id:'arc_rounds', name:'ARC INFUSION', rarity:'common', max:1, icon:'⚡', color:'#fe6',
-    descs:['Your hits call down a LIGHTNING STRIKE — heavy bonus damage + small splash (~1s cooldown). +22% damage.'], flavor:'overvoltage request granted. the grid answers from above.' },
+    descs:['Your hits call down a LIGHTNING STRIKE — heavy bonus damage + small splash. +22% damage.'], flavor:'overvoltage request granted. the grid answers from above.' },
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Your ATTACK applies SLIDE with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
@@ -2308,7 +2308,7 @@ const UPGRADE_POOL = [
     descs:['Your SPECIAL applies CHILL. +14% damage.'],
     flavor:'flash-freezing the perimeter.' },
   { id:'beacon_arc', name:'ARC PROTOCOL', rarity:'rare', max:1, icon:'⚡', color:'#fe6',
-    descs:['Your SPECIAL calls down a LIGHTNING STRIKE — heavy bonus damage + small splash (~1s cooldown, separate from ARC INFUSION). +10% damage.'],
+    descs:['Your SPECIAL calls down a LIGHTNING STRIKE — heavy bonus damage + small splash. +10% damage.'],
     flavor:'the killzone calls the storm.' },
   { id:'beacon_corrupt', name:'CORRUPT PROTOCOL', rarity:'rare', max:1, icon:'☣', color:'#a4f',
     descs:['Your SPECIAL applies CORRUPT — corrupted enemies take bonus damage from ALL sources. +18% damage.'],
@@ -9474,7 +9474,11 @@ function _triggerChainConduit(originZ, mods) {
 // Internal cooldown so fast weapons (sidearm/SMG) don't strike every bullet —
 // the strike is punctuation, not a metronome. SHOCKED now comes from Storm
 // Dash / OVERCHARGE / CHAIN CONDUIT instead of the infusion.
-const ARC_STRIKE_ICD = 54;       // frames between strikes (~0.9s), per source
+// ICD is short by design: a normal-cadence weapon (sidearm ~11 frames/shot,
+// revolver/shotgun/rifle slower) strikes on essentially EVERY hit, while a
+// fast weapon (SMG/laser/minigun, 1-3 frames/shot) is throttled to this rate
+// so it doesn't summon a continuous wall of lightning. ~9 frames ≈ 6.7/sec cap.
+const ARC_STRIKE_ICD = 9;        // frames between strikes, per source
 const ARC_STRIKE_SPLASH_R = 80;  // ground splash radius around the impact
 // Separate cooldown per source family so ARC INFUSION (weapon hits) and
 // ARC PROTOCOL (special hits) each get their own limiter — taking both
@@ -9489,10 +9493,15 @@ function tryArcStrike(z, hitDmg, src) {
   _arcStrikeLast[_key] = gameTime;
   const _m = runMods || {};
   // Bonus damage rides the triggering hit so the strike stays relevant as
-  // the build scales. Floor keeps it meaty on low-damage weapons.
-  const strikeDmg = Math.max(50, Math.floor((+hitDmg || 0) * 1.25));
+  // the build scales. Floor keeps it meaty on low-damage weapons. Lower than
+  // before since strikes now fire far more often (frequency over per-hit size).
+  const strikeDmg = Math.max(35, Math.floor((+hitDmg || 0) * 0.9));
   arcStrikeVFX(z.x, z.y, z.radius || 13);
+  // The strike's own damage must NOT add a hit-stop — at up to ~7 strikes/sec
+  // that would stutter the whole game. The jelly hit-react still fires.
+  _suppressHitStopOnce = true;
   damageZombie(z, strikeDmg, 0, 0);
+  _suppressHitStopOnce = false;
   addFloatingText(z.x, z.y - (z.radius || 13) - 18, strikeDmg, '#fe6');
   // OVERCHARGE: every lightning effect applies SHOCKED — the strike included.
   if (_m.overcharge > 0 && z.hp > 0) applyCharged(z);
@@ -9515,58 +9524,73 @@ function tryArcStrike(z, hitDmg, src) {
 // reads as "from above" in top-down), the bolt is the path, the ground
 // detonation is the impact. Deliberately louder than the storm-dash zap.
 function arcStrikeVFX(x, y, r) {
-  // (1) THE BOLT — three layered jagged strokes from a sky anchor with top
-  //     drift so it never reads as a plumb line; staggered lifetimes thin
-  //     the bolt as it dies (thick yellow → hot mid → white core).
-  const _topX = x + (Math.random() - 0.5) * 70;
+  // (1) THE BOLT — a real jagged lightning arc from a sky anchor. _perp +
+  //     high segment count + big jitter make it zigzag side-to-side instead
+  //     of reading as a straight line. Three layers trace the SAME path
+  //     (thick yellow body, hot mid, white core) so it's one coherent bolt.
+  const _topX = x + (Math.random() - 0.5) * 90;
   const _topY = y - 380;
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 16, maxLife: 16, size: 5.5, color: '#fe6', type: 'lightning', tx: x, ty: y });
-  particles.push({ x: _topX + (Math.random() - 0.5) * 26, y: _topY + 30, vx: 0, vy: 0, life: 12, maxLife: 12, size: 3, color: '#ff9', type: 'lightning', tx: x, ty: y });
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 10, maxLife: 10, size: 1.6, color: '#fff', type: 'lightning', tx: x, ty: y });
-  // (2) Descent streaks — sparks racing DOWN the bolt line. Motion toward
-  //     the target is what sells "from above" in a top-down camera.
-  for (let _i = 0; _i < 4; _i++) {
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 15, maxLife: 15, size: 6, color: '#fe6', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 40 });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 11, maxLife: 11, size: 3, color: '#ff9', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 30 });
+  // (2) FORK BRANCHES — short jagged offshoots peeling off the main bolt
+  //     partway down. Real lightning forks; this kills the "single line" read.
+  const _mdx = x - _topX, _mdy = y - _topY;
+  const _mpl = Math.hypot(_mdx, _mdy) || 1, _mpx = -_mdy / _mpl, _mpy = _mdx / _mpl;
+  for (let _i = 0; _i < 2; _i++) {
+    const _bt = 0.4 + Math.random() * 0.25;
+    const _bsx = _topX + _mdx * _bt, _bsy = _topY + _mdy * _bt;
+    const _side = _i === 0 ? 1 : -1, _blen = 42 + Math.random() * 44;
+    const _bex = _bsx + _mpx * _side * _blen + _mdx * 0.12;
+    const _bey = _bsy + _mpy * _side * _blen + _mdy * 0.12;
+    particles.push({ x: _bsx, y: _bsy, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 2.4,
+      color: _i === 0 ? '#fe6' : '#ff9', type: 'lightning', tx: _bex, ty: _bey, _perp: true, _segs: 5, _jitter: 22 });
+  }
+  // (3) Descent streaks — sparks racing DOWN the bolt. Motion toward the
+  //     target is what sells "from above" in a top-down camera.
+  for (let _i = 0; _i < 3; _i++) {
     const _t = 0.3 + Math.random() * 0.6;
     particles.push({ x: x + (_topX - x) * _t, y: y + (_topY - y) * _t,
-      vx: (x - _topX) * 0.045, vy: (y - _topY) * 0.045,
-      life: 7 + Math.floor(Math.random() * 4), maxLife: 11, size: 2 + Math.random() * 1.5,
+      vx: (x - _topX) * 0.05, vy: (y - _topY) * 0.05,
+      life: 6 + Math.floor(Math.random() * 4), maxLife: 10, size: 2 + Math.random() * 1.5,
       color: Math.random() > 0.5 ? '#fff' : '#fe6', type: 'spark' });
   }
-  // (3) Impact pop — segmented hitflash ring + the YELLOW SHOCKWAVE
-  //     (bigger + brighter than the storm-dash one, white rim, long linger).
-  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 16, color: '#fe6', type: 'hitflash' });
-  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 110, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.45, _alphaScale: 1.15 });
-  // (4) Radial ground forks — lightning crawling outward from the impact
+  // (4) IMPACT FLASH — the obvious pop. A bright white core flash + a yellow
+  //     bloom (filled, collapsing discs) under the segmented hitflash ring and
+  //     the white-rimmed yellow shockwave.
+  particles.push({ x, y, vx: 0, vy: 0, life: 6, maxLife: 6, size: r + 42, color: '#fff', type: 'spark' });
+  particles.push({ x, y, vx: 0, vy: 0, life: 9, maxLife: 9, size: r + 70, color: '#fe6', type: 'spark' });
+  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 20, color: '#fff', type: 'hitflash' });
+  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 120, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.42, _alphaScale: 1.2 });
+  // (5) Radial ground forks — jagged lightning crawling outward from impact
   for (let _i = 0; _i < 5; _i++) {
     const _a = (_i / 5) * Math.PI * 2 + Math.random() * 0.8;
-    const _len = 34 + Math.random() * 30;
-    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.8,
-      color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len });
+    const _len = 36 + Math.random() * 32;
+    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.9,
+      color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len, _perp: true, _segs: 4, _jitter: 16 });
   }
-  // (5) Spark burst + slow rising ionization motes (post-strike residue)
-  for (let _i = 0; _i < 12; _i++) {
+  // (6) Spark burst + slow rising ionization motes (post-strike residue)
+  for (let _i = 0; _i < 7; _i++) {
     const _a = Math.random() * Math.PI * 2, _s = 3 + Math.random() * 6;
     particles.push({ x, y, vx: Math.cos(_a) * _s, vy: Math.sin(_a) * _s,
       life: 9 + Math.floor(Math.random() * 6), maxLife: 15, size: 2 + Math.random() * 2,
       color: Math.random() > 0.45 ? '#fe6' : '#fff', type: 'spark' });
   }
-  for (let _i = 0; _i < 3; _i++) {
+  for (let _i = 0; _i < 2; _i++) {
     particles.push({ x: x + (Math.random() - 0.5) * 20, y: y + (Math.random() - 0.5) * 12,
       vx: (Math.random() - 0.5) * 0.6, vy: -0.8 - Math.random() * 0.8,
-      life: 26 + Math.floor(Math.random() * 10), maxLife: 36, size: 2 + Math.random() * 1.5,
+      life: 24 + Math.floor(Math.random() * 10), maxLife: 34, size: 2 + Math.random() * 1.5,
       color: Math.random() > 0.5 ? '#fe6' : '#ff9', type: 'spark' });
   }
-  // (6) Glitch chars — NECROWAVE signature on big procs
-  for (let _i = 0; _i < 2; _i++) {
-    particles.push({ x: x + (Math.random() - 0.5) * 30, y: y - 8 - Math.random() * 16,
-      vx: (Math.random() - 0.5) * 1.2, vy: -0.6, life: 16, maxLife: 16,
-      size: 9 + Math.random() * 4, color: '#fe6', type: 'glitchtext', text: '⚡' });
-  }
-  // (7) Scorch decal + feel: shake, zap crack, low thump
-  decals.push({ x, y, size: 16 + Math.random() * 10, alpha: 0.3, color: '#231a04' });
-  screenShake.intensity = Math.max(screenShake.intensity, 7);
-  playSfx('zap', 0.22, 0.03) || playSound(880, 0.07, 'sawtooth', 0.12);
-  playSound(110, 0.12, 'sine', 0.16);
+  // (7) Glitch char — NECROWAVE signature
+  particles.push({ x: x + (Math.random() - 0.5) * 26, y: y - 8 - Math.random() * 16,
+    vx: (Math.random() - 0.5) * 1.2, vy: -0.6, life: 15, maxLife: 15,
+    size: 9 + Math.random() * 4, color: '#fe6', type: 'glitchtext', text: '⚡' });
+  // (8) Scorch decal + feel. Shake kept modest + no bass thump because strikes
+  //     now fire up to ~7x/sec — a heavy shake/thump per strike would rumble
+  //     constantly. The bolt + flash carry the punch.
+  decals.push({ x, y, size: 15 + Math.random() * 9, alpha: 0.28, color: '#231a04' });
+  screenShake.intensity = Math.max(screenShake.intensity, 4);
+  playSfx('zap', 0.18, 0.03) || playSound(880, 0.06, 'sawtooth', 0.10);
 }
 function applyExposed(z) {
   if (!isHost) return;
@@ -10149,6 +10173,10 @@ let hitStopMs = 0;
 let gameTimeScale = 1.0;
 let timeScaleTarget = 1.0;
 let _slowMoTimer = 0;
+// When true, the next damageZombie() skips its hit-stop trigger. Used by the
+// frequent lightning strike so its bonus-damage call doesn't pile micro-freezes
+// on top of the triggering hit (the strike fires up to ~7x/sec on fast weapons).
+let _suppressHitStopOnce = false;
 // Directional damage vignette: angle from player to damage source (world space).
 // _lastHitFlash decays each frame; 1.0 right after hit, 0 when faded.
 let _lastHitAngle = 0;
@@ -17195,6 +17223,15 @@ function _spikeClass() {
 // shadowBlur is used on layers 4-5 for the rim glow — the perf rule warns
 // against it, but a single short-lived wave is fine. Avoid stacking many
 // of these per frame.
+// Deterministic 0..1 hash for lightning bolt jitter — keyed by (seed, frame,
+// segment) so a bolt's 3 stroke layers all trace ONE coherent jagged path
+// (no array allocation), while re-rolling each frame for a live shimmer.
+function _lboltRnd(seed, salt, s) {
+  let h = (seed + s * 374761393 + salt * 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
 function drawShockwave(ctx, x, y, radius, maxRadius, color, opts) {
   if (!(radius > 0) || !(maxRadius > 0)) return;
   opts = opts || {};
@@ -21398,12 +21435,45 @@ function _meleeApproachVel(p, a, range, cone, opts) {
   const dx = _bestZ.x - p.x, dy = _bestZ.y - p.y;
   const d = Math.hypot(dx, dy) || 1;
   const _zr = _bestZ.radius || 14;
-  // Close in so the enemy ends up COMFORTABLY within reach (~60% of range),
-  // not just at the very tip of the blade.
-  const _gap = d - (range * 0.6 + _zr);
+  // Close in so the enemy ends up at the blade's sweet spot (~3/4 of range),
+  // not just at the very tip. The post-hit snap (_repositionToBladeSweetSpot)
+  // fine-tunes from here once a strike actually connects.
+  const _gap = d - (range * 0.75 + _zr);
   if (_gap <= 3) return null;
   const _v = Math.min(_maxStep, _gap * 0.26 * _speedMult); // 0.26 = (1-decay) - safety; no overshoot
   return { vx: (dx / d) * _v, vy: (dy / d) * _v };
+}
+
+// On a connecting strike, nudge the LOCAL player so the struck enemy sits at
+// ~3/4 up the blade (range*0.75 along the facing). Keeps the sword visually
+// connecting at its sweet spot through a fight: steps IN when the enemy drifts
+// out toward the blade tip, eases back a touch when they crowd in. Feel/visual
+// only on the owning client; wall-clamped so it never shoves into geometry.
+function _repositionToBladeSweetSpot(p, z, a, range) {
+  if (!p || !z) return;
+  const c = Math.cos(a), s = Math.sin(a);
+  const along = (z.x - p.x) * c + (z.y - p.y) * s; // distance to enemy along facing
+  const desired = range * 0.75;
+  // Snap most of the way to the sweet spot each hit (snappy, not a teleport).
+  // Generous forward step-in, gentle backward give so the player is never
+  // yanked away from the swarm.
+  const shift = Math.max(-22, Math.min(48, along - desired)) * 0.7;
+  if (Math.abs(shift) < 0.6) return;
+  let nx = p.x + c * shift, ny = p.y + s * shift;
+  // Wall-clamp: if the full step lands in geometry, back it off; bail if even a
+  // short step is blocked.
+  if (typeof obstacleCollision === 'function' && obstacleCollision(nx, ny, PLAYER_RADIUS, true)) {
+    let _ok = false;
+    for (let _f = 0.6; _f >= 0.25; _f -= 0.175) {
+      const _tx = p.x + c * shift * _f, _ty = p.y + s * shift * _f;
+      if (!obstacleCollision(_tx, _ty, PLAYER_RADIUS, true)) { nx = _tx; ny = _ty; _ok = true; break; }
+    }
+    if (!_ok) return;
+  }
+  p.x = nx; p.y = ny;
+  // Spacing is corrected — cancel any in-flight chase glide so it doesn't fight
+  // the snap.
+  p._rLungeVx = 0; p._rLungeVy = 0;
 }
 
 // ---- JAB FLURRY: the held-attack alternate. After the opening LUNGE /
@@ -21806,6 +21876,9 @@ function _runComboStep(p, def, step, idx) {
   // We batch one consolidated hit sound after the loop instead.
   window._suppressHitSound = true;
   let _swingHitAny = false;
+  // Track the struck enemy nearest the facing axis — the one the blade is
+  // "pointed at" — so we can snap spacing to it after the swing resolves.
+  let _anchorZ = null, _anchorAbsDa = Infinity;
   for (const z of zombies) {
     if (!z || z.hp <= 0) continue;
     const dx = z.x - p.x, dy = z.y - p.y;
@@ -21844,6 +21917,7 @@ function _runComboStep(p, def, step, idx) {
     // flinging enemies across the room on every pulse swing.
     const _kb = step.knockback * (_rmCombo.dominantClass === 'pulse' ? 0.4 : 1);
     _swingHitAny = true;
+    if (isLocal && Math.abs(da) < _anchorAbsDa) { _anchorAbsDa = Math.abs(da); _anchorZ = z; }
     if (isHost) {
       const _prevHp = z.hp;
       damageZombie(z, dmg, dx/_nd * _kb, dy/_nd * _kb, false);
@@ -21885,6 +21959,13 @@ function _runComboStep(p, def, step, idx) {
   // the whole swing if it connected with anything.
   window._suppressHitSound = false;
   if (_swingHitAny && isHost) playHitSound();
+
+  // Snap the player so the struck enemy rides ~3/4 up the blade. Skip the
+  // FINISHER (forwardlunge) — it commits its own big forward thrust and the
+  // snap would fight that motion.
+  if (isLocal && _anchorZ && step.kind !== 'forwardlunge') {
+    _repositionToBladeSweetSpot(p, _anchorZ, a, range);
+  }
 
   // CARD: VORPAL FINISHER — if the finisher killed at least one foe,
   // schedule a second finisher swing targeted at the next nearest enemy
@@ -26316,9 +26397,9 @@ function triggerHitReact(z, dx, dy, dmg) {
   }
   // Mass resist: small bodies really pop, tanks/bosses barely budge
   const mass = Math.pow(13 / (z.radius || 13), 0.6);
-  const str = (0.6 + Math.min(0.8, (+dmg || 10) / 90)) * mass;
+  const str = (0.85 + Math.min(1.05, (+dmg || 10) / 75)) * mass;
   z._hrAngle = ang;
-  z._hrAmp = Math.min(1.5, Math.max(z._hrAmp || 0, str));
+  z._hrAmp = Math.min(2.1, Math.max(z._hrAmp || 0, str));
   z._hrT = 0;
 }
 // Per-frame visual state for the hit reaction. Damped sine: punch out fast,
@@ -26328,16 +26409,19 @@ function _hitReactVisual(z) {
   const amp = z._hrAmp || 0;
   if (amp <= 0) return null;
   const t = (z._hrT = (z._hrT || 0) + 1);
-  const env = Math.exp(-t * 0.11) * amp;
+  const env = Math.exp(-t * 0.105) * amp;
   if (env < 0.04) { z._hrAmp = 0; return null; }
   const osc = Math.sin(t * 0.62) * env;
-  const push = osc * Math.min((z.radius || 13) * 0.5, 12);
+  const push = osc * Math.min((z.radius || 13) * 0.65, 17);
+  // Clamp osc so a big amp can't invert/over-squash the body; the deform is
+  // exaggerated but still reads as the same creature.
+  const _o = Math.max(-1.1, Math.min(1.1, osc));
   return {
     ox: Math.cos(z._hrAngle) * push,
     oy: Math.sin(z._hrAngle) * push,
     ang: z._hrAngle,
-    sq: Math.max(0.45, 1 - osc * 0.52), // compress along hit axis
-    st: 1 + osc * 0.40,                 // bulge perpendicular
+    sq: Math.max(0.34, 1 - _o * 0.74), // compress along hit axis (jellier)
+    st: 1 + _o * 0.58,                 // bulge perpendicular
   };
 }
 function _drawTelegraph(z, _zr) {
@@ -26686,12 +26770,16 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const _preVx = z.vx, _preVy = z.vy;
   // Stronger hitFlash on crits so the 1-2 frame white flash actually reads.
   const _critHit = damage >= 50;
-  // Crit zoom + hit-stop: brief punch-in and freeze on heavy hits. Local visuals
-  // only (cameraZoom + hitStopMs are per-client). Skip when already in slow-mo
-  // to avoid stacking with the section-clear kill cam, and skip silent hits.
-  if (!silent && _slowMoTimer === 0 && hitStopMs === 0) {
-    if (_critHit) { triggerCameraZoom(1.025, 100); triggerHitStop(60); }
-    else if (damage >= 30) { triggerCameraZoom(1.015, 70); triggerHitStop(30); }
+  // Crit zoom + hit-stop: brief punch-in and freeze scaled to the hit's weight.
+  // Local visuals only (cameraZoom + hitStopMs are per-client). Skip when already
+  // in slow-mo (kill cam), skip silent hits, and skip when suppressed (lightning
+  // strike). Hit-stop duration is PROPORTIONAL to damage, hard-capped at 60ms so
+  // it always reads as a punch, never a freeze, and gated above chip damage so
+  // fast weak weapons (SMG/laser/flamethrower) don't micro-stutter.
+  if (!silent && !_suppressHitStopOnce && _slowMoTimer === 0 && hitStopMs === 0 && damage >= 22) {
+    const _hs = Math.min(60, Math.round(16 + damage * 0.45));
+    triggerHitStop(_hs);
+    triggerCameraZoom(_critHit ? 1.025 : 1.015, _critHit ? 100 : 70);
   }
   z.hp-=damage;
   // LEGENDARY: ABSOLUTE ZERO — a FROZEN enemy dropped below 20% HP shatters (execute).
@@ -38849,35 +38937,56 @@ function render() {
     if(p.type==='lightning'&&p.tx!==undefined){
       // Cull lightning if BOTH endpoints are offscreen
       if ((p.x<_pViewL||p.x>_pViewR||p.y<_pViewT||p.y>_pViewB) && (p.tx<_pViewL||p.tx>_pViewR||p.ty<_pViewT||p.ty>_pViewB)) continue;
-      const jitter = 20 * (p.life/p.maxLife);
-      const segs=6;
+      // Per-particle shape overrides: more segments + bigger jitter + a
+      // perpendicular zigzag (p._perp) turn a near-straight default bolt into
+      // a proper jagged lightning arc. Defaults match the old look (segs 6,
+      // jitter 20) so chains/zaps are unchanged.
+      const segs = p._segs || 6;
+      const _jitMax = (p._jitter != null ? p._jitter : 20);
+      const jitter = _jitMax * (p.life/p.maxLife);
+      const _perp = !!p._perp;
       const _lw = Math.max(1, p.size * 1.5); // outer width scales with particle size
+      // Direction + perpendicular unit for the zigzag, and a stable per-bolt
+      // hash seed. All 3 stroke layers reuse the same (_ls,_fs) so they trace
+      // ONE jagged path instead of 3 fuzzy overlapping ones; _fs = gameTime so
+      // the bolt shimmers frame to frame. Allocation-free (see _lboltRnd).
+      const _ddx = p.tx - p.x, _ddy = p.ty - p.y;
+      const _dl = Math.hypot(_ddx, _ddy) || 1;
+      const _pxv = -_ddy/_dl, _pyv = _ddx/_dl;
+      if (p._lseed == null) p._lseed = ((p.x*131 + p.y*577) | 0);
+      const _ls = p._lseed, _fs = (typeof gameTime === 'number' ? gameTime : 0) & 2047;
       // _noBlur flag (e.g., set on arc bolt trail particles) skips shadowBlur,
       // the #1 Canvas2D perf killer. CRITICAL: explicitly set shadowBlur=0 at
       // entry to the fake-glow path; otherwise leftover state from a previous
       // particle that DID use shadowBlur compounds with the extra stroke and
       // makes fake-glow MORE expensive than the original (a real bug we hit).
-      // PERF: lightning now uses the fake-glow path by DEFAULT (was shadowBlur=10
-      // per segment — the #1 Canvas2D perf killer, with 50-100 segments/frame on
-      // electric builds). _highBlur left as an opt-in hook; nothing sets it today.
       const _useBlur = !!p._highBlur;
       if (_useBlur) {
         ctx.strokeStyle=p.color||'#fe6';ctx.lineWidth=_lw;ctx.shadowColor=p.color||'#fe6';ctx.shadowBlur=10;
+        ctx.globalAlpha=p.life/p.maxLife;
+        ctx.beginPath();ctx.moveTo(p.x,p.y);
+        for(let s=1;s<segs;s++){const t=s/segs,bx=p.x+_ddx*t,by=p.y+_ddy*t;if(_perp){const o=(_lboltRnd(_ls,_fs,s)-0.5)*jitter;ctx.lineTo(bx+_pxv*o,by+_pyv*o);}else{ctx.lineTo(bx+(_lboltRnd(_ls,_fs,s)-0.5)*jitter,by+(_lboltRnd(_ls,_fs,s+131)-0.5)*jitter);}}
+        ctx.lineTo(p.tx,p.ty);ctx.stroke();
       } else {
         ctx.shadowBlur=0; // <-- must clear before fake-glow draws
         // Fake-glow: extra wide dim outer stroke first
         ctx.strokeStyle=p.color||'#fe6';ctx.globalAlpha=(p.life/p.maxLife)*0.35;ctx.lineWidth=_lw*2.5;
         ctx.beginPath();ctx.moveTo(p.x,p.y);
-        for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter);}
-        ctx.stroke();
+        for(let s=1;s<segs;s++){const t=s/segs,bx=p.x+_ddx*t,by=p.y+_ddy*t;if(_perp){const o=(_lboltRnd(_ls,_fs,s)-0.5)*jitter;ctx.lineTo(bx+_pxv*o,by+_pyv*o);}else{ctx.lineTo(bx+(_lboltRnd(_ls,_fs,s)-0.5)*jitter,by+(_lboltRnd(_ls,_fs,s+131)-0.5)*jitter);}}
+        ctx.lineTo(p.tx,p.ty);ctx.stroke();
+        // Body stroke (full bright)
         ctx.globalAlpha=p.life/p.maxLife;ctx.lineWidth=_lw;
+        ctx.beginPath();ctx.moveTo(p.x,p.y);
+        for(let s=1;s<segs;s++){const t=s/segs,bx=p.x+_ddx*t,by=p.y+_ddy*t;if(_perp){const o=(_lboltRnd(_ls,_fs,s)-0.5)*jitter;ctx.lineTo(bx+_pxv*o,by+_pyv*o);}else{ctx.lineTo(bx+(_lboltRnd(_ls,_fs,s)-0.5)*jitter,by+(_lboltRnd(_ls,_fs,s+131)-0.5)*jitter);}}
+        ctx.lineTo(p.tx,p.ty);ctx.stroke();
       }
+      // White-hot core traces the SAME jagged path (coherent bolt, not a 2nd
+      // fuzzy line).
+      ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(0.5,_lw*0.4);ctx.globalAlpha=p.life/p.maxLife;
       ctx.beginPath();ctx.moveTo(p.x,p.y);
-      for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter);}
-      ctx.stroke();
-      ctx.strokeStyle='#fff';ctx.lineWidth=Math.max(0.5,_lw*0.4);ctx.beginPath();ctx.moveTo(p.x,p.y);
-      for(let s=1;s<=segs;s++){const t=s/segs;ctx.lineTo(s===segs?p.tx:p.x+(p.tx-p.x)*t+(Math.random()-0.5)*jitter*0.5,s===segs?p.ty:p.y+(p.ty-p.y)*t+(Math.random()-0.5)*jitter*0.5);}
-      ctx.stroke();ctx.shadowBlur=0; // always clear so we don't leak shadowBlur=10 into other particle renders
+      for(let s=1;s<segs;s++){const t=s/segs,bx=p.x+_ddx*t,by=p.y+_ddy*t;if(_perp){const o=(_lboltRnd(_ls,_fs,s)-0.5)*jitter;ctx.lineTo(bx+_pxv*o,by+_pyv*o);}else{ctx.lineTo(bx+(_lboltRnd(_ls,_fs,s)-0.5)*jitter,by+(_lboltRnd(_ls,_fs,s+131)-0.5)*jitter);}}
+      ctx.lineTo(p.tx,p.ty);ctx.stroke();
+      ctx.shadowBlur=0; // always clear so we don't leak shadowBlur=10 into other particle renders
     } else {
       const sz=p.type==='smoke'?p.size*(1+(1-p.life/p.maxLife)*0.5):p.size*(p.life/p.maxLife);
       // Neon feel: widen the glow gate so almost every particle emits light —
