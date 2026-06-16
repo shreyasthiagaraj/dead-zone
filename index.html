@@ -9474,23 +9474,19 @@ function _triggerChainConduit(originZ, mods) {
 // Internal cooldown so fast weapons (sidearm/SMG) don't strike every bullet —
 // the strike is punctuation, not a metronome. SHOCKED now comes from Storm
 // Dash / OVERCHARGE / CHAIN CONDUIT instead of the infusion.
-// ICD is short by design: a normal-cadence weapon (sidearm ~11 frames/shot,
-// revolver/shotgun/rifle slower) strikes on essentially EVERY hit, while a
-// fast weapon (SMG/laser/minigun, 1-3 frames/shot) is throttled to this rate
-// so it doesn't summon a continuous wall of lightning. ~9 frames ≈ 6.7/sec cap.
-const ARC_STRIKE_ICD = 9;        // frames between strikes, per source
+// PER-ENEMY limiter: a given enemy can only be struck once per this many
+// frames, no matter how fast you fire AT it — so focus-firing one target
+// with a rapid weapon won't chain-strike it. Different enemies strike
+// independently, so spreading fire across a crowd lights the whole crowd up.
+const ARC_STRIKE_ICD = 14;       // frames between strikes ON THE SAME ENEMY
 const ARC_STRIKE_SPLASH_R = 80;  // ground splash radius around the impact
-// Separate cooldown per source family so ARC INFUSION (weapon hits) and
-// ARC PROTOCOL (special hits) each get their own limiter — taking both
-// cards means up to two strikes per window, not a shared cap.
-const _arcStrikeLast = { wpn: -9999, spc: -9999 };
 function tryArcStrike(z, hitDmg, src) {
   if (!z || z.hp <= 0) return false;
-  const _key = src === 'special' ? 'spc' : 'wpn';
-  // Self-heal a stale timestamp from a previous run (gameTime resets per run)
-  if (_arcStrikeLast[_key] > gameTime) _arcStrikeLast[_key] = -9999;
-  if (gameTime - _arcStrikeLast[_key] < ARC_STRIKE_ICD) return false;
-  _arcStrikeLast[_key] = gameTime;
+  const _last = z._arcStrikeLast;
+  // Gate per enemy. The `_last > gameTime` guard self-heals if a long-lived
+  // enemy somehow carries a stamp past a gameTime reset.
+  if (_last !== undefined && _last <= gameTime && gameTime - _last < ARC_STRIKE_ICD) return false;
+  z._arcStrikeLast = gameTime;
   const _m = runMods || {};
   // Flat per-strike damage. Strikes fire constantly now (the spectacle is the
   // point), so the headline number is intentionally small; splash + the +22%
@@ -9530,8 +9526,8 @@ function arcStrikeVFX(x, y, r) {
   //     (thick yellow body, hot mid, white core) so it's one coherent bolt.
   const _topX = x + (Math.random() - 0.5) * 90;
   const _topY = y - 380;
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 15, maxLife: 15, size: 6, color: '#fe6', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 40 });
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 11, maxLife: 11, size: 3, color: '#ff9', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 30 });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 15, maxLife: 15, size: 4, color: '#fe6', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 40 });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 11, maxLife: 11, size: 2, color: '#ff9', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 30 });
   // (2) FORK BRANCHES — short jagged offshoots peeling off the main bolt
   //     partway down. Real lightning forks; this kills the "single line" read.
   const _mdx = x - _topX, _mdy = y - _topY;
@@ -9542,7 +9538,7 @@ function arcStrikeVFX(x, y, r) {
     const _side = _i === 0 ? 1 : -1, _blen = 42 + Math.random() * 44;
     const _bex = _bsx + _mpx * _side * _blen + _mdx * 0.12;
     const _bey = _bsy + _mpy * _side * _blen + _mdy * 0.12;
-    particles.push({ x: _bsx, y: _bsy, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 2.4,
+    particles.push({ x: _bsx, y: _bsy, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.7,
       color: _i === 0 ? '#fe6' : '#ff9', type: 'lightning', tx: _bex, ty: _bey, _perp: true, _segs: 5, _jitter: 22 });
   }
   // (3) Descent streaks — sparks racing DOWN the bolt. Motion toward the
@@ -9565,7 +9561,7 @@ function arcStrikeVFX(x, y, r) {
   for (let _i = 0; _i < 5; _i++) {
     const _a = (_i / 5) * Math.PI * 2 + Math.random() * 0.8;
     const _len = 36 + Math.random() * 32;
-    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.9,
+    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.4,
       color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len, _perp: true, _segs: 4, _jitter: 16 });
   }
   // (6) Spark burst + slow rising ionization motes (post-strike residue)
