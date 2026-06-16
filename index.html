@@ -9526,8 +9526,42 @@ function arcStrikeVFX(x, y, r) {
   //     (thick yellow body, hot mid, white core) so it's one coherent bolt.
   const _topX = x + (Math.random() - 0.5) * 90;
   const _topY = y - 380;
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 15, maxLife: 15, size: 4, color: '#fe6', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 40 });
-  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 11, maxLife: 11, size: 2, color: '#ff9', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 30 });
+  // (0) STORM CLOUD at the bolt origin — the bolt boils out of its underside.
+  //     Built from many overlapping dark puffs of VARIED size (wider than tall)
+  //     plus lighter top-rim catches and downward tendril wisps, so the
+  //     silhouette reads as a real billowy wispy cloud, not one flat ellipse.
+  //     The smoke renderer gives each puff its own squash/rotation, adding
+  //     irregular edges. Core puffs are _protect'd so the cap keeps the cloud.
+  const _clx = _topX, _cly = _topY - 8;
+  for (let _i = 0; _i < 6; _i++) {                          // dark billowing core
+    const _ca = (_i / 6) * Math.PI * 2 + Math.random() * 0.5;
+    particles.push({ x: _clx + Math.cos(_ca) * (8 + Math.random() * 38),
+      y: _cly + Math.sin(_ca) * (5 + Math.random() * 12),
+      vx: (Math.random() - 0.5) * 0.4, vy: -0.1 - Math.random() * 0.18,
+      life: 24 + Math.floor(Math.random() * 12), maxLife: 36,
+      size: 15 + Math.random() * 13, color: '#1b1b29', type: 'smoke',
+      _smokeAlpha: 0.36 + Math.random() * 0.16, _protect: true });
+  }
+  for (let _i = 0; _i < 2; _i++) {                          // lighter top-rim catch
+    particles.push({ x: _clx + (Math.random() - 0.5) * 56, y: _cly - 6 - Math.random() * 8,
+      vx: (Math.random() - 0.5) * 0.3, vy: -0.15,
+      life: 18 + Math.floor(Math.random() * 8), maxLife: 26,
+      size: 9 + Math.random() * 8, color: '#39394f', type: 'smoke',
+      _smokeAlpha: 0.13 + Math.random() * 0.1 });
+  }
+  for (let _i = 0; _i < 3; _i++) {                          // downward tendril wisps
+    particles.push({ x: _clx + (Math.random() - 0.5) * 72, y: _cly + 8 + Math.random() * 12,
+      vx: (Math.random() - 0.5) * 0.6, vy: 0.18 + Math.random() * 0.3,
+      life: 16 + Math.floor(Math.random() * 10), maxLife: 26,
+      size: 6 + Math.random() * 7, color: '#141420', type: 'smoke',
+      _smokeAlpha: 0.2 + Math.random() * 0.12 });
+  }
+  // Faint charged underbelly — a hint of the bolt lighting the cloud from below.
+  particles.push({ x: _clx + (Math.random() - 0.5) * 18, y: _cly + 8, vx: 0, vy: 0,
+    life: 12, maxLife: 12, size: 12 + Math.random() * 6, color: '#2a1c06', type: 'smoke',
+    _smokeAlpha: 0.5, _protect: true });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 15, maxLife: 15, size: 4, color: '#fe6', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 40, _protect: true });
+  particles.push({ x: _topX, y: _topY, vx: 0, vy: 0, life: 11, maxLife: 11, size: 2, color: '#ff9', type: 'lightning', tx: x, ty: y, _perp: true, _segs: 11, _jitter: 30, _protect: true });
   // (2) FORK BRANCHES — short jagged offshoots peeling off the main bolt
   //     partway down. Real lightning forks; this kills the "single line" read.
   const _mdx = x - _topX, _mdy = y - _topY;
@@ -9539,7 +9573,7 @@ function arcStrikeVFX(x, y, r) {
     const _bex = _bsx + _mpx * _side * _blen + _mdx * 0.12;
     const _bey = _bsy + _mpy * _side * _blen + _mdy * 0.12;
     particles.push({ x: _bsx, y: _bsy, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 4), maxLife: 13, size: 1.7,
-      color: _i === 0 ? '#fe6' : '#ff9', type: 'lightning', tx: _bex, ty: _bey, _perp: true, _segs: 5, _jitter: 22 });
+      color: _i === 0 ? '#fe6' : '#ff9', type: 'lightning', tx: _bex, ty: _bey, _perp: true, _segs: 5, _jitter: 22, _protect: true });
   }
   // (3) Descent streaks — sparks racing DOWN the bolt. Motion toward the
   //     target is what sells "from above" in a top-down camera.
@@ -9553,10 +9587,10 @@ function arcStrikeVFX(x, y, r) {
   // (4) IMPACT FLASH — the obvious pop. A bright white core flash + a yellow
   //     bloom (filled, collapsing discs) under the segmented hitflash ring and
   //     the white-rimmed yellow shockwave.
-  particles.push({ x, y, vx: 0, vy: 0, life: 6, maxLife: 6, size: r + 42, color: '#fff', type: 'spark' });
-  particles.push({ x, y, vx: 0, vy: 0, life: 9, maxLife: 9, size: r + 70, color: '#fe6', type: 'spark' });
-  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 20, color: '#fff', type: 'hitflash' });
-  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 120, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.42, _alphaScale: 1.2 });
+  particles.push({ x, y, vx: 0, vy: 0, life: 6, maxLife: 6, size: r + 42, color: '#fff', type: 'spark', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 9, maxLife: 9, size: r + 70, color: '#fe6', type: 'spark', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 20, color: '#fff', type: 'hitflash', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 120, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.42, _alphaScale: 1.2, _protect: true });
   // (5) Radial ground forks — jagged lightning crawling outward from impact
   for (let _i = 0; _i < 5; _i++) {
     const _a = (_i / 5) * Math.PI * 2 + Math.random() * 0.8;
@@ -32628,10 +32662,23 @@ function update() {
       if (p.life > 0) { if (_pw !== i) particles[_pw] = p; _pw++; }
     }
     particles.length = _pw;
-    // Hard cap: drop oldest entries via one slice-reassign (avoids O(n²) splice shifts)
+    // Hard cap: drop the OLDEST UNPROTECTED entries first. Particles tagged
+    // _protect (the lightning strike's bolt / flash / cloud) survive, so a
+    // multi-hit burst — e.g. a deadshot piercing several enemies and firing
+    // several strikes in one frame — can't blow past the cap and FIFO-evict
+    // the strike visuals before they're drawn. Single compacting pass, only
+    // when over cap. Protected particles are few and short-lived, so they
+    // can't accumulate unbounded.
     const PARTICLE_CAP = isMobile ? 180 : 300;
     if (particles.length > PARTICLE_CAP) {
-      particles.splice(0, particles.length - PARTICLE_CAP);
+      let _toDrop = particles.length - PARTICLE_CAP;
+      let _w = 0;
+      for (let _r = 0; _r < particles.length; _r++) {
+        const _p = particles[_r];
+        if (_toDrop > 0 && !_p._protect) { _toDrop--; continue; }
+        particles[_w++] = _p;
+      }
+      particles.length = _w;
     }
   }
   // Cold Front particle pool tick — same lifecycle as the main array
