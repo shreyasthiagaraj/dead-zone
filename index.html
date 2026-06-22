@@ -2064,7 +2064,7 @@ const UPGRADE_POOL = [
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
     descs:['Your ATTACK applies SLIDE with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
-    descs:['Your ATTACK applies CORRUPT — corrupted enemies take escalating bonus damage from ALL sources. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
+    descs:['Your ATTACK applies CORRUPT. COMPROMISED enemies detonate on becoming infected, then RUPTURE for bonus damage on every hit — and take escalating damage from ALL sources. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 1) ----
   { id:'reactor_bloom', name:'REACTOR BLOOM', rarity:'rare', max:1, icon:'🔥', color:'#f60',
     descs:['OVERHEAT cap +1. +33% DoT damage. +50% MELTDOWN radius.'], flavor:'thermal runaway. the reactor goes critical.', prereqs:['thermal_rounds|burnout_wake'] },
@@ -2336,7 +2336,7 @@ const UPGRADE_POOL = [
     descs:['Your SPECIAL calls down a LIGHTNING STRIKE — heavy bonus damage + small splash. +10% damage.'],
     flavor:'the killzone calls the storm.' },
   { id:'beacon_corrupt', name:'CORRUPT PROTOCOL', rarity:'rare', max:1, icon:'☣', color:'#a4f',
-    descs:['Your SPECIAL applies CORRUPT — corrupted enemies take bonus damage from ALL sources. +18% damage.'],
+    descs:['Your SPECIAL applies CORRUPT. COMPROMISED enemies detonate + RUPTURE for bonus damage on hit, and take bonus damage from ALL sources. +18% damage.'],
     flavor:'infection spreader deployed.' },
   { id:'beacon_pulse', name:'PULSE PROTOCOL', rarity:'rare', max:1, icon:'💨', color:'#cef',
     descs:['Your SPECIAL applies SLIDE. +20% damage.'],
@@ -2830,7 +2830,7 @@ const _TERM_GLOSSARY = {
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   SHOCKED:      { color: '#ff4', desc: 'Arc conduit mark. Stuns the enemy for 1 second. Arc procs chain through Shocked enemies at longer range.' },
   SLIDE:        { color: '#cef', desc: 'Pulse kinetic state. 3.2x knockback — a SLID enemy becomes a hazard: crashing into other enemies (or a player) deals impact damage, spreads SLIDE, and wall slams. No damage amp.' },
-  COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes ~2x damage from all sources. Enemies deal 40% less while active.' },
+  COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Detonates on trigger (AoE + spread), RUPTURES for bonus direct damage on every hit, takes ~2x damage from all sources, and deals 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking vulnerability (0-5). Each stack = more damage taken. At threshold, becomes COMPROMISED.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
   DASH:         { color: '#0ff', desc: 'Short directional burst with brief invincibility. Can cross gaps. Cooldown: 800ms.' },
@@ -9245,6 +9245,7 @@ function updateElementZones() {
 // ============================================================
 let _synLock = false;
 let _meltdownLock = false; // re-entrancy guard for cascading combusts
+let _ruptureActive = false; // re-entrancy guard for CORRUPT rupture spread cascade
 let _runawayDepth = 0; // RUNAWAY CORE (legendary) chain-hop depth guard
 // Body color ramp for OVERHEAT stacks. dim red → yellow-white as stacks climb.
 function _overheatBodyColor(stacks) {
@@ -9659,6 +9660,40 @@ function applyExposed(z) {
     // (one-shot SLIDE floater removed — persistent label below the enemy reads the state.)
   }
 }
+// ---- CORRUPT RUPTURE VFX (shared host + client) ----
+// Pure visual — pushes particles + (big only) shake/glitch surge. No game-state
+// mutation and NO isHost gate, so it can run on every client: host calls it from
+// the rupture damage paths; non-host fires it from the COMPROMISED sync edge
+// (threshold burst) and the HP-delta hit loop (per-hit), so the effect reads
+// identically in multiplayer.
+//   big=true  → the loud once-per-enemy COMPROMISED detonation
+//   big=false → the cheap per-hit rupture (fires many times/sec; no shake/surge)
+const _RUPTURE_GLYPHS = ['☣','▓','▒','╳','0','1','#'];
+function corruptRuptureVFX(x, y, radius, big) {
+  radius = radius || 80;
+  if (big) {
+    // Origin — expanding CORRUPT shockwave (cap-exempt so the payoff never drops)
+    particles.push({ x, y, vx:0, vy:0, life:26, maxLife:26, size:radius, color:'#a4f', type:'shockwave', _rimColor:'#f0f', _lingerStart:0.3, _alphaScale:1.4, _protect:true });
+    // Inner counter-ring for depth
+    particles.push({ x, y, vx:0, vy:0, life:15, maxLife:15, size:radius*0.6, color:'#f0f', type:'wakering', _protect:true });
+    // Path — radial corrupt sparks
+    for (let i=0;i<20;i++){ const a=Math.random()*Math.PI*2, s=4+Math.random()*7; particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:16+Math.floor(Math.random()*8), maxLife:24, size:2.5+Math.random()*3, color:i%2?'#f0f':'#a4f', type:'spark' }); }
+    // Path — dark-purple corrupt smoke (organic ellipses)
+    for (let i=0;i<6;i++){ const a=Math.random()*Math.PI*2, s=1+Math.random()*2; particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-0.6, life:30+Math.floor(Math.random()*16), maxLife:46, size:9+Math.random()*8, color:Math.random()>0.5?'#206':'#403', type:'smoke', _smokeAlpha:0.2+Math.random()*0.14 }); }
+    // Signature — flying glitch glyphs (CORRUPT identity)
+    for (let i=0;i<5;i++){ const a=Math.random()*Math.PI*2, s=1.5+Math.random()*2.5; particles.push({ x:x+(Math.random()-0.5)*14, y:y-6-Math.random()*12, vx:Math.cos(a)*s, vy:Math.sin(a)*s-0.4, life:18, maxLife:18, size:9+Math.random()*5, color:Math.random()>0.5?'#c8f':'#a4f', type:'glitchtext', text:_RUPTURE_GLYPHS[Math.floor(Math.random()*_RUPTURE_GLYPHS.length)] }); }
+    // Feel — CORRUPT is the glitch class
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    if (typeof triggerGlitchSurge === 'function') triggerGlitchSurge(0.4, 28);
+    playSfx('zap', 0.16, 0.05) || playSound(220, 0.09, 'sawtooth', 0.14);
+  } else {
+    // Per-hit rupture — tight + cheap (no shake/surge — fires constantly)
+    const _r = Math.min(radius, 30);
+    particles.push({ x, y, vx:0, vy:0, life:10, maxLife:10, size:_r, color:'#a4f', type:'shockwave', _rimColor:'#f0f', _lingerStart:0.5, _alphaScale:1.1 });
+    for (let i=0;i<5;i++){ const a=Math.random()*Math.PI*2, s=3+Math.random()*4; particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:9+Math.floor(Math.random()*5), maxLife:14, size:2+Math.random()*2.5, color:i%2?'#f0f':'#a4f', type:'spark' }); }
+    if (Math.random() < 0.4) particles.push({ x:x+(Math.random()-0.5)*10, y:y-6, vx:(Math.random()-0.5)*1.4, vy:-0.6, life:14, maxLife:14, size:8+Math.random()*3, color:'#c8f', type:'glitchtext', text:_RUPTURE_GLYPHS[Math.floor(Math.random()*_RUPTURE_GLYPHS.length)] });
+  }
+}
 function applyCorrupt(z, stacks) {
   if (!isHost) return;
   // Re-apply cooldown — prevents corruption pools from maxing stacks instantly
@@ -9681,7 +9716,30 @@ function applyCorrupt(z, stacks) {
     // Stacks PERSIST through Compromised — vuln stays. Reset happens when Compromised timer expires.
     // (one-shot COMPROMISED floater removed — persistent label below the enemy reads the state.)
     for(let i=0;i<14;i++){const a=Math.random()*Math.PI*2,s=2+Math.random()*4;particles.push({x:z.x+Math.cos(a)*8,y:z.y+Math.sin(a)*8,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:18,maxLife:18,size:2+Math.random()*3,color:Math.random()>0.4?'#a4f':'#f0f',type:'spark'});}
-    screenShake.intensity = Math.max(screenShake.intensity, 4);
+    // ---- RUPTURE: the COMPROMISED detonation. Stored corruption bursts for
+    // direct AoE damage + spreads CORRUPT to neighbors. _ruptureActive caps the
+    // chain at one level so a cluster doesn't recurse into a stack overflow.
+    // Scales with CORRUPT investment (VIRAL INFUSION / CORRUPT PROTOCOL).
+    const _ruptR = 90 + (m.viralPayloadLv || 0) * 10;
+    if (!_ruptureActive) {
+      _ruptureActive = true;
+      const _ruptDmg = 40 + (m.viralPayloadLv || 0) * 10 + (m.beaconElement === 'corrupt' ? 15 : 0);
+      const _ruptR2 = _ruptR * _ruptR;
+      for (const oz of zombies) {
+        if (oz === z || oz.hp <= 0) continue;
+        const _rdx = oz.x - z.x, _rdy = oz.y - z.y;
+        if (_rdx*_rdx + _rdy*_rdy < _ruptR2) {
+          damageZombie(oz, _ruptDmg, 0, 0, true);   // silent: rides the burst, doesn't re-rupture
+          applyCorrupt(oz, 2);                        // spread (guarded — won't nest a burst)
+          particles.push({ x: oz.x, y: oz.y, vx:0, vy:0, life:10, maxLife:10, size:3, color:'#f0f', type:'spark' }); // impact pop
+        }
+      }
+      _ruptureActive = false;
+      // Epic VFX — inside the guard so chain-compromised neighbors don't each
+      // stack a full detonation (shake/glitch surge). Host renders it directly;
+      // non-host fires its own from the COMPROMISED sync edge.
+      corruptRuptureVFX(z.x, z.y, _ruptR, true);
+    }
     // INFECTION VECTOR: spread corrupt to nearest non-corrupted enemy
     if (m.infectionVector && !_synLock) {
       _synLock = true;
@@ -27062,12 +27120,12 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // longer multiplies incoming damage (that role belongs to CORRUPT now). Its
   // payoff is 3.2x knockback + wall slam + enemy/player collision damage
   // (see the SLIDE collision block in the zombie movement update).
-  // CORRUPT (amplifier class): corrupted enemies take escalating bonus damage
-  // from ALL sources — CORRUPT deals no damage of its own, it multiplies yours.
+  // CORRUPT: corrupted enemies take escalating bonus damage from ALL sources
+  // (the amp), AND now deal CORRUPT's own damage via RUPTURE — a COMPROMISED
+  // enemy ruptures on every hit for bonus direct damage that chips neighbors,
+  // plus a big AoE detonation the moment it becomes COMPROMISED (see applyCorrupt).
   // Each stack ramps the vuln; at COMPROMISED the system is wide open (~2x).
-  // VIRAL INFUSION / CORRUPT PROTOCOL investment widens the amp further.
-  // NOTE: like EXPOSED but stacking — the overlap with EXPOSED is intentional
-  // for now; pulse/EXPOSED is being reworked next to differentiate the two.
+  // VIRAL INFUSION / CORRUPT PROTOCOL investment widens the amp + the rupture.
   if (z._compromised) {
     const _cm = runMods || {};
     const _cAmp = 2.0 + (_cm.viralPayloadLv || 0) * 0.25 + (_cm.beaconElement === 'corrupt' ? 0.20 : 0);
@@ -27076,6 +27134,35 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     const _cm = runMods || {};
     const _perStack = 0.10 + (_cm.viralPayloadLv || 0) * 0.02 + (_cm.beaconElement === 'corrupt' ? 0.015 : 0);
     damage = Math.floor(damage * (1 + _perStack * Math.min(5, z._corrupt)));
+  }
+  // ---- RUPTURE on-hit: a real (non-silent) hit on a COMPROMISED enemy bursts
+  // it for CORRUPT's own flat damage + chips up to 2 neighbors. Added AFTER the
+  // amp (so corrupt damage isn't circularly re-amped by corrupt) and BEFORE the
+  // armor/shield layers below (so it respects them). Gated to !silent so the
+  // silent splash can't re-trigger it — recursion-safe. Per-hit VFX is fired by
+  // the caller paths (host local hit / non-host HP-delta loop), never here
+  // (damageZombie is host-only).
+  if (!silent && z._compromised) {
+    const _rm2 = runMods || {};
+    if ((_rm2.viralPayloadLv || 0) > 0 || _rm2.beaconElement === 'corrupt') {
+      const _ruptBonus = 10 + (_rm2.viralPayloadLv || 0) * 4 + (_rm2.beaconElement === 'corrupt' ? 4 : 0);
+      damage += _ruptBonus;
+      if (isHost) {
+        const _splashDmg = Math.floor(_ruptBonus * 0.5);
+        const _splashR2 = 70 * 70;
+        let _splashHit = 0;
+        for (const oz of zombies) {
+          if (_splashHit >= 2) break;
+          if (oz === z || oz.hp <= 0) continue;
+          const _sdx = oz.x - z.x, _sdy = oz.y - z.y;
+          if (_sdx*_sdx + _sdy*_sdy < _splashR2) { damageZombie(oz, _splashDmg, 0, 0, true); _splashHit++; }
+        }
+        // Host (+ single-player) per-hit VFX. Non-host fires its own from the
+        // HP-delta loop in applyHostState (gated on isHost here so it can't
+        // double up there). Cheap by design — no shake/surge.
+        corruptRuptureVFX(z.x, z.y, z.radius + 24, false);
+      }
+    }
   }
   // CARD: AFTERSHOCK VULN — staggered enemies take +25% damage for 2s
   if ((runMods||{}).aftershockVuln2 && (z._aftershockVuln > 0 || z.staggerTimer > 0)) damage = Math.floor(damage * (1 + _modScale('aftershock_vuln', 0.25, 0.05)));
@@ -33222,7 +33309,8 @@ function update() {
   if (isHost && isMultiplayer && gameTime % NET_SEND_RATE === 0) {
     const ps = players.map(p => ({ id:p.id,x:Math.round(p.x),y:Math.round(p.y),vx:+(p.vx||0).toFixed(1),vy:+(p.vy||0).toFixed(1),angle:+(p.angle.toFixed(2)),moveAngle:+((p.moveAngle||0).toFixed(2)),hp:Math.round(p.hp),maxHp:Math.round(p.maxHp),alive:p.alive,weapon:p.currentWeapon,weaponType:p.weapons[p.currentWeapon]?.type||'pistol',color:p.color,name:p.name,reviveProgress:p.reviveProgress||0,reviveTime:p.reviveTime||360,dashTimer:p.dashTimer||0,dashAngle:p.dashAngle||0,reloading:p.weapons[p.currentWeapon]?.reloading||false,firing:p._firing||false,waveKills:p._waveKills||0,totalKills:p._totalKills||0,powerUp:p.id===myId?(activePowerUp?activePowerUp.id:null):(p._remotePowerUp||null),dashCooldown:p.dashCooldown||0 }));
     // Pack per-zombie status flags into a small bitfield to keep the broadcast tight.
-    // bit 0 = invader (horde), 1 = burning, 2 = frozen/slow, 3 = shocked OR charged, 4 = spawning (trench)
+    // value bits: 1 = invader (horde), 2 = burning, 4 = frozen/slow, 8 = shocked OR charged,
+    // 16 = spawning (trench), 32 = boss vuln, 64 = firewall shield, 128 = CORRUPT compromised
     // OVERHEAT stack count rides as an explicit `oh` field (0-7) so non-hosts
     // can render the body-color ramp and ember density per stack.
     const zs = zombies.map(z => {
@@ -33234,6 +33322,7 @@ function update() {
       if (z._spawnAnim > 0) fl |= 16;
       if (z._vulnTimer > 0) fl |= 32; // boss vulnerability — for non-host visual parity
       if (z._fwShieldUp) fl |= 64;    // firewall shield-up dome
+      if (z._compromised) fl |= 128;  // CORRUPT compromised — drives non-host aura + rupture VFX
       const _zRow = { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl,oh:z._overheat||0 };
       // ARTILLERY: include locked-target + progress so non-host renders the
       // ground reticle + shell arc at the same position the host is animating.
@@ -33571,6 +33660,11 @@ function applyHostState(msg) {
       // Trigger the short white pop on non-host too — damageZombie does
       // this on host; here we mirror it via the damage edge.
       oz._hfPulse = 3;
+      // RUPTURE per-hit VFX on non-host: any damage to a COMPROMISED enemy
+      // (oz._compromised here is last sync's value — true if it was compromised
+      // when hit). Host fires its own from damageZombie; this is the non-host
+      // mirror. Cheap (no shake/surge).
+      if (oz._compromised) corruptRuptureVFX(oz.x, oz.y, (oz.radius || 12) + 24, false);
       // Mirror the physical hit reaction for damage we couldn't predict
       // locally (host melee, DoT procs, explosions). Skip if a reaction is
       // already in flight (local bullet contact) so one hit doesn't wobble
@@ -33610,7 +33704,7 @@ function applyHostState(msg) {
       oz.hp = nz.hp; oz.maxHp = nz.maxHp; oz.hitFlash = nz.hitFlash;
       oz.aware = nz.aware; oz.boss = nz.boss; oz.color = nz.color;
       // Apply flag bitfield: 1=invader, 2=burning, 4=frozen/slow, 8=shocked,
-      // 16=spawning, 32=boss vuln, 64=firewall shield up
+      // 16=spawning, 32=boss vuln, 64=firewall shield up, 128=CORRUPT compromised
       // OVERHEAT stack count rides in the explicit `oh` field for VFX scaling.
       const _fl = nz.fl || 0;
       oz._invader = (_fl & 1) !== 0;
@@ -33627,6 +33721,14 @@ function applyHostState(msg) {
       if (_fl & 32) { oz._vulnTimer = Math.max(oz._vulnTimer || 0, 6); oz._vulnMaxTimer = oz._vulnMaxTimer || 6; }
       else oz._vulnTimer = 0;
       oz._fwShieldUp = (_fl & 64) !== 0;
+      // CORRUPT compromised: set the synced flag (also makes the aura render on
+      // non-host) and edge-detect 0->1 to fire the big RUPTURE detonation locally
+      // — mirrors the gate/checkpoint/domain edge-detects elsewhere in this fn.
+      {
+        const _wasCmp = oz._compromised;
+        oz._compromised = (_fl & 128) !== 0;
+        if (!_wasCmp && oz._compromised && !isHost) corruptRuptureVFX(oz.x, oz.y, 90, true);
+      }
       // ARTILLERY marker fields (only present when telegraphing)
       if (nz.mTx !== undefined) {
         oz._artState = 'telegraph';
@@ -33652,6 +33754,7 @@ function applyHostState(msg) {
       if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
       if (_fl & 32) { fresh._vulnTimer = 6; fresh._vulnMaxTimer = 6; }
       if (_fl & 64) fresh._fwShieldUp = true;
+      if (_fl & 128) fresh._compromised = true; // already-compromised on first sight: set flag, no spurious burst
       if (nz.mTx !== undefined) {
         fresh._artState = 'telegraph';
         fresh._artTx = nz.mTx; fresh._artTy = nz.mTy;
