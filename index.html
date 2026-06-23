@@ -1124,7 +1124,7 @@ body.mobile #mobile-buttons { display: block; }
 <!-- ---- LEVEL-UP CARD PICKER (legacy — kept but unused; shop replaces it) ---- -->
 <div id="levelup-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:60;background:rgba(3,3,12,0.88);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;padding:14px;box-sizing:border-box">
   <div style="display:flex;flex-direction:column;align-items:center;gap:14px;max-width:760px;width:100%">
-    <div style="color:#ff0;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #ff0,0 0 24px rgba(255,255,0,0.4);animation:pulse 1s ease-in-out infinite">★ LEVEL UP ★</div>
+    <div id="levelup-banner" style="color:#ff0;font-size:14px;letter-spacing:4px;text-shadow:0 0 12px #ff0,0 0 24px rgba(255,255,0,0.4);animation:pulse 1s ease-in-out infinite">★ LEVEL UP ★</div>
     <div id="levelup-level" style="color:#f0f;font-size:28px;font-weight:bold;letter-spacing:5px;text-shadow:0 0 14px #f0f,0 0 28px rgba(255,0,255,0.6);line-height:1">LEVEL 2</div>
     <div id="levelup-subtitle" style="color:#0ff;font-size:11px;letter-spacing:3px;margin-top:-4px">CHOOSE A MOD</div>
     <div id="levelup-cards" style="display:flex;flex-direction:row;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:10px;width:100%"></div>
@@ -5714,6 +5714,7 @@ function startDescent() {
   // from a prior arcade or descent run (score/kills already zeroed in startSoloGame).
   arcadeStreak = 0; arcadeStreakTimer = 0; _arcadeMultikillCount = 0; _arcadeMultikillTimer = 0;
   arcadeScoreDisplay = 0; arcadeCounterPulse = 0; _arcadeBestStreak = 0; _arcadeBestMultikillTier = 0;
+  _descentBossDraft = false;
   initDescentSections();
   // Announce
   const el = document.getElementById('wave-announce');
@@ -5723,6 +5724,24 @@ function startDescent() {
   playWaveStartSound();
   // Spawn first section enemies
   spawnDescentSection(0);
+}
+
+// Free mod draft on a cleared section's gate beat — Descent's power-growth loop.
+// A 3-card pick every few depths, upgraded to a guaranteed rare+ hand after a
+// boss. Reuses the level-up picker (free, no BITS) and resumes play once chosen.
+const DESCENT_MOD_INTERVAL = 3; // a normal pick every N depths cleared
+function _descentModDraft(isBoss) {
+  if (isMultiplayer) return;          // the picker is single-player only
+  pendingLevelUps = 1;
+  _descentBossDraft = !!isBoss;
+  _levelupOnComplete = null;          // gate is already open — just resume after the pick
+  triggerLevelUpPicker();
+  const lv = document.getElementById('levelup-level');
+  if (lv) lv.textContent = isBoss ? 'BOSS REWARD' : 'MOD DRAFT';
+  const bn = document.getElementById('levelup-banner');
+  if (bn) bn.textContent = isBoss ? '☠ BOSS DOWN ☠' : '▼ DEPTH CLEARED ▼';
+  // Pool exhausted (everything maxed) → picker never opened; clear the queue.
+  if (gameState !== 'levelup') { pendingLevelUps = 0; _descentBossDraft = false; }
 }
 
 function spawnDescentSection(idx) {
@@ -7802,7 +7821,11 @@ function updateDescent() {
     // Gate-open punch-in on host. Non-host triggers via descentGateOpen 0->1 sync.
     // (Hit-stop + slow-mo removed for smoothness.)
     triggerCameraZoom(1.06, 600);
-    // (Data Link removed — door rewards handle all terminals)
+    // Free mod draft at the gate beat: a pick every few depths, plus a guaranteed
+    // rare+ hand after each boss. descentSection is 0-based, so depth = +1.
+    if (!isMultiplayer && (sec.isBoss || ((descentSection + 1) % DESCENT_MOD_INTERVAL) === 0)) {
+      _descentModDraft(sec.isBoss);
+    }
   }
   // Check if player passed through the gate to next section
   if (descentGateOpen) {
@@ -14279,9 +14302,13 @@ let _levelupSelectedId = null; // currently highlighted card id
 // draws confirmed). ROOM RUSH uses it to start the next room once the climb
 // mod is drafted. Cleared automatically after it runs.
 let _levelupOnComplete = null;
+let _descentBossDraft = false; // one-shot: next picker hand is rare+ (descent boss reward)
 
 function triggerLevelUpPicker() {
-  const choices = draftUpgradeCards();
+  // Descent boss rewards force a rare+ hand; one-shot so normal draws keep the
+  // standard rarity weights.
+  const choices = _descentBossDraft ? _draftBossCards(3) : draftUpgradeCards();
+  _descentBossDraft = false;
   if (choices.length === 0) {
     // Pool exhausted: just consume the level-up with a bonus
     pendingLevelUps--;
@@ -14320,6 +14347,10 @@ function triggerLevelUpPicker() {
   if (!el) return;
   const lv = document.getElementById('levelup-level');
   if (lv) lv.textContent = 'LEVEL ' + runLevel;
+  // Reset the small banner to its default; mode-specific callers (e.g. descent)
+  // override it after this returns.
+  const _bn = document.getElementById('levelup-banner');
+  if (_bn) _bn.textContent = '★ LEVEL UP ★';
   el.style.display = 'flex';
   el.classList.remove('visible');
   void el.offsetWidth;
