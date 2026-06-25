@@ -9701,8 +9701,8 @@ function applyExposed(z) {
   const _m = runMods || {};
   const _wasExposed = z._exposed;
   z._exposed = true;
-  // SLIDE base duration doubled to 6s (was 3s). KINETIC HOLD card extends it.
-  z._exposedTimer = Math.max(z._exposedTimer || 0, 360 + (_m.slideDurBonus || 0));
+  // SLIDE base duration 3s (reduced from 6s). KINETIC HOLD card extends it.
+  z._exposedTimer = Math.max(z._exposedTimer || 0, 180 + (_m.slideDurBonus || 0));
   if (!_wasExposed) {
     particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});
     // (one-shot SLIDE floater removed — persistent label below the enemy reads the state.)
@@ -9717,7 +9717,6 @@ function applyExposed(z) {
 const PULSE_LAUNCH_DELAY = 30; // frames (~0.5s @60fps)
 function _chargePulse(z, dmg, ang) {
   if (!z || z.hp <= 0) return;
-  applyExposed(z);                                       // SLIDE state (wall-slam + synergies)
   z._pulseCharge = (z._pulseCharge || 0) + Math.max(1, dmg || 1);
   if (typeof ang === 'number') z._pulseChargeAng = ang;  // launch in the latest hit direction
   if (!(z._pulseChargeTimer > 0)) z._pulseChargeTimer = PULSE_LAUNCH_DELAY;
@@ -9731,7 +9730,13 @@ function _firePulseLaunch(z) {
   const _k = (typeof _kbSizeScale === 'function') ? _kbSizeScale(z) : 1;
   // Launch force scales with the damage taken during the window (capped).
   const vel = Math.min(52, 6 + dmg * 0.5) * vsMult * _k;
-  const ang = (typeof z._pulseChargeAng === 'number') ? z._pulseChargeAng : (z.angle || 0);
+  let ang = z._pulseChargeAng;
+  if (typeof ang !== 'number') {
+    // No directional hit recorded (e.g. only zero-knockback damage) — launch
+    // away from the nearest player.
+    const _lp = (typeof getNearestAlivePlayer === 'function') ? getNearestAlivePlayer(z.x, z.y) : (typeof getLocalPlayer === 'function' ? getLocalPlayer() : null);
+    ang = _lp ? Math.atan2(z.y - _lp.y, z.x - _lp.x) : (z.angle || 0);
+  }
   z.vx = (z.vx || 0) + Math.cos(ang) * vel;
   z.vy = (z.vy || 0) + Math.sin(ang) * vel;
   z.staggerTimer = Math.max(z.staggerTimer || 0, 26);
@@ -22964,12 +22969,11 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
         tx: z.x + Math.cos(_la) * _ll, ty: z.y + Math.sin(_la) * _ll });
     }
   }
-  // PULSE INFUSION (melee path) — the blade's combo already supplies its own
-  // knockback; pulse no longer nudges per hit. It accumulates the damage + SLIDE
-  // and launches the enemy ~0.5s later with a class-colored pulsewave (see
-  // _chargePulse / the pulse-charge tick), so chaining hits doesn't shove it off.
+  // PULSE INFUSION (melee path) — apply SLIDE. The build-up-and-launch is now
+  // universal: while SLID, damageZombie routes hits into the pulse charge and
+  // launches the enemy ~0.5s later (see damageZombie / _firePulseLaunch).
   if (_m.pulseShotLv > 0) {
-    _chargePulse(z, dmg, attackAngle);
+    applyExposed(z);
   }
   // VIRAL PAYLOAD
   if (_m.viralPayloadLv > 0) {
@@ -24546,7 +24550,7 @@ function triggerShockwaveDash(lp) {
       z.staggerTimer = Math.max(z.staggerTimer || 0, 30 + 10 * _mods.kineticWake);
       if (_mods.kineticWake >= 3) {
         z._exposed = true;
-        z._exposedTimer = Math.max(z._exposedTimer || 0, 360 + ((runMods && runMods.slideDurBonus) || 0));
+        z._exposedTimer = Math.max(z._exposedTimer || 0, 180 + ((runMods && runMods.slideDurBonus) || 0));
       }
     }
   }
@@ -27525,10 +27529,6 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   const prevHp=z.hp;
   // Knockback scales inversely with size — bigger/heavier zombies resist more.
   const kbScale = Math.pow(13 / (z.radius || 13), 2);
-  // EXPOSED: 3.2x knockback + track pre-knockback speed for wall collision
-  // damage. Heavier than the old 2x so the status reads as "they go FLYING"
-  // — supports the "wall slam = bonus damage" loop the card promises.
-  const _exposedKbMult = z._exposed ? 3.0 : 1.0;
   // FROZEN: ice block resists knockback. Without this, a pulse-shoved
   // enemy that froze mid-flight (or one shot while frozen) would slide
   // for many frames since the frozen movement path has no chase override
@@ -27566,22 +27566,17 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // (DoT ticks, collision chip damage) don't punch the body, matching the
   // hit-stop/zoom policy above.
   if (!silent) triggerHitReact(z, kbx, kby, damage);
-  z.vx+=kbx*kbScale*_exposedKbMult*_frozenKbMult;z.vy+=kby*kbScale*_exposedKbMult*_frozenKbMult;
-  // SLIDE: every hit launches a SLID enemy. Enforce a knockback FLOOR so even
-  // low-knockback weapons send them flying (pulse "push class" identity). Tops
-  // the applied knockback up to the floor; strong pulse hits already exceed it.
-  // Skips silent hits (DoT/collision damage) so it can't feedback-loop, and
-  // scales with kbScale so heavy bosses still resist.
-  if (z._exposed && !silent && !(z._frozen || z._frozenTimer > 0)) {
-    const _kbMag = Math.sqrt(kbx*kbx + kby*kby) * kbScale * _exposedKbMult;
-    const _kbFloor = 12 * kbScale;
-    if (_kbMag < _kbFloor) {
-      let _kdx = kbx, _kdy = kby;
-      if (kbx*kbx + kby*kby < 0.01) { const _ksp = getLocalPlayer(); if (_ksp) { _kdx = z.x - _ksp.x; _kdy = z.y - _ksp.y; } }
-      const _kdl = Math.sqrt(_kdx*_kdx + _kdy*_kdy) || 1;
-      const _kAdd = _kbFloor - _kbMag;
-      z.vx += (_kdx/_kdl) * _kAdd; z.vy += (_kdy/_kdl) * _kAdd;
-    }
+  // PULSE (SLIDE): a SLID enemy no longer flies on every hit — the whole pulse
+  // class is now BUILD-UP-AND-LAUNCH. Route this hit's damage into the pulse
+  // charge (it launches ~0.5s later, proportional to the total damage taken —
+  // see _firePulseLaunch) and suppress the immediate knockback. Non-slid
+  // enemies take normal knockback. Silent hits (DoT/collision) don't charge so
+  // the launch can't feedback-loop.
+  if (z._exposed && damage > 0 && !silent && !(z._frozen || z._frozenTimer > 0)) {
+    const _pang = (kbx*kbx + kby*kby > 0.01) ? Math.atan2(kby, kbx) : undefined;
+    _chargePulse(z, damage, _pang);
+  } else {
+    z.vx += kbx*kbScale*_frozenKbMult; z.vy += kby*kbScale*_frozenKbMult;
   }
   // Arcade mode: every death (bullet, DoT, AoE, explosion) routes through here
   // so we award points + spawn the flashy "+X" label exactly once per kill.
@@ -30645,12 +30640,12 @@ function update() {
                         }
                       }
                     }
-                    // PULSE SHOT: don't shove on every shot — accumulate the
-                    // damage onto the enemy + apply SLIDE, and launch it ~0.5s
-                    // later with a class-colored pulsewave scaled to the damage
-                    // taken (see _chargePulse / the pulse-charge tick).
+                    // PULSE SHOT: apply SLIDE. While SLID, damageZombie routes
+                    // hits into the pulse charge and launches the enemy ~0.5s
+                    // later, proportional to damage taken (see damageZombie /
+                    // _firePulseLaunch) — build-up-and-launch, not hit-and-slide.
                     if (_m.pulseShotLv > 0) {
-                      _chargePulse(z, _dmg, a);
+                      applyExposed(z);
                     }
                     // VIRAL PAYLOAD: apply Corrupt stacks. Lv2+ applies 2 stacks; Lv3 spreads to neighbors on Compromised hit.
                     if (_m.viralPayloadLv > 0) {
