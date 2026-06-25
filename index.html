@@ -21895,7 +21895,7 @@ function _runComboStep(p, def, step, idx) {
   const _wwActive = _rmCombo.whirlwind && p._whirlwindReady;
   // CARD: CLEAVE — cone +30%
   let cone = step.cone * (_rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1);
-  if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'WHIRLWIND', '#fe6'); }
+  if (_wwActive) { cone = Math.PI * 2; p._whirlwindReady = false; }
   // WHIRLWIND also primes off a combo FINISHER — landing the finisher readies
   // your NEXT attack as a 360° spin (reliable, not just kill-streak based).
   // Skip if THIS swing already spun so it doesn't chain spins forever.
@@ -21905,7 +21905,7 @@ function _runComboStep(p, def, step, idx) {
   // the first hit is applied (and the readiness consumed) in the melee pre-hit
   // hook, so we only widen the cone here — don't consume the window.
   const _riposteSpin = _rmCombo.riposte && p._riposteReadyUntil && gameTime <= p._riposteReadyUntil;
-  if (_riposteSpin) { cone = Math.PI * 2; if (p === getLocalPlayer()) addFloatingText(p.x, p.y - 30, 'RIPOSTE SPIN!', '#fe6'); }
+  if (_riposteSpin) { cone = Math.PI * 2; }
   // Damage / approach cone — narrower than the visual swing arc.
   // Approach uses this so the auto-lunge only chases enemies the strike
   // will actually hit.
@@ -22461,11 +22461,10 @@ function _runComboStep(p, def, step, idx) {
     }
   }
 
-  // ---- COMBO LABEL + SOUND ----
+  // ---- COMBO SOUND ----
+  // (Combo step name callouts above the player removed — they cluttered the
+  // view while attacking. The swing VFX + sound carry the combo feedback.)
   if (isLocal) {
-    if (step.label) {
-      floatingTexts.push({ x: p.x, y: p.y - PLAYER_RADIUS - 18, text: step.label, color: mainCol, vx: 0, vy: -1.2, life: 22, maxLife: 22 });
-    }
     playSound(step.tone, 0.05 + (step.finisher ? 0.05 : 0), step.finisher ? 'sawtooth' : 'square', 0.07);
     if (step.finisher) {
       playSound(120, 0.1, 'sawtooth', 0.1);
@@ -25789,19 +25788,8 @@ function _arcadeAwardKill(z) {
   score += pts;
   kills++;
   if (gameMode === 'arcade') arcadeZombiesKilled++;
-  // Spawn the flashy label — bigger on high multipliers / boss kills.
-  const isBoss = !!(z && z.boss);
-  const color = isBoss ? '#f0f' : (mult >= 3 ? '#f0f' : mult >= 2 ? '#fa0' : '#ff0');
-  const label = (mult > 1 ? `+${pts}  x${mult}` : `+${pts}`);
-  floatingTexts.push({
-    x: z.x, y: z.y - (z.radius || 14) - 8,
-    text: label, color,
-    vx: 0, vy: -1.8,
-    life: 50, maxLife: 50,
-    _arcadePoints: true,
-    _pulse: 10,
-    _bigLabel: isBoss || mult >= 3,
-  });
+  // (Per-kill "+points" label above the enemy removed — the HUD score counter
+  // bump below carries the feedback now.)
   // Bump the HUD counter pulse — clamped, decays in updateHUD.
   arcadeCounterPulse = Math.min(1, arcadeCounterPulse + 0.6);
 }
@@ -28187,37 +28175,67 @@ function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,col
 // Accumulating damage label — combines rapid hits on the same SOURCE into one
 // growing, pulsing number. The label floats out to the right, then slowly rises
 // and fades. One active label per source (z._dmgLabel).
+// Damage label lifecycle: POP IN right above the enemy → PAUSE ~0.5s following
+// the enemy (more hits from the same source combine in, with a pulse) → DETACH
+// and FLOAT up + randomly left/right while shrinking and rapidly fading out.
+const _DMG_PAUSE_FRAMES = 30;   // ~0.5s hold above the enemy
+const _DMG_FLOAT_FRAMES = 26;   // float-away + fade-out window
 function _dmgColorFor(total, isCrit) {
   return isCrit ? '#f0f' : (total >= 100 ? '#f44' : total >= 40 ? '#fa0' : '#fff');
 }
 function addDamageNumber(z, dmg, isCrit) {
   if (!z || dmg < 1) return;
-  // Combine into the active label for this source if one is still alive.
+  // Combine into the active label ONLY while it's still PAUSED above this enemy.
+  // Once it has detached and started floating away, a new hit makes a new label.
   const _ex = z._dmgLabel;
-  if (_ex && _ex.life > 0 && _ex._dmgNum) {
+  if (_ex && _ex._dmgNum && _ex._dmgPhase === 'pause') {
     _ex._dmgTotal += dmg;
     _ex.text = Math.floor(_ex._dmgTotal) + '';
-    _ex.life = _ex.maxLife;                 // refresh so it lingers while hits land
-    _ex._pulse = 6;                          // re-pop on each combined hit
+    _ex._pauseTimer = _DMG_PAUSE_FRAMES;     // restart the hold so it lingers while hits land
+    _ex._pulse = 5;                           // slight pulse up as the number grows
     if (isCrit) _ex._crit = true;
     _ex.color = _dmgColorFor(_ex._dmgTotal, _ex._crit);
     return;
   }
-  // Fresh label — starts just up-and-right of the source, then drifts right.
-  const _offX = (z.radius || 14) * 0.35 + 5;
-  const _offY = -(z.radius || 14) - 8;
+  const _offY = -(z.radius || 14) - 12;       // right above the enemy
   const label = {
-    x: z.x + _offX, y: z.y + _offY,
+    x: z.x, y: z.y + _offY,
     text: Math.floor(dmg) + '',
     color: _dmgColorFor(dmg, isCrit),
-    vx: 0, vy: 0,
-    _driftRight: 0.9 + Math.random() * 0.4,
-    life: 38, maxLife: 38,
-    _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 6,
-    _follow: z, _followOffX: _offX, _followOffY: _offY,
+    _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg,
+    _dmgPhase: 'pause', _pauseTimer: _DMG_PAUSE_FRAMES, _floatTimer: _DMG_FLOAT_FRAMES,
+    _spawnPulse: 6, _pulse: 0, _vx: 0, _vy: 0,
+    _follow: z, _followOffX: 0, _followOffY: _offY,
+    life: 1, maxLife: 1,                       // life unused for dmgNum (removal via _updateDmgLabel)
   };
   z._dmgLabel = label;
   floatingTexts.push(label);
+}
+// Per-frame motion for a damage label. Returns false when it should be removed.
+function _updateDmgLabel(t) {
+  if (t._spawnPulse > 0) t._spawnPulse--;
+  if (t._pulse > 0) t._pulse--;
+  if (t._dmgPhase === 'float') {
+    t.x += t._vx || 0; t.y += t._vy || 0;
+    t._vx *= 0.95; t._vy *= 0.97;
+    t._floatTimer--;
+    return t._floatTimer > 0;
+  }
+  // PAUSE: track the enemy so the number stays pinned above it.
+  if (t._follow && t._follow.x !== undefined) {
+    t.x = t._follow.x + (t._followOffX || 0);
+    t.y = t._follow.y + (t._followOffY || 0);
+  }
+  t._pauseTimer--;
+  if (t._pauseTimer <= 0) {
+    // Detach and start floating up + to a random side.
+    t._dmgPhase = 'float';
+    t._follow = null;
+    const _dir = Math.random() < 0.5 ? -1 : 1;
+    t._vx = _dir * (0.6 + Math.random() * 1.7);
+    t._vy = -(1.2 + Math.random() * 1.2);
+  }
+  return true;
 }
 
 function clamp(v,mn,mx){return Math.max(mn,Math.min(mx,v));}
@@ -31072,7 +31090,7 @@ function update() {
       // OVERHEAT: each stack ticks 4 dmg every 0.5s (30 frames). Duration 3s
       // (180 frames, refreshes on application). At cap with Reactor Bloom Lv2
       // and Thermal Runaway, ticks ~46 dmg × 6 = ~280 DOT total.
-      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._runawayCoreActive?2.5:(window._thermalRunawayActive?_modScale('thermal_runaway',2,0.3):1);const _rbMult=runMods.reactorBloom>0?(1+_modScale('reactor_bloom',0.33,0.07)):1;if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%6===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(6,1+z._overheat));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.5,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*2,vy:-2.5-Math.random()*3,life:16,maxLife:16,size:3+Math.random()*4,color:['#f60','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
+      if(z._overheatTimer>0){z._overheatTimer--;const _trMult=window._runawayCoreActive?2.5:(window._thermalRunawayActive?_modScale('thermal_runaway',2,0.3):1);const _rbMult=runMods.reactorBloom>0?(1+_modScale('reactor_bloom',0.33,0.07)):1;if(gameTime%30===0&&z._overheat>0)damageZombie(z,Math.floor(4*z._overheat*_trMult*_rbMult),0,0,true);if(z._overheat>0&&((gameTime+z.zid)%Math.max(2,6-Math.min(4,z._overheat))===0)&&_statusParticleBudget>0){const _en=Math.min(_statusParticleBudget,Math.min(10,1+Math.ceil(z._overheat*1.6)));_statusParticleBudget-=_en;for(let fi=0;fi<_en;fi++)particles.push({x:z.x+(Math.random()-0.5)*z.radius*1.6,y:z.y+(Math.random()-0.5)*z.radius,vx:(Math.random()-0.5)*(2+z._overheat*0.35),vy:-2.4-Math.random()*3-z._overheat*0.45,life:16,maxLife:16,size:3+Math.random()*4+z._overheat*0.3,color:['#f60','#fa0','#f40','#ff0','#fc4'][Math.floor(Math.random()*5)],type:'explosion'});}if(gameTime%12===0&&z._overheat>0)decals.push({x:z.x+(Math.random()-0.5)*8,y:z.y+(Math.random()-0.5)*8,size:6+Math.random()*8,alpha:0.3,color:'#420'});if(z._overheatTimer<=0){z._overheat=0;z._meltdownLock=false;}}
       // FROZEN: hard CC, skip AI. The frozen enemy is a block of ice — it
       // should NOT slide around the room. Heavy friction (0.55, was 0.85)
       // brings inherited knockback velocity to near zero within ~3 frames,
@@ -33445,13 +33463,17 @@ function update() {
     let _tw = 0;
     for (let i = 0; i < floatingTexts.length; i++) {
       const t = floatingTexts[i];
-      // Damage labels: drift relative to followed zombie. Others: absolute drift.
-      if (t._follow && t._follow.x !== undefined) {
-        if (t._dmgNum) { const _age = 1 - t.life/t.maxLife; t._followOffX = (t._followOffX||0) + (t._driftRight||0.9) * Math.max(0, 1 - _age*1.7); t._followOffY = (t._followOffY||0) - (0.1 + _age * 0.75); t.x = t._follow.x + t._followOffX; t.y = t._follow.y + t._followOffY; }
-        else { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); }
-      } else { t.x += (t.vx||0); t.y += (t.vy||0); }
-      t.life--;
-      if (t.life > 0) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; }
+      let _keep;
+      if (t._dmgNum) {
+        _keep = _updateDmgLabel(t);   // pop-in → pause-follow → detach + float
+      } else {
+        // Other labels: follow a source (fixed offset) or drift absolutely.
+        if (t._follow && t._follow.x !== undefined) { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); }
+        else { t.x += (t.vx||0); t.y += (t.vy||0); }
+        t.life--;
+        _keep = t.life > 0;
+      }
+      if (_keep) { if (_tw !== i) floatingTexts[_tw] = t; _tw++; }
     }
     floatingTexts.length = _tw;
   }
@@ -38480,14 +38502,15 @@ function render() {
     const _zt = z._tier || 0;
     // PERF: fake glow — larger dimmer shapes instead of shadowBlur. Three
     // stacked halos (wide soft → mid → tight bright) give a strong neon bloom.
+    // Brighter than before for a punchier neon look against the darker scene.
     ctx.fillStyle=_zc;
-    ctx.globalAlpha=0.09 + _zt * 0.025;
-    _drawZombieShape(ctx, z.type, _zr+12+_zt*3);
+    ctx.globalAlpha=0.13 + _zt * 0.03;
+    _drawZombieShape(ctx, z.type, _zr+14+_zt*3);
     ctx.fill();
-    ctx.globalAlpha=0.18 + _zt * 0.04;
-    _drawZombieShape(ctx, z.type, _zr+6+_zt*2);
+    ctx.globalAlpha=0.24 + _zt * 0.05;
+    _drawZombieShape(ctx, z.type, _zr+7+_zt*2);
     ctx.fill();
-    ctx.globalAlpha=0.34 + _zt * 0.07;
+    ctx.globalAlpha=0.46 + _zt * 0.08;
     _drawZombieShape(ctx, z.type, _zr+2+_zt);
     ctx.fill();
     // Solid body
@@ -38756,13 +38779,25 @@ function render() {
         const _chillAlpha = 0.08 + Math.min(0.25, _chillStacks * 0.06);
         ctx.globalAlpha=_chillAlpha;ctx.shadowColor='#4ef';ctx.shadowBlur=12;ctx.fillStyle='#4ef';ctx.beginPath();ctx.arc(0,0,z.radius+1,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
       }
-      // Crystals — count scales with chill stacks (1 per stack, 8 when frozen)
+      // Crystals — one orbiting SNOWFLAKE per chill stack (8 when frozen). Bigger,
+      // brighter and white-cored so the stack count reads at a glance.
       const numCrystals = _isFrozen ? 8 : Math.max(1, _chillStacks);
-      const crystalSize = _isFrozen ? 5 : 2 + _chillStacks;
-      ctx.globalAlpha = _isFrozen ? 0.9 : 0.4 + _chillStacks * 0.12;
-      ctx.shadowColor='#4ef';ctx.shadowBlur = _isFrozen ? 12 : 4 + _chillStacks * 2;
-      for(let fi=0;fi<numCrystals;fi++){const fa=fi/numCrystals*Math.PI*2+performance.now()*(_isFrozen?0:0.001),fr=z.radius+(_isFrozen?4:2+_chillStacks);ctx.save();ctx.translate(Math.cos(fa)*fr,Math.sin(fa)*fr);ctx.rotate(fa);ctx.fillStyle=_isFrozen?'#8ff':'#4ef';ctx.beginPath();ctx.moveTo(0,-crystalSize);ctx.lineTo(crystalSize*0.6,0);ctx.lineTo(0,crystalSize);ctx.lineTo(-crystalSize*0.6,0);ctx.closePath();ctx.fill();ctx.restore();}
-      ctx.shadowBlur=0;ctx.globalAlpha=1;
+      const crystalSize = _isFrozen ? 6 : 4 + _chillStacks * 1.3;
+      const _flakeOrbit = z.radius + (_isFrozen ? 6 : 6 + _chillStacks);
+      ctx.globalAlpha = _isFrozen ? 0.95 : 0.6 + Math.min(0.35, _chillStacks * 0.1);
+      ctx.shadowColor = '#9ef'; ctx.shadowBlur = _isFrozen ? 10 : 6;
+      ctx.lineCap = 'round';
+      for (let fi = 0; fi < numCrystals; fi++) {
+        const fa = fi / numCrystals * Math.PI * 2 + performance.now() * (_isFrozen ? 0 : 0.0013);
+        ctx.save();
+        ctx.translate(Math.cos(fa) * _flakeOrbit, Math.sin(fa) * _flakeOrbit);
+        ctx.rotate(fa);
+        ctx.strokeStyle = _isFrozen ? '#aff' : '#8ef'; ctx.lineWidth = 1.7;
+        for (let s = 0; s < 3; s++) { const sa = s * Math.PI / 3; ctx.beginPath(); ctx.moveTo(-Math.cos(sa)*crystalSize, -Math.sin(sa)*crystalSize); ctx.lineTo(Math.cos(sa)*crystalSize, Math.sin(sa)*crystalSize); ctx.stroke(); }
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, crystalSize * 0.28, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.lineCap = 'butt';
     }
     // Compromised: purple corruption aura + glitch distortion
     if(z._compromised){ctx.globalAlpha=0.3;ctx.shadowColor='#a4f';ctx.shadowBlur=16;ctx.fillStyle='#a4f';ctx.beginPath();ctx.arc(0,0,z.radius+4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;ctx.globalAlpha=0.6;for(let ci=0;ci<3;ci++){const ca=Math.random()*Math.PI*2,cr=z.radius+Math.random()*6;ctx.fillStyle=Math.random()>0.5?'#a4f':'#f0f';ctx.fillRect(Math.cos(ca)*cr-2,Math.sin(ca)*cr-1,4+Math.random()*4,2);}ctx.globalAlpha=1;}
@@ -40394,21 +40429,23 @@ function render() {
     ctx.shadowColor = ft.color;
     // Damage numbers: bigger for crits, smaller/subtler otherwise
     if (ft._dmgNum) {
-      // Pulse scale — peaks on spawn, eases down
-      let _dmgScale = 1;
-      if (ft._pulse > 0) {
-        const _pt = ft._pulse / 6;
-        _dmgScale = 1 + _pt * 0.45;
-        ft._pulse--;
-      }
-      // Bigger, comic/arcade font (Impact) with a thick black outline instead of
-      // a shadowBlur glow — reads like a comic-book "POW" number and is cheaper.
-      const _baseSize = ft._crit ? 30 : 23;
+      // Bold comic/arcade font (Impact) with a thick black outline. Scale +
+      // opacity are driven by the lifecycle phase (see _updateDmgLabel).
       ctx.shadowBlur = 0;
-      // Fade out in last 35% of life
-      const _lifeRatio = ft.life / ft.maxLife;
-      ctx.globalAlpha = _lifeRatio < 0.35 ? _lifeRatio / 0.35 : 1;
-      const _dSz = Math.round(_baseSize * _dmgScale);
+      let _scale, _alpha;
+      if (ft._dmgPhase === 'float') {
+        const _ftr = Math.max(0, ft._floatTimer / _DMG_FLOAT_FRAMES); // 1 → 0
+        _alpha = _ftr * _ftr;          // rapid opacity falloff as it floats away
+        _scale = 0.6 + _ftr * 0.4;     // shrink down to 0.6
+      } else {
+        // Pause: punchy pop-in overshoot, plus a small bump each time it grows.
+        const _sp = (ft._spawnPulse || 0) / 6;
+        _scale = 1 + _sp * 0.7 + (ft._pulse > 0 ? (ft._pulse / 5) * 0.22 : 0);
+        _alpha = 1;
+      }
+      ctx.globalAlpha = _alpha;
+      const _baseSize = ft._crit ? 30 : 23;
+      const _dSz = Math.max(8, Math.round(_baseSize * _scale));
       if (ft._cachedSize !== _dSz) { ft._cachedFont = '900 ' + _dSz + 'px Impact, "Arial Black", sans-serif'; ft._cachedSize = _dSz; }
       ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
@@ -40875,39 +40912,9 @@ function render() {
       ctx.restore();
     }
 
-    // ---- PERSISTENT STATUS LABELS below enemies (CHILL x3, OVERHEAT x5, ...) ----
-    // Drawn in the world transform (matches body + zoom). One small colored
-    // line per active status, stacked BELOW the enemy; bosses excluded.
-    if (lp3 && lp3.alive) {
-      const _svL = camera.x - canvas.width/2 - 40, _svR = camera.x + canvas.width/2 + 40;
-      const _svT = camera.y - canvas.height/2 - 40, _svB = camera.y + canvas.height/2 + 40;
-      ctx.save();
-      ctx.translate(canvas.width/2 + screenShake.x, canvas.height/2 + screenShake.y);
-      ctx.scale(_BASE_ZOOM * cameraZoom, _BASE_ZOOM * cameraZoom);
-      ctx.translate(-camera.x, -camera.y);
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 9px "Courier New", monospace';
-      for (const z of zombies) {
-        if (!z || z.hp <= 0 || z.boss) continue;
-        if (z.x < _svL || z.x > _svR || z.y < _svT || z.y > _svB) continue;
-        const _sl = [];
-        if (z._overheat > 0) _sl.push(['OVERHEAT x' + z._overheat, '#f60']);
-        if (z._frozen || z._frozenTimer > 0) _sl.push(['FROZEN', '#adf']);
-        else if (z._chill > 0) _sl.push(['CHILL x' + z._chill, '#8ef']);
-        if (z._charged || z._shocked > 0) _sl.push(['SHOCKED', '#fe6']);
-        if (z._compromised) _sl.push(['COMPROMISED', '#c8f']);
-        else if (z._corrupt > 0) _sl.push(['CORRUPT x' + z._corrupt, '#a4f']);
-        if (z._exposed) _sl.push(['SLIDE', '#cef']);
-        if (!_sl.length) continue;
-        let _ly = z.y + z.radius + 12;
-        for (let _i = 0; _i < _sl.length; _i++) {
-          ctx.fillStyle = _sl[_i][1];
-          ctx.fillText(_sl[_i][0], z.x, _ly);
-          _ly += 10;
-        }
-      }
-      ctx.restore();
-    }
+    // (Persistent status text labels removed — status is now read purely from
+    // the per-enemy VFX: fire particles for OVERHEAT, snowflake crystals for
+    // CHILL, the SHOCKED/SLIDE/CORRUPT auras, etc.)
 
     // Sunbeam: yellow tint on screen + particles in the beam
     if (lp3 && lp3.alive && hasPowerUp('sunbeam')) {
@@ -41487,6 +41494,18 @@ function render() {
     }
     ctx.restore();
     _bf.t--; if (_bf.t <= 0) window._bossFlare = null;
+  }
+  // ---- AMBIENT VIGNETTE — slightly darker, neon-night mood ----
+  // Cheap single radial-gradient fill: a touch of overall darkening plus deeper
+  // edges, so the (brighter) neon elements pop more against the dark scene.
+  {
+    const _vgW = canvas.width, _vgH = canvas.height;
+    const _vg = ctx.createRadialGradient(_vgW/2, _vgH*0.46, Math.min(_vgW,_vgH)*0.30, _vgW/2, _vgH*0.5, Math.max(_vgW,_vgH)*0.72);
+    _vg.addColorStop(0, 'rgba(0,1,8,0.05)');
+    _vg.addColorStop(0.62, 'rgba(2,3,12,0.18)');
+    _vg.addColorStop(1, 'rgba(0,1,8,0.48)');
+    ctx.fillStyle = _vg;
+    ctx.fillRect(0, 0, _vgW, _vgH);
   }
   // ---- DEATH FOCUS VIGNETTE ----
   // Hold on the dying player — black overlay everywhere except a radial
