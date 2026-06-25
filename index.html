@@ -2535,9 +2535,7 @@ const UPGRADE_POOL = [
   { id:'vorpal_finisher', name:'VORPAL FINISHER', rarity:'rare', max:1, icon:'✦', color:'#fe6',
     descs:['Your finisher kill triggers a second finisher on the next nearest enemy in range. Chains once.'],
     flavor:'the edge keeps swinging. one rhythm, two heads.' },
-  { id:'flurry_slash', name:'FLURRY SLASH', rarity:'rare', max:1, icon:'⫶', color:'#fe6',
-    descs:['Hold ATTACK to keep slashing — opens with a lunge, then continuous forward jabs while held.'],
-    flavor:'no windup. no break. just blade.' },
+  // (FLURRY SLASH is now built into the RIPPER by default — no longer a mod card.)
   // ---- UNIVERSAL / DASH ----
   { id:'dash_strike', name:'DASH STRIKE', rarity:'epic', max:1, icon:'»', color:'#0ff',
     descs:['First ATTACK after dashing fires a 60° kinetic cone: +50 damage, knockback, stagger.'],
@@ -2801,7 +2799,6 @@ const _KEY_STATS = {
   magnetic_charge:   { label:'stick dmg',      base:50, step:10, unit:'%' },
   world_splitter:    { label:'finisher dmg',   base:200, step:25, unit:'%' },
   vorpal_finisher:   null,
-  flurry_slash:      null,
   dash_strike:       { label:'cone dmg',       base:50, step:10, unit:'' },
   twin_volley:       { label:'spread',         base:8,  step:1,  unit:'°' },
   pin_shot:          { label:'stun',           base:1.2, step:0.2, unit:'s' },
@@ -3190,7 +3187,6 @@ function rebuildRunMods() {
       case 'magnetic_charge':    m.magneticCharge = true; break;
       case 'world_splitter':     m.worldSplitter = true; break;
       case 'vorpal_finisher':    m.vorpalFinisher = true; break;
-      case 'flurry_slash':       m.flurrySlash = true; break;
       case 'dash_strike':        m.dashStrikeMod = true; break;
       case 'twin_volley':        m.twinVolley = true; break;
       case 'pin_shot':           m.pinShot = true; break;
@@ -3435,7 +3431,7 @@ const _RIPPER_CARDS = new Set([
   'cleave', 'lunge', 'executioner', 'bloodletter', 'whirlwind', 'riposte',
   'extended_reach', 'rising_blade', 'detonator',
   // 2026-05: new ripper mods
-  'world_splitter', 'vorpal_finisher', 'flurry_slash',
+  'world_splitter', 'vorpal_finisher',
   'bladestorm', // legendary capstone
 ]);
 function _isMeleeEquipped() {
@@ -9548,7 +9544,7 @@ function _triggerChainConduit(originZ, mods) {
 // with a rapid weapon won't chain-strike it. Different enemies strike
 // independently, so spreading fire across a crowd lights the whole crowd up.
 const ARC_STRIKE_ICD = 14;       // frames between strikes ON THE SAME ENEMY
-const ARC_STRIKE_SPLASH_R = 80;  // ground splash radius around the impact
+const ARC_STRIKE_SPLASH_R = 90;  // ground splash radius around the impact
 function tryArcStrike(z, hitDmg, src) {
   if (!z || z.hp <= 0) return false;
   const _last = z._arcStrikeLast;
@@ -9570,16 +9566,20 @@ function tryArcStrike(z, hitDmg, src) {
   addFloatingText(z.x, z.y - (z.radius || 13) - 18, strikeDmg, '#fe6');
   // OVERCHARGE: every lightning effect applies SHOCKED — the strike included.
   if (_m.overcharge > 0 && z.hp > 0) applyCharged(z);
-  // Ground splash — 35% to enemies adjacent to the impact, brief flinch.
-  const _spDmg = Math.floor(strikeDmg * 0.35);
+  // Ground splash — 40% to enemies adjacent to the impact, with a real outward
+  // blast shove (strongest at the impact center) so the strike reads explosive.
+  const _spDmg = Math.floor(strikeDmg * 0.40);
   if (_spDmg > 0) {
     const _r2 = ARC_STRIKE_SPLASH_R * ARC_STRIKE_SPLASH_R;
     for (const oz of zombies) {
       if (oz === z || oz.hp <= 0) continue;
       const _dx = oz.x - z.x, _dy = oz.y - z.y;
-      if (_dx*_dx + _dy*_dy < _r2) {
-        damageZombie(oz, _spDmg, _dx * 0.02, _dy * 0.02, true);
-        oz.staggerTimer = Math.max(oz.staggerTimer || 0, 10);
+      const _dd2 = _dx*_dx + _dy*_dy;
+      if (_dd2 < _r2) {
+        const _dd = Math.sqrt(_dd2) || 1;
+        const _kb = 6 * (1 - _dd / ARC_STRIKE_SPLASH_R); // blast falloff
+        damageZombie(oz, _spDmg, (_dx/_dd) * _kb, (_dy/_dd) * _kb, true);
+        oz.staggerTimer = Math.max(oz.staggerTimer || 0, 12);
       }
     }
   }
@@ -9655,23 +9655,25 @@ function _arcBoltStrike(x, y, r, topX, topY) {
   // (3) IMPACT FLASH — the obvious pop. A bright white core flash + a yellow
   //     bloom (filled, collapsing discs) under the segmented hitflash ring and
   //     the white-rimmed yellow shockwave.
-  particles.push({ x, y, vx: 0, vy: 0, life: 6, maxLife: 6, size: r + 42, color: '#fff', type: 'spark', _protect: true });
-  particles.push({ x, y, vx: 0, vy: 0, life: 9, maxLife: 9, size: r + 70, color: '#fe6', type: 'spark', _protect: true });
-  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: r + 20, color: '#fff', type: 'hitflash', _protect: true });
-  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 120, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.42, _alphaScale: 1.2, _protect: true });
-  // (4) Radial ground discharge — a FEW short jagged arcs crawling out from the
-  //     impact (electricity earthing itself where it lands, NOT trunk hairs).
-  for (let _i = 0; _i < 3; _i++) {
-    const _a = (_i / 3) * Math.PI * 2 + Math.random() * 1.1;
-    const _len = 24 + Math.random() * 22;
-    particles.push({ x, y, vx: 0, vy: 0, life: 8 + Math.floor(Math.random() * 4), maxLife: 12, size: 1.3,
-      color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len, _perp: true, _segs: 4, _jitter: 14 });
+  particles.push({ x, y, vx: 0, vy: 0, life: 7, maxLife: 7, size: r + 60, color: '#fff', type: 'spark', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 10, maxLife: 10, size: r + 96, color: '#fe6', type: 'spark', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 13, maxLife: 13, size: r + 28, color: '#fff', type: 'hitflash', _protect: true });
+  // Twin blast rings — a bright core shock + a big slow outer ring for the boom.
+  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: 150, color: '#fe6', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.42, _alphaScale: 1.4, _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 34, maxLife: 34, size: 230, color: '#ff9', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.5, _alphaScale: 1.0, _protect: true });
+  // (4) Radial ground discharge — jagged arcs crawling out from the impact
+  //     (electricity earthing itself where it lands, NOT trunk hairs).
+  for (let _i = 0; _i < 5; _i++) {
+    const _a = (_i / 5) * Math.PI * 2 + Math.random() * 1.1;
+    const _len = 30 + Math.random() * 28;
+    particles.push({ x, y, vx: 0, vy: 0, life: 9 + Math.floor(Math.random() * 5), maxLife: 14, size: 1.4,
+      color: _i % 2 === 0 ? '#fe6' : '#fff', type: 'lightning', tx: x + Math.cos(_a) * _len, ty: y + Math.sin(_a) * _len, _perp: true, _segs: 5, _jitter: 18 });
   }
   // (5) Spark burst + slow rising ionization motes (post-strike residue)
-  for (let _i = 0; _i < 7; _i++) {
-    const _a = Math.random() * Math.PI * 2, _s = 3 + Math.random() * 6;
+  for (let _i = 0; _i < 12; _i++) {
+    const _a = Math.random() * Math.PI * 2, _s = 4 + Math.random() * 7;
     particles.push({ x, y, vx: Math.cos(_a) * _s, vy: Math.sin(_a) * _s,
-      life: 9 + Math.floor(Math.random() * 6), maxLife: 15, size: 2 + Math.random() * 2,
+      life: 10 + Math.floor(Math.random() * 7), maxLife: 17, size: 2 + Math.random() * 2.5,
       color: Math.random() > 0.45 ? '#fe6' : '#fff', type: 'spark' });
   }
   for (let _i = 0; _i < 2; _i++) {
@@ -9684,12 +9686,13 @@ function _arcBoltStrike(x, y, r, topX, topY) {
   particles.push({ x: x + (Math.random() - 0.5) * 26, y: y - 8 - Math.random() * 16,
     vx: (Math.random() - 0.5) * 1.2, vy: -0.6, life: 15, maxLife: 15,
     size: 9 + Math.random() * 4, color: '#fe6', type: 'glitchtext', text: '⚡' });
-  // (7) Scorch decal + feel. Shake kept modest + no bass thump because strikes
-  //     now fire up to ~7x/sec — a heavy shake/thump per strike would rumble
-  //     constantly. The bolt + flash carry the punch.
-  decals.push({ x, y, size: 15 + Math.random() * 9, alpha: 0.28, color: '#231a04' });
-  screenShake.intensity = Math.max(screenShake.intensity, 4);
-  playSfx('zap', 0.18, 0.03) || playSound(880, 0.06, 'sawtooth', 0.10);
+  // (7) Scorch decal + feel. Strikes can fire up to ~7x/sec, so the shake/thump
+  //     use Math.max (no stacking) and the bass is short + quiet to avoid a
+  //     constant rumble — punchier than before, but still storm-sustainable.
+  decals.push({ x, y, size: 20 + Math.random() * 12, alpha: 0.34, color: '#231a04' });
+  screenShake.intensity = Math.max(screenShake.intensity, 6);
+  playSfx('zap', 0.22, 0.03) || playSound(880, 0.06, 'sawtooth', 0.10);
+  playSound(110, 0.07, 'sine', 0.06); // short low thump for the blast
 }
 function applyExposed(z) {
   if (!isHost) return;
@@ -18073,7 +18076,7 @@ function throwSpike() {
       const _aA = a + offsetA;
       spikes.push({
         x: sx, y: sy, ownerId: lp.id, classId: null,
-        vx: Math.cos(_aA) * 18, vy: Math.sin(_aA) * 18,
+        vx: Math.cos(_aA) * 22, vy: Math.sin(_aA) * 22,
         phase: 'flying',
         travel: 0, _homeTarget: _findBaseTarget(),
         stuckTo: null, stuckOffX: 0, stuckOffY: 0,
@@ -18083,17 +18086,34 @@ function throwSpike() {
     };
     _spawnBase(0);
     if (_twin) _spawnBase(0.18);
-    // Launch VFX — forceful red burst
-    for (let i = 0; i < 12; i++) {
-      const pa = a + (Math.random()-0.5)*0.5, ps = 4+Math.random()*5;
+    // RECOIL — the launch kicks the player backward (visual bob, like the
+    // deadshot's railgun kick).
+    lp._rSwingBob = 12; lp._rSwingBobMax = 12; lp._rSwingBobAng = a;
+    lp._rSwingBobAmp = 11; lp._rSwingBobRecoil = true;
+    // EXPLOSIVE LAUNCH VFX — white-hot muzzle detonation + forward ember spray +
+    // twin blast rings, plus a backward kick-spray that sells the recoil.
+    const _mx = sx + Math.cos(a) * 6, _my = sy + Math.sin(a) * 6;
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 7, maxLife: 7, size: 26, color: '#fff', type: 'explosion' });
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 10, maxLife: 10, size: 17, color: '#fa4', type: 'explosion' });
+    for (let i = 0; i < 22; i++) {
+      const pa = a + (Math.random()-0.5)*0.7, ps = 6+Math.random()*8;
       particles.push({ x: sx, y: sy, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
-        life: 10+Math.random()*4, maxLife: 14, size: 2+Math.random()*2,
-        color: Math.random()>0.3?'#f44':'#fa4', type: 'spark' });
+        life: 9+Math.random()*6, maxLife: 16, size: 2+Math.random()*2.5,
+        color: ['#fff','#f44','#fa4','#f60'][Math.floor(Math.random()*4)], type: 'explosion' });
     }
-    particles.push({ x: sx, y: sy, vx: 0, vy: 0, life: 8, maxLife: 8, size: 20, color: '#f44', type: 'wakering' });
-    screenShake.intensity = Math.max(screenShake.intensity, 2);
-    playSound(500, 0.07, 'sawtooth', 0.06);
-    playSound(300, 0.05, 'square', 0.04);
+    // backward kick-spray (opposite the launch) — reads as the recoil blast
+    for (let i = 0; i < 6; i++) {
+      const pa = a + Math.PI + (Math.random()-0.5)*0.8, ps = 2+Math.random()*3;
+      particles.push({ x: sx, y: sy, vx: Math.cos(pa)*ps, vy: Math.sin(pa)*ps,
+        life: 8+Math.random()*4, maxLife: 12, size: 1.5+Math.random()*1.5, color: '#fa4', type: 'spark' });
+    }
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 8, maxLife: 8, size: 18, color: '#fff', type: 'wakering' });
+    particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 36, color: '#f44', type: 'wakering' });
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    // Punchy layered launch: sharp crack + bass thump + transient snap
+    playSound(520, 0.07, 'sawtooth', 0.10);
+    playSound(170, 0.12, 'sine', 0.10);
+    playSound(900, 0.04, 'square', 0.06);
   }
   // Tag every spike just spawned in this cast with the overload flag —
   // updateSpikes reads sp._overload for the per-frame 2x radius / damage
@@ -21482,12 +21502,8 @@ function _swingMelee(p, def) {
   // → cross → 270 spin), one step per tap, skipping the spent lunge.
   const _freshPress = !!p._rFreshPress;
   if (p === getLocalPlayer() && p._rOpened && !_freshPress) {
-    // FLURRY SLASH mod gates the hold-to-flurry behavior. Without the mod,
-    // a held button does nothing past the opener — the player must tap to
-    // advance the combo.
-    if (!(runMods||{}).flurrySlash) {
-      return;
-    }
+    // FLURRY SLASH is built into the RIPPER by default: holding ATTACK past the
+    // opener runs the rapid jab flurry — no mod required.
     if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN * _rageCdMult) return;
     // The flurry is capped at 6 jabs. Once spent, take a short beat and
     // close the combo — the next press re-opens with a fresh LUNGE (or a
@@ -21727,7 +21743,7 @@ function _repositionToBladeSweetSpot(p, z, a, range) {
 const _JAB_COOLDOWN = 82; // ms between jabs — rapid but readable
 const _JAB_STEP = {
   kind: 'jab',
-  range: 75, cone: Math.PI * 26 / 180,
+  range: 112, cone: Math.PI * 30 / 180,
   damage: 15, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
   color: '#fe6', tone: 980, dir: 0, label: '',
 };
@@ -22163,7 +22179,13 @@ function _runComboStep(p, def, step, idx) {
     if (isLocal && Math.abs(da) < _anchorAbsDa) { _anchorAbsDa = Math.abs(da); _anchorZ = z; }
     if (isHost) {
       const _prevHp = z.hp;
-      damageZombie(z, dmg, dx/_nd * _kb, dy/_nd * _kb, false);
+      // SLASH DRAG: bias the knockback toward the swing's facing direction (a)
+      // so struck enemies get carried along the slash, not just shoved straight
+      // out from the player. Blend keeps the overall magnitude ~= _kb.
+      const _slashBias = 0.5;
+      const _kdx = (dx/_nd) * (1 - _slashBias) + Math.cos(a) * _slashBias;
+      const _kdy = (dy/_nd) * (1 - _slashBias) + Math.sin(a) * _slashBias;
+      damageZombie(z, dmg, _kdx * _kb, _kdy * _kb, false);
       // Stagger every hit — even SLASH should momentarily pause the enemy.
       z.staggerTimer = Math.max(z.staggerTimer || 0, step.stagger || 22);
       // VORPAL FINISHER — remember which enemies the finisher killed, so a
