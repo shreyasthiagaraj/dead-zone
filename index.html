@@ -2119,7 +2119,7 @@ const UPGRADE_POOL = [
     descs:['Dash endpoint detonates OVERHEATED enemies (60px).'], flavor:'dash in. everything ignites.', prereqs:['thermal_rounds|burnout_wake'] },
   // ---- DASH: CRYO ----
   { id:'cryo_wake', name:'COLD FRONT', rarity:'common', max:1, icon:'🧊', color:'#8ef',
-    descs:['Dash endpoint releases a cold gas burst. Applies CHILL.'], flavor:'the cold arrives before you do.' },
+    descs:['Dash endpoint releases a cold gas burst that instantly FREEZES enemies.'], flavor:'the cold arrives before you do.' },
   { id:'shatter_step', name:'SHATTER STEP', rarity:'rare', max:1, icon:'🧊', color:'#8ef',
     descs:['FROZEN enemies near dash endpoint take 60 dmg + heavy knockback.'], flavor:'walk through ice. it breaks.', prereqs:['cryo_rounds|cryo_wake'] },
   // ---- DASH: ARC ----
@@ -18076,7 +18076,7 @@ function throwSpike() {
       const _aA = a + offsetA;
       spikes.push({
         x: sx, y: sy, ownerId: lp.id, classId: null,
-        vx: Math.cos(_aA) * 22, vy: Math.sin(_aA) * 22,
+        vx: Math.cos(_aA) * 34, vy: Math.sin(_aA) * 34,
         phase: 'flying',
         travel: 0, _homeTarget: _findBaseTarget(),
         stuckTo: null, stuckOffX: 0, stuckOffY: 0,
@@ -18109,7 +18109,7 @@ function throwSpike() {
     }
     particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 8, maxLife: 8, size: 18, color: '#fff', type: 'wakering' });
     particles.push({ x: _mx, y: _my, vx: 0, vy: 0, life: 14, maxLife: 14, size: 36, color: '#f44', type: 'wakering' });
-    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    screenShake.intensity = Math.max(screenShake.intensity, 11);
     // Punchy layered launch: sharp crack + bass thump + transient snap
     playSound(520, 0.07, 'sawtooth', 0.10);
     playSound(170, 0.12, 'sine', 0.10);
@@ -19237,7 +19237,7 @@ function _updateRingZone(sp, _radBoost) {
 // Default thump that sticks for a moment.
 function _baseSpikExplode(sp) {
   const _ovr = sp._overload ? 2 : 1;
-  const _r = 50 * _ovr;
+  const _r = 64 * _ovr;
   // AoE damage to nearby enemies
   for (const z of zombies) {
     if (z.hp <= 0) continue;
@@ -19250,8 +19250,8 @@ function _baseSpikExplode(sp) {
   }
   // ---- IMPACT VFX (three-point rule: origin flash → rings → debris) ----
   // Origin: white-hot core flash — single big bright pop the eye locks onto.
-  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 8, maxLife: 8, size: 26, color: '#fff', type: 'explosion' });
-  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 18, color: '#fa4', type: 'explosion' });
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 9, maxLife: 9, size: 36, color: '#fff', type: 'explosion' });
+  particles.push({ x: sp.x, y: sp.y, vx: 0, vy: 0, life: 13, maxLife: 13, size: 25, color: '#fa4', type: 'explosion' });
   // Path: 6 radial impact streaks (star burst), short and bright.
   for (let _si = 0; _si < 6; _si++) {
     const _sa = (_si / 6) * Math.PI * 2 + Math.random() * 0.4;
@@ -19283,8 +19283,8 @@ function _baseSpikExplode(sp) {
       type: 'smoke', _smokeAlpha: 0.25 });
   }
   // Lingering scorch decal
-  decals.push({ x: sp.x, y: sp.y, size: 22, alpha: 0.55, color: '#310' });
-  screenShake.intensity = Math.max(screenShake.intensity, 6);
+  decals.push({ x: sp.x, y: sp.y, size: 26, alpha: 0.55, color: '#310' });
+  screenShake.intensity = Math.max(screenShake.intensity, 11);
   // Layered audio: sharp white-hot crack on top of the existing thump
   playSound(900, 0.04, 'square', 0.10);
   playSound(300, 0.08, 'sawtooth', 0.06);
@@ -21465,6 +21465,9 @@ const RIPPER_COMBO = [
 // the player hold fire to chain combos.
 const RIPPER_INTER_COMBO_COOLDOWN = 220;
 const RIPPER_COMBO_WINDOW = 700; // ms grace to chain next hit before combo resets
+// Hold ATTACK at least this long past the opener before the jab flurry kicks in,
+// so quick taps between combo steps don't accidentally trigger it.
+const RIPPER_FLURRY_HOLD = 175;
 
 function _swingMelee(p, def) {
   if (!p || !p.alive) return;
@@ -21485,6 +21488,7 @@ function _swingMelee(p, def) {
     // The dash-strike IS the opening move — holding now flows into the jab
     // flurry, tapping continues the standard combo from the slash.
     p._rOpened = true;
+    p._rOpenedAt = now;
     p._rFreshPress = false;
     p._rJabCount = 0; // fresh flurry budget
     return;
@@ -21504,6 +21508,9 @@ function _swingMelee(p, def) {
   if (p === getLocalPlayer() && p._rOpened && !_freshPress) {
     // FLURRY SLASH is built into the RIPPER by default: holding ATTACK past the
     // opener runs the rapid jab flurry — no mod required.
+    // Deliberate-hold gate: the flurry only begins once ATTACK has been held a
+    // beat past the opener, so quick taps between combo steps don't trip it.
+    if (now - (p._rOpenedAt || 0) < RIPPER_FLURRY_HOLD) return;
     if (p._rLastSwing && (now - p._rLastSwing) < _JAB_COOLDOWN * _rageCdMult) return;
     // The flurry is capped at 6 jabs. Once spent, take a short beat and
     // close the combo — the next press re-opens with a fresh LUNGE (or a
@@ -21621,6 +21628,7 @@ function _swingMelee(p, def) {
     // The opening LUNGE (or any non-finisher step) is spent — from here a
     // continuous hold becomes the jab flurry.
     p._rOpened = true;
+    p._rOpenedAt = now;
   }
   // Advance combo
   p._rComboIdx = (idx + 1) % RIPPER_COMBO.length;
@@ -21740,7 +21748,7 @@ function _repositionToBladeSweetSpot(p, z, a, range) {
 // alternate left/right wind-up. Lighter per-hit than the combo but
 // relentless while held. Releasing exits the flurry; a re-tap runs the
 // standard combo instead.
-const _JAB_COOLDOWN = 82; // ms between jabs — rapid but readable
+const _JAB_COOLDOWN = 102; // ms between jabs — slowed ~20% from 82 (flurry was too fast)
 const _JAB_STEP = {
   kind: 'jab',
   range: 112, cone: Math.PI * 30 / 180,
@@ -24484,6 +24492,9 @@ function triggerShockwaveDash(lp) {
     }
     if ((_mods.cryoWake||0) > 0) {
       z._slowTimer = Math.max(z._slowTimer || 0, 160 + 40 * _mods.cryoWake);
+      // COLD FRONT instantly freezes — mark frozen (visual + shatter synergies),
+      // not just the movement-gating timer. Bosses stay unfreezable.
+      if (!z.boss) z._frozen = true;
       z._frozenTimer = Math.max(z._frozenTimer || 0, 80 + 30 * _mods.cryoWake);
     }
     if ((_mods.staticWake||0) > 0) {
@@ -26879,8 +26890,16 @@ function dropZombieLoot(z) {
     // Screen shake and glitch surge
     screenShake.intensity=Math.max(screenShake.intensity,18);
     triggerGlitchSurge(0.7,80);
-    // Boss death freeze
-    _bossDeathFreeze = 30;
+    // No hit-stop on boss death (it was too jarring). Instead: a bright
+    // full-screen flash + a screen-space lens flare at the kill point.
+    const _bossFlashEl = document.getElementById('levelup-flash');
+    if (_bossFlashEl) {
+      _bossFlashEl.style.background = 'radial-gradient(circle, rgba(255,255,255,0.6), rgba(255,255,255,0))';
+      _bossFlashEl.classList.remove('fading'); _bossFlashEl.classList.add('flash');
+      setTimeout(() => { _bossFlashEl.classList.remove('flash'); _bossFlashEl.classList.add('fading'); _bossFlashEl.style.background = ''; }, 200);
+      setTimeout(() => { _bossFlashEl.classList.remove('fading'); }, 800);
+    }
+    window._bossFlare = { x: z.x, y: z.y, t: 30, max: 30, color: _bossColor };
     // 3 health pickups of 15 HP each
     for(let i=0;i<3;i++){const a=Math.random()*Math.PI*2,d=20+Math.random()*40;pickups.push({type:'health',amount:15,x:z.x+Math.cos(a)*d,y:z.y+Math.sin(a)*d,bobTimer:Math.random()*Math.PI*2});}
     // Big bits payout as a capped-value coin pile (large group to sweep up).
@@ -28136,23 +28155,39 @@ function damagePlayerObj(p,damage,attacker) {
   }
 }
 function addFloatingText(x,y,text,color='#fff'){floatingTexts.push({x,y,text,color,vy:-1.5,life:40,maxLife:40});}
-// Accumulating damage label — combines rapid hits on the same zombie into a single pulsing number.
+// Accumulating damage label — combines rapid hits on the same SOURCE into one
+// growing, pulsing number. The label floats out to the right, then slowly rises
+// and fades. One active label per source (z._dmgLabel).
+function _dmgColorFor(total, isCrit) {
+  return isCrit ? '#f0f' : (total >= 100 ? '#f44' : total >= 40 ? '#fa0' : '#fff');
+}
 function addDamageNumber(z, dmg, isCrit) {
   if (!z || dmg < 1) return;
-  // Each hit gets its own label — no combining. Drifts up and randomly left/right.
-  const _dir = Math.random() < 0.5 ? -1 : 1;
-  const _offX = (Math.random() - 0.5) * 6;
-  const _offY = -(z.radius || 14) - 8 - Math.random() * 4;
+  // Combine into the active label for this source if one is still alive.
+  const _ex = z._dmgLabel;
+  if (_ex && _ex.life > 0 && _ex._dmgNum) {
+    _ex._dmgTotal += dmg;
+    _ex.text = Math.floor(_ex._dmgTotal) + '';
+    _ex.life = _ex.maxLife;                 // refresh so it lingers while hits land
+    _ex._pulse = 6;                          // re-pop on each combined hit
+    if (isCrit) _ex._crit = true;
+    _ex.color = _dmgColorFor(_ex._dmgTotal, _ex._crit);
+    return;
+  }
+  // Fresh label — starts just up-and-right of the source, then drifts right.
+  const _offX = (z.radius || 14) * 0.35 + 5;
+  const _offY = -(z.radius || 14) - 8;
   const label = {
     x: z.x + _offX, y: z.y + _offY,
     text: Math.floor(dmg) + '',
-    color: isCrit ? '#f0f' : (dmg >= 100 ? '#f44' : dmg >= 40 ? '#fa0' : '#fff'),
-    vx: 0, vy: -1.2 - Math.random() * 0.4,
-    _driftDir: _dir * (0.3 + Math.random() * 0.4),
-    life: 28, maxLife: 28,
+    color: _dmgColorFor(dmg, isCrit),
+    vx: 0, vy: 0,
+    _driftRight: 0.9 + Math.random() * 0.4,
+    life: 38, maxLife: 38,
     _dmgNum: true, _crit: !!isCrit, _dmgTotal: dmg, _pulse: 6,
     _follow: z, _followOffX: _offX, _followOffY: _offY,
   };
+  z._dmgLabel = label;
   floatingTexts.push(label);
 }
 
@@ -29654,9 +29689,11 @@ function update() {
             if (fz.hp <= 0) continue;
             const dx = fz.x - cf.x, dy = fz.y - cf.y;
             if (dx*dx + dy*dy > cf.r*cf.r) continue;
-            if (cf._hits[fz.zid]) continue; // already chilled by this cloud
+            if (cf._hits[fz.zid]) continue; // already frozen by this cloud
             cf._hits[fz.zid] = 1;
-            applyChill(fz, 2);
+            // COLD FRONT flash-freezes on contact: 4 chill stacks trips the
+            // freeze threshold immediately (bosses can't freeze — applyChill bails).
+            applyChill(fz, 4);
             damageZombie(fz, 5, 0, 0, true);
           }
         }
@@ -33390,7 +33427,7 @@ function update() {
       const t = floatingTexts[i];
       // Damage labels: drift relative to followed zombie. Others: absolute drift.
       if (t._follow && t._follow.x !== undefined) {
-        if (t._dmgNum) { const _age = 1 - t.life/t.maxLife; t.vx = (t._driftDir||0) * _age; t._followOffX = (t._followOffX||0) + t.vx; t._followOffY = (t._followOffY||0) + (t.vy||0); t.x = t._follow.x + t._followOffX; t.y = t._follow.y + t._followOffY; }
+        if (t._dmgNum) { const _age = 1 - t.life/t.maxLife; t._followOffX = (t._followOffX||0) + (t._driftRight||0.9) * Math.max(0, 1 - _age*1.7); t._followOffY = (t._followOffY||0) - (0.1 + _age * 0.75); t.x = t._follow.x + t._followOffX; t.y = t._follow.y + t._followOffY; }
         else { t.x = t._follow.x + (t._followOffX||0); t.y = t._follow.y + (t._followOffY||0); }
       } else { t.x += (t.vx||0); t.y += (t.vy||0); }
       t.life--;
@@ -40344,19 +40381,25 @@ function render() {
       let _dmgScale = 1;
       if (ft._pulse > 0) {
         const _pt = ft._pulse / 6;
-        _dmgScale = 1 + _pt * 0.4;
+        _dmgScale = 1 + _pt * 0.45;
         ft._pulse--;
       }
-      const _baseSize = ft._crit ? 20 : 16;
-      ctx.shadowBlur = ft._crit ? 12 : 6;
-      // Fade out in last 40% of life
+      // Bigger, comic/arcade font (Impact) with a thick black outline instead of
+      // a shadowBlur glow — reads like a comic-book "POW" number and is cheaper.
+      const _baseSize = ft._crit ? 30 : 23;
+      ctx.shadowBlur = 0;
+      // Fade out in last 35% of life
       const _lifeRatio = ft.life / ft.maxLife;
-      ctx.globalAlpha = _lifeRatio < 0.4 ? _lifeRatio / 0.4 : 1;
-      ctx.fillStyle = ft.color;
+      ctx.globalAlpha = _lifeRatio < 0.35 ? _lifeRatio / 0.35 : 1;
       const _dSz = Math.round(_baseSize * _dmgScale);
-      if (ft._cachedSize !== _dSz) { ft._cachedFont = 'bold ' + _dSz + 'px monospace'; ft._cachedSize = _dSz; }
+      if (ft._cachedSize !== _dSz) { ft._cachedFont = '900 ' + _dSz + 'px Impact, "Arial Black", sans-serif'; ft._cachedSize = _dSz; }
       ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(3, _dSz * 0.18);
+      ctx.strokeStyle = '#000';
+      ctx.strokeText(ft.text, ft.x, ft.y);
+      ctx.fillStyle = ft.color;
       ctx.fillText(ft.text, ft.x, ft.y);
       ctx.globalAlpha = 1;
     } else if (ft._bitsLabel) {
@@ -41381,6 +41424,52 @@ function render() {
   if(gameMode==='trench'&&trenchFadeAlpha>0){
     ctx.fillStyle=`rgba(0,0,0,${Math.min(1,trenchFadeAlpha)})`;
     ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+  // ---- BOSS DEATH LENS FLARE ----
+  // Screen-space (post-fog) anamorphic flare at the kill point: bright core
+  // bloom + colored halo + horizontal/vertical streaks + a few flare orbs.
+  // Replaces the old boss-death hit-stop with a punchy, non-jarring flash.
+  if (window._bossFlare) {
+    const _bf = window._bossFlare;
+    const _bfLife = _bf.t / _bf.max;            // 1 → 0
+    const _bfa = _bfLife;                         // overall alpha
+    const _bfox = -camera.x + canvas.width/2 + screenShake.x;
+    const _bfoy = -camera.y + canvas.height/2 + screenShake.y;
+    const _bfx = _bf.x + _bfox, _bfy = _bf.y + _bfoy;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // White-hot core bloom (grows as it fades)
+    const _bfCore = 60 + (1 - _bfLife) * 70;
+    let _bfg = ctx.createRadialGradient(_bfx, _bfy, 0, _bfx, _bfy, _bfCore);
+    _bfg.addColorStop(0, `rgba(255,255,255,${(0.95*_bfa).toFixed(3)})`);
+    _bfg.addColorStop(0.25, `rgba(255,255,255,${(0.45*_bfa).toFixed(3)})`);
+    _bfg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = _bfg; ctx.beginPath(); ctx.arc(_bfx, _bfy, _bfCore, 0, Math.PI*2); ctx.fill();
+    // Anamorphic horizontal streak (the signature lens-flare bar)
+    const _bfW = 280 + 260 * (1 - _bfLife), _bfH = 4 + 12 * _bfa;
+    let _bfsg = ctx.createLinearGradient(_bfx - _bfW, _bfy, _bfx + _bfW, _bfy);
+    _bfsg.addColorStop(0, 'rgba(150,205,255,0)');
+    _bfsg.addColorStop(0.5, `rgba(215,235,255,${(0.7*_bfa).toFixed(3)})`);
+    _bfsg.addColorStop(1, 'rgba(150,205,255,0)');
+    ctx.fillStyle = _bfsg; ctx.fillRect(_bfx - _bfW, _bfy - _bfH/2, _bfW*2, _bfH);
+    // Thinner vertical streak
+    const _bfVH = _bfW * 0.7;
+    let _bfvg = ctx.createLinearGradient(_bfx, _bfy - _bfVH, _bfx, _bfy + _bfVH);
+    _bfvg.addColorStop(0, 'rgba(200,225,255,0)');
+    _bfvg.addColorStop(0.5, `rgba(225,240,255,${(0.4*_bfa).toFixed(3)})`);
+    _bfvg.addColorStop(1, 'rgba(200,225,255,0)');
+    ctx.fillStyle = _bfvg; ctx.fillRect(_bfx - 2, _bfy - _bfVH, 4, _bfVH*2);
+    // Small flare orbs along a diagonal
+    for (const _bk of [-0.6, -0.32, 0.34, 0.62]) {
+      const _box = _bfx + _bfW * 0.75 * _bk, _boy = _bfy + _bfW * 0.5 * _bk;
+      const _bor = 7 + 16 * Math.abs(_bk);
+      let _bog = ctx.createRadialGradient(_box, _boy, 0, _box, _boy, _bor);
+      _bog.addColorStop(0, `rgba(190,225,255,${(0.4*_bfa).toFixed(3)})`);
+      _bog.addColorStop(1, 'rgba(190,225,255,0)');
+      ctx.fillStyle = _bog; ctx.beginPath(); ctx.arc(_box, _boy, _bor, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    _bf.t--; if (_bf.t <= 0) window._bossFlare = null;
   }
   // ---- DEATH FOCUS VIGNETTE ----
   // Hold on the dying player — black overlay everywhere except a radial
