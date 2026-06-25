@@ -2034,11 +2034,10 @@ function getScaledGun() {
     bulletSpeed: BASE_GUN.bulletSpeed,
     spread: BASE_GUN.spread + (wideSpreadExtra > 0 ? 0.15 : 0),
     bulletSize: m.heavyCaliber > 0 ? 5 : BASE_GUN.bulletSize,
-    // PULSE INFUSION: modest knockback bump on every bullet. Initial
-    // impulse kept low so enemies don't teleport; the visible motion
-    // comes from the pulse-slide friction window in the stagger path.
-    // +12 over base 12 at lv1 (~2x base); +2 per stack.
-    knockback: BASE_GUN.knockback + (m.pulseShotLv > 0 ? 6 + m.pulseShotLv : 0),
+    // PULSE INFUSION: shots no longer shove on impact — the knockback is
+    // deferred to the accumulated pulse LAUNCH (~0.5s later, proportional to
+    // damage), so enemies stay put while you keep firing into them.
+    knockback: m.pulseShotLv > 0 ? 0 : BASE_GUN.knockback,
     pierce: BASE_GUN.pierce + (m.pierceAdd || 0),
     _pierceRangeBoost: (m.pierceAdd || 0) > 0,
     bounceCount: 0,
@@ -9708,6 +9707,67 @@ function applyExposed(z) {
     particles.push({x:z.x,y:z.y-z.radius-4,vx:0,vy:-1,life:12,maxLife:12,size:3,color:'#cef',type:'spark'});
     // (one-shot SLIDE floater removed — persistent label below the enemy reads the state.)
   }
+}
+// ---- PULSE INFUSION: charge → delayed class-colored LAUNCH ----
+// Instead of shoving an enemy on every shot (which pushes it out of your fire),
+// each pulse hit ACCUMULATES the damage dealt onto the enemy + applies SLIDE.
+// ~0.5s after the window's first hit the enemy is LAUNCHED by a class-colored
+// pulsewave with force proportional to the damage taken. Host-authoritative
+// (mirrors the delayed-charge synergy); the per-zombie tick fires the launch.
+const PULSE_LAUNCH_DELAY = 30; // frames (~0.5s @60fps)
+function _chargePulse(z, dmg, ang) {
+  if (!z || z.hp <= 0) return;
+  applyExposed(z);                                       // SLIDE state (wall-slam + synergies)
+  z._pulseCharge = (z._pulseCharge || 0) + Math.max(1, dmg || 1);
+  if (typeof ang === 'number') z._pulseChargeAng = ang;  // launch in the latest hit direction
+  if (!(z._pulseChargeTimer > 0)) z._pulseChargeTimer = PULSE_LAUNCH_DELAY;
+}
+function _firePulseLaunch(z) {
+  const dmg = z._pulseCharge || 0;
+  z._pulseCharge = 0; z._pulseChargeTimer = 0;
+  if (!z || z.hp <= 0) return;
+  const _m = runMods || {};
+  const vsMult = 1 + 0.5 * (_m.vectorSnap || 0);
+  const _k = (typeof _kbSizeScale === 'function') ? _kbSizeScale(z) : 1;
+  // Launch force scales with the damage taken during the window (capped).
+  const vel = Math.min(52, 6 + dmg * 0.5) * vsMult * _k;
+  const ang = (typeof z._pulseChargeAng === 'number') ? z._pulseChargeAng : (z.angle || 0);
+  z.vx = (z.vx || 0) + Math.cos(ang) * vel;
+  z.vy = (z.vy || 0) + Math.sin(ang) * vel;
+  z.staggerTimer = Math.max(z.staggerTimer || 0, 26);
+  z._pulseSlide = 26;          // light-friction slide so it glides rather than snaps
+  applyExposed(z);             // refresh SLIDE so the wall-slam stays armed mid-launch
+  // Lv3: the pulsewave also shoves (and lightly damages) nearby enemies.
+  if (_m.pulseShotLv >= 3) {
+    const _r2 = 70 * 70;
+    for (const oz of zombies) {
+      if (oz === z || oz.hp <= 0) continue;
+      const dx = oz.x - z.x, dy = oz.y - z.y, d2 = dx*dx + dy*dy;
+      if (d2 < _r2 && d2 > 0.1) {
+        const d = Math.sqrt(d2), _ok = (typeof _kbSizeScale === 'function') ? _kbSizeScale(oz) : 1;
+        oz.vx += (dx/d) * vel * 0.4 * _ok; oz.vy += (dy/d) * vel * 0.4 * _ok;
+        oz.staggerTimer = Math.max(oz.staggerTimer || 0, 12);
+        damageZombie(oz, Math.floor(dmg * 0.15), 0, 0, true);
+        applyExposed(oz);
+      }
+    }
+  }
+  _pulseLaunchVFX(z, ang, vel, dmg);
+}
+function _pulseLaunchVFX(z, ang, vel, dmg) {
+  const _r = 32 + Math.min(70, dmg * 0.6);
+  // Class-colored pulsewave: expanding shockwave + concentric rings + white core.
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 24, maxLife: 24, size: _r * 1.5, color: '#cef', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.35, _alphaScale: 1.2 });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: _r, color: '#cef', type: 'wakering' });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: _r * 0.55, color: '#fff', type: 'wakering' });
+  // Air-pressure puffs cone in the launch direction.
+  for (let i = 0; i < 9; i++) {
+    const pa = ang + (Math.random() - 0.5) * 0.85;
+    const ps = 2 + Math.random() * 3 + vel * 0.12;
+    particles.push({ x: z.x + Math.cos(pa) * 4, y: z.y + Math.sin(pa) * 4, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps, life: 16 + Math.floor(Math.random() * 8), maxLife: 24, size: 2 + Math.random() * 2.5, color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
+  }
+  screenShake.intensity = Math.max(screenShake.intensity, Math.min(9, 3 + dmg * 0.035));
+  playSound(190, 0.08, 'sine', 0.09); playSound(95, 0.11, 'sine', 0.07);
 }
 // ---- CORRUPT RUPTURE VFX (shared host + client) ----
 // Pure visual — pushes particles + (big only) shake/glitch surge. No game-state
@@ -22904,47 +22964,12 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
         tx: z.x + Math.cos(_la) * _ll, ty: z.y + Math.sin(_la) * _ll });
     }
   }
-  // PULSE INFUSION (melee path) — sword knockback is notably lighter
-  // than the gun's. The blade already adds its own combo knockback per
-  // step, so pulse here just nudges + applies EXPOSED + the slide window.
+  // PULSE INFUSION (melee path) — the blade's combo already supplies its own
+  // knockback; pulse no longer nudges per hit. It accumulates the damage + SLIDE
+  // and launches the enemy ~0.5s later with a class-colored pulsewave (see
+  // _chargePulse / the pulse-charge tick), so chaining hits doesn't shove it off.
   if (_m.pulseShotLv > 0) {
-    applyExposed(z);
-    const vsMult = _m.vectorSnap > 0 ? _modScale('vector_snap', 1.5, 0.3) : 1;
-    const pushF = (3 + _m.pulseShotLv) * vsMult;
-    z.vx += Math.cos(attackAngle) * pushF;
-    z.vy += Math.sin(attackAngle) * pushF;
-    const stag = 18 + (_m.vectorSnap || 0) * 8;
-    z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
-    // Pulse slide window — light-ish friction during the staggered movement.
-    z._pulseSlide = stag;
-    // Pulse-y VFX (not electric): concentric shockwave rings + white air-pressure
-    // puffs along the strike vector. Reads as compressed air slamming into the
-    // target — NO lightning bolts, NO bright cyan sparks.
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 14, maxLife: 14,
-      size: 26 + _m.pulseShotLv * 4, color: '#cef', type: 'wakering' });
-    particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10,
-      size: 16 + _m.pulseShotLv * 3, color: '#fff', type: 'wakering' });
-    // White air-pressure puffs cone forward in the strike direction
-    for (let _pi = 0; _pi < 5; _pi++) {
-      const _pa = attackAngle + (Math.random()-0.5) * 0.9;
-      const _ps = 1.2 + Math.random() * 1.6;
-      particles.push({
-        x: z.x + Math.cos(_pa) * 4, y: z.y + Math.sin(_pa) * 4,
-        vx: Math.cos(_pa) * _ps, vy: Math.sin(_pa) * _ps,
-        life: 18 + Math.floor(Math.random() * 6), maxLife: 24,
-        size: 5 + Math.random() * 3,
-        color: Math.random() > 0.5 ? '#eef' : '#cdf',
-        type: 'smoke', _smokeAlpha: 0.28 + Math.random() * 0.10,
-      });
-    }
-    // Two small forward dust streaks — visible push direction, no electricity
-    for (let _di = 0; _di < 2; _di++) {
-      const _da = attackAngle + (_di === 0 ? -0.25 : 0.25);
-      particles.push({ x: z.x, y: z.y,
-        vx: Math.cos(_da) * 3.2, vy: Math.sin(_da) * 3.2,
-        life: 12, maxLife: 12, size: 2 + Math.random(),
-        color: '#fff', type: 'spark' });
-    }
+    _chargePulse(z, dmg, attackAngle);
   }
   // VIRAL PAYLOAD
   if (_m.viralPayloadLv > 0) {
@@ -30620,31 +30645,12 @@ function update() {
                         }
                       }
                     }
-                    // PULSE SHOT: apply Exposed + knockback. Exposed enemies take slam damage when knocked into walls.
-                    // Vector Snap rare card scales knockback force + stagger (no damage amp).
+                    // PULSE SHOT: don't shove on every shot — accumulate the
+                    // damage onto the enemy + apply SLIDE, and launch it ~0.5s
+                    // later with a class-colored pulsewave scaled to the damage
+                    // taken (see _chargePulse / the pulse-charge tick).
                     if (_m.pulseShotLv > 0) {
-                      // Apply EXPOSED FIRST so the next-frame damageZombie
-                      // hit benefits from the EXPOSED kb mult. Secondary
-                      // push is now gentler — the spectacle comes from
-                      // a longer slide (z._pulseSlide flag, lighter
-                      // friction in the stagger movement path) rather
-                      // than a big initial vx that visibly teleports.
-                      applyExposed(z);
-                      const vsMult = 1 + 0.5 * (_m.vectorSnap || 0); // Lv1=+50%, Lv2=+100% knockback
-                      const pushF = (6 + _m.pulseShotLv * 2) * vsMult;
-                      z.vx += Math.cos(a) * pushF; z.vy += Math.sin(a) * pushF;
-                      // Stagger window for the slide — short, just enough
-                      // to register motion before chase reasserts.
-                      const stag = 18 + (_m.vectorSnap || 0) * 8;
-                      z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
-                      // Pulse slide window (light-ish friction in stagger).
-                      z._pulseSlide = stag;
-                      // Lv3: hits on Exposed create mini impact pulse
-                      if (_m.pulseShotLv >= 3 && z._exposed) {
-                        // silent=true on AOE — the spark ring below is the visual
-                        for (const oz of zombies) { if (oz === z || oz.hp <= 0) continue; const pd = Math.sqrt((oz.x-z.x)**2+(oz.y-z.y)**2); if (pd < 60) { damageZombie(oz, Math.floor(_dmg * 0.2), 0, 0, true); oz.staggerTimer = Math.max(oz.staggerTimer||0, 6); } }
-                        for(let pi=0;pi<6;pi++){const pa=(pi/6)*Math.PI*2;particles.push({x:z.x,y:z.y,vx:Math.cos(pa)*3,vy:Math.sin(pa)*3,life:10,maxLife:10,size:2,color:'#cef',type:'spark'});}
-                      }
+                      _chargePulse(z, _dmg, a);
                     }
                     // VIRAL PAYLOAD: apply Corrupt stacks. Lv2+ applies 2 stacks; Lv3 spreads to neighbors on Compromised hit.
                     if (_m.viralPayloadLv > 0) {
@@ -31401,6 +31407,16 @@ function update() {
             if (typeof playExplosionSound === 'function') playExplosionSound();
             z._delayedChargeDmg = 0;
           }
+        }
+        // ---- PULSE INFUSION: charged launch (accumulated damage → delayed pulsewave) ----
+        if (z._pulseChargeTimer > 0 && isHost) {
+          z._pulseChargeTimer--;
+          // Winding-up shimmer: faint class-colored motes gathering inward.
+          if (z._pulseChargeTimer % 5 === 0) {
+            const _pa = Math.random() * Math.PI * 2, _pr = (z.radius || 13) + 6 + Math.random() * 8;
+            particles.push({ x: z.x + Math.cos(_pa)*_pr, y: z.y + Math.sin(_pa)*_pr, vx: -Math.cos(_pa)*0.9, vy: -Math.sin(_pa)*0.9, life: 10, maxLife: 10, size: 2, color: '#cef', type: 'spark' });
+          }
+          if (z._pulseChargeTimer <= 0) _firePulseLaunch(z);
         }
         // ---- VULNERABILITY HANDLING (all bosses) ----
         // Tick the vuln timer + detect HP thresholds (75/50/25%) for cross-boss
