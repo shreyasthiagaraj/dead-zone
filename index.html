@@ -421,11 +421,14 @@ body.mobile #mobile-buttons { display: block; }
 #wave-announce .wave-num { font-size: clamp(22px, 5vw, 44px); color: #f0f; font-weight: bold; text-shadow: 0 0 20px rgba(255,0,255,0.6), 0 0 40px rgba(255,0,255,0.2); }
 #wave-announce .wave-sub { font-size: clamp(10px, 2.5vw, 14px); color: #0ff; margin-top: 4px; text-shadow: 0 0 8px rgba(0,255,255,0.4); }
 /* Arcade points: persistent top-center counter. Pops on each kill via inline scale. */
-#arcade-points { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 28; pointer-events: none; font-family: 'Courier New', monospace; font-weight: bold; color: #fa0; text-align: center; line-height: 1.1; display: none; transform-origin: 50% 0%; transition: transform 0.18s cubic-bezier(.5,1.6,.5,1); }
-#arcade-points .ap-label { font-size: clamp(9px, 1.6vw, 12px); letter-spacing: 3px; color: #fa0a; text-shadow: 0 0 6px rgba(255,170,0,0.4); margin-bottom: 1px; }
-#arcade-points .ap-value { font-size: clamp(28px, 5.5vw, 44px); color: #fa0; text-shadow: 0 0 14px rgba(255,170,0,0.7), 0 0 28px rgba(255,170,0,0.35); font-variant-numeric: tabular-nums; }
-#arcade-points .ap-streak { font-size: clamp(10px, 1.8vw, 14px); color: #f0f; text-shadow: 0 0 8px rgba(255,0,255,0.5); margin-top: 2px; min-height: 1em; }
-#arcade-points.popping { transform: translateX(-50%) scale(1.16); }
+/* Score/timer counter — now flows in the top-left HUD column, just below the
+   bits chip (was a big centered overlay). Compact, left-aligned. */
+#arcade-points { z-index: 28; pointer-events: none; font-family: 'Courier New', monospace; font-weight: bold; color: #fa0; text-align: left; line-height: 1.0; display: none; transform-origin: 0% 50%; transition: transform 0.18s cubic-bezier(.5,1.6,.5,1); padding-left: 2px; }
+#arcade-points .ap-value { font-size: clamp(17px, 3.4vw, 24px); color: #fa0; text-shadow: 0 0 10px rgba(255,170,0,0.6); font-variant-numeric: tabular-nums; }
+#arcade-points .ap-streak { font-size: clamp(8px, 1.5vw, 11px); letter-spacing: 1px; color: #f0f; text-shadow: 0 0 6px rgba(255,0,255,0.5); margin-top: 0; min-height: 0; }
+#arcade-points.popping { transform: scale(1.12); }
+/* Small auto-fading level label (top center) — used by DESCENT instead of the big title card. */
+#level-label { position: fixed; top: calc(36px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 22; pointer-events: none; font-family: 'Courier New', monospace; font-weight: bold; font-size: clamp(13px, 2.8vw, 19px); letter-spacing: 5px; color: #f0f; text-shadow: 0 0 10px rgba(255,0,255,0.6); opacity: 0; transition: opacity 0.45s ease; }
 
 /* ============================================================ */
 /* ARCADE DEATH SCREEN — neon gold/cyan overlay with stats grid */
@@ -826,6 +829,7 @@ body.mobile #mobile-buttons { display: block; }
 <div id="hud-topleft" style="display:none">
   <div id="hp-chip"><div class="bar-bg"><div class="bar-trail" id="health-trail"></div><div class="bar" id="health-bar"></div><div id="barrier-bar" style="position:absolute;top:0;left:0;height:100%;background:#4ff;border-radius:3px;box-shadow:0 0 6px #4ff;opacity:0.7;width:0%;transition:width 0.2s"></div></div><div class="hp-text" id="health-text">100 HP</div></div>
   <div id="xp-chip" title="BITS"><div class="bit-icon">◆</div><div class="xp-label" id="xp-label">0</div></div>
+  <div id="arcade-points"><div class="ap-value">0</div><div class="ap-streak"></div></div>
   <div id="effects-bar" style="display:flex;gap:4px;flex-direction:column;align-items:flex-start;pointer-events:none"></div>
 </div>
 <!-- Pause button, top-right corner -->
@@ -847,7 +851,8 @@ body.mobile #mobile-buttons { display: block; }
 </div>
 <div id="streak-hud" style="display:none"></div>
 <div id="center-hud" style="display:none;position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:20;pointer-events:none;font-family:'Courier New',monospace;text-align:center"></div>
-<div id="arcade-points"><div class="ap-label">SCORE</div><div class="ap-value">0</div><div class="ap-streak"></div></div>
+<!-- Small auto-fading top-center level label (DESCENT etc.) -->
+<div id="level-label"></div>
 
 <!-- ARCADE LEADERBOARD — top-10 high scores read from deadzone_lb_arcade -->
 <div id="arcade-leaderboard-screen">
@@ -1850,6 +1855,16 @@ function spawnMemoryFragment(x, y) {
 
 // Show a section/room title card in the wave-announce div.
 // Used everywhere a new section/wave begins.
+// Small top-center level label that fades out after a couple seconds. Used by
+// DESCENT (a quiet "LEVEL N") instead of the big DEPTH title card.
+function showLevelLabel(text) {
+  const el = document.getElementById('level-label');
+  if (!el) return;
+  el.textContent = text;
+  el.style.opacity = '1';
+  if (el._fadeT) clearTimeout(el._fadeT);
+  el._fadeT = setTimeout(() => { el.style.opacity = '0'; }, 2000);
+}
 function showSectionTitleCard(title, subtitle, isBoss) {
   const el = document.getElementById('wave-announce');
   if (!el) return;
@@ -5792,9 +5807,9 @@ function spawnDescentSection(idx) {
     const fy = sec.y + (0.2 + Math.random() * 0.6) * sec.height;
     spawnMemoryFragment(fx, fy);
   }
-  // Narrative title card — descent section name + flavor
-  const _dlore = DESCENT_SECTION_LORE[idx] || { name: `DEPTH ${idx + 1}`, sub: 'deeper than it should be' };
-  showSectionTitleCard(`DEPTH ${idx + 1}: ${_dlore.name}`, _dlore.sub, sec.isBoss);
+  // Quiet top-center "LEVEL N" label (fades after ~2s) instead of the big
+  // DEPTH title card — keeps the descent flow clean.
+  showLevelLabel(`LEVEL ${idx + 1}`);
   if (sec.isDark) addFloatingText(cx, sec.y + 130, 'DARKNESS', '#888');
 }
 
@@ -28014,8 +28029,9 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
   // Damage number popup — gun damage accumulates on sticky label; DOT/status creates separate drifting text
   if(damage>=1) {
     if (silent) {
-      // Non-gun damage: separate floating text that drifts up and to the right
-      floatingTexts.push({ x: z.x + 8 + Math.random()*10, y: z.y - (z.radius||14) - 10, text: Math.floor(damage)+'', color: '#fa0', vx: 0.5 + Math.random()*0.5, vy: -1.2 - Math.random()*0.5, life: 28, maxLife: 28, _dmgNum: false });
+      // Non-gun damage (DoT/status/AoE): a SMALL separate label that uses the
+      // SAME font system as hit numbers, floating straight up + slightly aside.
+      floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 12, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
     } else {
       addDamageNumber(z, damage, false);
     }
@@ -34458,7 +34474,7 @@ function updateHUD() {
             const mult = arcadeStreak >= 30 ? 5 : arcadeStreak >= 15 ? 4 : arcadeStreak >= 5 ? 3 : 2;
             stText = `x${mult} STREAK · ${arcadeStreak} KILLS`;
           } else if (gameMode === 'descent') {
-            stText = `SECTION ${descentSection + 1}`;
+            stText = '';   // level shown by the top-center LEVEL label instead
           } else if (arcadeWaveState === 'rest') {
             stText = `NEXT WAVE IN ${Math.ceil(arcadeWaveTimer / 60)}s`;
           } else if (arcadeWave > 0) {
@@ -38936,8 +38952,8 @@ function render() {
       const bw = _isBoss ? 100 : Math.max(16, Math.floor(z.radius * 1.6 + _hpRatio * 10));
       const bh = _isBoss ? 6 : Math.max(3, Math.floor(3 + _hpRatio));
       const hp2=Math.max(0,Math.min(1,z.hp/z.maxHp));
-      // Boss: bar under the body (below radius). Regular: above.
-      const _hby = _isBoss ? z.y + z.radius + 8 : z.y - z.radius - 10;
+      // Boss: bar under the body (below radius). Regular: above (raised a touch).
+      const _hby = _isBoss ? z.y + z.radius + 8 : z.y - z.radius - 14;
       const _hbx = z.x - bw / 2, _hbx2 = _hbx - 1, _hby2 = _hby - 1;
       // Outline: dark border + thin white frame so HP is readable at a glance
       ctx.fillStyle = '#000'; ctx.fillRect(_hbx2 - 1, _hby2 - 1, bw + 4, bh + 4);
@@ -40476,17 +40492,19 @@ function render() {
         _alpha = 1;
       }
       ctx.globalAlpha = _alpha;
-      const _baseSize = ft._crit ? 30 : 23;
+      const _baseSize = ft._small ? 16 : (ft._crit ? 30 : 23);
       const _dSz = Math.max(8, Math.round(_baseSize * _scale));
       if (ft._cachedSize !== _dSz) { ft._cachedFont = '900 ' + _dSz + 'px Impact, "Arial Black", sans-serif'; ft._cachedSize = _dSz; }
       ctx.font = ft._cachedFont;
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';   // so the number sits centered on the health bar at spawn
       ctx.lineJoin = 'round';
       ctx.lineWidth = Math.max(3, _dSz * 0.18);
       ctx.strokeStyle = '#000';
       ctx.strokeText(ft.text, ft.x, ft.y);
       ctx.fillStyle = ft.color;
       ctx.fillText(ft.text, ft.x, ft.y);
+      ctx.textBaseline = 'alphabetic';
       ctx.globalAlpha = 1;
     } else if (ft._bitsLabel) {
       // Accumulating bits pickup label — bigger, glowing, pulses when it grows
