@@ -1363,7 +1363,24 @@ const minimapCtx = minimapCanvas.getContext('2d');
 // breaks. Enable at boot with ?pixel=1, or from the console with
 // `PIXEL_MODE = true; loadEnemySprites()`. See PIXEL_PILOT_SPEC.md.
 // ============================================================
-window.PIXEL_MODE = typeof location !== 'undefined' && /[?&]pixel=1\b/.test(location.search || '');
+window.PIXEL_MODE = (function () {
+  const s = (typeof location !== 'undefined' && location.search) || '';
+  if (/[?&]pixel=0\b/.test(s)) return false;            // explicit override: off
+  if (/[?&]pixel=1\b/.test(s)) return true;             // explicit override: on
+  try {                                                  // sticky toggle (future in-game switch)
+    const ls = localStorage.getItem('necro_pixel');
+    if (ls === '0') return false;
+    if (ls === '1') return true;
+  } catch (e) {}
+  // Default ON inside the native app (Capacitor) so the pilot is visible on
+  // device without a query string. Plain web stays default-OFF — use ?pixel=1.
+  try {
+    const C = (typeof window !== 'undefined') && window.Capacitor;
+    if (C && (typeof C.isNativePlatform === 'function' ? C.isNativePlatform() : C.isNative)) return true;
+  } catch (e) {}
+  if (typeof location !== 'undefined' && (location.protocol === 'capacitor:' || location.protocol === 'ionic:')) return true;
+  return false;
+})();
 const ENEMY_SPRITES = {};            // type -> { img, ready }
 const PIXEL_SPRITE_TYPES = ['normal', 'fast', 'tank', 'spitter', 'brute', 'boss'];
 function loadEnemySprites() {
