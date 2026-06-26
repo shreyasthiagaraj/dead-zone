@@ -191,3 +191,19 @@ Naming: `enemy_<type>.png`. Drop a new PNG, reload page → instant iteration. F
 - Pixel body vs. smooth neon VFX coexistence (the #2 unknown)
 - Lighting interaction (now known to be free — confirm visually)
 - AI tool consistency across a small set before betting on 1000+
+
+---
+
+## Environment pilot (added 2026-06-26)
+Environments don't rotate, so they're lower-risk than enemies — a natural scale-up. A Domain-1 (Entry Cache, magenta) trio was generated via `create_map_object` and wired behind the same `PIXEL_MODE` flag:
+
+- **`sprites/env_floor.png`** (128) — seamless dark panel floor tile, magenta grid. Blitted per floor cell in the floor/wall cell loop (`drawImage` at `_px,_py,CELL_SIZE`), with an opaque base fill first so sprite alpha can't show through. Procedural pattern is the untouched `else`.
+- **`sprites/env_wall.png`** (128) — dark cover-block with magenta neon edges. Blitted per wall cell in the same loop's wall branch; procedural neon-wall fill is the fallback.
+- **`sprites/env_barrel.png`** (96) — overhead explosive barrel (orange rim, hazard symbol). **Art shipped, wiring deferred** — the barrel draw loop (`index.html` ~35618) is large and branchy; integrate the plain-barrel branch in a later pass. Not in `PIXEL_ENV_TYPES` yet, so it's not loaded.
+
+Loader: `ENV_SPRITES` / `loadEnvSprites()` (mirrors the enemy loader), `PIXEL_ENV_TYPES = ['floor','wall']`, files `sprites/env_<type>.png`, `onerror`→procedural. Integration points: floor cell branch and wall cell branch inside the floor render loop (search `PIXEL-ART PILOT: floor tile` / `PIXEL-ART PILOT: wall / cover block`). Both are client-local visual paths (no host state) → multiplayer-safe; both run before the lighting/fog composite → lit for free.
+
+**To A/B:** the floor + walls swap is the biggest "does this read as a pixel-art game" signal. Watch for: the cover-block tiling looking too busy on the full room perimeter (may want to limit pixel walls to interior obstacle clusters, not the border), and whether the dark floor reads as intentional vs flat. Note `env_floor.png` was regenerated once (v1 was featureless black; v2 has visible 4-panel grid).
+
+### Native (iOS) enablement (added 2026-06-26)
+`PIXEL_MODE` now defaults ON inside Capacitor (and `capacitor:`/`ionic:` schemes); plain web stays default-OFF (`?pixel=1`). Override order: `?pixel=1`/`?pixel=0` > `localStorage 'necro_pixel'` > native-default. `build-mobile.sh` now copies `sprites/` into `www/` so `cap sync` bundles them. NOTE: the device **launch** step (`ERR_UNKNOWN`) is separate and device-side (unlock / Developer Mode / trust the dev cert / run from Xcode).

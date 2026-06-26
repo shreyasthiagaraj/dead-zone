@@ -1398,6 +1398,24 @@ function loadEnemySprites() {
 // 404s for sprites that don't exist yet. Console toggling = re-run the loader.
 if (window.PIXEL_MODE) loadEnemySprites();
 
+// ---- PIXEL-ART PILOT: environment sprites (floor tile + cover/wall block) ----
+// Same flag + fail-safe pattern as enemies. Domain-1 (Entry Cache) pilot art.
+// Any unloaded/missing env sprite falls through to the procedural floor/wall.
+const ENV_SPRITES = {};              // key -> { img, ready }
+const PIXEL_ENV_TYPES = ['floor', 'wall'];   // barrel art shipped but not yet wired
+function loadEnvSprites() {
+  for (const t of PIXEL_ENV_TYPES) {
+    if (ENV_SPRITES[t]) continue;
+    const img = new Image();
+    const rec = { img, ready: false };
+    img.onload = () => { rec.ready = true; };
+    img.onerror = () => { rec.ready = false; };
+    img.src = `sprites/env_${t}.png`;
+    ENV_SPRITES[t] = rec;
+  }
+}
+if (window.PIXEL_MODE) loadEnvSprites();
+
 // ---- NEON BOOST ----
 // Amplify every ctx.shadowBlur assignment on the main game canvas so existing
 // glow calls (hundreds of them across render code) become proper neon-sign
@@ -34942,6 +34960,17 @@ function render() {
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       const _px=cx*CELL_SIZE, _py=cy*CELL_SIZE, _CS=CELL_SIZE;
+      // ---- PIXEL-ART PILOT: floor tile (flag-gated, fail-safe) ----
+      // Blit the pixel floor tile per cell instead of the procedural pattern.
+      // Opaque base fill first guarantees no see-through if the tile has alpha.
+      const _envFloor = window.PIXEL_MODE && ENV_SPRITES.floor;
+      if (_envFloor && _envFloor.ready) {
+        ctx.fillStyle = '#0a0710'; ctx.fillRect(_px, _py, _CS, _CS);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(_envFloor.img, _px, _py, _CS, _CS);
+        ctx.imageSmoothingEnabled = true;
+        continue;
+      }
       // Shell uses the default grid pattern (lines only, no alternating fills)
       // so it looks like a normal stage's floor.
       const _fp = gameState === 'shell'
@@ -35021,6 +35050,17 @@ function render() {
         if(vFloor)ctx.fillRect(px+_CS/2-1,py,2,_CS);
         ctx.globalAlpha=1;}
     } else {
+      // ---- PIXEL-ART PILOT: wall / cover block (flag-gated, fail-safe) ----
+      // Blit the pixel cover-block per wall cell; opaque base avoids see-through.
+      const _envWall = window.PIXEL_MODE && ENV_SPRITES.wall;
+      if (_envWall && _envWall.ready) {
+        const _wx = cx*CELL_SIZE, _wy = cy*CELL_SIZE;
+        ctx.fillStyle = _domainWallColor || '#0a0710'; ctx.fillRect(_wx, _wy, CELL_SIZE, CELL_SIZE);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(_envWall.img, _wx, _wy, CELL_SIZE, CELL_SIZE);
+        ctx.imageSmoothingEnabled = true;
+        continue;
+      }
       ctx.fillStyle = _domainWallColor || '#050508';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
       // Neon wall edges — glowing outlines where walls meet floor
