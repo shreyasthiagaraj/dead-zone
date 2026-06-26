@@ -4,10 +4,12 @@
 **Harness: BUILT and verified end-to-end.** What's done:
 - `index.html`: `window.PIXEL_MODE` flag (boots from `?pixel=1`), `loadEnemySprites()` loader for the 6 `sprites/enemy_*.png` with `onerror`→procedural fallback, and the flag-gated sprite branch at the body-draw chokepoint (sprite blit + neon halo + status-tint + hit-flash via `source-atop`).
 - `server.js`: fixed a pre-existing static-router bug — it didn't strip the query string, so `/?pixel=1` 404'd (which broke the pilot's reload-to-toggle). Also added `.png`/image MIME types.
-- `sprites/`: **placeholder** PNGs (geometric, spec-compliant: dark body + neon signature rim, facing right, transparent) so the plumbing could be verified. **These are NOT the real art** — replace with PixelLab output (step 2 below).
-- **Verified in live arcade combat:** `PIXEL_MODE=true` → 173–184 sprite blits/sec across 5 enemies; `PIXEL_MODE=false` → 0 blits, procedural fallback pristine; no console errors; `?pixel=1` boots all 6 sprites `ready`.
+- `sprites/`: **6 REAL PixelLab sprites are now in place** (placeholders replaced 2026-06-26). Generated with the `pixellab` MCP `create_map_object` tool (1 generation each). Each is a flat overhead dark body + neon signature rim, facing right, transparent — `enemy_{normal,fast,tank,spitter,brute,boss}.png` at 128/128/192/128/160/320 px.
+- **Verified in live arcade combat (placeholder pass):** `PIXEL_MODE=true` → 173–184 sprite blits/sec across 5 enemies; `PIXEL_MODE=false` → 0 blits, procedural fallback pristine; no console errors; `?pixel=1` boots all 6 sprites `ready`. Real-art serving re-verified: all 6 return `200 image/png` and `/?pixel=1` returns 200.
 
-**Still TODO:** (1) generate the 6 real sprites in PixelLab (the MCP server `pixellab` is added but its tools need a Claude Code restart to load), drop them into `sprites/` over the placeholders. (2) The subjective A/B quality call — is pixel *better*? — against the real art, in combat with VFX firing.
+**Generation lessons (real art):** `create_map_object`'s flattest view is `high top-down` (~35°), not a true 90° bird's-eye, so prompts must hammer "flat, seen from directly overhead" + the geometric shape language below + an asymmetric feature pointing RIGHT. Avoid "humanoid/standing/figure/cube/block" (→ 3D standing/box that tips over under rotation); prefer "flat overhead [shape], NOT a standing figure, NOT a 3D box." `fast` and `tank` each needed one regen. Budget note: `create_1_direction_object` and character pro/v3 cost 20–40 generations EACH — avoid on a small credit budget; `create_map_object` is 1 generation.
+
+**Still TODO:** the subjective A/B quality call — is pixel *better*? — in combat with VFX firing (step 3 / "Verification" below). Human visual judgment.
 
 ## Goal & hypothesis
 Answer ONE question cheaply, before committing to a 700–2000 asset conversion:
