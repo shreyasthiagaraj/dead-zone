@@ -9755,10 +9755,13 @@ function _firePulseLaunch(z) {
   const vel = Math.min(52, 6 + dmg * 0.5) * vsMult * _k;
   let ang = z._pulseChargeAng;
   if (typeof ang !== 'number') {
-    // No directional hit recorded (e.g. only zero-knockback damage) — launch
-    // away from the nearest player.
-    const _lp = (typeof getNearestAlivePlayer === 'function') ? getNearestAlivePlayer(z.x, z.y) : (typeof getLocalPlayer === 'function' ? getLocalPlayer() : null);
-    ang = _lp ? Math.atan2(z.y - _lp.y, z.x - _lp.x) : (z.angle || 0);
+    // No directional hit recorded (e.g. zero-knockback damage like the pulse
+    // sidearm) — launch AWAY from the nearest player. NOTE: getNearestAlivePlayer
+    // returns { player, dist }, so unwrap .player (reading .x/.y on the wrapper
+    // gave NaN, which sent the launch — and any enemy it hit — to NaN).
+    const _np = (typeof getNearestAlivePlayer === 'function') ? getNearestAlivePlayer(z.x, z.y).player : null;
+    const _lp = _np || (typeof getLocalPlayer === 'function' ? getLocalPlayer() : null);
+    ang = (_lp && typeof _lp.x === 'number') ? Math.atan2(z.y - _lp.y, z.x - _lp.x) : (z.angle || 0);
   }
   z.vx = (z.vx || 0) + Math.cos(ang) * vel;
   z.vy = (z.vy || 0) + Math.sin(ang) * vel;
@@ -28031,7 +28034,7 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     if (silent) {
       // Non-gun damage (DoT/status/AoE): a SMALL separate label that uses the
       // SAME font system as hit numbers, floating straight up + slightly aside.
-      floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 12, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
+      floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 19, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
     } else {
       addDamageNumber(z, damage, false);
     }
@@ -28237,7 +28240,7 @@ function addDamageNumber(z, dmg, isCrit) {
     _ex.color = _dmgColorFor(_ex._dmgTotal, _ex._crit);
     return;
   }
-  const _offY = -(z.radius || 14) - 12;       // right above the enemy
+  const _offY = -(z.radius || 14) - 19;       // a bit above the enemy / health bar
   const label = {
     x: z.x, y: z.y + _offY,
     text: Math.floor(dmg) + '',
@@ -31171,6 +31174,19 @@ function update() {
       if (z._tracerMarked > 0) z._tracerMarked--;
       // _hitByDischarge persists for 3s after wave ends so CASCADE works on delayed kills
       if (z._hitByDischarge && !_dischargeActive) { z._hitByDischargeTimer = (z._hitByDischargeTimer || 180) - 1; if (z._hitByDischargeTimer <= 0) z._hitByDischarge = false; }
+      // ---- PULSE INFUSION: charged launch (build up → launch) ----
+      // Ticked HERE — BEFORE SLIDE BALL MODE and the chase movement — so the
+      // launch velocity is set in time for ball mode to carry the enemy across
+      // the room. (When this ran later in the loop, the chase code overwrote
+      // z.vx the same frame, so the enemy just nudged and resumed chasing.)
+      if (z._pulseChargeTimer > 0 && isHost) {
+        z._pulseChargeTimer--;
+        if (z._pulseChargeTimer % 5 === 0) {
+          const _pa = Math.random() * Math.PI * 2, _pr = (z.radius || 13) + 6 + Math.random() * 8;
+          particles.push({ x: z.x + Math.cos(_pa)*_pr, y: z.y + Math.sin(_pa)*_pr, vx: -Math.cos(_pa)*0.9, vy: -Math.sin(_pa)*0.9, life: 10, maxLife: 10, size: 2, color: '#cef', type: 'spark' });
+        }
+        if (z._pulseChargeTimer <= 0) _firePulseLaunch(z);
+      }
       // PULSE SLIDE: smooth knockback that decays over time (like ice physics)
       if(z._slideTimer>0){z._slideTimer--;z._slideVx*=0.92;z._slideVy*=0.92;z.x+=z._slideVx;z.y+=z._slideVy;z.x=clamp(z.x,z.radius,ARENA_W-z.radius);z.y=clamp(z.y,z.radius,ARENA_H-z.radius);pushOutOfObstacles(z,z.radius);if(z._slideTimer<=0){z._slideVx=0;z._slideVy=0;}if(Math.abs(z._slideVx)+Math.abs(z._slideVy)>2)continue;}
       // ---- SLIDE BALL MODE (pinball) ----
@@ -31469,16 +31485,6 @@ function update() {
             if (typeof playExplosionSound === 'function') playExplosionSound();
             z._delayedChargeDmg = 0;
           }
-        }
-        // ---- PULSE INFUSION: charged launch (accumulated damage → delayed pulsewave) ----
-        if (z._pulseChargeTimer > 0 && isHost) {
-          z._pulseChargeTimer--;
-          // Winding-up shimmer: faint class-colored motes gathering inward.
-          if (z._pulseChargeTimer % 5 === 0) {
-            const _pa = Math.random() * Math.PI * 2, _pr = (z.radius || 13) + 6 + Math.random() * 8;
-            particles.push({ x: z.x + Math.cos(_pa)*_pr, y: z.y + Math.sin(_pa)*_pr, vx: -Math.cos(_pa)*0.9, vy: -Math.sin(_pa)*0.9, life: 10, maxLife: 10, size: 2, color: '#cef', type: 'spark' });
-          }
-          if (z._pulseChargeTimer <= 0) _firePulseLaunch(z);
         }
         // ---- VULNERABILITY HANDLING (all bosses) ----
         // Tick the vuln timer + detect HP thresholds (75/50/25%) for cross-boss
@@ -40492,7 +40498,7 @@ function render() {
         _alpha = 1;
       }
       ctx.globalAlpha = _alpha;
-      const _baseSize = ft._small ? 16 : (ft._crit ? 30 : 23);
+      const _baseSize = ft._small ? 14 : (ft._crit ? 26 : 20);
       const _dSz = Math.max(8, Math.round(_baseSize * _scale));
       if (ft._cachedSize !== _dSz) { ft._cachedFont = '900 ' + _dSz + 'px Impact, "Arial Black", sans-serif'; ft._cachedSize = _dSz; }
       ctx.font = ft._cachedFont;
