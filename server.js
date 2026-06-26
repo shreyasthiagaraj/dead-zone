@@ -7,10 +7,14 @@ const PORT = process.env.PORT || 3000;
 
 // ---- HTTP server to serve static files ----
 const server = http.createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
+  // Strip query string / hash before resolving to a file path so URLs like
+  // "/?pixel=1" (the pixel-art pilot's reload-to-toggle A/B switch) and
+  // "/sprites/foo.png?v=2" resolve to the real file instead of 404ing.
+  const urlPath = req.url.split('?')[0].split('#')[0];
+  let filePath = urlPath === '/' ? '/index.html' : urlPath;
   filePath = path.join(__dirname, filePath);
   const ext = path.extname(filePath);
-  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg' };
+  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon' };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
   fs.readFile(filePath, (err, data) => {

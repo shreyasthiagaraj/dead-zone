@@ -1355,6 +1355,32 @@ const ctx = canvas.getContext('2d');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 
+// ============================================================
+// PIXEL-ART PILOT (MVP) — flag-gated enemy-body sprite swap.
+// Validates whether AI pixel sprites beat the procedural neon shapes once
+// rotated and lit in the real VFX-heavy scene. Fully fail-safe: any
+// missing/unloaded sprite falls back to _drawZombieShape, so the game never
+// breaks. Enable at boot with ?pixel=1, or from the console with
+// `PIXEL_MODE = true; loadEnemySprites()`. See PIXEL_PILOT_SPEC.md.
+// ============================================================
+window.PIXEL_MODE = typeof location !== 'undefined' && /[?&]pixel=1\b/.test(location.search || '');
+const ENEMY_SPRITES = {};            // type -> { img, ready }
+const PIXEL_SPRITE_TYPES = ['normal', 'fast', 'tank', 'spitter', 'brute', 'boss'];
+function loadEnemySprites() {
+  for (const t of PIXEL_SPRITE_TYPES) {
+    if (ENEMY_SPRITES[t]) continue;  // already loading/loaded
+    const img = new Image();
+    const rec = { img, ready: false };
+    img.onload = () => { rec.ready = true; };
+    img.onerror = () => { rec.ready = false; };  // stays on the procedural path
+    img.src = `sprites/enemy_${t}.png`;
+    ENEMY_SPRITES[t] = rec;
+  }
+}
+// Eager-load only when the pilot is on, so the default experience never fires
+// 404s for sprites that don't exist yet. Console toggling = re-run the loader.
+if (window.PIXEL_MODE) loadEnemySprites();
+
 // ---- NEON BOOST ----
 // Amplify every ctx.shadowBlur assignment on the main game canvas so existing
 // glow calls (hundreds of them across render code) become proper neon-sign
@@ -38554,6 +38580,43 @@ function render() {
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
+    // ---- PIXEL-ART PILOT: sprite body swap (flag-gated, fail-safe) ----
+    // When PIXEL_MODE is on AND this enemy's sprite has loaded, blit the pixel
+    // sprite instead of the procedural shape. It's centered at the origin
+    // inside the existing translate+rotate+scale, so it inherits facing,
+    // spawn-scale, telegraph squash and hit-recoil for free. Status tint + hit
+    // flash are re-applied here, masked to the sprite's alpha. Any unloaded or
+    // missing sprite falls through to the procedural path below.
+    const _spr = window.PIXEL_MODE && ENEMY_SPRITES[z.type];
+    if (_spr && _spr.ready) {
+      // Soft neon halo so the chunky sprite still blooms with the scene.
+      ctx.globalAlpha = 0.18 + _zt * 0.04;
+      ctx.fillStyle = _zc;
+      ctx.beginPath(); ctx.arc(0, 0, _zr + 6, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      // Body sprite — radius _zr maps to half-width. Nearest-neighbour for
+      // crisp pixels; restore smoothing so later drawImage calls stay clean.
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(_spr.img, -_zr, -_zr, _zr * 2, _zr * 2);
+      ctx.imageSmoothingEnabled = true;
+      // Status tint (frozen/shocked/exposed/compromised/overheat) — only when
+      // the status color differs from the base, masked to the sprite's alpha.
+      if (_zc !== z.color) {
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.4; ctx.fillStyle = _zc;
+        ctx.fillRect(-_zr, -_zr, _zr * 2, _zr * 2);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      // Hit flash — instant white pop, masked to the sprite's alpha.
+      if (z._hfPulse > 0) {
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.92; ctx.fillStyle = '#fff';
+        ctx.fillRect(-_zr, -_zr, _zr * 2, _zr * 2);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+    } else {
     // PERF: fake glow — larger dimmer shapes instead of shadowBlur. Three
     // stacked halos (wide soft → mid → tight bright) give a strong neon bloom.
     // Brighter than before for a punchier neon look against the darker scene.
@@ -38636,6 +38699,7 @@ function render() {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    } // end procedural body path (pixel-art pilot: else of the sprite branch)
     // (old per-state telegraph rings removed — replaced by _drawTelegraph(z, _zr)
     // called in world space after the body restore below.)
     // ---- BOSS PHASE BODY MODIFICATIONS ----
