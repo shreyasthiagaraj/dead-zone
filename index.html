@@ -34735,6 +34735,7 @@ function render() {
   const _corridorTheme=ROOM_THEMES[0];
   // Domain visual: override wall/grid colors based on the current trench domain
   let _domainFloorTint = null, _domainWallColor = null, _domainGridColor = null;
+  let _descFloorPattern = null;
   if (gameState === 'shell') {
     // Same shape as a trench domain: wall + neon stroke + subtle floor tint.
     // Picks blue values so the room reads tinted, not a different theme entirely.
@@ -34746,6 +34747,14 @@ function render() {
     _domainFloorTint = _secPal.floorTint;
     _domainWallColor = _secPal.wallColor;
     _domainGridColor = _secPal.wallStroke;
+  } else if (gameMode === 'descent') {
+    // Descent floor evolves with depth: reuse the trench domain progression
+    // (every ~10 depths bumps the domain) so the floor PATTERN + tint + grid
+    // colour shift as the player descends. Walls keep their own colour.
+    const _dDom = getTrenchDomain(Math.min(40, descentSection || 0));
+    _domainFloorTint = _dDom.floorTint;
+    _domainGridColor = _dDom.wallStroke;
+    _descFloorPattern = _dDom.floorPattern;
   }
   // ---- Shell-only cyber void background ----
   // Instead of black beyond the shell walls, render a neon circuit board —
@@ -34903,7 +34912,9 @@ function render() {
       // so it looks like a normal stage's floor.
       const _fp = gameState === 'shell'
         ? null
-        : (gameMode==='trench'&&trenchSections[trenchSection]?.domain?.floorPattern);
+        : gameMode === 'trench'
+        ? (trenchSections[trenchSection]?.domain?.floorPattern)
+        : _descFloorPattern;
       if (_fp === 'checker') {
         const _isLight = (cx + cy) % 2 === 0;
         if (gameState === 'shell') {
@@ -38567,10 +38578,19 @@ function render() {
     ctx.globalAlpha=0.46 + _zt * 0.08;
     _drawZombieShape(ctx, z.type, _zr+2+_zt);
     ctx.fill();
-    // Solid body
-    ctx.globalAlpha=1;ctx.fillStyle=_zt >= 2 ? '#222' : '#1a1a1a';
+    // Solid body — a FILLED creature, not a hollow outline. Near-black base for
+    // weight, then a muted wash of the status colour so the body reads as
+    // coloured flesh, then a brighter inner core for lit-from-within volume.
+    ctx.globalAlpha=1;ctx.fillStyle=_zt >= 2 ? '#151515' : '#0d0d0d';
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
+    ctx.globalAlpha=0.30;ctx.fillStyle=_zc;
+    _drawZombieShape(ctx, z.type, _zr);
+    ctx.fill();
+    ctx.globalAlpha=0.24;
+    _drawZombieShape(ctx, z.type, _zr*0.55);
+    ctx.fill();
+    ctx.globalAlpha=1;
     // Neon outline — a wider, soft under-stroke behind the crisp outline makes
     // the edge read as "lit" (same path, drawn wide-dim then thin-bright).
     ctx.strokeStyle=_zc;
@@ -38584,6 +38604,21 @@ function render() {
       ctx.save();
       _drawZombieShape(ctx, z.type, _zr);
       ctx.clip();
+      // Zombie-flesh mottle — a few STABLE dark patches (seeded by zid) read as
+      // rotting/corrupted tissue. Stable hash → no per-frame flicker.
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#000';
+      let _mh = ((z.zid || 1) * 2654435761) >>> 0;
+      const _mN = _zr > 26 ? 5 : 3;
+      for (let _mi = 0; _mi < _mN; _mi++) {
+        _mh = (_mh * 1103515245 + 12345) >>> 0; const _ma = (_mh & 1023) / 1024 * 6.2832;
+        _mh = (_mh * 1103515245 + 12345) >>> 0; const _md = (_mh & 1023) / 1024 * _zr * 0.7;
+        _mh = (_mh * 1103515245 + 12345) >>> 0; const _ms = _zr * (0.12 + (_mh & 1023) / 1024 * 0.16);
+        ctx.beginPath();
+        ctx.arc(Math.cos(_ma) * _md, Math.sin(_ma) * _md, _ms, 0, 6.2832);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
       // Horizontal scanlines
       ctx.globalAlpha = 0.32;
       ctx.fillStyle = '#000';
