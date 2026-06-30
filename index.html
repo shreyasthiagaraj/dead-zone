@@ -9453,12 +9453,12 @@ function triggerMeltdown(z, cap) {
   playSound(60, 0.15, 'sine', 0.18);
   _meltdownLock = false;
 }
-function applyChill(z, stacks, force) {
+function applyChill(z, stacks, force, ignoreCd) {
   if (!isHost) return;
   // Post-freeze immunity — can't be chilled for 1s after thaw
   if (z._chillImmune > 0) return;
-  // Re-apply cooldown
-  if (z._chillApplyCd && z._chillApplyCd > 0) return;
+  // Re-apply cooldown (instant-freeze weapons pass ignoreCd to bypass it)
+  if (!ignoreCd && z._chillApplyCd && z._chillApplyCd > 0) return;
   z._chillApplyCd = _STATUS_APPLY_CD;
   force = force || 1;
   const m = runMods || {};
@@ -14567,7 +14567,7 @@ function _renderLevelupCards() {
       <div style="font-size:13px; font-weight:bold; letter-spacing:1.5px; color:${u.color}; text-shadow:0 0 6px ${u.color}">${u.name}</div>
       <div style="font-size:10px; letter-spacing:1px; color:${rarityColor}; text-transform:uppercase">${owned?`LV ${owned} → ${owned < u.max ? owned + 1 : 'MAX'}`:''}</div>
       ${_replaces ? `<div style="font-size:10px; letter-spacing:1px; color:#fa0; text-transform:uppercase; font-weight:bold">↻ Replaces ${_replaces.name}</div>` : ''}
-      <div style="font-size:12px; color:#fff; line-height:1.45; margin-top:2px; text-align:left; font-weight:700">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
+      <div style="font-size:12px; color:#fff; line-height:1.45; margin-top:2px; text-align:left; font-weight:700; max-height:26vh; overflow-y:auto; -webkit-overflow-scrolling:touch">${_formatCardDesc(_cardDescForLevel(u, owned))}</div>
       ${''/* flavor subtext removed from mod cards per design — description only */}
       ${_hasInfo ? `<button class="card-info-badge" data-card-id="${u.id}" aria-label="More info" style="position:absolute;top:-14px;right:-14px;width:36px;height:36px;border-radius:50%;background:#fc0;color:#000;border:2px solid #000;font-size:20px;font-weight:bold;line-height:1;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;box-shadow:0 0 12px rgba(255,200,0,0.7),inset 0 1px 2px rgba(255,255,255,0.4);z-index:5;padding:0">?</button>` : ''}
     `;
@@ -19383,7 +19383,7 @@ function _baseSpikExplode(sp) {
     const d2 = dx*dx + dy*dy;
     if (d2 < _r*_r) {
       const d = Math.sqrt(d2) || 1;
-      damageZombie(z, Math.floor((SPIKE_BASE_DAMAGE * (1 - d/_r) + 5) * _ovr), dx/d*3, dy/d*3);
+      damageZombie(z, Math.floor((SPIKE_BASE_DAMAGE * (1 - d/_r) + 5) * _ovr), dx/d*9, dy/d*9);
     }
   }
   // ---- IMPACT VFX (three-point rule: origin flash → rings → debris) ----
@@ -19583,7 +19583,7 @@ function _updateBaseSpike(sp) {
       const dx = z.x - sp.x, dy = z.y - sp.y;
       if (dx * dx + dy * dy < (z.radius + 6) ** 2) {
         // Direct hit + small AoE explosion
-        damageZombie(z, (SPIKE_BASE_DAMAGE + 10) * (sp._overload ? 2 : 1), sp.vx * 0.5, sp.vy * 0.5);
+        damageZombie(z, (SPIKE_BASE_DAMAGE + 10) * (sp._overload ? 2 : 1), sp.vx * 1.5, sp.vy * 1.5);
         _baseSpikExplode(sp); return;
       }
     }
@@ -20836,6 +20836,7 @@ function updateDischarge() {
       // (_hitByDischarge already set above, before the damage call)
       if (w.classId === 'fire') applyOverheat(z, 2, 1);
       if (w.classId === 'ice') applyChill(z, 2);
+      if ((runMods||{}).cryoRoundsLv > 0) applyChill(z, 4, 1, true); // DISCHARGE: CRYO INFUSION → instant freeze
       if (w.classId === 'chain') tryArcStrike(z, baseDmg, 'special'); // ARC PROTOCOL: strike instead of SHOCKED
       if (w.classId === 'wind') {
         applyExposed(z);
@@ -20892,8 +20893,11 @@ function updateResidualFields() {
     const rf = window._residualFields[fi];
     rf.timer--;
     if (rf.timer <= 0) { window._residualFields.splice(fi, 1); continue; }
-    // Damage enemies inside the zone every 20 frames
-    if (isHost && gameTime % 20 === 0) {
+    // Steady damage + stagger tick so the field reads as a continuous "cook"
+    // for its whole lifetime (was effectively one hit per enemy before, because
+    // the old per-zombie cooldown outlived the field). Stagger is refreshed each
+    // tick so enemies stay locked + flash while inside.
+    if (isHost && gameTime % 10 === 0) {
       for (const z of zombies) {
         if (z.hp <= 0) continue;
         const dx = z.x - rf.x, dy = z.y - rf.y, d = Math.sqrt(dx*dx+dy*dy);
@@ -20901,11 +20905,9 @@ function updateResidualFields() {
         const a = Math.atan2(dy, dx);
         let da = a - rf.angle; while (da > Math.PI) da -= Math.PI*2; while (da < -Math.PI) da += Math.PI*2;
         if (Math.abs(da) > rf.halfAngle) continue;
-        // Per-zombie cooldown (don't hit same zombie every tick)
-        if (rf.hitCd[z.zid] && rf.hitCd[z.zid] > 0) { rf.hitCd[z.zid]--; continue; }
-        rf.hitCd[z.zid] = 10;
-        damageZombie(z, Math.floor(rf.dmg * 0.3), 0, 0, true);
-        z.staggerTimer = Math.max(z.staggerTimer || 0, 8);
+        damageZombie(z, Math.floor(rf.dmg * 0.25), 0, 0, true);
+        z.staggerTimer = Math.max(z.staggerTimer || 0, 16); // refreshed each tick → locked while inside
+        z.hitFlash = Math.max(z.hitFlash || 0, 5);           // per-tick flash so the hit reads
         if (rf.applyElem && rf.classId) {
           if (rf.classId === 'fire') applyOverheat(z, 4, 1);
           if (rf.classId === 'ice') applyChill(z, 1);
@@ -21190,6 +21192,7 @@ function updatePayload() {
           z.staggerTimer = Math.max(z.staggerTimer || 0, stag);
           if (g.classId === 'fire') applyOverheat(z, 15, 1);
           if (g.classId === 'ice') applyChill(z, 1 + Math.floor(closeness * 3));
+          if ((runMods||{}).cryoRoundsLv > 0) applyChill(z, 4, 1, true); // PAYLOAD: CRYO INFUSION → instant freeze
           if (g.classId === 'chain') { tryArcStrike(z, _finalDmg, 'special'); z.staggerTimer = Math.max(z.staggerTimer, 30); }
           if (g.classId === 'wind') {
             applyExposed(z);
@@ -21526,7 +21529,8 @@ function _updateExtraGrenades() {
             z.staggerTimer = Math.max(z.staggerTimer || 0, 25);
             if (g.classId === 'fire') applyOverheat(z, 12, 1);
             else if (g.classId === 'ice') applyChill(z, 1 + Math.floor(closeness * 2));
-            else if (g.classId === 'chain') tryArcStrike(z, Math.floor(dmg * closeness), 'special');
+            if ((runMods||{}).cryoRoundsLv > 0) applyChill(z, 4, 1, true); // PAYLOAD: CRYO INFUSION → instant freeze
+            if (g.classId === 'chain') tryArcStrike(z, Math.floor(dmg * closeness), 'special');
             else if (g.classId === 'wind') applyExposed(z);
             else if (g.classId === 'corrupt') applyCorrupt(z, 2);
           }
@@ -21843,7 +21847,7 @@ function _meleeApproachVel(p, a, range, cone, opts) {
   // Close in so the enemy ends up at the blade's sweet spot (~3/4 of range),
   // not just at the very tip. The post-hit snap (_repositionToBladeSweetSpot)
   // fine-tunes from here once a strike actually connects.
-  const _gap = d - (range * 0.75 + _zr);
+  const _gap = d - (range * 0.70 + _zr);
   if (_gap <= 3) return null;
   const _v = Math.min(_maxStep, _gap * 0.26 * _speedMult); // 0.26 = (1-decay) - safety; no overshoot
   return { vx: (dx / d) * _v, vy: (dy / d) * _v };
@@ -21858,7 +21862,11 @@ function _repositionToBladeSweetSpot(p, z, a, range) {
   if (!p || !z) return;
   const c = Math.cos(a), s = Math.sin(a);
   const along = (z.x - p.x) * c + (z.y - p.y) * s; // distance to enemy along facing
-  const desired = range * 0.75;
+  // Account for the enemy's radius so the standoff stays constant regardless of
+  // enemy size — otherwise big enemies (tank/boss) end up touching the player,
+  // who then walks into them and eats contact damage. The enemy rides near the
+  // blade TIP, not buried at 3/4 reach.
+  const desired = range * 0.70 + (z.radius || 14);
   // Snap most of the way to the sweet spot each hit (snappy, not a teleport).
   // Generous forward step-in, gentle backward give so the player is never
   // yanked away from the swarm.
@@ -21890,7 +21898,7 @@ const _JAB_COOLDOWN = 102; // ms between jabs — slowed ~20% from 82 (flurry wa
 const _JAB_STEP = {
   kind: 'jab',
   range: 112, cone: Math.PI * 30 / 180,
-  damage: 15, knockback: 26, stagger: 12, cooldown: _JAB_COOLDOWN,
+  damage: 15, knockback: 40, stagger: 12, cooldown: _JAB_COOLDOWN,
   color: '#fe6', tone: 980, dir: 0, label: '',
 };
 function _runJabFlurry(p, def) {
@@ -22256,12 +22264,36 @@ function _runComboStep(p, def, step, idx) {
   // cones than the cap, so they're unaffected.
   // CARD: WORLD SPLITTER — finisher swings wider (cap relaxed by +50%)
   const _worldSplitterOn = _rmCombo.worldSplitter && step.finisher;
+  // WORLD SPLITTER signature VFX — a screen-cleaving slash: a bright blade line
+  // across the swing, an expanding shockwave, sparks, screenshake + glitch.
+  // Fires once per finisher swing (this function runs once per swing).
+  if (_worldSplitterOn && isLocal) {
+    const _wsR = (range || step.range || 118) * 1.3;
+    const _wsx = p.x + Math.cos(a) * _wsR * 0.45, _wsy = p.y + Math.sin(a) * _wsR * 0.45;
+    const _pa = a + Math.PI / 2; // perpendicular = the cleave line
+    particles.push({ x: _wsx - Math.cos(_pa)*_wsR, y: _wsy - Math.sin(_pa)*_wsR, vx:0, vy:0, life: 12, maxLife: 12, size: 4.5, color: '#fff', type: 'lightning', tx: _wsx + Math.cos(_pa)*_wsR, ty: _wsy + Math.sin(_pa)*_wsR, _segs: 1, _jitter: 0, _protect: true });
+    particles.push({ x: _wsx - Math.cos(_pa)*_wsR, y: _wsy - Math.sin(_pa)*_wsR, vx:0, vy:0, life: 16, maxLife: 16, size: 2, color: '#fe6', type: 'lightning', tx: _wsx + Math.cos(_pa)*_wsR, ty: _wsy + Math.sin(_pa)*_wsR, _segs: 1, _jitter: 0, _protect: true });
+    particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 22, maxLife: 22, size: _wsR*1.5, color: '#fe6', type: 'shockwave', _rimColor:'#fff', _lingerStart: 0.4, _alphaScale: 1.3, _protect: true });
+    for (let _wi = 0; _wi < 16; _wi++) {
+      const _wt = (_wi/15 - 0.5) * 2;
+      const _sx = _wsx + Math.cos(_pa)*_wsR*_wt, _sy = _wsy + Math.sin(_pa)*_wsR*_wt;
+      particles.push({ x:_sx, y:_sy, vx: Math.cos(a)*(2+Math.random()*4), vy: Math.sin(a)*(2+Math.random()*4), life: 12+Math.random()*6, maxLife: 18, size: 2+Math.random()*2, color: Math.random()>0.5?'#fff':'#fe6', type: 'spark' });
+    }
+    screenShake.intensity = Math.max(screenShake.intensity, 11);
+    triggerGlitchSurge(0.4, 16);
+    triggerCameraZoom(1.05, 260);
+    playSfx('explosion', 0.3) || playSound(140, 0.18, 'sawtooth', 0.18);
+    playSound(1200, 0.08, 'square', 0.10);
+  }
   // CARD: RIPOSTE — the parry counter opens the damage cone to a FULL circle
   // so the 360° spin actually hits everything around the player (the normal
   // forward-sector cap would limit even a visual 360 to ~110°).
   // RIPOSTE and WHIRLWIND open the damage cone to a FULL circle so the 360°
   // spin actually hits everything around the player (not just a ~110° sector).
-  const _halfConeCap = (_riposteSpin || _wwActive) ? Math.PI : (_worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 : MELEE_DAMAGE_HALF_CONE);
+  // CLEAVE widens the actual DAMAGE cone cap (not just the visual arc), so it
+  // genuinely catches more enemies per swing.
+  const _cleaveMul = _rmCombo.cleave ? (1 + _modScale('cleave', 0.30, 0.05)) : 1;
+  const _halfConeCap = (_riposteSpin || _wwActive) ? Math.PI : (_worldSplitterOn ? MELEE_DAMAGE_HALF_CONE * 1.5 * _cleaveMul : MELEE_DAMAGE_HALF_CONE * _cleaveMul);
   const halfCone = Math.min(cone / 2, _halfConeCap);
   const _critChance = 0.18;
   // Damage scale from run-wide mods: damageMult + adrenaline + meta power.
@@ -22980,8 +23012,7 @@ function _applyMeleeAttackPreHit(p, z, dmg, attackAngle) {
   }
   // CRYO ROUNDS — fine sparkly cryo gas (mirrors Cold Front's frost particles)
   if (_m.cryoRoundsLv > 0) {
-    const ch = 0.20 + 0.15 * _m.cryoRoundsLv;
-    if (Math.random() < ch) applyChill(z, 1, _sf);
+    applyChill(z, 1, _sf); // RIPPER: a guaranteed 1 stack per hit
     // Glittering frost sparkles around the enemy
     for (let _ci = 0; _ci < 8; _ci++) {
       const _ca = Math.random() * Math.PI * 2;
@@ -23453,7 +23484,12 @@ function updateDeadshot() {
   // Re-asserted every frame; auto-eases back to 1.0 when charging stops.
   // Delay the zoom until the charge has been held briefly (~8 frames) so a
   // quick tap-to-shoot doesn't jerk the camera for a snap shot.
-  if (_deadshotCharge > 8 && typeof triggerCameraZoom === 'function') triggerCameraZoom(0.8, 200);
+  if (_deadshotCharge > 8 && typeof triggerCameraZoom === 'function') {
+    // Gentle zoom-out that ramps gradually with charge (1.0 -> ~0.90) instead of
+    // snapping straight to a wide 0.8 — much less aggressive / slower.
+    const _dsZoom = 1 - Math.min(0.10, (_deadshotCharge - 8) * 0.0015);
+    triggerCameraZoom(_dsZoom, 200);
+  }
   const _m = runMods || {};
   // QUICK DRAW: charge faster. RAGE: 1.3× charge speed (matches gun fireRate boost).
   let chargeSpeed = 1 + (_m.quickDraw > 0 ? _modScale('quick_draw', 0.30, 0.05) : 0);
@@ -30681,6 +30717,7 @@ function update() {
                     else if (_bc === 'chain') tryArcStrike(z, _dmg, 'special');
                     else if (_bc === 'corrupt') applyCorrupt(z, 1);
                     else if (_bc === 'wind') applyExposed(z);
+                    if ((runMods||{}).cryoRoundsLv > 0) applyChill(z, 1, 1.2); // BEACON: CRYO INFUSION → 1 stack per hit
                     runStats.shotsHit++; runStats.damageDealt += _dmg;
                   } else if (_isLocal) {
                     // ---- CLASS PROCS ----
@@ -30706,9 +30743,11 @@ function update() {
                     // crystal weight; sidearm gets the dense long-lived
                     // shower so the impact reads as a real ice strike.
                     if (_m.cryoRoundsLv > 0) {
-                      const ch = 0.35 + 0.15 * _m.cryoRoundsLv; // 50%/65%/80%
-                      if (Math.random() < ch) applyChill(z, 1, _sf);
                       const _bIsDS = !!b._deadshotRound;
+                      // DEADSHOT: instant freeze (4 stacks, bypass apply cooldown).
+                      // SIDEARM: a guaranteed 1 stack per hit.
+                      if (_bIsDS) applyChill(z, 4, _sf, true);
+                      else applyChill(z, 1, _sf);
                       const _bsfN = _bIsDS ? 3 : 5;
                       const _bsfLifeMin = _bIsDS ? 11 : 35;
                       const _bsfLifeMax = _bIsDS ? 16 : 45;
@@ -30916,22 +30955,27 @@ function update() {
                   if(z.explodeOnDeath)createExplosion(z.x,z.y,z.explosionRadius,z.damage*0.5,'any');
                   // CHAIN KILL: deadshot kills fire bolts at nearby enemies
                   if (b._chainKill > 0 && b._deadshotRound) {
-                    const _ckMax = 1 + Math.min(4, Math.floor((b._chainKill - 1) / 2));
+                    const _ckMax = 2 + Math.min(3, b._chainKill); // one card chains to ~3 enemies
                     const _ckDmg = Math.floor(b.damage * _modScale('chain_kill', 0.60, 0.07));
                     const _ckHit = new Set([z.zid]);
                     let _ckLast = z;
+                    const _ckCol = b._deadshotColor || '#0ff';
                     for (let _ci = 0; _ci < _ckMax; _ci++) {
-                      let _ckBest = null, _ckBestD = 200;
+                      let _ckBest = null, _ckBestD = 240;
                       for (const _cz of zombies) { if (_cz.hp <= 0 || _ckHit.has(_cz.zid)) continue; const _cd = Math.sqrt((_cz.x-_ckLast.x)**2+(_cz.y-_ckLast.y)**2); if (_cd < _ckBestD) { _ckBestD = _cd; _ckBest = _cz; } }
                       if (!_ckBest) break;
                       _ckHit.add(_ckBest.zid);
                       damageZombie(_ckBest, _ckDmg, 0, 0);
-                      // Lightning bolt VFX from corpse to target
-                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: 1, color: b._deadshotColor || '#0ff', type: 'lightning', tx: _ckBest.x, ty: _ckBest.y });
-                      for (let _ck = 0; _ck < 4; _ck++) { const _ca = Math.random()*Math.PI*2; particles.push({x:_ckBest.x,y:_ckBest.y,vx:Math.cos(_ca)*3,vy:Math.sin(_ca)*3,life:8,maxLife:8,size:2,color:b._deadshotColor||'#f44',type:'spark'}); }
+                      addFloatingText(_ckBest.x, _ckBest.y - (_ckBest.radius||14) - 8, _ckDmg, _ckCol);
+                      // Bright forked bolt from the last target to this one + impact pop
+                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 14, maxLife: 14, size: 3.2, color: _ckCol, type: 'lightning', tx: _ckBest.x, ty: _ckBest.y, _segs: 5, _jitter: 14 });
+                      particles.push({ x: _ckLast.x, y: _ckLast.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: 1.6, color: '#fff', type: 'lightning', tx: _ckBest.x, ty: _ckBest.y, _segs: 5, _jitter: 14 });
+                      particles.push({ x: _ckBest.x, y: _ckBest.y, vx: 0, vy: 0, life: 9, maxLife: 9, size: (_ckBest.radius||14)+8, color: _ckCol, type: 'wakering' });
+                      for (let _ck = 0; _ck < 6; _ck++) { const _ca = Math.random()*Math.PI*2, _cs = 2+Math.random()*3; particles.push({x:_ckBest.x,y:_ckBest.y,vx:Math.cos(_ca)*_cs,vy:Math.sin(_ca)*_cs,life:9,maxLife:9,size:2,color:Math.random()>0.5?_ckCol:'#fff',type:'spark'}); }
+                      _ckBest.hitFlash = Math.max(_ckBest.hitFlash||0, 6);
                       _ckLast = _ckBest;
                     }
-                    if (_ckHit.size > 1) playSound(800, 0.06, 'sine', 0.04);
+                    if (_ckHit.size > 1) { playSound(900, 0.07, 'sine', 0.06); screenShake.intensity = Math.max(screenShake.intensity, 3); }
                   }
                   // LEGENDARY: DEAD EYE — a full-charge kill refunds 60% of the next charge.
                   if (b._deadEye && _isLocal) { _deadshotCharge = Math.max(_deadshotCharge, DEADSHOT_MAX_CHARGE * 0.6); }
