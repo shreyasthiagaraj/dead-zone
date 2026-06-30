@@ -5658,14 +5658,36 @@ function generateDescentMap(seed) {
   const arena = { x: marginX, y: 0, w: DESCENT_WIDTH, h: GRID_H };
   for (let y = 0; y < GRID_H; y++) for (let x = marginX; x < marginX + DESCENT_WIDTH && x < GRID_W; x++) dungeonGrid[y][x] = true;
   rooms.push(arena);
-  // Central pillar per section
+  // Per-section obstacle layouts — vary the cover as the player descends. Every
+  // template leaves the centre lane + both edge lanes open (always 2+ vertical
+  // paths), keeps the section's top (entry) and bottom (gate) clear, and ramps
+  // complexity with depth. Deterministic via the seeded rng (MP-consistent).
   const cx = marginX + Math.floor(DESCENT_WIDTH / 2);
-  for (let si = 0; si < numSections; si++) {
-    const py = si * DESCENT_SECTION_HEIGHT + Math.floor(DESCENT_SECTION_HEIGHT / 2);
-    for (let dy = 0; dy < 2; dy++) for (let dx = -1; dx <= 0; dx++) {
-      const gy = py + dy, gx = cx + dx;
-      if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) dungeonGrid[gy][gx] = false;
+  const _carveBlock = (gx0, gy0, w, h) => {
+    for (let yy = gy0; yy < gy0 + h; yy++) for (let xx = gx0; xx < gx0 + w; xx++) {
+      if (yy >= 0 && yy < GRID_H && xx >= 0 && xx < GRID_W) dungeonGrid[yy][xx] = false;
     }
+  };
+  // Each block: [dc (col offset from centre), r (row offset within section), w, h]
+  const _DESC_TEMPLATES = [
+    [],                                              // 0 open
+    [[-1,5,2,3]],                                    // 1 central pillar
+    [[-9,5,3,3],[6,5,3,3]],                          // 2 twin flanks
+    [[-12,5,2,2],[-1,5,2,2],[10,5,2,2]],            // 3 three pillars
+    [[-10,4,3,3],[4,8,3,3]],                         // 4 stagger weave
+    [[-13,4,3,2],[7,4,3,2],[-13,9,3,2],[7,9,3,2]],  // 5 corner cover
+    [[-13,6,5,2],[5,6,5,2]],                         // 6 soft gates
+  ];
+  for (let si = 0; si < numSections; si++) {
+    const secTop = si * DESCENT_SECTION_HEIGHT;
+    const _bossSec = si === 6 || (si >= 10 && si % 5 === 0);
+    let _tpl;
+    if (si <= 2 || _bossSec) _tpl = _DESC_TEMPLATES[0];     // open: tutorial start + boss arenas
+    else {
+      const _pool = si < 8 ? [1,1,2,3] : [1,2,3,4,5,6];     // simpler early, full variety later
+      _tpl = _DESC_TEMPLATES[_pool[Math.floor(rng() * _pool.length)]];
+    }
+    for (const b of _tpl) _carveBlock(cx + b[0], secTop + b[1], b[2], b[3]);
   }
   arena.theme = ROOM_THEMES[4];
   arena.brightness = 1.0;
@@ -5763,6 +5785,18 @@ function spawnDescentSection(idx) {
   descentGateOpen = false;
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const cx = (marginX + DESCENT_WIDTH / 2) * CELL_SIZE;
+  // Pick a FLOOR position in the section's mid-band — retries so spawns don't
+  // land inside the section's obstacle blocks (carved in generateDescentMap).
+  const _floorPos = (loDC, spanSub, loF, spanF) => {
+    let _x = (marginX + loDC) * CELL_SIZE, _y = sec.y + loF * sec.height;
+    for (let _t = 0; _t < 12; _t++) {
+      _x = (marginX + loDC + Math.random() * (DESCENT_WIDTH - spanSub)) * CELL_SIZE;
+      _y = sec.y + (loF + Math.random() * spanF) * sec.height;
+      const _gx = Math.floor(_x / CELL_SIZE), _gy = Math.floor(_y / CELL_SIZE);
+      if (dungeonGrid[_gy] && dungeonGrid[_gy][_gx]) break;
+    }
+    return { x: _x, y: _y };
+  };
   // Spawn enemies spread across the section (cap ranged types)
   const _dRangedTypes = new Set(['spitter', 'mini', 'sniper']);
   let _dRangedCount = 0;
@@ -5775,8 +5809,8 @@ function spawnDescentSection(idx) {
     }
     if (_dRangedTypes.has(tk)) _dRangedCount++;
     const t = ZOMBIE_TYPES[tk]; if (!t) continue;
-    const ex = (marginX + 2 + Math.random() * (DESCENT_WIDTH - 4)) * CELL_SIZE;
-    const ey = sec.y + (0.3 + Math.random() * 0.5) * sec.height;
+    const _ep = _floorPos(2, 4, 0.3, 0.5);
+    const ex = _ep.x, ey = _ep.y;
     const _sm = _enemyStageMult(idx + 1);
     const _shp = t.hp * _sm.hp;
     const _sspd = Math.max(0.8, t.speed * _sm.speed);
@@ -5791,21 +5825,18 @@ function spawnDescentSection(idx) {
     descentEnemiesTotal++; // boss counts
   }
   // Element chest — break it to release a temporary element zone
-  const ezx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
-  const ezy = sec.y + (0.4 + Math.random() * 0.3) * sec.height;
-  spawnElementZone(ezx, ezy);
+  const _ezp = _floorPos(3, 6, 0.4, 0.3);
+  spawnElementZone(_ezp.x, _ezp.y);
   // Spawn barrels
   for (let bi = 0; bi < 2; bi++) {
-    const bx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
-    const by = sec.y + (0.2 + Math.random() * 0.6) * sec.height;
-    barrels.push({ x: bx, y: by, radius: 14, hp: 1 });
+    const _bp = _floorPos(3, 6, 0.2, 0.6);
+    barrels.push({ x: _bp.x, y: _bp.y, radius: 14, hp: 1 });
   }
   // Corrupted memory fragments
   const _dfragCount = 1 + Math.floor(Math.random() * 2);
   for (let fi = 0; fi < _dfragCount; fi++) {
-    const fx = (marginX + 3 + Math.random() * (DESCENT_WIDTH - 6)) * CELL_SIZE;
-    const fy = sec.y + (0.2 + Math.random() * 0.6) * sec.height;
-    spawnMemoryFragment(fx, fy);
+    const _fp2 = _floorPos(3, 6, 0.2, 0.6);
+    spawnMemoryFragment(_fp2.x, _fp2.y);
   }
   // Quiet top-center "LEVEL N" label (fades after ~2s) instead of the big
   // DEPTH title card — keeps the descent flow clean.
@@ -34754,6 +34785,7 @@ function render() {
     const _dDom = getTrenchDomain(Math.min(40, descentSection || 0));
     _domainFloorTint = _dDom.floorTint;
     _domainGridColor = _dDom.wallStroke;
+    _domainWallColor = _dDom.wallColor; // tinted solid fill so obstacle blocks read as structure
     _descFloorPattern = _dDom.floorPattern;
   }
   // ---- Shell-only cyber void background ----
@@ -35042,8 +35074,8 @@ function render() {
     ctx.stroke();
     ctx.globalAlpha = 1;
   } else {
-    ctx.globalAlpha = 0.4; // dim the grid lines (same as a normal stage)
-    ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.5; ctx.stroke(_floorPath);
+    ctx.globalAlpha = 0.52; // brighter neon grid lines
+    ctx.strokeStyle=_gridStrokeColor; ctx.lineWidth=0.6; ctx.stroke(_floorPath);
     ctx.globalAlpha = 1;
   }
   // Wireframe scan line (D4 only) — horizontal gold line sweeping down
@@ -38565,17 +38597,20 @@ function render() {
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
-    // PERF: fake glow — larger dimmer shapes instead of shadowBlur. Three
-    // stacked halos (wide soft → mid → tight bright) give a strong neon bloom.
-    // Brighter than before for a punchier neon look against the darker scene.
+    // PERF: fake glow — larger dimmer shapes instead of shadowBlur. FOUR
+    // stacked halos (wide bloom → wide soft → mid → tight bright) give a strong
+    // neon bloom. Brighter + an extra outer halo for a hotter neon look.
     ctx.fillStyle=_zc;
-    ctx.globalAlpha=0.13 + _zt * 0.03;
+    ctx.globalAlpha=0.09 + _zt * 0.02;
+    _drawZombieShape(ctx, z.type, _zr+22+_zt*4);
+    ctx.fill();
+    ctx.globalAlpha=0.18 + _zt * 0.03;
     _drawZombieShape(ctx, z.type, _zr+14+_zt*3);
     ctx.fill();
-    ctx.globalAlpha=0.24 + _zt * 0.05;
+    ctx.globalAlpha=0.32 + _zt * 0.05;
     _drawZombieShape(ctx, z.type, _zr+7+_zt*2);
     ctx.fill();
-    ctx.globalAlpha=0.46 + _zt * 0.08;
+    ctx.globalAlpha=0.58 + _zt * 0.08;
     _drawZombieShape(ctx, z.type, _zr+2+_zt);
     ctx.fill();
     // Solid body — a FILLED creature, not a hollow outline. Near-black base for
@@ -38584,17 +38619,17 @@ function render() {
     ctx.globalAlpha=1;ctx.fillStyle=_zt >= 2 ? '#151515' : '#0d0d0d';
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
-    ctx.globalAlpha=0.30;ctx.fillStyle=_zc;
+    ctx.globalAlpha=0.34;ctx.fillStyle=_zc;
     _drawZombieShape(ctx, z.type, _zr);
     ctx.fill();
-    ctx.globalAlpha=0.24;
+    ctx.globalAlpha=0.30;
     _drawZombieShape(ctx, z.type, _zr*0.55);
     ctx.fill();
     ctx.globalAlpha=1;
-    // Neon outline — a wider, soft under-stroke behind the crisp outline makes
-    // the edge read as "lit" (same path, drawn wide-dim then thin-bright).
+    // Neon outline — a wider, brighter soft under-stroke behind the crisp outline
+    // makes the edge read as "lit" (same path, drawn wide-dim then thin-bright).
     ctx.strokeStyle=_zc;
-    ctx.globalAlpha=0.45;ctx.lineWidth=_zlw+3;ctx.stroke();
+    ctx.globalAlpha=0.55;ctx.lineWidth=_zlw+4;ctx.stroke();
     ctx.globalAlpha=1;ctx.lineWidth=_zlw;ctx.stroke();
     // ---- CORRUPTED-PROGRAM SCANLINES + GLITCH CHUNKS ----
     // Makes every zombie look like a broken signal rather than a plain shape.
