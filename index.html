@@ -9857,6 +9857,7 @@ function applyExposed(z) {
 // pulsewave with force proportional to the damage taken. Host-authoritative
 // (mirrors the delayed-charge synergy); the per-zombie tick fires the launch.
 const PULSE_LAUNCH_DELAY = 30; // frames (~0.5s @60fps)
+let _pulseFxQueue = []; // host→client one-shot pulse-detonation VFX events (drained each broadcast)
 function _chargePulse(z, dmg, ang) {
   if (!z || z.hp <= 0) return;
   z._pulseCharge = (z._pulseCharge || 0) + Math.max(1, dmg || 1);
@@ -9889,8 +9890,11 @@ function _firePulseLaunch(z) {
   // the "damage after a delay" — the launch alone was too subtle.
   const detoR = 72 + (_m.pulseShotLv >= 3 ? 34 : 0);
   const detoDmg = 25 + Math.min(70, Math.floor(dmg * 0.5));
-  _pulseLaunchVFX(z, ang, vel, dmg);                 // explosion at the bomb (before body flies off)
+  _pulseLaunchVFX(z.x, z.y, ang, vel, dmg);          // explosion at the bomb (before body flies off)
   addFloatingText(z.x, z.y - (z.radius || 12) - 16, 'DETONATE', '#cef');
+  // Multiplayer: queue the blast so non-host clients replay it (the launch runs
+  // host-side, so without this the explosion would only show on the host).
+  if (isMultiplayer) _pulseFxQueue.push({ x: Math.round(z.x), y: Math.round(z.y), a: +ang.toFixed(2), v: Math.round(vel), d: Math.round(dmg) });
   damageZombie(z, detoDmg, 0, 0, true);              // direct burst to the host
   // AoE: damage + shove + spread SLIDE to neighbors so the chain continues.
   const _r2 = detoR * detoR, _push = vel * (_m.pulseShotLv >= 3 ? 0.5 : 0.34);
@@ -9912,22 +9916,22 @@ function _firePulseLaunch(z) {
   z._pulseSlide = 26;          // light-friction slide so it glides rather than snaps
   applyExposed(z);             // refresh SLIDE so the wall-slam stays armed mid-launch
 }
-function _pulseLaunchVFX(z, ang, vel, dmg) {
+function _pulseLaunchVFX(x, y, ang, vel, dmg) {
   const _r = 40 + Math.min(95, dmg * 0.7);
   // KINETIC DETONATION blast — cap-exempt rings + flash so the bomb never gets culled.
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 26, maxLife: 26, size: _r * 1.7, color: '#cef', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.30, _alphaScale: 1.35, _protect: true });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: _r, color: '#cef', type: 'wakering', _protect: true });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _r * 0.5, color: '#fff', type: 'wakering', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 26, maxLife: 26, size: _r * 1.7, color: '#cef', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.30, _alphaScale: 1.35, _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 18, maxLife: 18, size: _r, color: '#cef', type: 'wakering', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _r * 0.5, color: '#fff', type: 'wakering', _protect: true });
   // Bright white core flash
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: _r * 0.6, color: '#fff', type: 'spark', _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 7, maxLife: 7, size: _r * 0.6, color: '#fff', type: 'spark', _protect: true });
   // Radial blast sparks — the detonation in all directions
-  for (let i = 0; i < 16; i++) { const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 6; particles.push({ x: z.x, y: z.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 12 + Math.floor(Math.random() * 8), maxLife: 20, size: 2 + Math.random() * 2.5, color: i % 3 ? '#cef' : '#fff', type: 'spark' }); }
+  for (let i = 0; i < 16; i++) { const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 6; particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 12 + Math.floor(Math.random() * 8), maxLife: 20, size: 2 + Math.random() * 2.5, color: i % 3 ? '#cef' : '#fff', type: 'spark' }); }
   // Directional launch cone — denser + faster than before (the body's wake)
-  for (let i = 0; i < 16; i++) { const pa = ang + (Math.random() - 0.5) * 0.9, ps = 3 + Math.random() * 4 + vel * 0.16; particles.push({ x: z.x + Math.cos(pa) * 5, y: z.y + Math.sin(pa) * 5, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps, life: 16 + Math.floor(Math.random() * 10), maxLife: 26, size: 2 + Math.random() * 3, color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' }); }
+  for (let i = 0; i < 16; i++) { const pa = ang + (Math.random() - 0.5) * 0.9, ps = 3 + Math.random() * 4 + vel * 0.16; particles.push({ x: x + Math.cos(pa) * 5, y: y + Math.sin(pa) * 5, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps, life: 16 + Math.floor(Math.random() * 10), maxLife: 26, size: 2 + Math.random() * 3, color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' }); }
   // Kinetic streak — a straight glint along the launch vector (the body hurled)
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 2.4, color: '#fff', type: 'lightning', tx: z.x + Math.cos(ang) * (_r * 1.2), ty: z.y + Math.sin(ang) * (_r * 1.2), _segs: 1, _jitter: 0, _protect: true });
+  particles.push({ x, y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 2.4, color: '#fff', type: 'lightning', tx: x + Math.cos(ang) * (_r * 1.2), ty: y + Math.sin(ang) * (_r * 1.2), _segs: 1, _jitter: 0, _protect: true });
   // Chunky debris flung along the launch
-  for (let i = 0; i < 8; i++) { const pa = ang + (Math.random() - 0.5) * 1.0, ps = 4 + Math.random() * 5 + vel * 0.1; particles.push({ x: z.x, y: z.y, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps - 1, life: 18 + Math.floor(Math.random() * 10), maxLife: 28, size: 2.5 + Math.random() * 2, color: Math.random() > 0.5 ? '#9be' : '#cef', type: 'spark', _pixel: true, gravity: 0.12 }); }
+  for (let i = 0; i < 8; i++) { const pa = ang + (Math.random() - 0.5) * 1.0, ps = 4 + Math.random() * 5 + vel * 0.1; particles.push({ x, y, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps - 1, life: 18 + Math.floor(Math.random() * 10), maxLife: 28, size: 2.5 + Math.random() * 2, color: Math.random() > 0.5 ? '#9be' : '#cef', type: 'spark', _pixel: true, gravity: 0.12 }); }
   screenShake.intensity = Math.max(screenShake.intensity, Math.min(13, 6 + dmg * 0.05));
   playSound(150, 0.10, 'sine', 0.12); playSound(70, 0.14, 'sine', 0.09);
 }
@@ -33889,7 +33893,8 @@ function update() {
         mdChoice = [trenchSection, _side, _mdSec.multiDoor.primary.reward, _mdSec.multiDoor.secondary.reward];
       }
     }
-    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, cps, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer, mdChoice });
+    const pfx = _pulseFxQueue; _pulseFxQueue = []; // drain pulse-detonation VFX events for this broadcast
+    sendMsg({ type: 'game_state', players: ps, zombies: zs, zBullets, pickups: pks, barrels: brs, elemZones: ezs, cps, pfx, spikes: sps, score, kills, level, exitPos, levelSeed: window._currentLevelSeed||0, gameMode, survivalWave, survivalWaveState, arcadeWave, arcadeWaveState, arcadeWaveTimer: arcadeWaveTimer||0, arcadeStreak: arcadeStreak||0, hordeTimer: hordeTimer||0, hordeCircleTimer: hordeCircleTimer||0, gauntletRoom: gauntletRoom||0, gauntletState: gauntletState||'fighting', descentSection: descentSection||0, descentTopWall: descentTopWall||0, descentGateOpen: descentGateOpen||false, trenchSection: trenchSection||0, cpRoom: _checkpointRoomActive||false, sLHp, sRHp, sWave, sWaveSt, sWaveTimer, mdChoice });
   }
 
   if (gameState === 'shell') _shellTickExtras();
@@ -34005,6 +34010,14 @@ function applyHostState(msg) {
     }
   }
   if (msg.elemZones) { elementZones = msg.elemZones; }
+  if (msg.pfx) {
+    // Replay host's PULSE detonations (the launch runs host-side; this mirrors the
+    // dramatic blast + DETONATE floater on non-host clients).
+    for (const e of msg.pfx) {
+      _pulseLaunchVFX(e.x, e.y, e.a, e.v, e.d);
+      addFloatingText(e.x, e.y - 26, 'DETONATE', '#cef');
+    }
+  }
   if (msg.cps) {
     // Rebuild host's corrupt clouds; keep any local (fire) puddles. Bloom VFX on
     // newly-appeared clouds so the "infection erupts" pop reads on non-host too.
