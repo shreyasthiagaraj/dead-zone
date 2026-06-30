@@ -5645,6 +5645,7 @@ const DESCENT_WIDTH = 40; // cells wide
 let descentSection = 0, descentGateOpen = false, descentEnemiesTotal = 0, descentEnemiesKilled = 0;
 let descentTopWall = 0; // y pixel of the closing upper wall
 let descentSections = []; // { y, height, enemies, cleared, type, hazards }
+let _descentTerminal = null; // { x, y, isBoss, used, t } — the walk-in MOD TERMINAL on mod-beat depths
 
 function generateDescentMap(seed) {
   const rng = seededRandom(seed || Date.now());
@@ -5747,6 +5748,7 @@ function startDescent() {
   arcadeStreak = 0; arcadeStreakTimer = 0; _arcadeMultikillCount = 0; _arcadeMultikillTimer = 0;
   arcadeScoreDisplay = 0; arcadeCounterPulse = 0; _arcadeBestStreak = 0; _arcadeBestMultikillTier = 0;
   _descentBossDraft = false;
+  _descentTerminal = null;
   initDescentSections();
   // Announce
   const el = document.getElementById('wave-announce');
@@ -5761,19 +5763,82 @@ function startDescent() {
 // Free mod draft on a cleared section's gate beat — Descent's power-growth loop.
 // A 3-card pick every few depths, upgraded to a guaranteed rare+ hand after a
 // boss. Reuses the level-up picker (free, no BITS) and resumes play once chosen.
-const DESCENT_MOD_INTERVAL = 3; // a normal pick every N depths cleared
-function _descentModDraft(isBoss) {
-  if (isMultiplayer) return;          // the picker is single-player only
+const DESCENT_MOD_INTERVAL = 3; // a mod terminal every N depths cleared
+function _descentModDraft(isBoss, onDone) {
+  if (isMultiplayer) { if (onDone) onDone(); return; } // the picker is single-player only
   pendingLevelUps = 1;
   _descentBossDraft = !!isBoss;
-  _levelupOnComplete = null;          // gate is already open — just resume after the pick
+  _levelupOnComplete = onDone || null; // fires after the pick is confirmed (opens the gate)
   triggerLevelUpPicker();
   const lv = document.getElementById('levelup-level');
   if (lv) lv.textContent = isBoss ? 'BOSS REWARD' : 'MOD DRAFT';
   const bn = document.getElementById('levelup-banner');
   if (bn) bn.textContent = isBoss ? '☠ BOSS DOWN ☠' : '▼ DEPTH CLEARED ▼';
-  // Pool exhausted (everything maxed) → picker never opened; clear the queue.
-  if (gameState !== 'levelup') { pendingLevelUps = 0; _descentBossDraft = false; }
+  // Pool exhausted (everything maxed) → picker never opened; run onDone now.
+  if (gameState !== 'levelup') { pendingLevelUps = 0; _descentBossDraft = false; _levelupOnComplete = null; if (onDone) onDone(); }
+}
+
+// Spawn the walk-in MOD TERMINAL near the section's gate on a mod-beat depth.
+// The gate stays locked until the player walks into the terminal and drafts —
+// a calm, opt-in beat (with a lens flare) instead of a jarring auto-popup.
+function _spawnDescentTerminal(sec) {
+  if (isMultiplayer) return;
+  const mX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
+  const tx = (mX + DESCENT_WIDTH / 2) * CELL_SIZE;
+  const ty = sec.y + sec.height * 0.6;
+  _descentTerminal = { x: tx, y: ty, isBoss: !!sec.isBoss, used: false, t: 0 };
+  addFloatingText(tx, ty - 54, sec.isBoss ? '☠ BOSS MOD TERMINAL ☠' : '◈ MOD TERMINAL ◈', sec.isBoss ? '#fe6' : '#0ff');
+  playSfx('ui_click', 0.25) || playSound(700, 0.08, 'sine', 0.1);
+}
+
+// Render the walk-in MOD TERMINAL: a glowing obelisk on a light pad with a
+// pulsing lens flare. Fake-glow (layered fills) + straight glint lines — no
+// shadowBlur. Drawn in world space from the descent gate render block.
+function _drawDescentTerminal(ctx) {
+  const tm = _descentTerminal; if (!tm) return;
+  tm.t = (tm.t || 0) + 1;
+  const col = tm.isBoss ? '#fe6' : '#0ff';
+  const pulse = 0.6 + Math.sin(tm.t * 0.08) * 0.4;
+  ctx.save();
+  ctx.translate(tm.x, tm.y);
+  // Ground glow pad (concentric fake-glow discs)
+  ctx.fillStyle = col;
+  ctx.globalAlpha = 0.10 * pulse; ctx.beginPath(); ctx.arc(0, 0, 52, 0, 6.2832); ctx.fill();
+  ctx.globalAlpha = 0.16 * pulse; ctx.beginPath(); ctx.arc(0, 0, 34, 0, 6.2832); ctx.fill();
+  ctx.globalAlpha = 0.26 * pulse; ctx.beginPath(); ctx.arc(0, 0, 20, 0, 6.2832); ctx.fill();
+  // Pulsing rim ring
+  ctx.globalAlpha = 0.5 * pulse; ctx.strokeStyle = col; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, 40 + pulse * 5, 0, 6.2832); ctx.stroke();
+  // Obelisk diamond
+  ctx.globalAlpha = 1; ctx.fillStyle = '#0a0a12';
+  ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(15, -2); ctx.lineTo(0, 22); ctx.lineTo(-15, -2); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 0.5; ctx.strokeStyle = col; ctx.lineWidth = 5; ctx.stroke();
+  ctx.globalAlpha = 1; ctx.lineWidth = 2; ctx.stroke();
+  // Bright core
+  ctx.globalAlpha = pulse; ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(0, -4, 3 + pulse * 2, 0, 6.2832); ctx.fill();
+  // LENS FLARE — straight bright glints crossing the core (jitter-free)
+  const flR = 64 + pulse * 16;
+  ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff';
+  ctx.globalAlpha = 0.55 * pulse;
+  ctx.beginPath(); ctx.moveTo(-flR, -4); ctx.lineTo(flR, -4); ctx.stroke(); // horizontal anamorphic streak
+  ctx.globalAlpha = 0.34 * pulse; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.moveTo(0, -4 - flR*0.52); ctx.lineTo(0, -4 + flR*0.52); ctx.stroke(); // vertical
+  ctx.globalAlpha = 0.22 * pulse; ctx.strokeStyle = col;
+  ctx.beginPath(); ctx.moveTo(-flR*0.42, -4 - flR*0.42); ctx.lineTo(flR*0.42, -4 + flR*0.42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-flR*0.42, -4 + flR*0.42); ctx.lineTo(flR*0.42, -4 - flR*0.42); ctx.stroke();
+  // Lens ghost discs along the horizontal axis
+  ctx.globalAlpha = 0.4 * pulse; ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(flR*0.62, -4, 4, 0, 6.2832); ctx.fill();
+  ctx.beginPath(); ctx.arc(-flR*0.46, -4, 2.6, 0, 6.2832); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  // Prompt
+  ctx.save();
+  ctx.globalAlpha = 0.55 + 0.45 * pulse; ctx.fillStyle = col;
+  ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('▼ WALK IN ▼', tm.x, tm.y + 46);
+  ctx.restore();
 }
 
 function spawnDescentSection(idx) {
@@ -7856,16 +7921,39 @@ function updateDescent() {
       setTimeout(() => showDeathScreen(), 2500);
       return;
     }
-    descentGateOpen = true;
-    addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
-    playExitFoundSound();
-    // Gate-open punch-in on host. Non-host triggers via descentGateOpen 0->1 sync.
-    // (Hit-stop + slow-mo removed for smoothness.)
     triggerCameraZoom(1.06, 600);
-    // Free mod draft at the gate beat: a pick every few depths, plus a guaranteed
-    // rare+ hand after each boss. descentSection is 0-based, so depth = +1.
+    // Mod beat (every few depths + after each boss): drop a walk-in MOD TERMINAL
+    // and keep the gate LOCKED until the player uses it. Otherwise the gate just
+    // opens. descentSection is 0-based, so depth = +1.
     if (!isMultiplayer && (sec.isBoss || ((descentSection + 1) % DESCENT_MOD_INTERVAL) === 0)) {
-      _descentModDraft(sec.isBoss);
+      descentGateOpen = false; // re-lock — must visit the terminal first
+      _spawnDescentTerminal(sec);
+    } else {
+      descentGateOpen = true;
+      addFloatingText(getLocalPlayer().x, getLocalPlayer().y - 30, 'GATE OPEN!', '#0ff');
+      playExitFoundSound();
+    }
+  }
+  // MOD TERMINAL — walk into it to open the draft; the gate opens once you pick.
+  if (_descentTerminal && !_descentTerminal.used && gameState === 'playing') {
+    const lp = getLocalPlayer();
+    if (lp) {
+      const _dtx = lp.x - _descentTerminal.x, _dty = lp.y - _descentTerminal.y;
+      if (_dtx*_dtx + _dty*_dty < (PLAYER_RADIUS + 40) * (PLAYER_RADIUS + 40)) {
+        _descentTerminal.used = true;
+        const _wasBoss = _descentTerminal.isBoss;
+        triggerCameraZoom(1.05, 300);
+        _descentModDraft(_wasBoss, () => {
+          // confirmUpgradeCard skips its own resume when an onComplete is set,
+          // so resume here.
+          if (gameState === 'levelup') gameState = 'playing';
+          descentGateOpen = true;
+          _descentTerminal = null;
+          const _lp = getLocalPlayer();
+          if (_lp) addFloatingText(_lp.x, _lp.y - 30, 'GATE OPEN!', '#0ff');
+          playExitFoundSound();
+        });
+      }
     }
   }
   // Check if player passed through the gate to next section
@@ -37911,6 +37999,7 @@ function render() {
     ctx.fillText(descentGateOpen?'▼ GATE OPEN ▼':'✕ GATE LOCKED ✕',(gx1+gx2)/2,gy-15);ctx.shadowBlur=0;
     // Closing wall indicator
     if(descentTopWall>0){ctx.globalAlpha=0.4;ctx.fillStyle='#100008';ctx.fillRect(gx1,descentTopWall-200,gx2-gx1,200);ctx.globalAlpha=0.8;ctx.shadowColor='#f44';ctx.shadowBlur=8;ctx.strokeStyle='#f44';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(gx1,descentTopWall);ctx.lineTo(gx2,descentTopWall);ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+    _drawDescentTerminal(ctx);
   }
 
   // Black out everything outside the current section bounds
