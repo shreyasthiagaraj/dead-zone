@@ -875,12 +875,12 @@ body.mobile #mobile-buttons { display: block; }
       <div class="ad-rank" id="ad-rank"></div>
     </div>
     <div class="ad-grid">
-      <div class="ad-cell"><div class="ad-label">WAVE</div><div class="ad-val" id="ad-wave">0</div></div>
+      <div class="ad-cell"><div class="ad-label" id="ad-wave-label">WAVE</div><div class="ad-val" id="ad-wave">0</div></div>
       <div class="ad-cell"><div class="ad-label">KILLS</div><div class="ad-val" id="ad-kills">0</div></div>
       <div class="ad-cell"><div class="ad-label">TIME</div><div class="ad-val" id="ad-time">0:00</div></div>
       <div class="ad-cell"><div class="ad-label">BEST STREAK</div><div class="ad-val" id="ad-streak">—</div></div>
       <div class="ad-cell"><div class="ad-label">BEST MULTIKILL</div><div class="ad-val" id="ad-multikill">—</div></div>
-      <div class="ad-cell"><div class="ad-label">PERFECT WAVES</div><div class="ad-val" id="ad-perfect">0</div></div>
+      <div class="ad-cell" id="ad-perfect-cell"><div class="ad-label">PERFECT WAVES</div><div class="ad-val" id="ad-perfect">0</div></div>
     </div>
     <div class="ad-buttons">
       <button class="ad-btn primary" id="ad-retry">▶ RETRY</button>
@@ -16274,12 +16274,14 @@ function _showArcadeGameOver() {
   const survivalTime = Math.floor((Date.now() - runStats.startTime) / 1000);
   const survivalMin = Math.floor(survivalTime / 60);
   const survivalSec = survivalTime % 60;
-  // Persist run to the arcade leaderboard (top-50 by score).
-  const lbKey = 'deadzone_lb_arcade';
+  // Persist run to the per-mode leaderboard (top-50 by score). Reused for the
+  // descent retry screen too — descent records depth in the "wave" slot.
+  const _isDescent = gameMode === 'descent';
+  const lbKey = _isDescent ? 'deadzone_lb_descent' : 'deadzone_lb_arcade';
   const lbHistory = JSON.parse(localStorage.getItem(lbKey) || '[]');
   const runEntry = {
     score: score|0,
-    wave: arcadeWave|0,
+    wave: _isDescent ? (descentSection + 1) : (arcadeWave|0),
     kills: kills|0,
     time: survivalTime,
     perfect: _arcadePerfectWaves|0,
@@ -16316,12 +16318,15 @@ function _showArcadeGameOver() {
   if (el) {
     const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
     set('ad-score', (score|0).toLocaleString());
-    set('ad-wave', arcadeWave|0);
+    set('ad-wave', _isDescent ? (descentSection + 1) : (arcadeWave|0));
+    set('ad-wave-label', _isDescent ? 'DEPTH' : 'WAVE');
     set('ad-kills', kills|0);
     set('ad-time', `${survivalMin}:${String(survivalSec).padStart(2, '0')}`);
     set('ad-streak', _arcadeBestStreak >= 2 ? `x${_arcadeBestStreak}` : '—');
     set('ad-multikill', _ARCADE_MULTIKILL_LABELS[_arcadeBestMultikillTier] || '—');
     set('ad-perfect', _arcadePerfectWaves|0);
+    // Descent has no "perfect waves" stat — hide that cell.
+    const _pc = document.getElementById('ad-perfect-cell'); if (_pc) _pc.style.display = _isDescent ? 'none' : '';
     set('ad-subtitle', '+' + shardsEarned + ' BITS · process terminated');
     const rankEl = document.getElementById('ad-rank');
     if (rankEl) {
@@ -16391,11 +16396,12 @@ function restartArcade() {
   });
   const mb = document.getElementById('mobile-buttons'); if (mb) mb.style.display = '';
   isMultiplayer = false;
-  gameMode = 'arcade';
   // Retry re-opens the weapon picker so the player can choose a fresh loadout
-  // instead of being silently re-equipped. The picker calls _beginArcadeRun()
-  // (→ startSoloGame) once a weapon is selected.
-  _openArcadeWeaponPicker();
+  // instead of being silently re-equipped. The picker (mode-aware) drops back
+  // into the same mode the player died in.
+  const _retryDescent = gameMode === 'descent';
+  gameMode = _retryDescent ? 'descent' : 'arcade';
+  _openArcadeWeaponPicker(_retryDescent ? 'descent' : 'arcade');
 }
 
 // Wire the death-screen buttons once on load (idempotent guard via _wired flag).
@@ -16540,9 +16546,10 @@ function showDeathToShell() {
   // Arcade mode bypasses the Shell entirely — go straight to the arcade
   // game-over overlay with stats + 1-tap retry. This is the "drop a quarter,
   // hit RETRY" loop.
-  if (gameMode === 'arcade' && !isMultiplayer) {
+  if ((gameMode === 'arcade' || gameMode === 'descent') && !isMultiplayer) {
     // Play the dramatic hit-stop + focus vignette + dissolve first; the beat
-    // reveals the arcade game-over overlay when it finishes.
+    // reveals the (mode-aware) game-over / retry overlay when it finishes.
+    // Descent reuses this same retry screen instead of crashing to the Shell.
     _playArcadeDeathBeat();
     return;
   }
