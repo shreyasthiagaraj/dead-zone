@@ -2092,7 +2092,7 @@ const UPGRADE_POOL = [
   { id:'arc_rounds', name:'ARC INFUSION', rarity:'common', max:1, icon:'⚡', color:'#fe6',
     descs:['Your hits call down a LIGHTNING STRIKE — heavy bonus damage + small splash. +22% damage.'], flavor:'overvoltage request granted. the grid answers from above.' },
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
-    descs:['Your ATTACK applies SLIDE with massive knockback. Push enemies into walls for slam damage.'], flavor:'kinetic payload. impact registered.' },
+    descs:['Your ATTACK arms a KINETIC TIME BOMB — hits charge the enemy, then ~0.5s later it DETONATES for a damage burst + AoE and LAUNCHES (slam into walls for bonus damage).'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
     descs:['Your ATTACK applies CORRUPT and blooms a PESTILENCE CLOUD over the target — the cloud rots and spreads corruption to nearby enemies. Corrupted enemies take escalating bonus damage from ALL sources. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
   // ---- CLASS ENHANCEMENT (rare, max 1) ----
@@ -2856,7 +2856,7 @@ const _TERM_GLOSSARY = {
   CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   SHOCKED:      { color: '#ff4', desc: 'Arc conduit mark. Stuns the enemy for 1 second. Arc procs chain through Shocked enemies at longer range.' },
-  SLIDE:        { color: '#cef', desc: 'Pulse kinetic state. 3.2x knockback — a SLID enemy becomes a hazard: crashing into other enemies (or a player) deals impact damage, spreads SLIDE, and wall slams. No damage amp.' },
+  SLIDE:        { color: '#cef', desc: 'Pulse kinetic state. A bomb arming: hits charge it, then ~0.5s later it DETONATES (damage burst + AoE) and LAUNCHES the enemy — a flying hazard that wall-slams and crashes into others for impact damage. Spreads SLIDE.' },
   COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes ~2x damage from all sources. Enemies deal 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking vulnerability (0-5). Each stack = more damage taken. At threshold, becomes COMPROMISED. Hits bloom a PESTILENCE CLOUD that rots + spreads corruption.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
@@ -9870,8 +9870,9 @@ function _firePulseLaunch(z) {
   const _m = runMods || {};
   const vsMult = 1 + 0.5 * (_m.vectorSnap || 0);
   const _k = (typeof _kbSizeScale === 'function') ? _kbSizeScale(z) : 1;
-  // Launch force scales with the damage taken during the window (capped).
-  const vel = Math.min(52, 6 + dmg * 0.5) * vsMult * _k;
+  // Launch force scales with the damage fed into the bomb during the window.
+  // Punchier than before (cap 72, base 12) so the launch reads as DRAMATIC.
+  const vel = Math.min(72, 12 + dmg * 0.55) * vsMult * _k;
   let ang = z._pulseChargeAng;
   if (typeof ang !== 'number') {
     // No directional hit recorded (e.g. zero-knockback damage like the pulse
@@ -9882,42 +9883,53 @@ function _firePulseLaunch(z) {
     const _lp = _np || (typeof getLocalPlayer === 'function' ? getLocalPlayer() : null);
     ang = (_lp && typeof _lp.x === 'number') ? Math.atan2(z.y - _lp.y, z.x - _lp.x) : (z.angle || 0);
   }
+  // ---- TIME-BOMB DETONATION: the bomb GOES OFF. A direct burst to the host +
+  // an AoE shockwave to neighbors, scaling with the damage fed in. Silent so it
+  // can't re-charge the pulse (charge routing requires a non-silent hit). This is
+  // the "damage after a delay" — the launch alone was too subtle.
+  const detoR = 72 + (_m.pulseShotLv >= 3 ? 34 : 0);
+  const detoDmg = 25 + Math.min(70, Math.floor(dmg * 0.5));
+  _pulseLaunchVFX(z, ang, vel, dmg);                 // explosion at the bomb (before body flies off)
+  addFloatingText(z.x, z.y - (z.radius || 12) - 16, 'DETONATE', '#cef');
+  damageZombie(z, detoDmg, 0, 0, true);              // direct burst to the host
+  // AoE: damage + shove + spread SLIDE to neighbors so the chain continues.
+  const _r2 = detoR * detoR, _push = vel * (_m.pulseShotLv >= 3 ? 0.5 : 0.34);
+  for (const oz of zombies) {
+    if (oz === z || oz.hp <= 0) continue;
+    const dx = oz.x - z.x, dy = oz.y - z.y, d2 = dx*dx + dy*dy;
+    if (d2 < _r2 && d2 > 0.1) {
+      const d = Math.sqrt(d2), _ok = (typeof _kbSizeScale === 'function') ? _kbSizeScale(oz) : 1;
+      oz.vx += (dx/d) * _push * _ok; oz.vy += (dy/d) * _push * _ok;
+      oz.staggerTimer = Math.max(oz.staggerTimer || 0, 12);
+      damageZombie(oz, Math.floor(detoDmg * 0.4), 0, 0, true);
+      applyExposed(oz);
+    }
+  }
+  // ---- LAUNCH: hurl the (surviving) body along the hit direction.
   z.vx = (z.vx || 0) + Math.cos(ang) * vel;
   z.vy = (z.vy || 0) + Math.sin(ang) * vel;
   z.staggerTimer = Math.max(z.staggerTimer || 0, 26);
   z._pulseSlide = 26;          // light-friction slide so it glides rather than snaps
   applyExposed(z);             // refresh SLIDE so the wall-slam stays armed mid-launch
-  // Lv3: the pulsewave also shoves (and lightly damages) nearby enemies.
-  if (_m.pulseShotLv >= 3) {
-    const _r2 = 70 * 70;
-    for (const oz of zombies) {
-      if (oz === z || oz.hp <= 0) continue;
-      const dx = oz.x - z.x, dy = oz.y - z.y, d2 = dx*dx + dy*dy;
-      if (d2 < _r2 && d2 > 0.1) {
-        const d = Math.sqrt(d2), _ok = (typeof _kbSizeScale === 'function') ? _kbSizeScale(oz) : 1;
-        oz.vx += (dx/d) * vel * 0.4 * _ok; oz.vy += (dy/d) * vel * 0.4 * _ok;
-        oz.staggerTimer = Math.max(oz.staggerTimer || 0, 12);
-        damageZombie(oz, Math.floor(dmg * 0.15), 0, 0, true);
-        applyExposed(oz);
-      }
-    }
-  }
-  _pulseLaunchVFX(z, ang, vel, dmg);
 }
 function _pulseLaunchVFX(z, ang, vel, dmg) {
-  const _r = 32 + Math.min(70, dmg * 0.6);
-  // Class-colored pulsewave: expanding shockwave + concentric rings + white core.
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 24, maxLife: 24, size: _r * 1.5, color: '#cef', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.35, _alphaScale: 1.2 });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 16, maxLife: 16, size: _r, color: '#cef', type: 'wakering' });
-  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 11, maxLife: 11, size: _r * 0.55, color: '#fff', type: 'wakering' });
-  // Air-pressure puffs cone in the launch direction.
-  for (let i = 0; i < 9; i++) {
-    const pa = ang + (Math.random() - 0.5) * 0.85;
-    const ps = 2 + Math.random() * 3 + vel * 0.12;
-    particles.push({ x: z.x + Math.cos(pa) * 4, y: z.y + Math.sin(pa) * 4, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps, life: 16 + Math.floor(Math.random() * 8), maxLife: 24, size: 2 + Math.random() * 2.5, color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' });
-  }
-  screenShake.intensity = Math.max(screenShake.intensity, Math.min(9, 3 + dmg * 0.035));
-  playSound(190, 0.08, 'sine', 0.09); playSound(95, 0.11, 'sine', 0.07);
+  const _r = 40 + Math.min(95, dmg * 0.7);
+  // KINETIC DETONATION blast — cap-exempt rings + flash so the bomb never gets culled.
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 26, maxLife: 26, size: _r * 1.7, color: '#cef', type: 'shockwave', _rimColor: '#fff', _lingerStart: 0.30, _alphaScale: 1.35, _protect: true });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 18, maxLife: 18, size: _r, color: '#cef', type: 'wakering', _protect: true });
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 12, maxLife: 12, size: _r * 0.5, color: '#fff', type: 'wakering', _protect: true });
+  // Bright white core flash
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 7, maxLife: 7, size: _r * 0.6, color: '#fff', type: 'spark', _protect: true });
+  // Radial blast sparks — the detonation in all directions
+  for (let i = 0; i < 16; i++) { const a = Math.random() * Math.PI * 2, s = 3 + Math.random() * 6; particles.push({ x: z.x, y: z.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 12 + Math.floor(Math.random() * 8), maxLife: 20, size: 2 + Math.random() * 2.5, color: i % 3 ? '#cef' : '#fff', type: 'spark' }); }
+  // Directional launch cone — denser + faster than before (the body's wake)
+  for (let i = 0; i < 16; i++) { const pa = ang + (Math.random() - 0.5) * 0.9, ps = 3 + Math.random() * 4 + vel * 0.16; particles.push({ x: z.x + Math.cos(pa) * 5, y: z.y + Math.sin(pa) * 5, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps, life: 16 + Math.floor(Math.random() * 10), maxLife: 26, size: 2 + Math.random() * 3, color: Math.random() > 0.4 ? '#cef' : '#fff', type: 'spark' }); }
+  // Kinetic streak — a straight glint along the launch vector (the body hurled)
+  particles.push({ x: z.x, y: z.y, vx: 0, vy: 0, life: 10, maxLife: 10, size: 2.4, color: '#fff', type: 'lightning', tx: z.x + Math.cos(ang) * (_r * 1.2), ty: z.y + Math.sin(ang) * (_r * 1.2), _segs: 1, _jitter: 0, _protect: true });
+  // Chunky debris flung along the launch
+  for (let i = 0; i < 8; i++) { const pa = ang + (Math.random() - 0.5) * 1.0, ps = 4 + Math.random() * 5 + vel * 0.1; particles.push({ x: z.x, y: z.y, vx: Math.cos(pa) * ps, vy: Math.sin(pa) * ps - 1, life: 18 + Math.floor(Math.random() * 10), maxLife: 28, size: 2.5 + Math.random() * 2, color: Math.random() > 0.5 ? '#9be' : '#cef', type: 'spark', _pixel: true, gravity: 0.12 }); }
+  screenShake.intensity = Math.max(screenShake.intensity, Math.min(13, 6 + dmg * 0.05));
+  playSound(150, 0.10, 'sine', 0.12); playSound(70, 0.14, 'sine', 0.09);
 }
 // CORRUPT signature glitch glyphs — reused by the pestilence-cloud VFX.
 const _CORRUPT_GLYPHS = ['☣','▓','▒','╳','0','1','#'];
@@ -31267,9 +31279,19 @@ function update() {
       // z.vx the same frame, so the enemy just nudged and resumed chasing.)
       if (z._pulseChargeTimer > 0 && isHost) {
         z._pulseChargeTimer--;
-        if (z._pulseChargeTimer % 5 === 0) {
-          const _pa = Math.random() * Math.PI * 2, _pr = (z.radius || 13) + 6 + Math.random() * 8;
-          particles.push({ x: z.x + Math.cos(_pa)*_pr, y: z.y + Math.sin(_pa)*_pr, vx: -Math.cos(_pa)*0.9, vy: -Math.sin(_pa)*0.9, life: 10, maxLife: 10, size: 2, color: '#cef', type: 'spark' });
+        // Wind-up telegraph — the bomb ARMING. Inward-converging sparks intensify
+        // as it nears detonation; a contracting warning ring in the final moments
+        // reads as "about to blow". (Host-side visual; non-host sees the blast.)
+        const _ct = 1 - z._pulseChargeTimer / PULSE_LAUNCH_DELAY; // 0→1 over the wind-up
+        if (z._pulseChargeTimer % 3 === 0) {
+          const _n = 1 + Math.floor(_ct * 2);
+          for (let _pi = 0; _pi < _n; _pi++) {
+            const _pa = Math.random() * Math.PI * 2, _pr = (z.radius || 13) + 8 + Math.random() * (10 + _ct * 10);
+            particles.push({ x: z.x + Math.cos(_pa)*_pr, y: z.y + Math.sin(_pa)*_pr, vx: -Math.cos(_pa)*(0.9 + _ct*1.4), vy: -Math.sin(_pa)*(0.9 + _ct*1.4), life: 8, maxLife: 8, size: 2, color: _ct > 0.6 ? '#fff' : '#cef', type: 'spark' });
+          }
+        }
+        if (z._pulseChargeTimer <= 10 && z._pulseChargeTimer % 4 === 0) {
+          particles.push({ x: z.x, y: z.y, vx:0, vy:0, life: 8, maxLife: 8, size: (z.radius||13) + 18, color: '#cef', type: 'wakering' });
         }
         if (z._pulseChargeTimer <= 0) _firePulseLaunch(z);
       }
