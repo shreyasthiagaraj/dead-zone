@@ -7906,7 +7906,7 @@ function startTrenchFade() {
 }
 
 function updateTrenchFade() {
-  if (gameMode !== 'trench') return;
+  if (gameMode !== 'trench' && gameMode !== 'breach') return;
   // Non-host: detect host's section change → snap to black, then fade in
   if (!isHost) {
     if (trenchSection !== _trenchPrevSection) {
@@ -10120,8 +10120,15 @@ function corruptCloudBloomVFX(x, y, r) {
   for (let i=0;i<5;i++){ const a=Math.random()*Math.PI*2, s=2+Math.random()*3; particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:10+Math.floor(Math.random()*5), maxLife:15, size:2+Math.random()*2, color:i%2?'#c8f':'#f0f', type:'spark' }); }
   particles.push({ x:x+(Math.random()-0.5)*12, y:y-6, vx:(Math.random()-0.5)*1.2, vy:-0.6, life:15, maxLife:15, size:10, color:'#c8f', type:'glitchtext', text:_CORRUPT_GLYPHS[Math.floor(Math.random()*_CORRUPT_GLYPHS.length)] });
 }
+// TEMP: the CORRUPT STATUS effect (stacking vulnerability → COMPROMISED amp +
+// aura/labels) is disabled while we test the CORRUPTION CLOUD mechanic in
+// isolation. Code is intact — flip this back to true to re-enable. Because all
+// corrupt stacks flow through applyCorrupt, gating it here also disables the amp
+// (nothing ever becomes _corrupt/_compromised), the aura, and the status labels.
+const CORRUPT_STATUS_ENABLED = false;
 function applyCorrupt(z, stacks) {
   if (!isHost) return;
+  if (!CORRUPT_STATUS_ENABLED) return; // disabled for now — cloud is the only corrupt effect
   // Re-apply cooldown — prevents corruption pools from maxing stacks instantly
   if (z._corruptApplyCd && z._corruptApplyCd > 0) return;
   z._corruptApplyCd = _STATUS_APPLY_CD;
@@ -29519,8 +29526,8 @@ function update() {
           if (lp._iceSlowed > 0) { lp._iceSlowed--; lp.vx *= 0.5; lp.vy *= 0.5; }
         }
       }
-      // Freeze movement while fading (trench transitions only)
-      if (gameMode === 'trench' && trenchFadeDir !== 0) { lp.vx = 0; lp.vy = 0; }
+      // Freeze movement while fading (trench / breach transitions only)
+      if ((gameMode === 'trench' || gameMode === 'breach') && trenchFadeDir !== 0) { lp.vx = 0; lp.vy = 0; }
     }
     // Gamepad right stick explicitly overrides aim assist for players using one.
     if(gamepad.connected&&(Math.abs(gamepad.rx)>0.01||Math.abs(gamepad.ry)>0.01)){
@@ -33419,8 +33426,8 @@ function update() {
       }
       if(z.attackCooldown>0){const _cdRate=(z._fireRateMult||1)>1?0.5:1;z.attackCooldown-=_cdRate;}
     }
-    // Trench: hard-clamp zombies to current section's interior so wind/blast knockback can't tunnel them through walls
-    if (gameMode === 'trench') {
+    // Trench/Breach: hard-clamp zombies to current section's interior so wind/blast knockback can't tunnel them through walls
+    if (gameMode === 'trench' || gameMode === 'breach') {
       const _tsec = trenchSections[trenchSection];
       if (_tsec) {
         const _tTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
@@ -33951,7 +33958,7 @@ function update() {
       const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
       _minX = _mx * CELL_SIZE;
       _maxX = (_mx + DESCENT_WIDTH) * CELL_SIZE;
-    } else if (gameMode === 'trench') {
+    } else if (gameMode === 'trench' || gameMode === 'breach') {
       // Clamp to current section bounds (variable height rooms)
       const _tSec = trenchSections && trenchSections[trenchSection];
       if (_tSec) {
@@ -38138,7 +38145,7 @@ function render() {
   }
 
   // Black out everything outside the current section bounds
-  if (gameMode === 'trench' && trenchSections[trenchSection]) {
+  if ((gameMode === 'trench' || gameMode === 'breach') && trenchSections[trenchSection]) {
     const _bSec = trenchSections[trenchSection];
     const _bTW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
     const _bLeft = _bSec.x;
@@ -38222,8 +38229,8 @@ function render() {
     ctx.beginPath();ctx.moveTo(bx2-bLen,by2);ctx.lineTo(bx2,by2);ctx.lineTo(bx2,by2-bLen);ctx.stroke();
     ctx.shadowBlur=0;ctx.globalAlpha=1;
   }
-  // Trench door(s) — color-coded by reward
-  if(gameMode==='trench'&&trenchSections[trenchSection]){
+  // Trench / Breach door(s) — color-coded by reward (breach = plain cyan)
+  if((gameMode==='trench'||gameMode==='breach')&&trenchSections[trenchSection]){
     const sec=trenchSections[trenchSection];
     const TW=((_sectionWidths&&_sectionWidths[trenchSection])||TRENCH_SECTION_W)*CELL_SIZE;
     const open=sec.cleared && !_dlChoicePending;
@@ -41081,7 +41088,7 @@ function render() {
       fc.width = canvas.width; fc.height = canvas.height;
       let _fogFill = 'rgba(0,0,8,0.6)';
       if (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'descent') _fogFill = 'rgba(0,0,8,0.5)';
-      else if (gameMode === 'trench') { const _fp = _getSectionPalette(trenchSection); _fogFill = `rgba(${_fp.fogR},${_fp.fogG},${_fp.fogB},0.5)`; }
+      else if (gameMode === 'trench' || gameMode === 'breach') { const _fp = _getSectionPalette(trenchSection); _fogFill = `rgba(${_fp.fogR},${_fp.fogG},${_fp.fogB},0.5)`; }
       fctx.fillStyle = _fogFill;
       fctx.fillRect(0, 0, fc.width, fc.height);
       fctx.globalCompositeOperation = 'destination-out';
