@@ -5757,6 +5757,7 @@ function startDescent() {
   _descentBossDraft = false;
   _descentTerminal = null;
   decor = []; // fresh ambient decor for this descent (trench-grade room dressing)
+  _stageLights = [];
   initDescentSections();
   // Announce
   const el = document.getElementById('wave-announce');
@@ -5903,6 +5904,7 @@ function spawnDescentSection(idx) {
   spawnTrenchSectionFloorDecals(idx, sec);
   spawnSectionProps(idx, sec);
   spawnTrenchSectionDecor(idx, sec);
+  _addStageLights(sec.x, sec.y, sec.width, sec.height, (sec.domain && sec.domain.accentColor) || '#0ff', 3 + Math.floor(Math.random() * 2));
   // Pick a FLOOR position in the section's mid-band — retries so spawns don't
   // land inside the section's obstacle blocks (carved in generateDescentMap).
   const _floorPos = (loDC, spanSub, loF, spanF) => {
@@ -7241,6 +7243,7 @@ function startTrench() {
   trenchFadeAlpha = 0;
   trenchFadeDir = 0;
   decor = [];
+  _stageLights = [];
   initTrenchSections();
   const el = document.getElementById('wave-announce');
   document.getElementById('wave-num').textContent = 'THE TRENCH';
@@ -7490,6 +7493,8 @@ function spawnTrenchSection(idx) {
   // Procedural decor populates the section with atmosphere (terminals, server racks,
   // cryopods, bodies, etc). Domain-aware — different types fit different domains.
   spawnTrenchSectionDecor(idx);
+  // ---- AMBIENT STAGE LIGHTS ---- domain-tinted glow pools for atmosphere.
+  { const _slSec = trenchSections[idx]; if (_slSec) { const _slDom = _slSec.domain || getTrenchDomain(idx); const _slW = ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W) * CELL_SIZE; const _slH = _secH(idx) * CELL_SIZE; _addStageLights(_slSec.x, _slSec.y || 0, _slW, _slH, (_slDom && _slDom.accentColor) || '#b06', 3 + Math.floor(Math.random() * 3)); } }
   // ---- DESTRUCTIBLE OBJECTS ----
   // Explosive barrels + data crates (break for possible drops)
   const _numBarrels = 1 + Math.floor(Math.random() * 2);
@@ -8476,6 +8481,48 @@ function spawnSectionProps(idx, _secOv) {
 //        wireframe_obj, slumped_body.
 // ============================================================
 let decor = [];
+
+// ---- AMBIENT STAGE LIGHTS ----
+// Decorative colored glow pools placed around a room for atmosphere. These are
+// NOT the WebGL fog lights (that system is capped at 4 and doubles as fog) — they
+// are cheap additive radial glows drawn in the world pass, domain-tinted, gently
+// pulsing. Populated per section; culled to the view.
+let _stageLights = [];
+function _addStageLights(x0, y0, w, h, accent, n) {
+  for (let i = 0; i < n; i++) {
+    _stageLights.push({
+      x: x0 + (0.1 + Math.random() * 0.8) * w,
+      y: y0 + (0.12 + Math.random() * 0.76) * h,
+      r: 95 + Math.random() * 85,
+      color: accent || '#b06',
+      ph: Math.random() * Math.PI * 2,
+    });
+  }
+}
+function _drawStageLights(ctx) {
+  if (!_stageLights.length) return;
+  const _cr = 1500; // generous cull radius around the camera
+  const _t = performance.now();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const g of _stageLights) {
+    if (Math.abs(g.x - camera.x) > _cr || Math.abs(g.y - camera.y) > _cr) continue;
+    const pulse = 0.55 + Math.sin(_t * 0.0016 + g.ph) * 0.25;
+    const grad = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, g.r);
+    grad.addColorStop(0, g.color);
+    grad.addColorStop(0.55, g.color + '6');
+    grad.addColorStop(1, 'transparent');
+    ctx.globalAlpha = 0.16 * pulse;
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2); ctx.fill();
+    // tiny bright core so it reads as an actual lamp source
+    ctx.globalAlpha = 0.5 * pulse;
+    ctx.beginPath(); ctx.arc(g.x, g.y, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+}
 
 function _decorRand(seed) {
   const x = Math.sin(seed * 9301.2834 + 12.94) * 43758.5453;
@@ -35562,6 +35609,8 @@ function render() {
     }
   }
 
+  // Ambient stage lights — decorative domain-tinted glow pools (atmosphere).
+  _drawStageLights(ctx);
   // Ambient decor — terminals, server racks, cryopods, etc. Drawn between decals and entities.
   renderDecor(ctx);
 
