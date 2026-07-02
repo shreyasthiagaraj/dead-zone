@@ -9482,18 +9482,27 @@ function updateBurnoutPuddles() {
           type: 'spark',
         });
       }
-      // Apply corrupt (weaken + spread) every 20 frames; the CORRUPTION CLOUD
-      // deals ONGOING damage to anything inside every 1s (10/s by default).
+      // Checked every 20 frames. The CORRUPTION CLOUD damages anything inside on a
+      // PER-ENEMY 1s timer (fires on ENTRY, then every ~1s while inside) — a global
+      // tick would miss fast enemies that pass through the small cloud between
+      // ticks. Shows an obvious purple '-N' label (the generic silent number is
+      // suppressed so there's exactly one clear label per hit).
       if (isHost && gameTime % 20 === 0) {
         const r2 = p.radius * p.radius;
-        const _ccTick = p._corruptCloud && (gameTime % 60 === 0); // ~1/s ongoing DoT
         for (const z of zombies) {
           if (z.hp <= 0) continue;
           const dx = z.x - p.x, dy = z.y - p.y;
           if (dx*dx + dy*dy < r2) {
-            applyCorrupt(z, 1); // weaken (vuln) + spread corruption to everything inside
+            applyCorrupt(z, 1); // weaken + spread corruption (no-op while CORRUPT status is disabled)
             if (p._glitchLv >= 2) damageZombie(z, 15, 0, 0, true); // BLIGHT ZONE DoT
-            if (_ccTick) damageZombie(z, p._cloudDoT || 10, 0, 0, true); // CORRUPTION CLOUD DoT
+            if (p._corruptCloud && (gameTime - (z._cloudDotFrame || -999) >= 60)) {
+              z._cloudDotFrame = gameTime;
+              const _cd = p._cloudDoT || 10;
+              window._suppressSilentDmgNum = true;
+              damageZombie(z, _cd, 0, 0, true);   // silent: HP / death / scoring, no hit reaction
+              window._suppressSilentDmgNum = false;
+              addFloatingText(z.x + (Math.random()-0.5)*10, z.y - (z.radius||14) - 18, '-' + _cd, '#d6f');
+            }
           }
         }
       }
@@ -10106,7 +10115,7 @@ function _spawnCorruptCloud(z, m) {
   z._corruptCloudCd = 12; // ~200ms between clouds per enemy
   m = m || runMods || {};
   const _spreadMul = 1 + (m.cloudSpread || 0) * 0.20; // OUTBREAK: +20% radius per copy
-  const _r = (34 + (m.viralPayloadLv || 0) * 4 + (m.beaconElement === 'corrupt' ? 6 : 0)) * _spreadMul;
+  const _r = (46 + (m.viralPayloadLv || 0) * 4 + (m.beaconElement === 'corrupt' ? 6 : 0)) * _spreadMul;
   const _life = 180; // 3s @60fps
   const _cloudDoT = 10 + (m.cloudToxin || 0) * 5; // VIRULENCE: +5 damage/tick per copy
   burnoutPuddles.push({ x: z.x, y: z.y, radius: _r, life: _life, maxLife: _life, _corrupt: true, _glitchLv: (m.glitchWake || 0), _corruptCloud: true, _cloudDoT: _cloudDoT });
@@ -28306,7 +28315,9 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     if (silent) {
       // Non-gun damage (DoT/status/AoE): a SMALL separate label that uses the
       // SAME font system as hit numbers, floating straight up + slightly aside.
-      floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 19, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
+      // _suppressSilentDmgNum lets a caller (e.g. the CORRUPTION CLOUD) spawn its
+      // own distinct label instead of this generic one.
+      if (!window._suppressSilentDmgNum) floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 19, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
     } else {
       addDamageNumber(z, damage, false);
     }
@@ -37193,13 +37204,20 @@ function render() {
         }
         ctx.closePath();
       };
+      // Pulse so the cloud visibly BREATHES / glows (reads clearly on dark floor).
+      const _glow = 0.68 + 0.32 * Math.sin(performance.now() * 0.006 + _seed);
+      // 0) GLOW — wide soft fake-glow halo behind everything (no shadowBlur).
+      ctx.globalAlpha = bpFade * 0.17 * _glow;
+      ctx.fillStyle = '#b6f';
+      _drawBlob(bp.x, bp.y, bp.radius * 2.0, 22, 3, 0.14, 5, 0.07, 0.5);
+      ctx.fill();
       // 1) Wide diffuse halo — soft outer fog with no defined edge
-      ctx.globalAlpha = bpFade * 0.10 * bpPulse;
+      ctx.globalAlpha = bpFade * 0.20 * bpPulse;
       ctx.fillStyle = '#a4f';
       _drawBlob(bp.x, bp.y, bp.radius * 1.7, 28, 3, 0.16, 5.2, 0.08, 0);
       ctx.fill();
       // 2) Mid layer — main pool body, larger noise so it slumps and wobbles
-      ctx.globalAlpha = bpFade * 0.30 * bpPulse;
+      ctx.globalAlpha = bpFade * 0.46 * bpPulse;
       ctx.fillStyle = '#a4f';
       _drawBlob(bp.x, bp.y, bp.radius, 26, 4, 0.20, 7, 0.10, 1.4);
       ctx.fill();
@@ -37209,24 +37227,22 @@ function render() {
         const px = bp.x + Math.cos(_t * 0.8 + pi * 2.1 + _seed) * bp.radius * 0.35;
         const py = bp.y + Math.sin(_t * 0.6 + pi * 2.7 + _seed * 0.4) * bp.radius * 0.35;
         const pr = bp.radius * (0.22 + Math.sin(_t * 1.4 + pi + _seed * 0.2) * 0.08);
-        ctx.globalAlpha = bpFade * 0.30 * bpPulse;
-        ctx.fillStyle = pi === 1 ? '#c6f' : '#a4f';
+        ctx.globalAlpha = bpFade * 0.34 * bpPulse;
+        ctx.fillStyle = pi === 1 ? '#d6f' : '#b6f';
         _drawBlob(px, py, pr, 14, 3, 0.22, 5, 0.12, pi * 1.7);
         ctx.fill();
       }
-      // 4) Hot spot — small bright magenta pocket near a slow-drifting point
+      // 4) Hot spot — bright pulsing magenta core near a slow-drifting point
       const _hx = bp.x + Math.cos(_t * 0.5 + _seed) * bp.radius * 0.25;
       const _hy = bp.y + Math.sin(_t * 0.4 + _seed * 1.2) * bp.radius * 0.25;
-      ctx.globalAlpha = bpFade * 0.22 * bpPulse;
+      ctx.globalAlpha = bpFade * (0.26 + 0.22 * _glow);
       ctx.fillStyle = '#f0f';
-      _drawBlob(_hx, _hy, bp.radius * 0.32, 12, 4, 0.25, 6, 0.12, 0.7);
+      _drawBlob(_hx, _hy, bp.radius * 0.34, 12, 4, 0.25, 6, 0.12, 0.7);
       ctx.fill();
-      // 5) Rising vapor wisps — ephemeral DOM-side particles for gassy lift,
-      // spawned per-puddle in updateBurnoutPuddles instead of here, but we add
-      // a soft rim haze to suggest the surface is venting.
-      ctx.globalAlpha = bpFade * 0.22 * bpPulse;
-      ctx.strokeStyle = '#c6f'; ctx.lineWidth = 1.5;
-      _drawBlob(bp.x, bp.y, bp.radius * 1.05, 24, 4, 0.16, 7, 0.08, 2.8);
+      // 5) Bright pulsing rim — a glowing edge so the cloud's bounds read clearly.
+      ctx.globalAlpha = bpFade * (0.30 + 0.28 * _glow);
+      ctx.strokeStyle = '#e9f'; ctx.lineWidth = 2.2;
+      _drawBlob(bp.x, bp.y, bp.radius * 1.02, 24, 4, 0.16, 7, 0.08, 2.8);
       ctx.stroke();
     } else {
       // Fire puddle — orange/red pulsing circle with bright center
