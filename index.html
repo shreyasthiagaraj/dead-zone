@@ -5680,6 +5680,11 @@ function generateDescentMap(seed) {
     [[-10,4,3,3],[4,8,3,3]],                         // 4 stagger weave
     [[-13,4,3,2],[7,4,3,2],[-13,9,3,2],[7,9,3,2]],  // 5 corner cover
     [[-13,6,5,2],[5,6,5,2]],                         // 6 soft gates
+    [[-6,4,1,7],[5,4,1,7]],                          // 7 twin corridor walls (3 lanes)
+    [[-11,4,2,2],[-4,6,2,2],[3,8,2,2],[10,6,2,2]],  // 8 diagonal step
+    [[-5,5,10,3]],                                   // 9 wide central block (side lanes)
+    [[-16,5,3,4],[13,5,3,4]],                        // 10 edge alcoves (open centre)
+    [[-2,4,4,2],[-11,8,3,2],[8,8,3,2]],             // 11 T-cover
   ];
   for (let si = 0; si < numSections; si++) {
     const secTop = si * DESCENT_SECTION_HEIGHT;
@@ -5687,7 +5692,7 @@ function generateDescentMap(seed) {
     let _tpl;
     if (si <= 2 || _bossSec) _tpl = _DESC_TEMPLATES[0];     // open: tutorial start + boss arenas
     else {
-      const _pool = si < 8 ? [1,1,2,3] : [1,2,3,4,5,6];     // simpler early, full variety later
+      const _pool = si < 8 ? [1,1,2,3,7,9] : [1,2,3,4,5,6,7,8,9,10,11]; // simpler early, full variety later
       _tpl = _DESC_TEMPLATES[_pool[Math.floor(rng() * _pool.length)]];
     }
     for (const b of _tpl) _carveBlock(cx + b[0], secTop + b[1], b[2], b[3]);
@@ -5751,6 +5756,7 @@ function startDescent() {
   arcadeScoreDisplay = 0; arcadeCounterPulse = 0; _arcadeBestStreak = 0; _arcadeBestMultikillTier = 0;
   _descentBossDraft = false;
   _descentTerminal = null;
+  decor = []; // fresh ambient decor for this descent (trench-grade room dressing)
   initDescentSections();
   // Announce
   const el = document.getElementById('wave-announce');
@@ -5888,6 +5894,15 @@ function spawnDescentSection(idx) {
   descentGateOpen = false;
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const cx = (marginX + DESCENT_WIDTH / 2) * CELL_SIZE;
+  // Trench-grade room dressing: augment the descent section with the geometry
+  // the decor system needs, then reuse trench's floor decals + destructible
+  // props + ambient decor so descent stages are as featured as main-game rooms.
+  sec.x = marginX * CELL_SIZE;
+  sec.width = DESCENT_WIDTH * CELL_SIZE;
+  sec.domain = getTrenchDomain(Math.min(40, idx));
+  spawnTrenchSectionFloorDecals(idx, sec);
+  spawnSectionProps(idx, sec);
+  spawnTrenchSectionDecor(idx, sec);
   // Pick a FLOOR position in the section's mid-band — retries so spawns don't
   // land inside the section's obstacle blocks (carved in generateDescentMap).
   const _floorPos = (loDC, spanSub, loF, spanF) => {
@@ -8290,13 +8305,13 @@ function _placeProp(gx, gy, propType, colors) {
 // stencils, directional arrows, maintenance hatches, chalk outlines, hazard
 // chevrons). Called once per section entry. Every decal is viewport-culled on
 // render so spawning lots is cheap.
-function spawnTrenchSectionFloorDecals(idx) {
-  const sec = trenchSections[idx];
+function spawnTrenchSectionFloorDecals(idx, _secOv) {
+  const sec = _secOv || trenchSections[idx];
   if (!sec || sec._floorDecalsSeeded) return;
   sec._floorDecalsSeeded = true;
   const domain = sec.domain || getTrenchDomain(idx);
   const accent = (domain && domain.accentColor) || '#b06';
-  const secW = (_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W;
+  const secW = sec.width ? Math.floor(sec.width / CELL_SIZE) : ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W);
   const sx = sec.x;
   const _fdSecY = sec.y || 0;
   const _fdSecH = sec.height ? Math.floor(sec.height / CELL_SIZE) : _secH(idx);
@@ -8416,15 +8431,15 @@ function spawnTrenchSectionFloorDecals(idx) {
 }
 
 // Spawn destructible props as logical vignettes in a trench section
-function spawnSectionProps(idx) {
-  const sec = trenchSections[idx];
+function spawnSectionProps(idx, _secOv) {
+  const sec = _secOv || trenchSections[idx];
   if (!sec || sec.isBoss || sec._propsSeeded) return;
   sec._propsSeeded = true;
   const domain = sec.domain || getTrenchDomain(idx);
   const domainIdx = TRENCH_DOMAINS.indexOf(domain);
   const vigPool = _pickVignettesForDomain(domainIdx);
   const colors = _PROP_DOMAIN_COLORS[Math.max(0, Math.min(3, domainIdx))];
-  const secW = (_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W;
+  const secW = sec.width ? Math.floor(sec.width / CELL_SIZE) : ((_sectionWidths && _sectionWidths[idx]) || TRENCH_SECTION_W);
   const usedCells = new Set();
   // 2-4 vignettes per section (more in larger sections)
   const vigCount = secW >= 26 ? 3 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
@@ -8634,8 +8649,8 @@ function _spawnDebrisCluster(x, y, domain) {
   }
 }
 
-function spawnTrenchSectionDecor(idx) {
-  const sec = trenchSections[idx];
+function spawnTrenchSectionDecor(idx, _secOv) {
+  const sec = _secOv || trenchSections[idx];
   if (!sec || sec._decorSeeded) return;
   sec._decorSeeded = true;
   const domain = sec.domain || getTrenchDomain(idx);
