@@ -5794,66 +5794,88 @@ function _spawnDescentTerminal(sec) {
   playSfx('ui_click', 0.25) || playSound(700, 0.08, 'sine', 0.1);
 }
 
-// Render the walk-in MOD TERMINAL — matches the main-mode (arcade) terminal:
-// cyan ambient glow + light beam + pulsing rings + bright core + wrench + a
-// lens flare. Always cyan. One object/frame, so gradients + shadowBlur are fine.
+// Render the walk-in MOD TERMINAL — matches the MAIN-GAME (trench _shopChest)
+// terminal: a monitor/console body with a screen + scanlines, data beam,
+// concentric glow rings, orbiting dots. Always cyan. Plus a lens flare. One
+// object/frame, so gradients + shadowBlur are fine.
 function _drawDescentTerminal(ctx) {
   const tm = _descentTerminal; if (!tm) return;
+  tm.t = (tm.t || 0) + 1;
+  const _ctColor = '#0ff';
+  const R = 22; // matches the trench shop-chest radius
+  // Rise-out-of-floor spawn ease (first ~30 frames).
+  const animT = Math.max(0, Math.min(1, tm.t / 30));
+  const easedT = 1 - (1 - animT) * (1 - animT);
+  const scale = easedT;
+  const yRise = (1 - easedT) * 36;
   const _lpT = getLocalPlayer();
   const _near = !!(_lpT && _lpT.alive && Math.hypot(_lpT.x - tm.x, _lpT.y - tm.y) < 80);
-  const _pmsT = performance.now();
-  const _pulseT = 0.5 + Math.sin(_pmsT * 0.005) * 0.4;
+  const _t = performance.now();
+  const pulse = 0.7 + Math.sin(_t * 0.005) * 0.25;
   ctx.save();
-  // Wide cyan ambient glow
-  ctx.globalAlpha = 0.14 * _pulseT + (_near ? 0.20 : 0);
-  const _outerG = ctx.createRadialGradient(tm.x, tm.y, 0, tm.x, tm.y, 140);
-  _outerG.addColorStop(0, '#0ff'); _outerG.addColorStop(0.5, 'rgba(0,255,255,0.25)'); _outerG.addColorStop(1, 'transparent');
-  ctx.fillStyle = _outerG; ctx.beginPath(); ctx.arc(tm.x, tm.y, 140, 0, Math.PI*2); ctx.fill();
-  // Vertical light beam
-  ctx.globalAlpha = (_near ? 0.36 : 0.20) * _pulseT;
-  const _beam = ctx.createLinearGradient(tm.x, tm.y - 70, tm.x, tm.y + 70);
-  _beam.addColorStop(0, 'transparent'); _beam.addColorStop(0.2, '#0ff'); _beam.addColorStop(0.5, '#fff'); _beam.addColorStop(0.8, '#0ff'); _beam.addColorStop(1, 'transparent');
-  ctx.fillStyle = _beam; ctx.fillRect(tm.x - 12, tm.y - 70, 24, 140);
-  // Pulsing rings
-  for (let _ri = 0; _ri < 3; _ri++) {
-    const _rPhase = (_pmsT * 0.003 + _ri * 1.6) % (Math.PI * 2);
-    const _rSize = 18 + Math.sin(_rPhase) * 10 + _ri * 12;
-    ctx.globalAlpha = (_near ? 0.85 : 0.55) * (1 - _ri * 0.18) * _pulseT;
-    ctx.strokeStyle = _ri % 2 === 0 ? '#0ff' : '#8ff';
-    ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 16; ctx.lineWidth = _near ? 3 : 2;
-    ctx.beginPath(); ctx.arc(tm.x, tm.y, _rSize, 0, Math.PI*2); ctx.stroke();
+  ctx.translate(tm.x, tm.y + yRise);
+  // Large pulsing ground glow
+  ctx.globalAlpha = 0.18 * pulse * easedT; ctx.shadowColor = _ctColor; ctx.shadowBlur = 80; ctx.fillStyle = _ctColor;
+  ctx.beginPath(); ctx.arc(0, 0, (R + 50) * scale, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0;
+  // Bright inner glow ring
+  ctx.globalAlpha = 0.35 * pulse * easedT; ctx.shadowColor = _ctColor; ctx.shadowBlur = 30; ctx.fillStyle = _ctColor;
+  ctx.beginPath(); ctx.arc(0, 0, (R + 24) * scale, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0;
+  // Pulsing outer ring outline
+  ctx.globalAlpha = 0.5 * pulse * easedT; ctx.strokeStyle = _ctColor; ctx.lineWidth = 2; ctx.shadowColor = _ctColor; ctx.shadowBlur = 20;
+  ctx.beginPath(); ctx.arc(0, 0, (R + 40) * scale, 0, Math.PI*2); ctx.stroke(); ctx.shadowBlur = 0;
+  // Vertical data beam
+  const beamH = 500 * easedT;
+  if (easedT > 0.3) {
+    const _bgrd = ctx.createLinearGradient(0, -beamH, 0, 5);
+    _bgrd.addColorStop(0, 'rgba(0,255,255,0)'); _bgrd.addColorStop(0.6, `rgba(0,255,255,${0.15 * pulse})`); _bgrd.addColorStop(1, `rgba(0,255,255,${0.25 * pulse})`);
+    ctx.fillStyle = _bgrd; ctx.fillRect(-10 * scale, -beamH, 20 * scale, beamH + 5);
   }
-  ctx.shadowBlur = 0;
-  // LENS FLARE — straight bright glints crossing the core (jitter-free lines)
-  const flR = 74 + _pulseT * 16;
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.5 * _pulseT;
-  ctx.beginPath(); ctx.moveTo(tm.x - flR, tm.y); ctx.lineTo(tm.x + flR, tm.y); ctx.stroke();
-  ctx.globalAlpha = 0.3 * _pulseT; ctx.lineWidth = 1.1;
-  ctx.beginPath(); ctx.moveTo(tm.x, tm.y - flR*0.5); ctx.lineTo(tm.x, tm.y + flR*0.5); ctx.stroke();
-  ctx.globalAlpha = 0.2 * _pulseT; ctx.strokeStyle = '#0ff';
-  ctx.beginPath(); ctx.moveTo(tm.x - flR*0.42, tm.y - flR*0.42); ctx.lineTo(tm.x + flR*0.42, tm.y + flR*0.42); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(tm.x - flR*0.42, tm.y + flR*0.42); ctx.lineTo(tm.x + flR*0.42, tm.y - flR*0.42); ctx.stroke();
-  ctx.globalAlpha = 0.4 * _pulseT; ctx.fillStyle = '#0ff';
-  ctx.beginPath(); ctx.arc(tm.x + flR*0.6, tm.y, 4, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(tm.x - flR*0.44, tm.y, 2.6, 0, Math.PI*2); ctx.fill();
-  // Bright core
-  ctx.globalAlpha = (_near ? 0.95 : 0.75) * _pulseT;
-  const _coreG = ctx.createRadialGradient(tm.x, tm.y, 0, tm.x, tm.y, 22);
-  _coreG.addColorStop(0, '#fff'); _coreG.addColorStop(0.3, '#0ff'); _coreG.addColorStop(0.7, 'rgba(0,255,255,0.3)'); _coreG.addColorStop(1, 'transparent');
-  ctx.fillStyle = _coreG; ctx.beginPath(); ctx.arc(tm.x, tm.y, 16, 0, Math.PI*2); ctx.fill();
-  // Wrench icon
-  ctx.globalAlpha = _near ? 1 : 0.9; ctx.fillStyle = '#fff';
-  ctx.shadowColor = '#0ff'; ctx.shadowBlur = _near ? 22 : 12;
-  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('⚒', tm.x, tm.y);
-  // Label
-  ctx.shadowBlur = 8; ctx.fillStyle = '#0ff'; ctx.font = 'bold 11px monospace';
-  ctx.fillText('MOD TERMINAL', tm.x, tm.y + 32);
-  if (_near) {
-    ctx.shadowBlur = 6; ctx.globalAlpha = 0.7 + Math.sin(_pmsT * 0.006) * 0.3; ctx.fillStyle = '#fff'; ctx.font = 'bold 10px monospace';
-    ctx.fillText('STEP IN TO UPGRADE', tm.x, tm.y - 36);
+  // Lens flare — straight glints across the screen
+  const flR = 76 + pulse * 16;
+  ctx.globalAlpha = 0.5 * pulse * easedT; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(-flR, -R*0.4); ctx.lineTo(flR, -R*0.4); ctx.stroke();
+  ctx.globalAlpha = 0.28 * pulse * easedT; ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.moveTo(0, -R*0.4 - flR*0.5); ctx.lineTo(0, -R*0.4 + flR*0.5); ctx.stroke();
+  // Terminal body — monitor/console
+  ctx.globalAlpha = easedT;
+  const tw = R * 1.3 * scale, th = R * 1.6 * scale;
+  ctx.fillStyle = '#060a10';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(-tw, -th, tw*2, th*2, 3); else ctx.rect(-tw, -th, tw*2, th*2);
+  ctx.fill();
+  ctx.strokeStyle = _ctColor; ctx.lineWidth = 2; ctx.shadowColor = _ctColor; ctx.shadowBlur = 12; ctx.stroke(); ctx.shadowBlur = 0;
+  // Screen + scanlines
+  const sw = tw * 0.8, sh = th * 0.5;
+  ctx.fillStyle = '#0a1420'; ctx.fillRect(-sw, -th + 6, sw*2, sh*2);
+  ctx.strokeStyle = _ctColor + '4'; ctx.lineWidth = 1; ctx.strokeRect(-sw, -th + 6, sw*2, sh*2);
+  ctx.globalAlpha = 0.08 * easedT;
+  for (let sy = -th + 8; sy < -th + 6 + sh*2; sy += 3) { ctx.fillStyle = '#000'; ctx.fillRect(-sw, sy, sw*2, 1); }
+  // Icon + MOD label on screen
+  ctx.globalAlpha = 0.8 * easedT * pulse;
+  ctx.fillStyle = _ctColor; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('◆', 0, -th + 14);
+  ctx.font = 'bold 7px monospace'; ctx.fillStyle = '#fff';
+  ctx.fillText('MOD', 0, -th + 26);
+  ctx.textBaseline = 'alphabetic';
+  // Base/stand
+  ctx.globalAlpha = easedT; ctx.fillStyle = '#0a0a14';
+  ctx.fillRect(-tw*0.5, th - 4, tw, 4);
+  ctx.strokeStyle = _ctColor; ctx.lineWidth = 1; ctx.strokeRect(-tw*0.5, th - 4, tw, 4);
+  // Prompt below
+  ctx.globalAlpha = (_near ? 0.9 : 0.55) * pulse * easedT;
+  ctx.fillStyle = _near ? '#fff' : _ctColor; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(_near ? 'STEP IN TO UPGRADE' : 'MOD TERMINAL', 0, th + 14);
+  // Orbiting data dots
+  if (easedT > 0.6) {
+    ctx.globalAlpha = 0.7;
+    for (let oi = 0; oi < 4; oi++) {
+      const oa = _t * 0.003 + oi * Math.PI / 2;
+      const orr = (R + 12) * scale;
+      ctx.fillStyle = _ctColor; ctx.shadowColor = _ctColor; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.arc(Math.cos(oa)*orr, Math.sin(oa)*orr, 2, 0, Math.PI*2); ctx.fill(); ctx.shadowBlur = 0;
+    }
   }
-  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
