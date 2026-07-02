@@ -964,6 +964,7 @@ body.mobile #mobile-buttons { display: block; }
       <button class="menu-btn" id="btn-arcade" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#fa0;border-color:#fa0;background:linear-gradient(180deg,rgba(255,170,0,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,170,0,0.25),inset 0 0 8px rgba(255,170,0,0.08);text-shadow:0 0 8px rgba(255,170,0,0.6)">▶ ARCADE</button>
       <button class="menu-btn" id="btn-arcade-lb" style="padding:6px 20px;font-size:11px;letter-spacing:3px;min-width:220px;color:#fa0c;border-color:#fa05;background:transparent;text-shadow:0 0 4px rgba(255,170,0,0.4)">🏆 ARCADE TOP 10</button>
       <button class="menu-btn" id="btn-descent" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0f0;border-color:#0f0;background:linear-gradient(180deg,rgba(0,255,0,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,0,0.25),inset 0 0 8px rgba(0,255,0,0.08);text-shadow:0 0 8px rgba(0,255,0,0.6)">▼ DESCENT</button>
+      <button class="menu-btn" id="btn-breach" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0ff;border-color:#0ff;background:linear-gradient(180deg,rgba(0,255,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,255,0.25),inset 0 0 8px rgba(0,255,255,0.08);text-shadow:0 0 8px rgba(0,255,255,0.6)">▶ BREACH</button>
       <button class="menu-btn" id="btn-roomrush" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0fc;border-color:#0fc;background:linear-gradient(180deg,rgba(0,255,200,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,200,0.25),inset 0 0 8px rgba(0,255,200,0.08);text-shadow:0 0 8px rgba(0,255,200,0.6)">▦ ROOM RUSH</button>
       <button class="menu-btn" id="btn-blitz" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#f4f;border-color:#f4f;background:linear-gradient(180deg,rgba(255,70,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,70,255,0.25),inset 0 0 8px rgba(255,70,255,0.08);text-shadow:0 0 8px rgba(255,70,255,0.6)">⏱ BLITZ</button>
       <div style="display:flex;flex-direction:row;gap:8px;flex-wrap:wrap;justify-content:center">
@@ -7177,9 +7178,14 @@ function initTrenchSections() {
     const _isFirstSection = (i === 0);
     const _doorEligible = !isBoss && !_isFirstSection;
     const _exitD_i = _sectionExitDirs[i] || 'E';
+    // BREACH is linear + generic-terminal-only: no branching multi-doors and no
+    // class-specific door rewards (mods come from the every-3 mod chamber).
+    const _breach = gameMode === 'breach';
     // Pull pre-computed geometry decision from generateTrenchMap.
-    const _mdGeom = _sectionMultiDoors && _sectionMultiDoors[i];
-    if (_isFirstSection) {
+    const _mdGeom = !_breach && _sectionMultiDoors && _sectionMultiDoors[i];
+    if (_breach) {
+      // single door, no reward — handled below by the default push
+    } else if (_isFirstSection) {
       const _firstClasses = ['thermal','cryo','arc','pulse','corrupt'];
       // Signal Lab focus locks the first-section class if set.
       if (_researchFocus && _firstClasses.includes(_researchFocus)) {
@@ -7244,10 +7250,17 @@ function startTrench() {
   trenchFadeDir = 0;
   decor = [];
   _stageLights = [];
+  // BREACH: reset the arcade-style scoring layer + mod-chamber state.
+  const _breach = gameMode === 'breach';
+  if (_breach) {
+    arcadeStreak = 0; arcadeStreakTimer = 0; _arcadeMultikillCount = 0; _arcadeMultikillTimer = 0;
+    arcadeScoreDisplay = 0; arcadeCounterPulse = 0; _arcadeBestStreak = 0; _arcadeBestMultikillTier = 0;
+    _descentBossDraft = false; _descentTerminal = null;
+  }
   initTrenchSections();
   const el = document.getElementById('wave-announce');
-  document.getElementById('wave-num').textContent = 'THE TRENCH';
-  document.getElementById('wave-sub').textContent = 'Push forward. Never look back.';
+  document.getElementById('wave-num').textContent = _breach ? 'BREACH' : 'THE TRENCH';
+  document.getElementById('wave-sub').textContent = _breach ? 'How deep can you breach?' : 'Push forward. Never look back.';
   el.style.opacity = '1';
   setTimeout(() => el.style.opacity = '0', 2500);
   playWaveStartSound();
@@ -7633,8 +7646,29 @@ function updateCheckpointRoom(sec, TW) {
 }
 
 function updateTrench() {
-  if (!isHost || gameMode !== 'trench') return;
+  const _breach = gameMode === 'breach';
+  if (!isHost || (gameMode !== 'trench' && !_breach)) return;
   if (trenchFadeDir !== 0) return; // mid-transition: don't process
+  if (_breach) _decayScoreStreaks(); // scored mode: tick the streak windows
+  // BREACH mod terminal walk-in: draft, then unlock the door.
+  if (_breach && _descentTerminal && !_descentTerminal.used && gameState === 'playing') {
+    const _blp = getLocalPlayer();
+    if (_blp) {
+      const _bdx = _blp.x - _descentTerminal.x, _bdy = _blp.y - _descentTerminal.y;
+      if (_bdx*_bdx + _bdy*_bdy < (PLAYER_RADIUS + 40) * (PLAYER_RADIUS + 40)) {
+        _descentTerminal.used = true;
+        triggerCameraZoom(1.05, 300);
+        _descentModDraft(false, () => {
+          if (gameState === 'levelup') gameState = 'playing';
+          _descentTerminal = null;
+          _dlChoicePending = false; // unlock the door
+          const _l = getLocalPlayer();
+          if (_l) addFloatingText(_l.x, _l.y - 30, 'DOOR OPEN!', '#0ff');
+          playExitFoundSound();
+        });
+      }
+    }
+  }
   const sec = trenchSections[trenchSection];
   if (!sec) return;
   const TW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
@@ -7706,11 +7740,23 @@ function updateTrench() {
       return;
     }
     const lp2 = getLocalPlayer();
-    if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
-    playExitFoundSound();
-    // ---- SECTION CLEAR REWARDS ----
+    // BREACH: every 3rd room cleared becomes a MOD CHAMBER — drop the walk-in
+    // mod terminal at the room centre and keep the door LOCKED until it's used
+    // (reuses _dlChoicePending as the door gate). Otherwise the door just opens.
+    if (_breach && !isMultiplayer && ((trenchSection + 1) % 3 === 0)) {
+      const _tcx = sec.x + TW / 2, _tcy = (sec.y || 0) + (sec.height || _secH(trenchSection) * CELL_SIZE) / 2;
+      _descentTerminal = { x: _tcx, y: _tcy, isBoss: false, used: false, t: 0 };
+      _dlChoicePending = true; // block the door until the terminal is used
+      addFloatingText(_tcx, _tcy - 54, '◈ MOD CHAMBER ◈', '#0ff');
+      if (typeof showLevelLabel === 'function') showLevelLabel('◈ MOD CHAMBER ◈');
+      playSfx('ui_click', 0.25) || playSound(700, 0.08, 'sine', 0.1);
+    } else {
+      if (lp2) addFloatingText(lp2.x, lp2.y - 30, 'DOOR OPEN!', '#0ff');
+      playExitFoundSound();
+    }
+    // ---- SECTION CLEAR REWARDS ---- (skipped in BREACH — mods come from the chamber)
     // Door rewards handle all mod terminals. Only boss/domain special cases remain.
-    if (!isMultiplayer && !_sectionRewardsClaimed) {
+    if (!_breach && !isMultiplayer && !_sectionRewardsClaimed) {
       _sectionRewardsClaimed = true;
       if (sec.isBoss) {
         // Boss reward handled in checkpoint room
@@ -13451,7 +13497,7 @@ function updateLobbyUI() {
   document.getElementById('lobby-code').textContent = lobbyCode;
   // Show game mode label
   const modeDisp = document.getElementById('mode-display');
-  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'trench' ? 'MODE: TRENCH' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : gameMode === 'arcade' ? 'MODE: ARCADE' : gameMode === 'siege' ? 'MODE: SIEGE' : 'MODE: CO-OP';
+  modeDisp.textContent = gameMode === 'descent' ? 'MODE: DESCENT' : gameMode === 'breach' ? 'MODE: BREACH' : gameMode === 'trench' ? 'MODE: TRENCH' : gameMode === 'gauntlet' ? 'MODE: GAUNTLET' : gameMode === 'horde' ? 'MODE: HORDE' : gameMode === 'survival' ? 'MODE: SURVIVAL' : gameMode === 'arcade' ? 'MODE: ARCADE' : gameMode === 'siege' ? 'MODE: SIEGE' : 'MODE: CO-OP';
 }
 
 // Internal: the real death screen routine. showDeathScreen() wraps it with a
@@ -13538,8 +13584,8 @@ function _realShowDeathScreen() {
 
   // Mode-specific progression stat (horde has no progression — it's one continuous level)
   const showProg = gameMode !== 'horde';
-  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
-  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
+  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'breach' ? 'ROOM' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
+  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'breach' ? (trenchSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
 
   // Leaderboard history — store up to 50 runs per mode, display all of them in a scrollable list
   const lbKey = `deadzone_lb_${gameMode}`;
@@ -13720,6 +13766,10 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
       titleEl.textContent = 'DESCENT';
       titleEl.style.color = '#0f0';
       titleEl.style.textShadow = '0 0 12px rgba(0,255,0,0.55)';
+    } else if (mode === 'breach') {
+      titleEl.textContent = 'BREACH';
+      titleEl.style.color = '#0ff';
+      titleEl.style.textShadow = '0 0 12px rgba(0,255,255,0.55)';
     } else {
       titleEl.textContent = 'ARCADE';
       titleEl.style.color = '#fa0';
@@ -13785,13 +13835,26 @@ function _beginDescentRun() {
   gameMode = 'descent';
   startSoloGame();
 }
+// BREACH: a linear scored run through trench's rooms with a mod chamber every 3.
+function _beginBreachRun() {
+  isMultiplayer = false;
+  if (hasMidRunSession()) clearMidRunSession();
+  ['hp-chip','btn-dash','btn-shoot','btn-mark','btn-spike'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = '';
+  });
+  const _mb = document.getElementById('mobile-buttons'); if (_mb) _mb.style.display = '';
+  gameMode = 'breach';
+  startSoloGame();
+}
 // Dispatch from the shared weapon picker to the right quick-play run starter.
 function _beginModeRun(mode) {
   if (mode === 'descent') _beginDescentRun();
+  else if (mode === 'breach') _beginBreachRun();
   else _beginArcadeRun();
 }
 addBtn('btn-arcade', () => { _openArcadeWeaponPicker(); });
 addBtn('btn-descent', () => { _openArcadeWeaponPicker('descent'); });
+addBtn('btn-breach', () => { _openArcadeWeaponPicker('breach'); });
 addBtn('btn-arcade-picker-back', () => {
   const el = document.getElementById('arcade-weapon-picker');
   if (el) el.style.display = 'none';
@@ -16435,11 +16498,12 @@ function _showArcadeGameOver() {
   // Persist run to the per-mode leaderboard (top-50 by score). Reused for the
   // descent retry screen too — descent records depth in the "wave" slot.
   const _isDescent = gameMode === 'descent';
-  const lbKey = _isDescent ? 'deadzone_lb_descent' : 'deadzone_lb_arcade';
+  const _isBreach = gameMode === 'breach';
+  const lbKey = _isDescent ? 'deadzone_lb_descent' : _isBreach ? 'deadzone_lb_breach' : 'deadzone_lb_arcade';
   const lbHistory = JSON.parse(localStorage.getItem(lbKey) || '[]');
   const runEntry = {
     score: score|0,
-    wave: _isDescent ? (descentSection + 1) : (arcadeWave|0),
+    wave: _isDescent ? (descentSection + 1) : _isBreach ? (trenchSection + 1) : (arcadeWave|0),
     kills: kills|0,
     time: survivalTime,
     perfect: _arcadePerfectWaves|0,
@@ -16476,15 +16540,15 @@ function _showArcadeGameOver() {
   if (el) {
     const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
     set('ad-score', (score|0).toLocaleString());
-    set('ad-wave', _isDescent ? (descentSection + 1) : (arcadeWave|0));
-    set('ad-wave-label', _isDescent ? 'DEPTH' : 'WAVE');
+    set('ad-wave', _isDescent ? (descentSection + 1) : _isBreach ? (trenchSection + 1) : (arcadeWave|0));
+    set('ad-wave-label', _isDescent ? 'DEPTH' : _isBreach ? 'ROOM' : 'WAVE');
     set('ad-kills', kills|0);
     set('ad-time', `${survivalMin}:${String(survivalSec).padStart(2, '0')}`);
     set('ad-streak', _arcadeBestStreak >= 2 ? `x${_arcadeBestStreak}` : '—');
     set('ad-multikill', _ARCADE_MULTIKILL_LABELS[_arcadeBestMultikillTier] || '—');
     set('ad-perfect', _arcadePerfectWaves|0);
     // Descent has no "perfect waves" stat — hide that cell.
-    const _pc = document.getElementById('ad-perfect-cell'); if (_pc) _pc.style.display = _isDescent ? 'none' : '';
+    const _pc = document.getElementById('ad-perfect-cell'); if (_pc) _pc.style.display = (_isDescent || _isBreach) ? 'none' : '';
     set('ad-subtitle', '+' + shardsEarned + ' BITS · process terminated');
     const rankEl = document.getElementById('ad-rank');
     if (rankEl) {
@@ -16557,9 +16621,9 @@ function restartArcade() {
   // Retry re-opens the weapon picker so the player can choose a fresh loadout
   // instead of being silently re-equipped. The picker (mode-aware) drops back
   // into the same mode the player died in.
-  const _retryDescent = gameMode === 'descent';
-  gameMode = _retryDescent ? 'descent' : 'arcade';
-  _openArcadeWeaponPicker(_retryDescent ? 'descent' : 'arcade');
+  const _retryMode = (gameMode === 'descent' || gameMode === 'breach') ? gameMode : 'arcade';
+  gameMode = _retryMode;
+  _openArcadeWeaponPicker(_retryMode);
 }
 
 // Wire the death-screen buttons once on load (idempotent guard via _wired flag).
@@ -16661,8 +16725,8 @@ function calculateDeathStats() {
   lbHistory.sort((a, b) => b.score - a.score);
   if (lbHistory.length > 50) lbHistory.length = 50;
   localStorage.setItem(lbKey, JSON.stringify(lbHistory));
-  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
-  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
+  const progLabel = gameMode === 'siege' ? 'WAVE' : gameMode === 'descent' ? 'SECTION' : gameMode === 'breach' ? 'ROOM' : gameMode === 'trench' ? 'SECTION' : gameMode === 'survival' ? 'WAVE' : gameMode === 'arcade' ? 'WAVE' : gameMode === 'gauntlet' ? 'ROOM' : 'LEVEL';
+  const progValue = gameMode === 'siege' ? (siegeWave || 1) : gameMode === 'descent' ? (descentSection + 1) : gameMode === 'breach' ? (trenchSection + 1) : gameMode === 'trench' ? (trenchSection + 1) : gameMode === 'survival' ? (survivalWave || 1) : gameMode === 'arcade' ? (arcadeWave || 1) : gameMode === 'gauntlet' ? (gauntletRoom || 1) : (level || 1);
   return { shardsEarned, survivalTime, survivalMin, survivalSec, kills, progLabel, progValue, isNewBest, runBitsEarned };
 }
 
@@ -16704,10 +16768,10 @@ function showDeathToShell() {
   // Arcade mode bypasses the Shell entirely — go straight to the arcade
   // game-over overlay with stats + 1-tap retry. This is the "drop a quarter,
   // hit RETRY" loop.
-  if ((gameMode === 'arcade' || gameMode === 'descent') && !isMultiplayer) {
+  if ((gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach') && !isMultiplayer) {
     // Play the dramatic hit-stop + focus vignette + dissolve first; the beat
     // reveals the (mode-aware) game-over / retry overlay when it finishes.
-    // Descent reuses this same retry screen instead of crashing to the Shell.
+    // Descent + Breach reuse this retry screen instead of crashing to the Shell.
     _playArcadeDeathBeat();
     return;
   }
@@ -16897,7 +16961,7 @@ function startSoloGame() {
   if (gameMode === 'descent') {
     generateDescentMap(window._currentLevelSeed);
     exitPos = null;
-  } else if (gameMode === 'trench') {
+  } else if (gameMode === 'trench' || gameMode === 'breach') {
     generateTrenchMap(window._currentLevelSeed);
     exitPos = null;
   } else if (gameMode === 'survival') {
@@ -16938,7 +17002,7 @@ function startSoloGame() {
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const _sec0X = (_sectionXPositions[0] || 0) * CELL_SIZE;
   const _sec0Y = (_sectionYPositions[0] || 0) * CELL_SIZE;
-  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : gameMode === 'trench' ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : ((gameMode === 'gauntlet' || gameMode === 'roomrush') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : (gameMode === 'trench' || gameMode === 'breach') ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : ((gameMode === 'gauntlet' || gameMode === 'roomrush') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = []; floatingTexts = []; explosions = []; barrels = [];
@@ -16950,7 +17014,7 @@ function startSoloGame() {
   playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade' || gameMode === 'roomrush' || gameMode === 'blitz') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'descent') startDescent();
-  else if (gameMode === 'trench') startTrench();
+  else if (gameMode === 'trench' || gameMode === 'breach') startTrench();
   else if (gameMode === 'survival') startSurvivalWave();
   else if (gameMode === 'arcade') startArcadeWave();
   else if (gameMode === 'horde') startHorde();
@@ -26017,7 +26081,7 @@ function updateArcadeWaves() {
 // Scored modes share the arcade kill-feel: per-kill points with a chain-streak
 // multiplier, multikill callouts, the +X floater, and the top-center SCORE HUD.
 // Arcade and Descent both opt in; every other mode uses flat per-kill scoring.
-function _isScoredMode() { return gameMode === 'arcade' || gameMode === 'descent'; }
+function _isScoredMode() { return gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach'; }
 // Tick the chain-kill streak + multikill windows down each frame. Shared by the
 // scored modes so combos expire on the same cadence regardless of update loop.
 function _decayScoreStreaks() {
@@ -31223,7 +31287,7 @@ function update() {
   if (isHost) {
     if (gameMode === 'descent') {
       updateDescent();
-    } else if (gameMode === 'trench') {
+    } else if (gameMode === 'trench' || gameMode === 'breach') {
       updateTrench();
     } else if (gameMode === 'horde') {
       updateHorde();
@@ -34952,11 +35016,18 @@ function render() {
     _domainWallColor = SHELL_THEME.wall;       // '#0c1830' — dark navy walls
     _domainGridColor = SHELL_THEME.wallStroke; // '#3a7fd6' — neon blue wall edge
     _domainFloorTint = 'rgba(60,120,200,0.05)';// subtle blue wash on the floor
-  } else if (gameMode === 'trench' && trenchSections[trenchSection]) {
+  } else if ((gameMode === 'trench' || gameMode === 'breach') && trenchSections[trenchSection]) {
     const _secPal = _getSectionPalette(trenchSection);
     _domainFloorTint = _secPal.floorTint;
     _domainWallColor = _secPal.wallColor;
     _domainGridColor = _secPal.wallStroke;
+    // BREACH MOD CHAMBER: while the terminal is up, the room reads as a calm
+    // cyan chamber — same transformation as Descent.
+    if (gameMode === 'breach' && _descentTerminal) {
+      _domainFloorTint = 'rgba(0,200,255,0.06)';
+      _domainGridColor = '#0ff';
+      _domainWallColor = '#06141c';
+    }
   } else if (gameMode === 'descent') {
     // Descent floor evolves with depth: reuse the trench domain progression
     // (every ~10 depths bumps the domain) so the floor PATTERN + tint + grid
@@ -35613,6 +35684,8 @@ function render() {
   _drawStageLights(ctx);
   // Ambient decor — terminals, server racks, cryopods, etc. Drawn between decals and entities.
   renderDecor(ctx);
+  // BREACH mod-chamber terminal (descent draws its own in the descent gate block).
+  if (gameMode === 'breach') _drawDescentTerminal(ctx);
 
   // Corrupted memory fragments — ghostly floor text you read while passing through
   if (memoryFragments.length > 0) {
