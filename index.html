@@ -1406,6 +1406,67 @@ const ctx = canvas.getContext('2d');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 
+// ============================================================
+// PIXEL-ART PILOT (MVP) — flag-gated enemy-body sprite swap.
+// Validates whether AI pixel sprites beat the procedural neon shapes once
+// rotated and lit in the real VFX-heavy scene. Fully fail-safe: any
+// missing/unloaded sprite falls back to _drawZombieShape, so the game never
+// breaks. Enable at boot with ?pixel=1, or from the console with
+// `PIXEL_MODE = true; loadEnemySprites()`. See PIXEL_PILOT_SPEC.md.
+// ============================================================
+window.PIXEL_MODE = (function () {
+  const s = (typeof location !== 'undefined' && location.search) || '';
+  if (/[?&]pixel=0\b/.test(s)) return false;            // explicit override: off
+  if (/[?&]pixel=1\b/.test(s)) return true;             // explicit override: on
+  try {                                                  // sticky toggle (future in-game switch)
+    const ls = localStorage.getItem('necro_pixel');
+    if (ls === '0') return false;
+    if (ls === '1') return true;
+  } catch (e) {}
+  // Default ON inside the native app (Capacitor) so the pilot is visible on
+  // device without a query string. Plain web stays default-OFF — use ?pixel=1.
+  try {
+    const C = (typeof window !== 'undefined') && window.Capacitor;
+    if (C && (typeof C.isNativePlatform === 'function' ? C.isNativePlatform() : C.isNative)) return true;
+  } catch (e) {}
+  if (typeof location !== 'undefined' && (location.protocol === 'capacitor:' || location.protocol === 'ionic:')) return true;
+  return false;
+})();
+const ENEMY_SPRITES = {};            // type -> { img, ready }
+const PIXEL_SPRITE_TYPES = ['normal', 'fast', 'tank', 'spitter', 'brute', 'boss'];
+function loadEnemySprites() {
+  for (const t of PIXEL_SPRITE_TYPES) {
+    if (ENEMY_SPRITES[t]) continue;  // already loading/loaded
+    const img = new Image();
+    const rec = { img, ready: false };
+    img.onload = () => { rec.ready = true; };
+    img.onerror = () => { rec.ready = false; };  // stays on the procedural path
+    img.src = `sprites/enemy_${t}.png`;
+    ENEMY_SPRITES[t] = rec;
+  }
+}
+// Eager-load only when the pilot is on, so the default experience never fires
+// 404s for sprites that don't exist yet. Console toggling = re-run the loader.
+if (window.PIXEL_MODE) loadEnemySprites();
+
+// ---- PIXEL-ART PILOT: environment sprites (floor tile + cover/wall block) ----
+// Same flag + fail-safe pattern as enemies. Domain-1 (Entry Cache) pilot art.
+// Any unloaded/missing env sprite falls through to the procedural floor/wall.
+const ENV_SPRITES = {};              // key -> { img, ready }
+const PIXEL_ENV_TYPES = ['floor', 'wall'];   // barrel art shipped but not yet wired
+function loadEnvSprites() {
+  for (const t of PIXEL_ENV_TYPES) {
+    if (ENV_SPRITES[t]) continue;
+    const img = new Image();
+    const rec = { img, ready: false };
+    img.onload = () => { rec.ready = true; };
+    img.onerror = () => { rec.ready = false; };
+    img.src = `sprites/env_${t}.png`;
+    ENV_SPRITES[t] = rec;
+  }
+}
+if (window.PIXEL_MODE) loadEnvSprites();
+
 // ---- NEON BOOST ----
 // Amplify every ctx.shadowBlur assignment on the main game canvas so existing
 // glow calls (hundreds of them across render code) become proper neon-sign
@@ -36504,6 +36565,17 @@ function render() {
       const ri=roomGrid&&roomGrid[cy]?roomGrid[cy][cx]:-1;
       const theme=ri>=0&&rooms[ri]?.theme?rooms[ri].theme:_corridorTheme;
       const _px=cx*CELL_SIZE, _py=cy*CELL_SIZE, _CS=CELL_SIZE;
+      // ---- PIXEL-ART PILOT: floor tile (flag-gated, fail-safe) ----
+      // Blit the pixel floor tile per cell instead of the procedural pattern.
+      // Opaque base fill first guarantees no see-through if the tile has alpha.
+      const _envFloor = window.PIXEL_MODE && ENV_SPRITES.floor;
+      if (_envFloor && _envFloor.ready) {
+        ctx.fillStyle = '#0a0710'; ctx.fillRect(_px, _py, _CS, _CS);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(_envFloor.img, _px, _py, _CS, _CS);
+        ctx.imageSmoothingEnabled = true;
+        continue;
+      }
       // Shell uses the default grid pattern (lines only, no alternating fills)
       // so it looks like a normal stage's floor.
       const _fp = gameState === 'shell'
@@ -36585,6 +36657,17 @@ function render() {
         if(vFloor)ctx.fillRect(px+_CS/2-1,py,2,_CS);
         ctx.globalAlpha=1;}
     } else {
+      // ---- PIXEL-ART PILOT: wall / cover block (flag-gated, fail-safe) ----
+      // Blit the pixel cover-block per wall cell; opaque base avoids see-through.
+      const _envWall = window.PIXEL_MODE && ENV_SPRITES.wall;
+      if (_envWall && _envWall.ready) {
+        const _wx = cx*CELL_SIZE, _wy = cy*CELL_SIZE;
+        ctx.fillStyle = _domainWallColor || '#0a0710'; ctx.fillRect(_wx, _wy, CELL_SIZE, CELL_SIZE);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(_envWall.img, _wx, _wy, CELL_SIZE, CELL_SIZE);
+        ctx.imageSmoothingEnabled = true;
+        continue;
+      }
       ctx.fillStyle = _domainWallColor || '#050508';
       ctx.fillRect(cx*CELL_SIZE,cy*CELL_SIZE,CELL_SIZE,CELL_SIZE);
       // Neon wall edges — glowing outlines where walls meet floor
@@ -40171,6 +40254,43 @@ function render() {
     // Type-specific body shape — tier-scaled glow and inner fill
     const _zr=z.radius, _zlw=z.boss||z.type==='boss'?3:(z._tier>=2?2.5:2);
     const _zt = z._tier || 0;
+    // ---- PIXEL-ART PILOT: sprite body swap (flag-gated, fail-safe) ----
+    // When PIXEL_MODE is on AND this enemy's sprite has loaded, blit the pixel
+    // sprite instead of the procedural shape. It's centered at the origin
+    // inside the existing translate+rotate+scale, so it inherits facing,
+    // spawn-scale, telegraph squash and hit-recoil for free. Status tint + hit
+    // flash are re-applied here, masked to the sprite's alpha. Any unloaded or
+    // missing sprite falls through to the procedural path below.
+    const _spr = window.PIXEL_MODE && ENEMY_SPRITES[z.type];
+    if (_spr && _spr.ready) {
+      // Soft neon halo so the chunky sprite still blooms with the scene.
+      ctx.globalAlpha = 0.18 + _zt * 0.04;
+      ctx.fillStyle = _zc;
+      ctx.beginPath(); ctx.arc(0, 0, _zr + 6, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      // Body sprite — radius _zr maps to half-width. Nearest-neighbour for
+      // crisp pixels; restore smoothing so later drawImage calls stay clean.
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(_spr.img, -_zr, -_zr, _zr * 2, _zr * 2);
+      ctx.imageSmoothingEnabled = true;
+      // Status tint (frozen/shocked/exposed/compromised/overheat) — only when
+      // the status color differs from the base, masked to the sprite's alpha.
+      if (_zc !== z.color) {
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.4; ctx.fillStyle = _zc;
+        ctx.fillRect(-_zr, -_zr, _zr * 2, _zr * 2);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+      // Hit flash — instant white pop, masked to the sprite's alpha.
+      if (z._hfPulse > 0) {
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.92; ctx.fillStyle = '#fff';
+        ctx.fillRect(-_zr, -_zr, _zr * 2, _zr * 2);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1;
+      }
+    } else {
     // PERF: fake glow — larger dimmer shapes instead of shadowBlur. FOUR
     // stacked halos (wide bloom → wide soft → mid → tight bright) give a strong
     // neon bloom. Brighter + an extra outer halo for a hotter neon look.
@@ -40280,6 +40400,7 @@ function render() {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    } // end procedural body path (pixel-art pilot: else of the sprite branch)
     // (old per-state telegraph rings removed — replaced by _drawTelegraph(z, _zr)
     // called in world space after the body restore below.)
     // ---- BOSS PHASE BODY MODIFICATIONS ----

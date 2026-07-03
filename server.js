@@ -7,8 +7,9 @@ const PORT = process.env.PORT || 3000;
 
 // ---- HTTP server to serve static files ----
 const server = http.createServer((req, res) => {
-  // Strip the query string (share links: ?daily= / ?stage= / ?join=) and
-  // contain the resolved path to this directory (no ../ traversal).
+  // Strip the query string/hash (share links ?daily=/?stage=/?join=, the
+  // pixel pilot's ?pixel=1 toggle, cache-busted sprites) and contain the
+  // resolved path to this directory (no ../ traversal).
   let pathname = '/';
   try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (e) {}
   if (pathname === '/') pathname = '/index.html';
@@ -17,7 +18,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(403); res.end('Forbidden'); return;
   }
   const ext = path.extname(filePath);
-  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg' };
+  const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon' };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
 
   fs.readFile(filePath, (err, data) => {
