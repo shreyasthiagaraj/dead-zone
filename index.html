@@ -12872,12 +12872,13 @@ function _scrollAimFromClientX(clientX) {
   _scrollAimAngle = -Math.PI / 2 + (t - 0.5) * 2 * SCROLL_MAX_AIM;
 }
 // Open vertical corridor — no cover (clear sightlines are the whole game).
-// THE STAGE IS THE VIEWPORT: lane width = the portrait screen width (mobile
-// uses the shorter screen dimension so a landscape start can't bake a wide
-// lane), with 1-cell walls at the exact screen edges — enemies physically
-// cannot go beyond the visible left/right.
+// THE STAGE IS THE VIEWPORT: lane width = the FULL current screen width, with
+// 1-cell walls at the exact screen edges — enemies physically cannot go beyond
+// the visible left/right. If the run starts in the wrong orientation, the
+// resize hook (_rebuildScrollLane) regenerates the lane to the new width the
+// moment the device rotates.
 function generateScrollArena(seed) {
-  const _laneW = isMobile ? Math.min(canvas.width, canvas.height) : Math.min(canvas.width, 1100);
+  const _laneW = isMobile ? canvas.width : Math.min(canvas.width, 1200);
   const _laneH = Math.max(1800, Math.floor(Math.max(canvas.width, canvas.height) * 1.8));
   setArenaDimensions(Math.max(320, Math.floor(_laneW)), _laneH);
   const rng = seededRandom(seed || Date.now());
@@ -12913,6 +12914,28 @@ function generateScrollArena(seed) {
 }
 function startScroll() {
   showSectionTitleCard('SECTOR 1', 'hold the line', false);
+}
+// Rebuild the lane to the CURRENT viewport width mid-run (rotation / window
+// resize). Regenerates the corridor, re-pins the turret, and shifts enemies +
+// pickups by the anchor delta so their positions relative to the player hold.
+function _rebuildScrollLane() {
+  if (gameMode !== 'scroll') return;
+  if (gameState !== 'playing' && gameState !== 'paused' && gameState !== 'levelup') return;
+  const _oldAX = _scrollAnchorX, _oldAY = _scrollAnchorY;
+  generateScrollArena(window._currentLevelSeed || Date.now());
+  const _dx = _scrollAnchorX - _oldAX, _dy = _scrollAnchorY - _oldAY;
+  const lp = getLocalPlayer();
+  if (lp) { lp.x = _scrollAnchorX; lp.y = _scrollAnchorY; lp.vx = 0; lp.vy = 0; }
+  for (const z of zombies) {
+    z.x = Math.max(CELL_SIZE * 1.6, Math.min(ARENA_W - CELL_SIZE * 1.6, z.x + _dx));
+    z.y = Math.max(CELL_SIZE * 2, Math.min(ARENA_H - CELL_SIZE * 2, z.y + _dy));
+  }
+  for (const pk of pickups) {
+    pk.x = Math.max(CELL_SIZE * 1.6, Math.min(ARENA_W - CELL_SIZE * 1.6, pk.x + _dx));
+    pk.y += _dy;
+  }
+  camera.x = _scrollAnchorX;
+  camera.y = _scrollAnchorY - canvas.height * 0.26;
 }
 // Curated roster — types that read well approaching in lanes from the top.
 // INFINITE mode: variety keeps unlocking as sectors climb (filtered so a
@@ -13562,7 +13585,7 @@ let debugLighting = false;
 initGL();
 
 // ---- RESIZE ----
-function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; minimapCanvas.width = isMobile ? 90 : 130; minimapCanvas.height = isMobile ? 90 : 130; }
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; minimapCanvas.width = isMobile ? 90 : 130; minimapCanvas.height = isMobile ? 90 : 130; if (typeof _rebuildScrollLane === 'function') _rebuildScrollLane(); }
 window.addEventListener('resize', resize); resize();
 
 // ============================================================
