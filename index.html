@@ -12867,6 +12867,19 @@ function resetScrollState() {
   scrollLevel = 1; scrollDist = 0; _scrollSpawnTimer = 110; // ~2s beat before the first enemy
   _scrollFiring = false; _scrollTouchId = null; _scrollAimAngle = -Math.PI / 2;
 }
+// Neon energy-blast impact (ONSLAUGHT sidearm) — expanding ring + radial
+// sparks + white flash. big=enemy hit, !big=wall/expiry fizzle. Fake glow only.
+function _energyImpactVFX(x, y, color, big) {
+  particles.push({ x, y, vx:0, vy:0, life: big?12:8, maxLife: big?12:8, size: big?30:18, color, type:'wakering' });
+  if (big) particles.push({ x, y, vx:0, vy:0, life:8, maxLife:8, size:16, color:'#fff', type:'wakering' });
+  const _n = big ? 8 : 4;
+  for (let _i = 0; _i < _n; _i++) {
+    const _a = Math.random()*Math.PI*2, _s = 2.5 + Math.random()*(big?5:3);
+    particles.push({ x, y, vx: Math.cos(_a)*_s, vy: Math.sin(_a)*_s, life: 8+Math.floor(Math.random()*5), maxLife: 13,
+      size: 1.5+Math.random()*2, color: _i<2?'#fff':color, type:'spark' });
+  }
+  particles.push({ x, y, vx:0, vy:0, life:4, maxLife:4, size: big?8:5, color:'#fff', type:'spark' });
+}
 // Desktop mouse x → fire angle (absolute: pointer position IS the aim).
 function _scrollAimFromClientX(clientX) {
   const w = window.innerWidth || 1;
@@ -18034,7 +18047,8 @@ function fireWeaponForPlayer(p) {
       pierce: gun.pierce + ((_rm.predatorPierce && p._postDashTimer > 0) ? 1 : 0), pierced: 0,
       life: _sbLife, maxLife: _sbLife,
       flame: false, explosive: false, explosionRadius: 0,
-      tracer: _scrollProj, chain: false, chainRange: 0, chainCount: 0,      // scroll: neon streak trail
+      tracer: false, chain: false, chainRange: 0, chainCount: 0,
+      _energy: _scrollProj,                                                 // scroll: neon energy-blast render + trail + impact
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: false,
       _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
@@ -30621,6 +30635,15 @@ function update() {
     // Deadshot trail — bright cyan light streak + wispy black smoke (matches
     // the sidearm's smoke puffs). Throttled spawns so a long-life pierce
     // shot doesn't pile up trail particles.
+    // Energy blast trail (ONSLAUGHT sidearm) — throttled neon motes shed in the
+    // wake. Cheap: 1 spark every other frame + occasional white core mote (the
+    // scroll sidearm fires ~7/s and bullets live ~50 frames).
+    if(b._energy && (gameTime + i) % 2 === 0){
+      particles.push({ x: b.x - b.vx*0.25 + (Math.random()-0.5)*3, y: b.y - b.vy*0.25 + (Math.random()-0.5)*3,
+        vx: -b.vx*0.05 + (Math.random()-0.5)*0.8, vy: -b.vy*0.05 + (Math.random()-0.5)*0.8,
+        life: 10 + Math.floor(Math.random()*6), maxLife: 16, size: 1.5 + Math.random()*1.5,
+        color: Math.random() < 0.3 ? '#fff' : b.color, type: 'spark' });
+    }
     if(b._deadshotRound){const _dc=b._deadshotColor||b.color;
       // Body embers — chunky cyan sparks spawning every frame in the wake
       // (was every other frame). Two per frame so the trail reads as a
@@ -30720,7 +30743,7 @@ function update() {
     // Bouncing behavior: ricochet off walls
     if(b._bouncing>0&&!_bfast&&obstacleCollision(b.x,b.y,b.size,true)){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);b.x=_bpx;b.y=_bpy;if(obstacleCollision(b.x+b.vx,b.y,b.size,true))b.vx=-b.vx;if(obstacleCollision(b.x,b.y+b.vy,b.size,true))b.vy=-b.vy;b.x+=b.vx;b.y+=b.vy;for(let rk=0;rk<6;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:_bpx,y:_bpy,vx:Math.cos(ra)*3+b.vx*0.3,vy:Math.sin(ra)*3+b.vy*0.3,life:8+Math.random()*6,maxLife:14,size:1.5+Math.random()*2,color:Math.random()>0.5?'#ff8':'#fff',type:'spark'});}screenShake.intensity=Math.max(screenShake.intensity,1.5);continue;}
     const _bAH=ARENA_H;
-    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}bullets[i]=bullets[bullets.length-1],bullets.pop();continue;}
+    if(b.x<0||b.x>ARENA_W||b.y<0||b.y>_bAH){if(b._bouncing>0){b._bouncing--;if(b._deadshotRound)b.damage=Math.floor(b.damage*0.8);if(b.x<0||b.x>ARENA_W)b.vx=-b.vx;if(b.y<0||b.y>_bAH)b.vy=-b.vy;b.x=Math.max(1,Math.min(ARENA_W-1,b.x));b.y=Math.max(1,Math.min(_bAH-1,b.y));for(let rk=0;rk<4;rk++){const ra=Math.random()*Math.PI*2;particles.push({x:b.x,y:b.y,vx:Math.cos(ra)*2,vy:Math.sin(ra)*2,life:8,maxLife:8,size:1.5,color:'#ff8',type:'spark'});}continue;}if(b._energy)_energyImpactVFX(Math.max(4,Math.min(ARENA_W-4,b.x)),Math.max(4,Math.min(_bAH-4,b.y)),b.color,false);bullets[i]=bullets[bullets.length-1],bullets.pop();continue;}
     // For fast bullets (Tesla etc): skip obstacle check — they use sweep collision
     // against zombies/barrels which handles the path correctly. Obstacle check would
     // kill the bullet at its end position (often inside a wall) before sweep runs.
@@ -31659,6 +31682,7 @@ function update() {
           for(let k=0;k<3;k++)particles.push({x:b.x,y:b.y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:10+Math.random()*8,maxLife:18,size:2+Math.random()*2,color:'#f0f',type:'blood'});
         }
         playHitSound();
+        if(b._energy)_energyImpactVFX(b.x,b.y,b.color,true); // neon burst on every enemy hit
         if(!b._hitZombies)b._hitZombies=new Set();b._hitZombies.add(z.zid);b.pierced=(b.pierced||0)+1;if(b.pierced>(b.pierce||0)){if(b.explosive)createExplosion(b.x,b.y,b.explosionRadius,b.damage);bullets[i]=bullets[bullets.length-1],bullets.pop();break;}
       }}
     }
@@ -38930,6 +38954,27 @@ function render() {
     ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.9;
     ctx.beginPath(); for(let di=0;di<4;di++){const da=(di/4)*Math.PI*2;ctx.lineTo(Math.cos(da)*b.size,Math.sin(da)*b.size);ctx.lineTo(Math.cos(da+Math.PI/4)*b.size*0.35,Math.sin(da+Math.PI/4)*b.size*0.35);} ctx.closePath(); ctx.fill();
     ctx.globalAlpha = 0.7; ctx.fillStyle = '#fd0'; ctx.beginPath(); ctx.arc(0, 0, b.size*0.3, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1; ctx.restore();
+    }else if(b._energy){
+    // NEON ENERGY BLAST (ONSLAUGHT sidearm) — a comet of layered fake-glow:
+    // wide ambient halo → tapered tail → bright orb → pulsing white-hot core.
+    // No shadowBlur (perf); reads as a plasma bolt, not a rectangle.
+    const _ea = Math.atan2(b.vy, b.vx);
+    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(_ea);
+    const _es = b.size;
+    // Wide ambient halo (dim, elongated along travel)
+    ctx.globalAlpha = 0.20; ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.ellipse(-_es, 0, _es*4.6, _es*2.3, 0, 0, Math.PI*2); ctx.fill();
+    // Tapered comet tail
+    ctx.globalAlpha = 0.5; ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.moveTo(_es*1.7, 0); ctx.lineTo(-_es*1.2, -_es*1.5); ctx.lineTo(-_es*5.6, 0); ctx.lineTo(-_es*1.2, _es*1.5); ctx.closePath(); ctx.fill();
+    // Bright color orb
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(0, 0, _es*1.7, 0, Math.PI*2); ctx.fill();
+    // White-hot pulsing core
+    ctx.globalAlpha = 0.8 + Math.sin((gameTime + (b._originX||0)) * 0.9) * 0.2;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(_es*0.4, 0, _es*0.95, 0, Math.PI*2); ctx.fill();
     ctx.globalAlpha = 1; ctx.restore();
     }else if(b.laserGlow){
     // Laser dot with intense glow
