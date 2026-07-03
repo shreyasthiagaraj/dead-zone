@@ -967,6 +967,7 @@ body.mobile #mobile-buttons { display: block; }
       <button class="menu-btn" id="btn-breach" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0ff;border-color:#0ff;background:linear-gradient(180deg,rgba(0,255,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,255,0.25),inset 0 0 8px rgba(0,255,255,0.08);text-shadow:0 0 8px rgba(0,255,255,0.6)">▶ BREACH</button>
       <button class="menu-btn" id="btn-roomrush" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0fc;border-color:#0fc;background:linear-gradient(180deg,rgba(0,255,200,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,200,0.25),inset 0 0 8px rgba(0,255,200,0.08);text-shadow:0 0 8px rgba(0,255,200,0.6)">▦ ROOM RUSH</button>
       <button class="menu-btn" id="btn-blitz" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#f4f;border-color:#f4f;background:linear-gradient(180deg,rgba(255,70,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,70,255,0.25),inset 0 0 8px rgba(255,70,255,0.08);text-shadow:0 0 8px rgba(255,70,255,0.6)">⏱ BLITZ</button>
+      <button class="menu-btn" id="btn-scroll" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#f44;border-color:#f44;background:linear-gradient(180deg,rgba(255,68,68,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,68,68,0.25),inset 0 0 8px rgba(255,68,68,0.08);text-shadow:0 0 8px rgba(255,68,68,0.6)">▲ ONSLAUGHT</button>
       <div style="display:flex;flex-direction:row;gap:8px;flex-wrap:wrap;justify-content:center">
         <button class="menu-btn" id="btn-crypt" style="display:none">FORGE</button>
         <button class="menu-btn" id="btn-challenges" style="display:none">CHALLENGES</button>
@@ -1601,6 +1602,9 @@ const GUN_RELOAD_TIME = 50;       // frames (~0.8s cooldown)
 const GUN_BULLET_RANGE = 2;       // life=2, speed=300: frame 1 sweeps 0-300px (full range), frame 2 cleans up
 const GUN_EFFECTIVE_RANGE = 210;   // base hitscan range in px
 function _getGunRange() {
+  // ONSLAUGHT (scroll): the sidearm covers the whole screen height — range is
+  // not a knob in this mode, target priority is.
+  if (gameMode === 'scroll') return 1600;
   const _rm = runMods || {};
   const _lr = _rm.longReach || 0;
   const _longBonus = _lr > 0 ? _modScale('long_reach', 0.40, 0.08) : 0;
@@ -5506,7 +5510,8 @@ function updateXPOrbs() {
   if (!lp) return;
   // Magnet radius grows with upgrades and meta
   const mods = runMods || {};
-  const baseR = 80;
+  // ONSLAUGHT (scroll): the fixed turret can't walk to orbs — vacuum everything.
+  const baseR = gameMode === 'scroll' ? 4000 : 80;
   const magnetR = baseR * (1 + (mods.magnetRadiusMult || 0)) * (1 + getMetaBonus('magnet'));
   const magnetR2 = magnetR * magnetR;
   const pickupR2 = (PLAYER_RADIUS + 12) * (PLAYER_RADIUS + 12);
@@ -12825,6 +12830,147 @@ function generateArcadeArena(seed) {
   uploadDungeonGrid();
 }
 
+// ============================================================
+// ONSLAUGHT (gameMode 'scroll') — one-thumb vertical horde defense.
+// The player is a fixed turret at the bottom of an open corridor; hordes
+// descend from the top; the thumb (or mouse) steers only the left/right
+// fire angle. Skill = planning shots + target priority, not dexterity.
+// Levels ("sectors") tick as the infinite map visually scrolls past; a
+// mod card draft opens automatically every 2 sectors. Solo-only.
+// ============================================================
+let scrollLevel = 1;          // current sector
+let scrollDist = 0;           // accumulated scroll (world px) — drives sectors + floor visuals
+let _scrollSpawnTimer = 90;   // frames until next squad spawn
+let _scrollAimAngle = -Math.PI / 2; // current fire angle (straight up)
+let _scrollFiring = false;    // thumb/mouse held → fire (or charge, for deadshot)
+let _scrollTouchId = null;    // the touch steering the aim
+let _scrollAnchorX = 0, _scrollAnchorY = 0; // pinned player position
+const SCROLL_MAX_AIM = Math.PI * 78 / 180;  // aim sweep: up ±78°
+const SCROLL_SPEED = 1.6;                   // visual scroll px/frame (~96px/s)
+const SCROLL_LEVEL_DIST = 2400;             // scroll px per sector (~25s)
+const SCROLL_ZOMBIE_CAP = 42;               // perf guard (mobile)
+function resetScrollState() {
+  scrollLevel = 1; scrollDist = 0; _scrollSpawnTimer = 60;
+  _scrollFiring = false; _scrollTouchId = null; _scrollAimAngle = -Math.PI / 2;
+}
+// Thumb/mouse x → fire angle. Absolute mapping (screen left = full left tilt,
+// center = straight up) — predictable, no drift, ideal for one-thumb play.
+function _scrollAimFromClientX(clientX) {
+  const w = window.innerWidth || 1;
+  const t = Math.max(0, Math.min(1, clientX / w));
+  _scrollAimAngle = -Math.PI / 2 + (t - 0.5) * 2 * SCROLL_MAX_AIM;
+}
+// Open vertical corridor — no cover (clear sightlines are the whole game).
+function generateScrollArena(seed) {
+  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 0.5), Math.floor(DEFAULT_ARENA_H * 0.72));
+  const rng = seededRandom(seed || Date.now());
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  const margin = 4;
+  const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
+  carveRoom(arena);
+  rooms.push(arena);
+  arena.theme = ROOM_THEMES[4];
+  arena.brightness = 1.0;
+  arena.flicker = false;
+  roomDetails = [];
+  // Light floor debris for texture (no gameplay obstacles)
+  const arenaDetails = [];
+  for (let di = 0; di < 26; di++) {
+    const px = (arena.x + 2 + rng() * (arena.w - 4)) * CELL_SIZE;
+    const py = (arena.y + 2 + rng() * (arena.h - 4)) * CELL_SIZE;
+    const kind = rng();
+    if (kind < 0.4) arenaDetails.push({ type: 'stain', x: px, y: py, size: 12 + rng() * 26, color: rng() < 0.5 ? '#2a1515' : '#1a1a10' });
+    else if (kind < 0.7) arenaDetails.push({ type: 'scratch', x: px, y: py, angle: rng() * Math.PI, len: 8 + rng() * 15 });
+    else arenaDetails.push({ type: 'rubble', x: px, y: py, size: 6 + rng() * 10, count: 3 + Math.floor(rng() * 4) });
+  }
+  roomDetails.push({ ri: 0, theme: arena.theme, details: arenaDetails, brightness: 1.0, flicker: false });
+  buildRoomGrid();
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs*CELL_SIZE, y: y*CELL_SIZE, w: (x-rs)*CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
+  // Pinned turret position — bottom-center, above the lower wall.
+  _scrollAnchorX = ARENA_W / 2;
+  _scrollAnchorY = ARENA_H - (margin + 4) * CELL_SIZE;
+}
+function startScroll() {
+  showSectionTitleCard('SECTOR 1', 'hold the line', false);
+}
+// Curated roster — types that read well approaching in lanes from the top.
+// New pressure every couple of sectors; filtered so a missing type never crashes.
+function _scrollTierTypes(lv) {
+  let ts;
+  if (lv <= 2)      ts = ['normal', 'normal', 'fast'];
+  else if (lv <= 4) ts = ['normal', 'fast', 'splitter'];
+  else if (lv <= 6) ts = ['normal', 'fast', 'splitter', 'spitter'];
+  else if (lv <= 8) ts = ['normal', 'fast', 'splitter', 'spitter', 'tank'];
+  else              ts = ['normal', 'fast', 'splitter', 'spitter', 'tank', 'stalker'];
+  return ts.filter(t => ZOMBIE_TYPES[t]);
+}
+// Spawn one enemy just above the visible top edge, random x across the view.
+function spawnScrollZombie(tk) {
+  const t = ZOMBIE_TYPES[tk] || ZOMBIE_TYPES.normal;
+  const lp = getLocalPlayer();
+  if (!lp) return;
+  const _visW = (canvas.width / (window.cameraZoom || 1));
+  const x = Math.max(CELL_SIZE * 6, Math.min(ARENA_W - CELL_SIZE * 6,
+    lp.x + (Math.random() - 0.5) * _visW * 0.92));
+  const y = Math.max(CELL_SIZE * 5, lp.y - (canvas.height / (window.cameraZoom || 1)) * 0.62 - 40 - Math.random() * 120);
+  const _sm = _enemyStageMult(scrollLevel);
+  const hp = Math.max(1, Math.floor(t.hp * _sm.hp));
+  const spd = t.speed * _sm.speed;
+  zombies.push({ zid: _nextZombieId++, x, y, vx: 0, vy: spd, hp, maxHp: hp, speed: spd,
+    radius: t.radius, color: t.color, damage: t.damage, score: t.score, type: tk,
+    attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0,
+    lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0,
+    angle: Math.PI / 2, staggerTimer: 0, aware: true,
+    wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0,
+    stuckTimer: 0, lastX: 0, lastY: 0 });
+}
+// Per-frame director: pin the player, advance the scroll/sectors, open the
+// auto-draft every 2 sectors, spawn squads, and magnet drops to the turret.
+function updateScrollMode() {
+  if (gameMode !== 'scroll' || gameState !== 'playing') return;
+  const lp = getLocalPlayer();
+  if (!lp || !lp.alive) return;
+  // FIXED TURRET: pin position every frame (also cancels knockback/pulls).
+  lp.x = _scrollAnchorX; lp.y = _scrollAnchorY; lp.vx = 0; lp.vy = 0;
+  // Advance the infinite scroll → sector progression.
+  scrollDist += SCROLL_SPEED;
+  const newLevel = 1 + Math.floor(scrollDist / SCROLL_LEVEL_DIST);
+  if (newLevel !== scrollLevel) {
+    scrollLevel = newLevel;
+    level = scrollLevel; // keep the shared HUD level in sync
+    showSectionTitleCard('SECTOR ' + scrollLevel, scrollLevel % 2 === 0 ? 'mod uplink ready' : 'the swarm thickens', false);
+    triggerGlitchSurge(0.3, 22);
+    playSound(600, 0.08, 'sine', 0.1);
+    // AUTO MOD DRAFT every 2 sectors — the run's whole build path (no shop).
+    if (scrollLevel % 2 === 0 && !levelUpChoices) {
+      pendingLevelUps = Math.max(pendingLevelUps || 0, 1);
+      triggerLevelUpPicker(); // pauses the game (gameState 'levelup') until picked
+    }
+  }
+  // Squad spawner — pressure ramps with sector; capped for mobile perf.
+  _scrollSpawnTimer--;
+  if (_scrollSpawnTimer <= 0) {
+    _scrollSpawnTimer = Math.max(36, 110 - scrollLevel * 6) + Math.floor(Math.random() * 30);
+    if (zombies.length < SCROLL_ZOMBIE_CAP) {
+      const ts = _scrollTierTypes(scrollLevel);
+      const squad = 2 + Math.min(6, Math.floor(scrollLevel / 2)) + Math.floor(Math.random() * 2);
+      for (let i = 0; i < squad && zombies.length < SCROLL_ZOMBIE_CAP; i++) {
+        spawnScrollZombie(ts[Math.floor(Math.random() * ts.length)]);
+      }
+    }
+  }
+  // Drop magnet: the turret can't walk to pickups — drift them to the player.
+  for (const pk of pickups) {
+    const dx = lp.x - pk.x, dy = lp.y - pk.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    if (d < 1000) { const pull = Math.min(9, 2.5 + 500 / d); pk.x += (dx / d) * pull; pk.y += (dy / d) * pull; }
+  }
+}
+
 function generateHordeArena(seed) {
   setArenaDimensions(DEFAULT_ARENA_W, DEFAULT_ARENA_H);
   const rng = seededRandom(seed || Date.now());
@@ -13314,7 +13460,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench';
+  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench' || gameMode === 'scroll';
   const baseBright = _brightMode ? 0.35 : 0.25;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -13799,6 +13945,10 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
       titleEl.textContent = 'BREACH';
       titleEl.style.color = '#0ff';
       titleEl.style.textShadow = '0 0 12px rgba(0,255,255,0.55)';
+    } else if (mode === 'scroll') {
+      titleEl.textContent = 'ONSLAUGHT';
+      titleEl.style.color = '#f44';
+      titleEl.style.textShadow = '0 0 12px rgba(255,68,68,0.55)';
     } else {
       titleEl.textContent = 'ARCADE';
       titleEl.style.color = '#fa0';
@@ -13807,6 +13957,9 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
   }
   grid.innerHTML = '';
   for (const pk in PRIMARY_WEAPON_OPTIONS) {
+    // ONSLAUGHT: fixed-turret one-thumb mode — the melee ripper doesn't fit
+    // (no movement, no reach). Sidearm + Deadshot only.
+    if (mode === 'scroll' && pk === 'ripper') continue;
     const pw = PRIMARY_WEAPON_OPTIONS[pk];
     const isP = selectedPrimary === pk;
     const card = document.createElement('button');
@@ -13875,15 +14028,35 @@ function _beginBreachRun() {
   gameMode = 'breach';
   startSoloGame();
 }
+// ONSLAUGHT (scroll): one-thumb vertical horde defense. Fixed player at the
+// bottom, hordes descend from the top, thumb steers the fire angle. Only the
+// SPECIAL button shows — no dash / attack / shoot buttons (touch = fire).
+function _beginScrollRun() {
+  isMultiplayer = false;
+  if (hasMidRunSession()) clearMidRunSession();
+  ['hp-chip','btn-mark'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = '';
+  });
+  // Explicitly hide the buttons this mode doesn't use (a retry via
+  // restartArcade re-shows the full arcade set before we get here).
+  ['btn-dash','btn-shoot','btn-spike','minimap'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+  const _mb = document.getElementById('mobile-buttons'); if (_mb) _mb.style.display = '';
+  gameMode = 'scroll';
+  startSoloGame();
+}
 // Dispatch from the shared weapon picker to the right quick-play run starter.
 function _beginModeRun(mode) {
   if (mode === 'descent') _beginDescentRun();
   else if (mode === 'breach') _beginBreachRun();
+  else if (mode === 'scroll') _beginScrollRun();
   else _beginArcadeRun();
 }
 addBtn('btn-arcade', () => { _openArcadeWeaponPicker(); });
 addBtn('btn-descent', () => { _openArcadeWeaponPicker('descent'); });
 addBtn('btn-breach', () => { _openArcadeWeaponPicker('breach'); });
+addBtn('btn-scroll', () => { _openArcadeWeaponPicker('scroll'); });
 addBtn('btn-arcade-picker-back', () => {
   const el = document.getElementById('arcade-weapon-picker');
   if (el) el.style.display = 'none';
@@ -16528,11 +16701,12 @@ function _showArcadeGameOver() {
   // descent retry screen too — descent records depth in the "wave" slot.
   const _isDescent = gameMode === 'descent';
   const _isBreach = gameMode === 'breach';
-  const lbKey = _isDescent ? 'deadzone_lb_descent' : _isBreach ? 'deadzone_lb_breach' : 'deadzone_lb_arcade';
+  const _isScroll = gameMode === 'scroll';
+  const lbKey = _isDescent ? 'deadzone_lb_descent' : _isBreach ? 'deadzone_lb_breach' : _isScroll ? 'deadzone_lb_scroll' : 'deadzone_lb_arcade';
   const lbHistory = JSON.parse(localStorage.getItem(lbKey) || '[]');
   const runEntry = {
     score: score|0,
-    wave: _isDescent ? (descentSection + 1) : _isBreach ? (trenchSection + 1) : (arcadeWave|0),
+    wave: _isDescent ? (descentSection + 1) : _isBreach ? (trenchSection + 1) : _isScroll ? (scrollLevel|0) : (arcadeWave|0),
     kills: kills|0,
     time: survivalTime,
     perfect: _arcadePerfectWaves|0,
@@ -16650,7 +16824,7 @@ function restartArcade() {
   // Retry re-opens the weapon picker so the player can choose a fresh loadout
   // instead of being silently re-equipped. The picker (mode-aware) drops back
   // into the same mode the player died in.
-  const _retryMode = (gameMode === 'descent' || gameMode === 'breach') ? gameMode : 'arcade';
+  const _retryMode = (gameMode === 'descent' || gameMode === 'breach' || gameMode === 'scroll') ? gameMode : 'arcade';
   gameMode = _retryMode;
   _openArcadeWeaponPicker(_retryMode);
 }
@@ -16797,7 +16971,7 @@ function showDeathToShell() {
   // Arcade mode bypasses the Shell entirely — go straight to the arcade
   // game-over overlay with stats + 1-tap retry. This is the "drop a quarter,
   // hit RETRY" loop.
-  if ((gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach') && !isMultiplayer) {
+  if ((gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach' || gameMode === 'scroll') && !isMultiplayer) {
     // Play the dramatic hit-stop + focus vignette + dissolve first; the beat
     // reveals the (mode-aware) game-over / retry overlay when it finishes.
     // Descent + Breach reuse this retry screen instead of crashing to the Shell.
@@ -17004,6 +17178,10 @@ function startSoloGame() {
   } else if (gameMode === 'blitz') {
     generateArcadeArena(window._currentLevelSeed);
     exitPos = null;
+  } else if (gameMode === 'scroll') {
+    generateScrollArena(window._currentLevelSeed);
+    exitPos = null;
+    resetScrollState();
   } else if (gameMode === 'horde') {
     generateHordeArena(window._currentLevelSeed);
     exitPos = null;
@@ -17031,7 +17209,7 @@ function startSoloGame() {
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const _sec0X = (_sectionXPositions[0] || 0) * CELL_SIZE;
   const _sec0Y = (_sectionYPositions[0] || 0) * CELL_SIZE;
-  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : (gameMode === 'trench' || gameMode === 'breach') ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : ((gameMode === 'gauntlet' || gameMode === 'roomrush') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : (gameMode === 'trench' || gameMode === 'breach') ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : gameMode === 'scroll' ? { x: _scrollAnchorX, y: _scrollAnchorY } : ((gameMode === 'gauntlet' || gameMode === 'roomrush') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = []; floatingTexts = []; explosions = []; barrels = [];
@@ -17040,7 +17218,7 @@ function startSoloGame() {
   if (gameMode === 'dungeon') placeExit();
   showScreen(null);
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade' || gameMode === 'roomrush' || gameMode === 'blitz') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade' || gameMode === 'roomrush' || gameMode === 'blitz' || gameMode === 'scroll') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'descent') startDescent();
   else if (gameMode === 'trench' || gameMode === 'breach') startTrench();
@@ -17051,6 +17229,7 @@ function startSoloGame() {
   else if (gameMode === 'gauntlet') startGauntlet();
   else if (gameMode === 'roomrush') startRoomRush();
   else if (gameMode === 'blitz') startBlitz();
+  else if (gameMode === 'scroll') startScroll();
   else startLevel();
 }
 
@@ -17200,6 +17379,8 @@ document.addEventListener('visibilitychange', () => {
 document.addEventListener('click', _onAppForeground);
 window.addEventListener('mousemove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY;
+  // ONSLAUGHT (scroll): mouse x steers the fire angle (desktop parity with thumb).
+  if (gameMode === 'scroll' && gameState === 'playing') _scrollAimFromClientX(e.clientX);
   // Desktop virtual joystick: pivot around the click point to steer.
   if (!isMobile && leftJoystick.active) {
     let dx = e.clientX - leftJoystick.cx, dy = e.clientY - leftJoystick.cy;
@@ -17217,6 +17398,8 @@ window.addEventListener('mousedown', e => {
   // Don't start the joystick if the click targeted a HUD element (buttons, weapon slots, menus).
   const el = e.target;
   if (el && el !== canvas && el !== document.body && el.tagName !== 'HTML') return;
+  // ONSLAUGHT (scroll): mouse-down = hold trigger (no movement joystick).
+  if (gameMode === 'scroll') { _scrollFiring = true; _scrollAimFromClientX(e.clientX); return; }
   leftJoystick.active = true;
   leftJoystick.cx = e.clientX; leftJoystick.cy = e.clientY;
   leftJoystick.dx = 0; leftJoystick.dy = 0;
@@ -17226,6 +17409,7 @@ window.addEventListener('mouseup', e => {
   if (e.button !== 0) return;
   mouse.down = false;
   if (isMobile) return;
+  if (gameMode === 'scroll') _scrollFiring = false;
   leftJoystick.active = false;
   leftJoystick.dx = 0; leftJoystick.dy = 0;
   leftJoystick.nx = 0; leftJoystick.ny = 0;
@@ -17236,9 +17420,17 @@ canvas.addEventListener('mousedown', () => canvas.focus());
 
 // Touch
 // Single joystick: left side of screen = movement/aim joystick. Right side = buttons only.
-function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue; if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } } }
-function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } } }
-function handleTouchEnd(e) { for (const t of e.changedTouches) { if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} } if ((gameState === 'playing' || gameState === 'shell') && !_debugPickerOpen) e.preventDefault(); }
+function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue;
+  // ONSLAUGHT (scroll): the whole screen is the one-thumb aim/fire zone —
+  // first touch steers the fire angle and holds the trigger.
+  if (gameMode === 'scroll') { if (_scrollTouchId === null) { _scrollTouchId = t.identifier; _scrollFiring = true; _scrollAimFromClientX(tx); } continue; }
+  if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } } }
+function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) {
+  if (gameMode === 'scroll') { if (t.identifier === _scrollTouchId) _scrollAimFromClientX(t.clientX); continue; }
+  if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } } }
+function handleTouchEnd(e) { for (const t of e.changedTouches) {
+  if (gameMode === 'scroll' && t.identifier === _scrollTouchId) { _scrollTouchId = null; _scrollFiring = false; continue; }
+  if (leftJoystick.active&&t.identifier===leftJoystick.id){leftJoystick.active=false;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0;} } if ((gameState === 'playing' || gameState === 'shell') && !_debugPickerOpen) e.preventDefault(); }
 if (isMobile) {
   // Listen on canvas and joystick zones for touch start
   canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
@@ -18039,6 +18231,7 @@ function _dashClassColor() {
 // spike-class card transforms the mechanic entirely (Hades-style cast). All
 // 5 mechanics share a button + charges + per-class color scheme.
 function throwSpike() {
+  if (gameMode === 'scroll') return; // ONSLAUGHT: no attack button
   if (gameState !== 'playing' && gameState !== 'shell') return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
@@ -24057,6 +24250,7 @@ function _fireDeadshot(lp) {
 }
 
 function dash() {
+  if (gameMode === 'scroll') return; // ONSLAUGHT: fixed turret — no dash
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   const _mods = runMods || {};
@@ -26110,7 +26304,7 @@ function updateArcadeWaves() {
 // Scored modes share the arcade kill-feel: per-kill points with a chain-streak
 // multiplier, multikill callouts, the +X floater, and the top-center SCORE HUD.
 // Arcade and Descent both opt in; every other mode uses flat per-kill scoring.
-function _isScoredMode() { return gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach'; }
+function _isScoredMode() { return gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'breach' || gameMode === 'scroll'; }
 // Tick the chain-kill streak + multikill windows down each frame. Shared by the
 // scored modes so combos expire on the same cadence regardless of update loop.
 function _decayScoreStreaks() {
@@ -28749,6 +28943,15 @@ function update() {
       // otherwise lp.angle stays where it was when the charge started.
       if (!_deadshotCharging) lp.angle = _autoAimAngle;
     }
+    // ONSLAUGHT (scroll): one-thumb control overrides everything above — the
+    // thumb/mouse x IS the aim (upward cone), applied even mid-deadshot-charge
+    // so the charge keeps tracking the thumb. No movement input, no aim assist.
+    if (gameMode === 'scroll') {
+      dx = 0; dy = 0;
+      lp.angle = _scrollAimAngle;
+      _autoAimAngle = _scrollAimAngle;
+      _autoAimTarget = null;
+    }
     // Gamepad left stick — additive with keyboard
     if(gamepad.connected&&(gamepad.lx!==0||gamepad.ly!==0)){
       dx=gamepad.lx;dy=gamepad.ly;
@@ -30125,7 +30328,10 @@ function update() {
 
     const w=lp.weapons[lp.currentWeapon];
     if(w&&w.muzzleFlash>0)w.muzzleFlash--;
-    const shouldFire=isMobile?rightJoystick.firing:(keys['a']||gamepad.fire);
+    // ONSLAUGHT (scroll): thumb-down (or mouse-down / 'a') IS the fire input —
+    // sidearm auto-fires while held; deadshot charges on hold, fires on release.
+    const shouldFire = gameMode === 'scroll' ? (_scrollFiring || !!keys['a'])
+                     : (isMobile ? rightJoystick.firing : (keys['a'] || gamepad.fire));
     lp._firing=shouldFire;
     // Cooldown tick — gun cools down when not firing
     if (_gunReloading) {
@@ -31355,6 +31561,7 @@ function update() {
       updateSurvivalWaves();
     } else if (gameMode === 'arcade') {
       updateArcadeWaves();
+      updateScrollMode();
     } else if (gameMode !== 'shell') {
       // Continuous zombie spawning based on level (skip Shell — staging only).
       spawnTimer++;
@@ -35490,6 +35697,38 @@ function render() {
     // setup here, then every decal draws inside that mask for free.
     ctx.save();
     ctx.clip(_floorPath);
+    // ---- ONSLAUGHT (scroll): the world visibly scrolls past the fixed turret.
+    // Cheap parallax: horizontal lane lines drift downward with scrollDist, a
+    // brighter seam marks each sector boundary, plus a faint aim guide so the
+    // one-thumb player can line up shots. All world-space, floor-clipped.
+    if (gameMode === 'scroll') {
+      const _slSpace = 130;
+      const _slL = camera.x - canvas.width/2, _slR = camera.x + canvas.width/2;
+      ctx.lineWidth = 1;
+      for (let _si = 0; _si < 12; _si++) {
+        const _sy = _dvT + (((_si * _slSpace) + scrollDist) % (canvas.height + 80));
+        // Sector seam: line whose absolute scroll position crosses a sector multiple
+        const _absY = Math.round((_sy - _dvT - scrollDist) / _slSpace);
+        const _isSeam = ((_si + Math.floor(scrollDist / _slSpace)) % 8) === 0;
+        ctx.globalAlpha = _isSeam ? 0.16 : 0.06;
+        ctx.strokeStyle = _isSeam ? '#f44' : '#4ff';
+        ctx.beginPath(); ctx.moveTo(_slL, _sy); ctx.lineTo(_slR, _sy); ctx.stroke();
+      }
+      // Aim guide — faint dashed ray along the current fire angle.
+      const _agP = getLocalPlayer();
+      if (_agP && _agP.alive) {
+        ctx.globalAlpha = 0.14;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([10, 14]);
+        ctx.beginPath();
+        ctx.moveTo(_agP.x + Math.cos(_scrollAimAngle) * (PLAYER_RADIUS + 16), _agP.y + Math.sin(_scrollAimAngle) * (PLAYER_RADIUS + 16));
+        ctx.lineTo(_agP.x + Math.cos(_scrollAimAngle) * 1600, _agP.y + Math.sin(_scrollAimAngle) * 1600);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.globalAlpha = 1;
+    }
     for (const d of decals) {
       if (d.x < _dvL || d.x > _dvR || d.y < _dvT || d.y > _dvB) continue;
       ctx.globalAlpha = d.alpha;
@@ -41052,6 +41291,7 @@ function render() {
   if (gameState !== 'shell')
   {
     var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
+    if (gameMode === 'scroll') spotRadius = 3000; // ONSLAUGHT: no fog — the whole lane must read
     // BLACKOUT modifier: halve flashlight range
     if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].modifier && trenchSections[trenchSection].modifier.id === 'blackout') spotRadius = Math.floor(spotRadius * 0.5);
     // THE CORE domain: self-lit, no fog (expand radius massively)
