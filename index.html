@@ -12872,13 +12872,19 @@ function _scrollAimFromClientX(clientX) {
   _scrollAimAngle = -Math.PI / 2 + (t - 0.5) * 2 * SCROLL_MAX_AIM;
 }
 // Open vertical corridor — no cover (clear sightlines are the whole game).
+// THE STAGE IS THE VIEWPORT: lane width = the portrait screen width (mobile
+// uses the shorter screen dimension so a landscape start can't bake a wide
+// lane), with 1-cell walls at the exact screen edges — enemies physically
+// cannot go beyond the visible left/right.
 function generateScrollArena(seed) {
-  setArenaDimensions(Math.floor(DEFAULT_ARENA_W * 0.5), Math.floor(DEFAULT_ARENA_H * 0.72));
+  const _laneW = isMobile ? Math.min(canvas.width, canvas.height) : Math.min(canvas.width, 1100);
+  const _laneH = Math.max(1800, Math.floor(Math.max(canvas.width, canvas.height) * 1.8));
+  setArenaDimensions(Math.max(320, Math.floor(_laneW)), _laneH);
   const rng = seededRandom(seed || Date.now());
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
   rooms = [];
-  const margin = 4;
+  const margin = 1; // thin edge walls — the lane fills the whole viewport
   const arena = { x: margin, y: margin, w: GRID_W - margin * 2, h: GRID_H - margin * 2 };
   carveRoom(arena);
   rooms.push(arena);
@@ -12909,27 +12915,39 @@ function startScroll() {
   showSectionTitleCard('SECTOR 1', 'hold the line', false);
 }
 // Curated roster — types that read well approaching in lanes from the top.
-// New pressure every couple of sectors; filtered so a missing type never crashes.
+// INFINITE mode: variety keeps unlocking as sectors climb (filtered so a
+// missing type never crashes); HP/speed scale per sector via _enemyStageMult,
+// so survival is the score — there is no end state.
 function _scrollTierTypes(lv) {
   let ts;
-  if (lv <= 2)      ts = ['normal', 'normal', 'fast'];
-  else if (lv <= 4) ts = ['normal', 'fast', 'splitter'];
-  else if (lv <= 6) ts = ['normal', 'fast', 'splitter', 'spitter'];
-  else if (lv <= 8) ts = ['normal', 'fast', 'splitter', 'spitter', 'tank'];
-  else              ts = ['normal', 'fast', 'splitter', 'spitter', 'tank', 'stalker'];
+  if (lv <= 2)       ts = ['normal', 'normal', 'fast'];
+  else if (lv <= 4)  ts = ['normal', 'fast', 'splitter'];
+  else if (lv <= 6)  ts = ['normal', 'fast', 'splitter', 'spitter'];
+  else if (lv <= 8)  ts = ['normal', 'fast', 'splitter', 'spitter', 'leaper', 'tank'];
+  else if (lv <= 11) ts = ['normal', 'fast', 'splitter', 'spitter', 'leaper', 'tank', 'exploder', 'stalker'];
+  else if (lv <= 14) ts = ['fast', 'splitter', 'spitter', 'leaper', 'tank', 'exploder', 'stalker', 'brute'];
+  else               ts = ['fast', 'splitter', 'spitter', 'leaper', 'tank', 'exploder', 'stalker', 'brute', 'crusher'];
   return ts.filter(t => ZOMBIE_TYPES[t]);
 }
-// Spawn one enemy just above the visible top edge, random x across the view.
+// Spawn one enemy. Entry points: the TOP edge (just above the visible top) or
+// the SIDE walls within the top ~25% of the screen — never lower, never behind.
 function spawnScrollZombie(tk) {
   const t = ZOMBIE_TYPES[tk] || ZOMBIE_TYPES.normal;
   const lp = getLocalPlayer();
   if (!lp) return;
-  const _visW = (canvas.width / (window.cameraZoom || 1));
-  const x = Math.max(CELL_SIZE * 6, Math.min(ARENA_W - CELL_SIZE * 6,
-    lp.x + (Math.random() - 0.5) * _visW * 0.92));
   // Visible top ≈ lp.y - 0.76*canvas.height (the scroll camera frames the
-  // turret low on screen) — spawn just past it so enemies never pop in-view.
-  const y = Math.max(CELL_SIZE * 5, lp.y - canvas.height * 0.80 - 40 - Math.random() * 120);
+  // turret low on screen).
+  const _visTop = lp.y - canvas.height * 0.76;
+  let x, y;
+  if (Math.random() < 0.72) {
+    // TOP entry: across the full lane width, just past the visible top.
+    x = CELL_SIZE * 1.5 + Math.random() * (ARENA_W - CELL_SIZE * 3);
+    y = Math.max(CELL_SIZE * 2, _visTop - 60 - Math.random() * 120);
+  } else {
+    // SIDE entry: hugging the left/right wall, within the top 25% of the screen.
+    x = Math.random() < 0.5 ? CELL_SIZE * 1.6 + t.radius : ARENA_W - CELL_SIZE * 1.6 - t.radius;
+    y = Math.max(CELL_SIZE * 2, _visTop + Math.random() * canvas.height * 0.25);
+  }
   const _sm = _enemyStageMult(scrollLevel);
   const hp = Math.max(1, Math.floor(t.hp * _sm.hp));
   const spd = t.speed * _sm.speed;
@@ -12938,6 +12956,7 @@ function spawnScrollZombie(tk) {
     attackCooldown: 0, hitFlash: 0, ranged: t.ranged || false, fireRate: t.fireRate || 0,
     lastFired: 0, explodeOnDeath: t.explodeOnDeath || false, explosionRadius: t.explosionRadius || 0,
     angle: Math.PI / 2, staggerTimer: 0, aware: true,
+    _spawnAnim: 30, _spawnAnimMax: 30, // materialize poof — side entries pop in-view
     wanderAngle: Math.random() * Math.PI * 2, wanderTimer: 0,
     stuckTimer: 0, lastX: 0, lastY: 0 });
 }
@@ -12964,14 +12983,17 @@ function updateScrollMode() {
       triggerLevelUpPicker(); // pauses the game (gameState 'levelup') until picked
     }
   }
-  // Squad spawner — pressure ramps with sector; capped for mobile perf.
+  // Squad spawner — INFINITE ramp: cadence tightens and squads grow with the
+  // sector, forever. The active-enemy cap creeps up too (perf-bounded) so late
+  // sectors feel like a flood, and per-enemy HP keeps scaling underneath.
   _scrollSpawnTimer--;
   if (_scrollSpawnTimer <= 0) {
-    _scrollSpawnTimer = Math.max(36, 110 - scrollLevel * 6) + Math.floor(Math.random() * 30);
-    if (zombies.length < SCROLL_ZOMBIE_CAP) {
+    _scrollSpawnTimer = Math.max(20, 108 - scrollLevel * 4) + Math.floor(Math.random() * 20);
+    const _cap = Math.min(56, SCROLL_ZOMBIE_CAP + scrollLevel);
+    if (zombies.length < _cap) {
       const ts = _scrollTierTypes(scrollLevel);
-      const squad = 2 + Math.min(6, Math.floor(scrollLevel / 2)) + Math.floor(Math.random() * 2);
-      for (let i = 0; i < squad && zombies.length < SCROLL_ZOMBIE_CAP; i++) {
+      const squad = 2 + Math.floor(scrollLevel * 0.7) + Math.floor(Math.random() * 2);
+      for (let i = 0; i < squad && zombies.length < _cap; i++) {
         spawnScrollZombie(ts[Math.floor(Math.random() * ts.length)]);
       }
     }
@@ -31909,7 +31931,8 @@ function update() {
       const _zt0 = ZOMBIE_TYPES[z.type];
       const _relentless = z.boss || z.type === 'stalker' || z.type === 'sniper' || (_zt0 && _zt0.sniper)
         || (gameMode === 'siege' && z._siegeWallTarget)
-        || (gameMode === 'horde' && z._invader);
+        || (gameMode === 'horde' && z._invader)
+        || gameMode === 'scroll'; // ONSLAUGHT: the horde NEVER stops advancing — no leash, no wander
 
       // Tick the post-deaggro grace down each frame (set when pursuit dropped)
       if (z._postDeaggroGrace && z._postDeaggroGrace > 0) z._postDeaggroGrace--;
