@@ -1558,6 +1558,16 @@ const _PRIMARY_SPECIAL_PAIR = {
 };
 function _setPrimaryBundle(primaryId, opts) {
   if (!PRIMARY_WEAPON_OPTIONS[primaryId]) primaryId = 'pistol';
+  // Unlock-ladder gate (RIPPER/DEADSHOT are rewards). try/catch keeps the
+  // load-time calls safe — the unlock consts live later in the script (TDZ),
+  // so boot-time equips pass through and runtime UI paths enforce.
+  try {
+    if (!_primaryUnlocked(primaryId)) {
+      const _lp0 = (typeof getLocalPlayer === 'function') ? getLocalPlayer() : null;
+      if (_lp0 && typeof addFloatingText === 'function') addFloatingText(_lp0.x, _lp0.y - 40, '🔒 NOT YET RECOVERED', '#f66');
+      return;
+    }
+  } catch (e) {}
   const _specialId = _PRIMARY_SPECIAL_PAIR[primaryId] || 'beacon';
   selectedPrimary = primaryId;
   selectedSpecial = _specialId;
@@ -3354,7 +3364,7 @@ function draftUpgradeCards() {
     // Pool of upgrades the player hasn't maxed out — also gate on prereqs so
     // synergy cards only appear once the player owns one mod from each of
     // the two classes they pair (matches mod-terminal behavior).
-    const pool = UPGRADE_POOL.filter(u => !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) && _passesWeaponGate(u));
+    const pool = UPGRADE_POOL.filter(u => !attempted.has(u.id) && (runUpgrades[u.id] || 0) < u.max && _meetsPrereqs(u) && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) && _passesWeaponGate(u) && _cardAllowedInStack(u));
     if (pool.length === 0) break;
     // Roll rarity
     const totalW = pool.reduce((s, u) => s + (weights[u.rarity] || 1), 0);
@@ -3516,6 +3526,11 @@ function _isMeleeEquipped() {
   return !!(def && def._melee);
 }
 function _passesWeaponGate(u) {
+  // STACK complexity gating rides this chokepoint too — every draft source
+  // (level-up picker + all shop variants) filters through here, and
+  // _cardAllowedInStack is a hard no-op outside stack stages (TRENCH keeps
+  // the full 181-card system).
+  if (!_cardAllowedInStack(u)) return false;
   if (_isMeleeEquipped() && _GUN_ONLY_CARDS.has(u.id)) return false;
   // Heavy caliber and similar gun-only cards: also skip when DEADSHOT is the
   // primary weapon (deadshot doesn't use fireRate/bulletSize the same way).
@@ -10797,6 +10812,10 @@ let mouse = { x: 0, y: 0, down: false, worldX: 0, worldY: 0 };
 let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0 };
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 let shootButtonHeld = false; // when true, auto-aim engages
+// AUTO-FIRE pref cache (mobile default ON) — hot input path must not hit
+// localStorage per frame. Toggle via _setAutoFire(false) → PRO hold-to-shoot.
+let _autoFirePref = (() => { try { return localStorage.getItem('necrowave_autofire') !== '0'; } catch (e) { return true; } })();
+function _setAutoFire(on) { _autoFirePref = !!on; try { localStorage.setItem('necrowave_autofire', on ? '1' : '0'); } catch (e) {} }
 
 // ---- AUTO-TARGETING SYSTEM ----
 // Weighted score: distance + threat + facing + stickiness + drag bias + type + visibility.
@@ -13877,21 +13896,31 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
   for (const pk in PRIMARY_WEAPON_OPTIONS) {
     const pw = PRIMARY_WEAPON_OPTIONS[pk];
     const isP = selectedPrimary === pk;
+    // Unlock-ladder lock state (RIPPER/DEADSHOT are rewards; TDZ-safe at boot).
+    let _locked = false;
+    try { _locked = !_primaryUnlocked(pk); } catch (e) {}
     const card = document.createElement('button');
     card.style.cssText = `
-      padding:18px 12px;border:2px solid ${isP ? pw.color : '#333'};border-radius:12px;
-      background:${isP ? 'rgba(60,60,80,0.25)' : 'rgba(3,3,12,0.7)'};
-      box-shadow:${isP ? '0 0 22px '+pw.color+'66' : 'none'};
-      color:#fff;font-family:'Courier New',monospace;cursor:pointer;text-align:center;
+      padding:18px 12px;border:2px solid ${_locked ? '#333' : (isP ? pw.color : '#333')};border-radius:12px;
+      background:${isP && !_locked ? 'rgba(60,60,80,0.25)' : 'rgba(3,3,12,0.7)'};
+      box-shadow:${isP && !_locked ? '0 0 22px '+pw.color+'66' : 'none'};
+      opacity:${_locked ? '0.5' : '1'};
+      color:#fff;font-family:'Courier New',monospace;cursor:${_locked ? 'default' : 'pointer'};text-align:center;
       display:flex;flex-direction:column;align-items:center;gap:8px;transition:all 0.2s;
     `;
-    card.innerHTML = `
+    const _lockTease = pk === 'ripper' ? 'BREACH THE DOMAIN GATE' : 'EARN 40★';
+    card.innerHTML = _locked ? `
+      <div style="font-size:32px;filter:grayscale(1);opacity:0.6">🔒</div>
+      <div style="font-size:14px;font-weight:bold;color:#667;letter-spacing:2px">${pw.name}</div>
+      <div style="font-size:10px;color:#556;line-height:1.35">${_lockTease}</div>
+    ` : `
       <div style="font-size:32px;text-shadow:0 0 14px ${pw.color}">${pw.icon}</div>
       <div style="font-size:14px;font-weight:bold;color:${pw.color};letter-spacing:2px">${pw.name}</div>
       <div style="font-size:10px;color:#888;line-height:1.35">${pw.desc}</div>
     `;
     const _pick = (e) => {
       if (e) { e.preventDefault(); e.stopPropagation(); }
+      if (_locked) { playSound(180, 0.08, 'square', 0.1); return; }
       _setPrimaryBundle(pk);
       playSfx('ui_click', 0.25) || playSound(900, 0.05, 'sine', 0.12);
       el.style.display = 'none';
@@ -16808,6 +16837,9 @@ if (typeof window !== 'undefined') {
 
 // Extract death stats calculation for reuse by Shell and multiplayer death screen
 function calculateDeathStats() {
+  // STACK stages settle through applyStackMeta — never here (double payout +
+  // phantom leaderboard rows otherwise).
+  if (window.STACK_RUN) return null;
   const survivalTime = Math.floor((Date.now() - runStats.startTime) / 1000);
   const survivalMin = Math.floor(survivalTime / 60);
   const survivalSec = survivalTime % 60;
@@ -17020,6 +17052,7 @@ function _showRebootScreen() {
 // ============================================================
 function startSoloGame() {
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
+  window.STACK_RUN = null;   // non-stack modes must never read a stale stage marker (startStack re-sets it)
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
   _autoAimTarget = null; _autoAimDetect = null; _autoAimAngle = 0; _autoAimDragX = 0; _autoAimDragY = 0;
@@ -17871,6 +17904,9 @@ function fireSingleShot(p,w,d) { /* legacy — unused */
 // SPECIAL WEAPON SYSTEM — routes to the selected special
 // ============================================================
 function activateSpecial() {
+  // STACK ladder: the special is an unlock reward (button hidden too; this
+  // also blocks desktop keybinds before the unlock).
+  if (window.STACK_RUN && !isUnlocked('special')) return;
   // Shell is now a real room — specials work here too. Beacon/payload/discharge
   // still need a special target to be useful but firing them is allowed.
   switch (selectedSpecial) {
@@ -18130,6 +18166,8 @@ function _dashClassColor() {
 // 5 mechanics share a button + charges + per-class color scheme.
 function throwSpike() {
   if (gameState !== 'playing' && gameState !== 'shell') return;
+  // STACK ladder: the spike daemon is an unlock reward (covers keybinds too).
+  if (window.STACK_RUN && !isUnlocked('spike')) return;
   const lp = getLocalPlayer();
   if (!lp || !lp.alive) return;
   // THERMAL MINE: pressing Spike lays a mine while you still have charges.
@@ -27254,8 +27292,292 @@ function _loadStack() { try { return JSON.parse(localStorage.getItem('necrowave_
 function _saveStack(d) { try { localStorage.setItem('necrowave_stack', JSON.stringify(d)); } catch (e) {} }
 function _stackBest(idx) { const d = _loadStack(); return d[idx] || 0; }
 
-// THE single gate function — P1 replaces with star-threshold gates.
-function _stackUnlocked(idx) { return idx === 0 || _stackBest(idx - 1) >= 1; }
+// ---- GATES ----
+// Cumulative star thresholds to ATTEMPT each domain's gate boss. [TUNABLE]
+// ~50% of the stars available before it: 1★-everything isn't quite enough,
+// which teaches the star-hunt replay loop without demanding 3★ perfection.
+const DOMAIN_GATE_STARS = [18, 48, 84, 120];
+function _stackTotalStars() {
+  const d = _loadStack();
+  let t = 0; for (let i = 0; i < STACK_STAGE_DEFS.length; i++) t += (d[i] || 0);
+  return t;
+}
+// THE single gate function: previous node cleared, plus star thresholds on
+// domain-gate bosses.
+function _stackUnlocked(idx) {
+  if (idx !== 0 && _stackBest(idx - 1) < 1) return false;
+  const def = STACK_STAGE_DEFS[idx];
+  if (def && def.type === 'boss' && _stackTotalStars() < (DOMAIN_GATE_STARS[def.domain] || 0)) return false;
+  return true;
+}
+
+// ============================================================
+// META LAYER — economy, unlock ladder, gating, migration.
+// All numbers [TUNABLE].
+// ============================================================
+const STACK_ECON = {
+  firstClearBase: 50,   // [T] + ramp×index, paid once per node (first star earned)
+  firstClearRamp: 5,    // [T]
+  gateMult: 3,          // [T] domain-gate bosses pay ×3 first-clear
+  starBonusBase: 15,    // [T] per NEW star
+  starBonusRamp: 5,     // [T] + floor(index/6)×this
+  replayClear: 15,      // [T] flat for a clear with no new stars
+  dailyBounty: 150,     // [T] (P3 — DAILY DROP first clear)
+};
+
+// Payout for a completed attempt. Fails pay nothing here — every kill already
+// banked BITS live via grantXP (Law 3's guarantee).
+function computeStackPayout(result) {
+  const rows = [];
+  if (result.outcome === 'death') return { rows, total: 0 };
+  const idx = result.stageIdx;
+  const isGate = result.type === 'boss';
+  const firstClear = result.prevBest === 0;
+  let total = 0;
+  if (firstClear) {
+    const fc = Math.round((STACK_ECON.firstClearBase + idx * STACK_ECON.firstClearRamp) * (isGate ? STACK_ECON.gateMult : 1));
+    rows.push({ label: isGate ? 'GATE BREACHED' : 'FIRST CLEAR', amount: fc });
+    total += fc;
+  }
+  if (result.newStars > 0) {
+    const per = STACK_ECON.starBonusBase + Math.floor(idx / 6) * STACK_ECON.starBonusRamp;
+    const sb = result.newStars * per;
+    rows.push({ label: `★ NEW STAR${result.newStars > 1 ? 'S' : ''} ×${result.newStars}`, amount: sb });
+    total += sb;
+  }
+  if (!firstClear && result.newStars === 0) {
+    rows.push({ label: 'NODE RE-CLEANSED', amount: STACK_ECON.replayClear });
+    total += STACK_ECON.replayClear;
+  }
+  // HARVEST keeps its identity as the end-of-run amplifier.
+  const harvest = getMetaBonus('harvest');
+  if (harvest > 0 && total > 0) {
+    const bonus = Math.round(total * harvest);
+    if (bonus > 0) { rows.push({ label: 'HARVEST', amount: bonus }); total += bonus; }
+  }
+  return { rows, total };
+}
+
+// ---- UNLOCK LADDER (the retention spine) ----
+// trigger kinds: {kind:'stage', index} → that node has ≥1★
+//                {kind:'stars', n}     → total stars ≥ n
+//                {kind:'domain', d}    → domain d's gate boss has ≥1★
+// Order = tease order. Everything [TUNABLE], incl. the whole schedule.
+const UNLOCK_TRACK = [
+  { id: 'special',          name: 'SPECIAL ONLINE',      icon: '◎', desc: 'Your bundled SPECIAL weapon is compiled. New button unlocked.',      trigger: { kind: 'stage', index: 1 },  tease: 'CLEAR NODE 02 — SPECIAL WEAPON' },
+  { id: 'drafts',           name: 'MOD DRAFTS ONLINE',   icon: '⚙', desc: 'Between waves: pick 1 of 3 THERMAL mods. Builds begin.',             trigger: { kind: 'stage', index: 2 },  tease: 'CLEAR NODE 03 — MOD DRAFTS' },
+  { id: 'forge_map',        name: 'FORGE UPLINK',        icon: '⚒', desc: 'Permanent upgrades. Spend BITS between missions.',                    trigger: { kind: 'stage', index: 3 },  tease: 'CLEAR NODE 04 — THE FORGE' },
+  { id: 'spike',            name: 'SPIKE DAEMON',        icon: '⟁', desc: 'A throwable daemon process. New button unlocked.',                    trigger: { kind: 'stage', index: 5 },  tease: 'CLEAR NODE 06 — SPIKE DAEMON' },
+  { id: 'class_cryo',       name: 'CRYO PROTOCOL',       icon: '🧊', desc: 'CRYO mods join your drafts. CHILL. FREEZE. SHATTER.',               trigger: { kind: 'stars', n: 8 },      tease: 'CRYO PROTOCOL' },
+  { id: 'daily_drop',       name: 'DAILY DROP',          icon: '◈', desc: 'A fresh seeded challenge every day. (Deploying soon.)',              trigger: { kind: 'stage', index: 7 },  tease: 'CLEAR NODE 08 — DAILY DROP' },
+  { id: 'class_arc',        name: 'ARC PROTOCOL',        icon: '⚡', desc: 'ARC mods join your drafts. SHOCK chains between enemies.',           trigger: { kind: 'stars', n: 16 },     tease: 'ARC PROTOCOL' },
+  { id: 'class_pulse',      name: 'PULSE PROTOCOL',      icon: '💨', desc: 'PULSE mods join your drafts. Launch. Slam. Shatter walls.',          trigger: { kind: 'stars', n: 26 },     tease: 'PULSE PROTOCOL' },
+  { id: 'arcade',           name: 'ARCADE TERMINAL',     icon: '▶', desc: 'Endless waves. Multikill streaks. Local top 10.',                    trigger: { kind: 'stars', n: 30 },     tease: 'ARCADE TERMINAL' },
+  { id: 'primary_ripper',   name: 'RIPPER RECOVERED',    icon: '⚔', desc: 'Close-quarters cleave + lunge, bundled with DISCHARGE.',             trigger: { kind: 'domain', d: 0 },     tease: 'BREACH THE GATE — RIPPER' },
+  { id: 'trench',           name: 'DEEP RUN PROTOCOL',   icon: '▼', desc: 'THE TRENCH: the full 50-section descent. One life. Full shop.',      trigger: { kind: 'domain', d: 0 },     tease: 'BREACH THE GATE — DEEP RUN' },
+  { id: 'class_corrupt',    name: 'CORRUPT PROTOCOL',    icon: '☣', desc: 'CORRUPT mods join your drafts. Infect. Compromise. Consume.',        trigger: { kind: 'stars', n: 36 },     tease: 'CORRUPT PROTOCOL' },
+  { id: 'primary_deadshot', name: 'DEADSHOT RECOVERED',  icon: '◈', desc: 'Charge-shot precision rifle, bundled with PAYLOAD.',                 trigger: { kind: 'stars', n: 40 },     tease: 'DEADSHOT' },
+];
+const _UNLOCK_BY_ID = Object.fromEntries(UNLOCK_TRACK.map(u => [u.id, u]));
+
+function _loadUnlocks() { try { const u = JSON.parse(localStorage.getItem('necrowave_unlocks') || '{}'); u.ids = u.ids || {}; return u; } catch (e) { return { ids: {} }; } }
+function _saveUnlocks(u) { try { localStorage.setItem('necrowave_unlocks', JSON.stringify(u)); } catch (e) {} }
+// Unknown ids are OPEN (e.g. class_thermal — the baseline class is never locked).
+function isUnlocked(id) {
+  if (!_UNLOCK_BY_ID[id]) return true;
+  return !!_loadUnlocks().ids[id];
+}
+let _pendingCeremonies = [];
+function _unlockTriggerMet(t) {
+  if (!t) return false;
+  if (t.kind === 'stage') return _stackBest(t.index) >= 1;
+  if (t.kind === 'stars') return _stackTotalStars() >= t.n;
+  if (t.kind === 'domain') {
+    const gi = STACK_STAGE_DEFS.findIndex(x => x.type === 'boss' && x.domain === t.d);
+    return gi >= 0 && _stackBest(gi) >= 1;
+  }
+  return false;
+}
+// Sweep the track; newly satisfied entries persist + queue a ceremony.
+function evaluateUnlocks(silent) {
+  const u = _loadUnlocks();
+  let changed = false;
+  for (const entry of UNLOCK_TRACK) {
+    if (u.ids[entry.id]) continue;
+    if (_unlockTriggerMet(entry.trigger)) {
+      u.ids[entry.id] = Date.now();
+      changed = true;
+      if (!silent) _pendingCeremonies.push(entry.id);
+    }
+  }
+  if (changed) _saveUnlocks(u);
+  return changed;
+}
+// Law 2's horizon line: the first locked entry, with a live delta for star goals.
+function nextUnlockTease() {
+  const u = _loadUnlocks();
+  for (const entry of UNLOCK_TRACK) {
+    if (u.ids[entry.id]) continue;
+    if (entry.trigger.kind === 'stars') {
+      const need = entry.trigger.n - _stackTotalStars();
+      return `${entry.icon} ${entry.tease} — ${Math.max(1, need)}★ MORE`;
+    }
+    return `${entry.icon} ${entry.tease}`;
+  }
+  return null;
+}
+
+// ---- COMPLEXITY GATING (Law 7) ----
+// syn_* epics bridge two classes — derive which, from their prereq card ids.
+const _SYN_CARD_CLASSES = {};
+{
+  for (const u of UPGRADE_POOL) {
+    if (!u.prereqs || !/^syn_/.test(u.id)) continue;
+    const cls = new Set();
+    for (const group of u.prereqs) for (const id of group.split('|')) {
+      const c = _CARD_CLASS_MAP[id]; if (c) cls.add(c);
+    }
+    if (cls.size) _SYN_CARD_CLASSES[u.id] = Array.from(cls);
+  }
+}
+// Draft-pool predicate — a no-op outside STACK stages (TRENCH keeps the full
+// 181-card system). Class-tagged cards need their class unlocked; syn epics
+// need both bridged classes; rarity ramps in by node depth. [T thresholds]
+function _cardAllowedInStack(u) {
+  if (!window.STACK_RUN) return true;
+  const cls = _CARD_CLASS_MAP[u.id];
+  if (cls && !isUnlocked('class_' + cls)) return false;
+  const syn = _SYN_CARD_CLASSES[u.id];
+  if (syn && !syn.every(c => isUnlocked('class_' + c))) return false;
+  const rIdx = _RARITY_ORDER.indexOf(u.rarity);
+  if (rIdx >= 2 && window.STACK_RUN.index < 4) return false;   // epics from node 5 [T]
+  if (rIdx >= 3 && window.STACK_RUN.index < 8) return false;   // legendaries from node 9 [T]
+  return true;
+}
+// Primary weapon gating: SIDEARM is the starter; the others are ladder rewards.
+function _primaryUnlocked(pk) {
+  if (pk === 'ripper') return isUnlocked('primary_ripper');
+  if (pk === 'deadshot') return isUnlocked('primary_deadshot');
+  return true;
+}
+
+// ---- GRANDFATHERING ----
+// Existing players (any prior runs/BITS/spend/roomrush stars) keep their full
+// toolkit silently — never re-lock what someone has used. Fresh installs walk
+// the ladder. Idempotent via unlocks.migrated.
+function migrateExistingProfile() {
+  const u = _loadUnlocks();
+  if (u.migrated) return;
+  let prior = false;
+  try {
+    prior = (metaStats.totalRuns || 0) > 0 || metaShards > 0 ||
+      parseInt(localStorage.getItem('necrowave_bits_spent') || '0', 10) > 0 ||
+      Object.keys(loadRoomRush()).length > 0;
+  } catch (e) {}
+  if (prior) {
+    for (const id of ['special', 'drafts', 'forge_map', 'spike', 'daily_drop',
+      'class_cryo', 'class_arc', 'class_pulse', 'class_corrupt',
+      'primary_ripper', 'primary_deadshot', 'trench', 'arcade']) {
+      u.ids[id] = u.ids[id] || Date.now();
+    }
+  }
+  u.migrated = 1;
+  _saveUnlocks(u);
+  // Fresh profiles: never boot with a locked primary equipped.
+  if (!prior && typeof selectedPrimary !== 'undefined' && !_primaryUnlocked(selectedPrimary)) {
+    _setPrimaryBundle('pistol');
+  }
+}
+
+// ---- VICTORY LAYER ----
+function _loadProgress() { try { return JSON.parse(localStorage.getItem('necrowave_progress') || '{}'); } catch (e) { return {}; } }
+function _saveProgress(p) { try { localStorage.setItem('necrowave_progress', JSON.stringify(p)); } catch (e) {} }
+
+// ---- THE META BOUNDARY IMPLEMENTATION ----
+// Called exactly once per attempt from completeStackStage. Mutates `result`
+// with payout rows + teases for the overlay, banks BITS, updates lifetime
+// stats, records gate/domain progress, and sweeps the unlock ladder.
+function applyStackMeta(result) {
+  const payout = computeStackPayout(result);
+  result.payoutRows = payout.rows;
+  result.walletBefore = metaShards;
+  if (payout.total > 0) {
+    metaShards += payout.total;
+    try { localStorage.setItem('necrowave_shards', String(metaShards)); } catch (e) {}
+  }
+  result.bitsAwarded = payout.total;
+  result.walletAfter = metaShards;
+  // Lifetime stats (stack stages skip calculateDeathStats entirely).
+  try {
+    metaStats.totalRuns = (metaStats.totalRuns || 0) + 1;
+    metaStats.totalKills = (metaStats.totalKills || 0) + (result.kills || 0);
+    localStorage.setItem('necrowave_stats', JSON.stringify(metaStats));
+  } catch (e) {}
+  // Domain/gate progress.
+  if (result.outcome !== 'death' && result.type === 'boss') {
+    const p = _loadProgress();
+    p.domains = p.domains || {};
+    if (!p.domains[result.domain]) p.domains[result.domain] = { clearedAt: Date.now() };
+    const lastGate = STACK_STAGE_DEFS.filter(x => x.type === 'boss').length;
+    const clearedGates = Object.keys(p.domains).length;
+    if (clearedGates >= lastGate && !p.gameClearedAt) p.gameClearedAt = Date.now();
+    _saveProgress(p);
+  }
+  evaluateUnlocks(false);
+  result.unlockTease = nextUnlockTease();
+}
+
+// Count-up ticker for payout/wallet numbers (inverse of the shop's count-down).
+function _animateCount(el, from, to, ms) {
+  if (!el) return;
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / ms);
+    const v = Math.round(from + (to - from) * (1 - Math.pow(1 - t, 3)));
+    el.textContent = String(v);
+    if (t < 1) requestAnimationFrame(step);
+    else { el.style.textShadow = '0 0 14px rgba(255,221,0,0.9)'; setTimeout(() => { el.style.textShadow = ''; }, 350); }
+  };
+  requestAnimationFrame(step);
+}
+
+// ---- UNLOCK CEREMONY ----
+// Full-screen reveal on the MAP (never mid-combat). Queue drains one at a
+// time each time the map opens; grandfathered grants never enqueue.
+function _showNextCeremony() {
+  const id = _pendingCeremonies.shift();
+  if (!id) return;
+  const def = _UNLOCK_BY_ID[id];
+  if (!def) { _showNextCeremony(); return; }
+  let el = document.getElementById('unlock-ceremony');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'unlock-ceremony';
+    el.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:140;background:rgba(0,0,4,0.94);font-family:"Courier New",monospace;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `
+    <div style="text-align:center;max-width:340px;animation:skNodePulse 1.8s ease-in-out infinite;border:2px double #f06;border-radius:18px;padding:34px 22px;background:linear-gradient(180deg,rgba(255,0,102,0.1),rgba(3,3,10,0.9))">
+      <div style="color:#f068;font-size:10px;letter-spacing:4px;margin-bottom:14px">// PROTOCOL RECOVERED //</div>
+      <div style="font-size:52px;line-height:1;text-shadow:0 0 24px rgba(255,0,102,0.8)">${def.icon}</div>
+      <div style="color:#fff;font-size:18px;letter-spacing:4px;font-weight:bold;margin:14px 0 8px;text-shadow:0 0 12px rgba(255,0,102,0.7)">${def.name}</div>
+      <div style="color:#fbd;font-size:11px;letter-spacing:1px;line-height:1.6;margin-bottom:22px">${def.desc}</div>
+      <button class="menu-btn success" id="unlock-compile" style="padding:11px 0;width:100%;font-size:14px;letter-spacing:4px">[ COMPILE ]</button>
+    </div>`;
+  el.style.display = 'flex';
+  triggerGlitchSurge(0.5, 30);
+  playSound(1200, 0.12, 'sine', 0.16); setTimeout(() => playSound(1600, 0.12, 'sine', 0.14), 110); setTimeout(() => playSound(2100, 0.16, 'sine', 0.12), 230);
+  const done = () => {
+    el.style.display = 'none';
+    _renderStackMap();          // newly unlocked chips/landmarks appear behind the reveal
+    _showNextCeremony();        // drain the queue one at a time
+  };
+  const btn = document.getElementById('unlock-compile');
+  if (btn) {
+    btn.addEventListener('click', e => { e.preventDefault(); playSfx('ui_click', 0.3); done(); });
+    btn.addEventListener('touchend', e => { e.preventDefault(); playSfx('ui_click', 0.3); done(); }, { passive: false });
+  }
+}
 
 // Domain-tinted ROOM_THEMES pick for the gauntlet-style room renderer.
 const _STACK_DOMAIN_THEME = [7, 4, 2, 5]; // ruin(magenta) furnace(orange) tile(cyan) storage(gold)
@@ -27333,6 +27655,13 @@ function startStackStage(idx) {
 // Mode-start dispatch (map already generated in startSoloGame's branch).
 function startStack() {
   const def = STACK_STAGE_DEFS[_stackStageIdx];
+  // Live-stage marker for the meta layer (draft filters, payout guards).
+  window.STACK_RUN = { stageId: def.id, index: _stackStageIdx, domain: def.domain, isGate: def.type === 'boss', parSec: def.par, type: def.type };
+  // Ladder-gated verbs: the special/spike buttons appear as unlock rewards.
+  const _mk = document.getElementById('btn-mark');
+  if (_mk) _mk.style.display = isUnlocked('special') ? '' : 'none';
+  const _sp = document.getElementById('btn-spike');
+  if (_sp) _sp.style.display = isUnlocked('spike') ? '' : 'none';
   _stackState = 'intro';
   _stackTimer = 120;
   _stackDone = false;
@@ -27399,7 +27728,9 @@ function updateStack() {
   if (sec.spawned && zombies.length === 0) {
     if (sec.currentWave < sec.waves.length - 1) {
       // Wave cleared — micro-draft beat on flagged waves, then a breather.
-      if (!isMultiplayer && def.draftAfter && def.draftAfter.indexOf(sec.currentWave) !== -1) {
+      // Ladder-gated (Law 7): the first nodes are pure shooting; drafts come
+      // online as an unlock reward, THERMAL-only at first.
+      if (!isMultiplayer && isUnlocked('drafts') && def.draftAfter && def.draftAfter.indexOf(sec.currentWave) !== -1) {
         _stackState = 'draft';
         _stackModDraft(() => {
           if (gameState === 'levelup') gameState = 'playing';
@@ -27455,9 +27786,10 @@ function _finishStackStage(outcome) {
   _presentStackResult(result);  // VFX + overlay (client-safe path for future co-op)
 }
 
-// META BOUNDARY STUB — P2 replaces the internals with payouts/unlocks/streaks.
-// Contract: called exactly once per attempt (clear OR death), synchronously
-// before the overlay renders; may mutate `result` (bitsAwarded etc.).
+// META BOUNDARY — persists stars, then hands the result to the meta layer
+// (payouts, unlocks, lifetime stats, gate progress). Contract: called exactly
+// once per attempt (clear OR death), synchronously before the overlay renders;
+// mutates `result` (payoutRows/bitsAwarded/wallet*/unlockTease).
 function completeStackStage(result) {
   if (result.stars > 0) {
     const d = _loadStack();
@@ -27466,7 +27798,7 @@ function completeStackStage(result) {
   }
   result.newBest = _stackBest(result.stageIdx);
   result.newStars = Math.max(0, result.stars - result.prevBest);
-  result.bitsAwarded = 0;   // per-kill BITS already banked live via grantXP
+  applyStackMeta(result);
 }
 
 // ---- RESULT PRESENTATION (world frozen behind the overlay) ----
@@ -27513,9 +27845,36 @@ function _presentStackResult(result) {
         `</div>`;
     }
   }
-  // P2 wires real payout rows here; per-kill BITS are already banked live.
-  set('sk-bits', result.bitsAwarded > 0 ? `+${result.bitsAwarded} ◆` : '');
+  // Payout rows (staggered) + wallet count-up. Kill-BITS are already banked
+  // live via grantXP — shown as context, never double-granted.
+  const bitsEl = document.getElementById('sk-bits');
+  if (bitsEl) {
+    bitsEl.innerHTML = '';
+    const rows = result.payoutRows || [];
+    rows.forEach((r, i) => {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;justify-content:space-between;gap:14px;opacity:0;transition:opacity 0.35s;font-size:11px;letter-spacing:2px;margin:2px 0';
+      div.innerHTML = `<span style="color:#fbd">${r.label}</span><span style="color:#fd0">+${r.amount} ◆</span>`;
+      bitsEl.appendChild(div);
+      setTimeout(() => { div.style.opacity = '1'; }, 250 + i * 250);
+    });
+    if (result.bitsAwarded > 0) {
+      const wal = document.createElement('div');
+      wal.style.cssText = 'margin-top:6px;font-size:12px;letter-spacing:2px;color:#fd0;font-weight:bold;text-shadow:0 0 8px rgba(255,221,0,0.5)';
+      wal.innerHTML = `◆ <span id="sk-wallet">${result.walletBefore}</span>`;
+      bitsEl.appendChild(wal);
+      setTimeout(() => {
+        const we = document.getElementById('sk-wallet');
+        if (we) _animateCount(we, result.walletBefore, result.walletAfter, 700);
+      }, 250 + rows.length * 250);
+    }
+  }
+  // Law 2 on the result screen too: what the next carrot is.
   set('sk-best', died ? `BEST ${_starString(result.prevBest)}` : ((result.newStars > 0) ? 'NEW BEST!' : `BEST ${_starString(result.newBest)}`));
+  const bestEl = document.getElementById('sk-best');
+  if (bestEl && result.unlockTease && !died) {
+    bestEl.innerHTML += `<div style="margin-top:6px;color:#0cf;font-size:10px;letter-spacing:2px">NEXT: ${result.unlockTease}</div>`;
+  }
   const nextBtn = document.getElementById('sk-next');
   if (nextBtn) nextBtn.style.display = (!died && result.stageIdx + 1 < STACK_STAGE_DEFS.length) ? '' : 'none';
   const el = document.getElementById('stack-result');
@@ -27560,6 +27919,7 @@ function openStackMap() {
   gameState = 'menu';
   gamePaused = false;
   isMultiplayer = false;
+  window.STACK_RUN = null;   // no live stage while the map is up
   window._deathBeatPlaying = false;
   if (typeof stopSunbeamLoop === 'function') stopSunbeamLoop();
   if (typeof stopWeaponLoop === 'function') stopWeaponLoop();
@@ -27574,6 +27934,8 @@ function openStackMap() {
   // Land the view on the next node (the "what am I doing? THIS." beat).
   const nxt = document.getElementById('stack-next-node');
   if (nxt) setTimeout(() => { try { nxt.scrollIntoView({ block: 'center', behavior: 'instant' in document.documentElement.style ? 'auto' : 'auto' }); } catch (e) {} }, 30);
+  // Ceremony beats queued by the last stage's unlocks play here, on the map.
+  if (_pendingCeremonies.length) setTimeout(_showNextCeremony, 450);
 }
 function closeStackMap() {
   const el = document.getElementById('stack-screen');
@@ -27595,6 +27957,23 @@ function _renderStackMap() {
     const pw = PRIMARY_WEAPON_OPTIONS[selectedPrimary];
     loEl.textContent = pw ? `${pw.icon} ${pw.name}` : '⌖ LOADOUT';
   }
+  // Ladder-gated HUD chips: FORGE appears as an unlock reward; DAILY teases P3.
+  const fgEl = document.getElementById('stack-forge-chip');
+  if (fgEl) fgEl.style.display = isUnlocked('forge_map') ? '' : 'none';
+  const dlEl = document.getElementById('stack-daily-slot');
+  if (dlEl) dlEl.style.display = isUnlocked('daily_drop') ? '' : 'none';
+  // Law 2's horizon: the next unlock, always visible.
+  let teaseEl = document.getElementById('stack-tease-row');
+  if (!teaseEl) {
+    teaseEl = document.createElement('div');
+    teaseEl.id = 'stack-tease-row';
+    teaseEl.style.cssText = 'max-width:640px;margin:8px auto 0;text-align:center;color:#0cf;font-size:10px;letter-spacing:2px;text-shadow:0 0 6px rgba(0,204,255,0.4)';
+    const hud = document.getElementById('stack-hud');
+    if (hud) hud.appendChild(teaseEl);
+  }
+  const tease = nextUnlockTease();
+  teaseEl.textContent = tease ? `NEXT UNLOCK: ${tease}` : '';
+  teaseEl.style.display = tease ? '' : 'none';
   bands.innerHTML = '';
   // Find the "next" node: first unlocked node without a star.
   let nextIdx = -1;
@@ -27645,9 +28024,14 @@ function _renderStackMap() {
         btn.style.borderStyle = unlocked ? 'double' : 'solid';
       }
       const glyph = def.type === 'surge' ? '⏱' : (isBossNode ? '☣' : '');
+      // Locked gate bosses show their star price — the map states the goal.
+      const gateNeed = (isBossNode && !unlocked && _stackBest(i - 1) >= 1)
+        ? (DOMAIN_GATE_STARS[def.domain] || 0) : 0;
       const starRow = unlocked
         ? `<span style="color:${stars > 0 ? '#ff0' : '#456'};letter-spacing:3px">${_starString(stars)}</span>`
-        : `<span style="color:#456">LOCKED</span>`;
+        : (gateNeed
+          ? `<span style="color:#fd0">★ ${gateNeed} REQUIRED — ${Math.max(0, gateNeed - totalStars)} MORE</span>`
+          : `<span style="color:#456">LOCKED</span>`);
       btn.innerHTML =
         `<div class="sk-num">${unlocked ? (isNext ? '▶' : String(i + 1).padStart(2, '0')) : '🔒'}</div>` +
         `<div style="flex:1;min-width:0">` +
@@ -27668,6 +28052,30 @@ function _renderStackMap() {
         btn.addEventListener('touchcancel', () => btn.classList.remove('tapped'));
       }
       band.appendChild(btn);
+    }
+    // Unlockable LANDMARKS at the domain's foot: modes re-homed onto the map.
+    if (d === 0) {
+      const marks = [];
+      if (isUnlocked('trench')) marks.push({ id: 'stack-mark-trench', icon: '▼', name: 'DEEP RUN — THE TRENCH', sub: 'the full 50-section descent · one life · full shop', color: '#0f0' });
+      if (isUnlocked('arcade')) marks.push({ id: 'stack-mark-arcade', icon: '▶', name: 'ARCADE TERMINAL', sub: 'endless waves · multikill streaks · top 10', color: '#fa0' });
+      for (const m of marks) {
+        const mk = document.createElement('button');
+        mk.className = 'stack-node sk-open';
+        mk.id = m.id;
+        mk.style.borderColor = m.color;
+        mk.style.color = m.color;
+        mk.style.background = `linear-gradient(180deg, ${m.color}14, rgba(3,6,14,0.6))`;
+        mk.innerHTML = `<div class="sk-num">${m.icon}</div><div style="flex:1"><div class="sk-name" style="color:#fff">${m.name}</div><div class="sk-sub">${m.sub}</div></div>`;
+        const go = () => {
+          playSfx('ui_click', 0.3);
+          closeStackMap();
+          if (m.id === 'stack-mark-trench') { isMultiplayer = false; gameMode = 'trench'; enterShell(false); }
+          else { _openArcadeWeaponPicker('arcade'); }
+        };
+        mk.addEventListener('click', e => { e.preventDefault(); go(); });
+        mk.addEventListener('touchend', e => { e.preventDefault(); const t = e.changedTouches[0]; if (!t) return; const r = mk.getBoundingClientRect(); if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) return; go(); }, { passive: false });
+        band.appendChild(mk);
+      }
     }
     bands.appendChild(band);
   }
@@ -27690,6 +28098,11 @@ if (STACK_FRONT_DOOR) {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
 }
+
+// Boot: grandfather existing profiles (silent full grants), then sweep the
+// ladder silently so retuned triggers never strand an earned unlock.
+migrateExistingProfile();
+evaluateUnlocks(true);
 
 function spawnSurvivalZombie() {
   const ts = getZombieTypesForWave(survivalWave);
@@ -29278,7 +29691,12 @@ function update() {
     // Press shoot → lock nearest enemy in facing cone → fire until dead or overheat.
     // Release shoot → clear lock. Must re-press to pick new target. Desktop uses
     // the A key as the shoot input; mobile uses the on-screen shoot button.
-    const _shootHeld = isMobile ? shootButtonHeld : !!keys['a'];
+    // AUTO-FIRE (mobile default ON): fire whenever enemies are up — the hold
+    // button becomes a PRO option (necrowave_autofire='0' restores it).
+    // DEADSHOT keeps hold-to-charge (its release IS the shot). Desktop unchanged.
+    const _autoFireOn = isMobile && _autoFirePref && selectedPrimary !== 'deadshot' &&
+      gameState === 'playing' && zombies.length > 0 && !gamePaused;
+    const _shootHeld = (isMobile ? shootButtonHeld : !!keys['a']) || _autoFireOn;
     {
       if (isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
