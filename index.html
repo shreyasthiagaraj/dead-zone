@@ -980,6 +980,13 @@ body.mobile #mobile-buttons { display: block; }
   <div id="start-controls" style="display:none"></div>
 </div>
 
+<!-- ---- ORIENTATION HINT (auto-pauses gameplay until the device is rotated) ---- -->
+<div id="orient-hint" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:210;background:rgba(3,3,12,0.93);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:'Courier New',monospace;align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center">
+  <div style="font-size:52px" id="orient-hint-icon">🔄</div>
+  <div id="orient-hint-text" style="color:#f44;font-size:16px;letter-spacing:4px;text-shadow:0 0 10px rgba(255,68,68,0.5)">ROTATE TO PORTRAIT</div>
+  <div style="color:#888;font-size:11px;letter-spacing:2px">game paused</div>
+</div>
+
 <!-- ---- ARCADE WEAPON PICKER ---- -->
 <div id="arcade-weapon-picker" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:130;background:rgba(3,3,12,0.94);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);font-family:'Courier New',monospace;align-items:center;justify-content:flex-start;flex-direction:column;padding:14px;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch">
   <div style="width:100%;max-width:640px;margin:0 auto;padding-top:10px">
@@ -1437,8 +1444,12 @@ function pollGamepad() {
   }
   if (pressed(9)) togglePauseMenu();           // Options / Start → pause
 }
-// Lock to landscape on mobile
-try { screen.orientation?.lock?.('landscape').catch(()=>{}); } catch(e) {}
+// Per-mode orientation: landscape everywhere EXCEPT ONSLAUGHT (scroll), which
+// is portrait-first (one-thumb vertical play). Where the Screen Orientation API
+// is unavailable (iOS WKWebView/Safari), the lock silently no-ops and the
+// #orient-hint overlay nudges the player to rotate instead.
+function _lockOrientation(mode) { try { screen.orientation?.lock?.(mode).catch(()=>{}); } catch(e) {} }
+_lockOrientation('landscape'); // boot default
 document.body.classList.add(isMobile ? 'mobile' : 'desktop');
 
 // Controls hint: moved into the codex MODES tab; no persistent overlay on the start screen.
@@ -12845,7 +12856,7 @@ let _scrollAimAngle = -Math.PI / 2; // current fire angle (straight up)
 let _scrollFiring = false;    // thumb/mouse held → fire (or charge, for deadshot)
 let _scrollTouchId = null;    // the touch steering the aim
 let _scrollAnchorX = 0, _scrollAnchorY = 0; // pinned player position
-const SCROLL_MAX_AIM = Math.PI * 78 / 180;  // aim sweep: up ±78°
+const SCROLL_MAX_AIM = Math.PI / 2;         // aim sweep: full 0-180° (flat left ↔ flat right)
 const SCROLL_SPEED = 1.6;                   // visual scroll px/frame (~96px/s)
 const SCROLL_LEVEL_DIST = 2400;             // scroll px per sector (~25s)
 const SCROLL_ZOMBIE_CAP = 42;               // perf guard (mobile)
@@ -12916,7 +12927,9 @@ function spawnScrollZombie(tk) {
   const _visW = (canvas.width / (window.cameraZoom || 1));
   const x = Math.max(CELL_SIZE * 6, Math.min(ARENA_W - CELL_SIZE * 6,
     lp.x + (Math.random() - 0.5) * _visW * 0.92));
-  const y = Math.max(CELL_SIZE * 5, lp.y - (canvas.height / (window.cameraZoom || 1)) * 0.62 - 40 - Math.random() * 120);
+  // Visible top ≈ lp.y - 0.76*canvas.height (the scroll camera frames the
+  // turret low on screen) — spawn just past it so enemies never pop in-view.
+  const y = Math.max(CELL_SIZE * 5, lp.y - canvas.height * 0.80 - 40 - Math.random() * 120);
   const _sm = _enemyStageMult(scrollLevel);
   const hp = Math.max(1, Math.floor(t.hp * _sm.hp));
   const spd = t.speed * _sm.speed;
@@ -17110,6 +17123,9 @@ function _showRebootScreen() {
 // START GAME
 // ============================================================
 function startSoloGame() {
+  // ONSLAUGHT plays portrait; every other mode locks landscape. Covers all
+  // solo starts AND retries (both funnel through here).
+  _lockOrientation(gameMode === 'scroll' ? 'portrait' : 'landscape');
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
@@ -17415,6 +17431,32 @@ window.addEventListener('mouseup', e => {
   leftJoystick.nx = 0; leftJoystick.ny = 0;
 });
 window.addEventListener('wheel', e => { if (gameState !== 'playing') return; const lp = getLocalPlayer(); if (!lp) return; switchWeapon((lp.currentWeapon + (e.deltaY > 0 ? 1 : -1) + lp.weapons.length) % lp.weapons.length); });
+// ---- Orientation guard (mobile): ONSLAUGHT wants portrait, everything else
+// wants landscape. On a mismatch mid-run, auto-pause behind a rotate hint and
+// resume the moment the device turns. Poll-based (cheap) so it also works where
+// the Screen Orientation API/lock is unavailable (iOS WKWebView).
+let _orientPaused = false;
+setInterval(() => {
+  const el = document.getElementById('orient-hint');
+  if (!el) return;
+  const _wantPortrait = gameMode === 'scroll';
+  const _isPortrait = window.innerHeight >= window.innerWidth;
+  const _mismatch = isMobile && (_wantPortrait !== _isPortrait);
+  const _inRun = gameState === 'playing' || (_orientPaused && gameState === 'paused');
+  if (_mismatch && _inRun && !gamePaused) {
+    if (!_orientPaused) {
+      _orientPaused = true;
+      if (gameState === 'playing') gameState = 'paused';
+      const txt = document.getElementById('orient-hint-text');
+      if (txt) txt.textContent = _wantPortrait ? 'ROTATE TO PORTRAIT' : 'ROTATE TO LANDSCAPE';
+      el.style.display = 'flex';
+    }
+  } else if (_orientPaused && !_mismatch) {
+    _orientPaused = false;
+    if (gameState === 'paused' && !gamePaused) gameState = 'playing';
+    el.style.display = 'none';
+  }
+}, 400);
 window.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', () => canvas.focus());
 
@@ -34161,22 +34203,25 @@ function update() {
   }
   // ARCADE and DESCENT keep the player dead-centered (no aim look-ahead offset)
   // so the view never dynamically pans. Other modes keep the look-ahead.
-  const _camOff = (gameMode === 'arcade' || gameMode === 'descent') ? 0 : 1;
+  const _camOff = (gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'scroll') ? 0 : 1;
+  // ONSLAUGHT (scroll): frame the fixed turret LOW on the screen (~76% down)
+  // so nearly the whole view is the lane above — portrait-first framing.
+  const _scrollCamY = gameMode === 'scroll' ? -(canvas.height * 0.26) : 0;
   if (isMobile) {
     camera.x = lerp(camera.x, camTarget.x + cameraOffset.x * _camOff, 0.1);
-    camera.y = lerp(camera.y, camTarget.y + cameraOffset.y * _camOff, 0.1);
+    camera.y = lerp(camera.y, camTarget.y + cameraOffset.y * _camOff + _scrollCamY, 0.1);
   } else {
     // Desktop: camera follows the player in trench AND arcade (the arcade
     // arena is bigger than the screen, so a fixed arena-center camera lets the
     // player drift to the edge — keep them centered instead). Other modes
     // center on the arena.
     let _camTX = ARENA_W / 2, _camTY = ARENA_H / 2;
-    if (gameMode === 'trench' || gameMode === 'arcade' || gameMode === 'descent') {
+    if (gameMode === 'trench' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'scroll') {
       // Follow the player like mobile does — the playfield is larger than the
       // screen. DESCENT keeps the player centered with NO look-ahead pan
       // (_camOff = 0); the clamp below keeps the column framed at the edges.
       _camTX = camTarget.x + cameraOffset.x * _camOff;
-      _camTY = camTarget.y + cameraOffset.y * _camOff;
+      _camTY = camTarget.y + cameraOffset.y * _camOff + _scrollCamY;
     }
     camera.x = _camTX;
     camera.y = _camTY;
