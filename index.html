@@ -10874,10 +10874,11 @@ let mouse = { x: 0, y: 0, down: false, worldX: 0, worldY: 0 };
 let leftJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0 };
 let rightJoystick = { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0, nx: 0, ny: 0, aiming: false, firing: false };
 let shootButtonHeld = false; // when true, auto-aim engages
-// AUTO-FIRE pref cache (mobile default ON) — hot input path must not hit
-// localStorage per frame. Toggle via _setAutoFire(false) → PRO hold-to-shoot.
-let _autoFirePref = (() => { try { return localStorage.getItem('necrowave_autofire') !== '0'; } catch (e) { return true; } })();
-function _setAutoFire(on) { _autoFirePref = !!on; try { localStorage.setItem('necrowave_autofire', on ? '1' : '0'); } catch (e) {} }
+// NOTE: an always-on AUTO-FIRE default was tried and reverted (2026-07-03).
+// In this engine, holding fire puts the left stick into AIM-STEER mode — the
+// player roots in place while shooting. Any future auto-fire must decouple
+// "firing" from "aim-steer" so move-while-firing survives. Until then:
+// left thumb moves, hold SHOOT to fire. Do not re-add a firing default here.
 
 // ---- AUTO-TARGETING SYSTEM ----
 // Weighted score: distance + threat + facing + stickiness + drag bias + type + visibility.
@@ -29957,12 +29958,9 @@ function update() {
     // Press shoot → lock nearest enemy in facing cone → fire until dead or overheat.
     // Release shoot → clear lock. Must re-press to pick new target. Desktop uses
     // the A key as the shoot input; mobile uses the on-screen shoot button.
-    // AUTO-FIRE (mobile default ON): fire whenever enemies are up — the hold
-    // button becomes a PRO option (necrowave_autofire='0' restores it).
-    // DEADSHOT keeps hold-to-charge (its release IS the shot). Desktop unchanged.
-    const _autoFireOn = isMobile && _autoFirePref && selectedPrimary !== 'deadshot' &&
-      gameState === 'playing' && zombies.length > 0 && !gamePaused;
-    const _shootHeld = (isMobile ? shootButtonHeld : !!keys['a']) || _autoFireOn;
+    // (Auto-fire default reverted: while firing, the movement stick steers aim
+    // and the player roots — see the note at shootButtonHeld.)
+    const _shootHeld = isMobile ? shootButtonHeld : !!keys['a'];
     {
       if (isMobile && leftJoystick.active) { dx = leftJoystick.nx; dy = leftJoystick.ny; }
 
