@@ -967,6 +967,8 @@ body.mobile #mobile-buttons { display: block; }
       <button class="menu-btn" id="btn-breach" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0ff;border-color:#0ff;background:linear-gradient(180deg,rgba(0,255,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,255,0.25),inset 0 0 8px rgba(0,255,255,0.08);text-shadow:0 0 8px rgba(0,255,255,0.6)">▶ BREACH</button>
       <button class="menu-btn" id="btn-roomrush" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#0fc;border-color:#0fc;background:linear-gradient(180deg,rgba(0,255,200,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(0,255,200,0.25),inset 0 0 8px rgba(0,255,200,0.08);text-shadow:0 0 8px rgba(0,255,200,0.6)">▦ ROOM RUSH</button>
       <button class="menu-btn" id="btn-blitz" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#f4f;border-color:#f4f;background:linear-gradient(180deg,rgba(255,70,255,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,70,255,0.25),inset 0 0 8px rgba(255,70,255,0.08);text-shadow:0 0 8px rgba(255,70,255,0.6)">⏱ BLITZ</button>
+      <!-- P0 dev entry to the STACK stage runtime — replaced by the map screen at the P1 flag flip -->
+      <button class="menu-btn" id="btn-stack" style="padding:10px 32px;font-size:14px;letter-spacing:4px;min-width:220px;color:#f06;border-color:#f06;background:linear-gradient(180deg,rgba(255,0,102,0.12),rgba(3,6,14,0.6));box-shadow:0 0 14px rgba(255,0,102,0.25),inset 0 0 8px rgba(255,0,102,0.08);text-shadow:0 0 8px rgba(255,0,102,0.6)">▓ STACK (DEV)</button>
       <div style="display:flex;flex-direction:row;gap:8px;flex-wrap:wrap;justify-content:center">
         <button class="menu-btn" id="btn-crypt" style="display:none">FORGE</button>
         <button class="menu-btn" id="btn-challenges" style="display:none">CHALLENGES</button>
@@ -1037,6 +1039,22 @@ body.mobile #mobile-buttons { display: block; }
     <div style="display:flex;flex-direction:column;gap:10px">
       <button class="menu-btn success" id="bz-retry" style="padding:11px 0;font-size:15px;letter-spacing:3px;width:100%">↻ AGAIN</button>
       <button class="menu-btn" id="bz-menu" style="padding:9px 0;font-size:13px;letter-spacing:3px;width:100%;color:#9fd;border-color:#9fd6;background:transparent">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<!-- ---- STACK NODE RESULT (clear / fault / stars) ---- -->
+<div id="stack-result" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:135;background:rgba(3,3,12,0.9);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:'Courier New',monospace;align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
+  <div style="width:100%;max-width:340px;text-align:center;border:2px solid rgba(255,0,102,0.4);border-radius:16px;padding:26px 18px;background:linear-gradient(180deg,rgba(255,0,102,0.08),rgba(3,6,14,0.78));box-shadow:0 0 30px rgba(255,0,102,0.22),inset 0 0 16px rgba(255,0,102,0.06)">
+    <div id="sk-title" style="color:#f06;font-size:24px;letter-spacing:4px;text-shadow:0 0 14px rgba(255,0,102,0.6)">NODE CLEAR</div>
+    <div id="sk-stars" style="font-size:40px;letter-spacing:8px;margin:16px 0 6px;color:#ff0;text-shadow:0 0 18px rgba(255,255,0,0.6)">★★★</div>
+    <div id="sk-detail" style="color:#fbd;font-size:12px;letter-spacing:1px;margin-bottom:4px">—</div>
+    <div id="sk-bits" style="color:#fd0;font-size:12px;letter-spacing:2px;margin-bottom:2px"></div>
+    <div id="sk-best" style="color:#f8b;font-size:10px;letter-spacing:2px;margin-bottom:18px">—</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="menu-btn success" id="sk-next" style="padding:11px 0;font-size:15px;letter-spacing:3px;width:100%">NEXT NODE ▶</button>
+      <button class="menu-btn" id="sk-retry" style="padding:9px 0;font-size:13px;letter-spacing:3px;width:100%;color:#f06;border-color:#f068">↻ RETRY</button>
+      <button class="menu-btn" id="sk-map" style="padding:9px 0;font-size:13px;letter-spacing:3px;width:100%;color:#fbd;border-color:#fbd6;background:transparent">▦ MAP</button>
     </div>
   </div>
 </div>
@@ -7290,32 +7308,38 @@ function spawnTrenchWave(idx, waveIdx) {
   // individual enemy carries more weight. HP bumps harder so D4 archetypes
   // feel like genuine events. Damage and speed scale gently — the player's
   // dodge window stays the same; raw tank/threat is what changes.
-  const _dIdx = Math.min(3, Math.floor(idx / 10));
-  const _dLocal = idx % 10;
+  // STACK stages ride these curves at a virtual section index (sec._diffIdx);
+  // trench/breach leave _diffIdx undefined → _sIdx === idx (behavior-neutral).
+  const _sIdx = (sec._diffIdx != null) ? sec._diffIdx : idx;
+  const _dIdx = Math.min(3, Math.floor(_sIdx / 10));
+  const _dLocal = _sIdx % 10;
   const _domainBaseHp = [1.0, 1.8, 3.2, 5.5];
   let hpScale = _domainBaseHp[_dIdx] + _dLocal * 0.12;
   // +15% baseline speed (was 0.1 — now 0.4 — applies the global "enemies are
   // 15% faster" buff that lands across every mode).
   let speedBoost = 0.4 + _dIdx * 0.10 + _dLocal * 0.010;
-  const dmgScale = 1.0 + _dIdx * 0.40 + _dLocal * 0.045;
-  const _lateGameArmor = idx >= 15 ? 0.85 : 1.0;
+  const dmgScale = (1.0 + _dIdx * 0.40 + _dLocal * 0.045) * (sec._dmgMult || 1);
+  const _lateGameArmor = _sIdx >= 15 ? 0.85 : 1.0;
   // DOUBLE TIME modifier: enemies have 60% HP
   if (sec.modifier && sec.modifier.id === 'doubletime') hpScale *= 0.6;
   // WARDEN'S GAZE modifier: enemies 20% faster
   if (sec.modifier && sec.modifier.id === 'warden') speedBoost += 0.4;
   // TRIAL modifier: +30% HP, +20% speed
   if (sec._trialModified) { hpScale *= 1.3; speedBoost += 0.3; }
+  // STACK per-stage fine-grain overrides (default 1/0 elsewhere).
+  hpScale *= (sec._hpMult || 1);
+  speedBoost += (sec._spdAdd || 0);
   // Cap shooting enemies per wave — ALL types that fire projectiles at the player.
   // Prevents unfair projectile density where every enemy is firing at once.
   const _rangedTypes = new Set(['spitter', 'mini', 'sniper', 'beam', 'shielder', 'strafe', 'mortar', 'caster', 'disc', 'scatter', 'spiker', 'splasher']);
   let _rangedCount = 0;
   // Domain-specific caps: D1=tight melee, D4=everything, D5=elite-heavy
-  const _maxRanged = sec.isBoss ? 0 : (idx < 10 ? 1 : (idx < 30 ? 2 : (idx < 40 ? 4 : 3)));
+  const _maxRanged = sec.isBoss ? 0 : (_sIdx < 10 ? 1 : (_sIdx < 30 ? 2 : (_sIdx < 40 ? 4 : 3)));
   // Cap elite/heavy enemies per wave — prevents the "wall of tanks" feeling.
   // Elites are high-HP, high-threat targets that demand focused attention.
   const _eliteTypes = new Set(['tank', 'brute', 'stalker', 'anchor', 'shieldbot', 'reaper', 'crusher', 'bull', 'lash']);
   let _eliteCount = 0;
-  const _maxElite = sec.isBoss ? 0 : (idx < 10 ? 1 : (idx < 30 ? 2 : (idx < 40 ? 4 : 99)));
+  const _maxElite = sec.isBoss ? 0 : (_sIdx < 10 ? 1 : (_sIdx < 30 ? 2 : (_sIdx < 40 ? 4 : 99)));
   // Melee filler pool — when caps are hit, reroll to these approachable types.
   // Keeps late waves feeling dense without being unfair.
   const _meleeFillers = ['normal', 'fast', 'drone', 'leaper', 'exploder'];
@@ -7359,18 +7383,18 @@ function spawnTrenchWave(idx, waveIdx) {
     } while (_spawnAttempts < 20 && !(dungeonGrid[Math.floor(ey/CELL_SIZE)] && dungeonGrid[Math.floor(ey/CELL_SIZE)][Math.floor(ex/CELL_SIZE)]));
     // Domain-specific spawn idle — D1 rushes fast, D3 lurks, D4 is relentless
     let _spIdleMin = ZOMBIE_SPAWN_IDLE_MIN, _spIdleMax = ZOMBIE_SPAWN_IDLE_MAX;
-    if (idx < 10) { _spIdleMin = 15; _spIdleMax = 35; }         // D1: fast rush
-    else if (idx < 20) { _spIdleMin = 25; _spIdleMax = 45; }    // D2: normal
-    else if (idx < 30) { _spIdleMin = 40; _spIdleMax = 70; }    // D3: lurk in maze
-    else if (idx < 40) { _spIdleMin = 10; _spIdleMax = 25; }    // D4: relentless
-    else { _spIdleMin = 25; _spIdleMax = 45; }                   // D5: normal
+    if (_sIdx < 10) { _spIdleMin = 15; _spIdleMax = 35; }         // D1: fast rush
+    else if (_sIdx < 20) { _spIdleMin = 25; _spIdleMax = 45; }    // D2: normal
+    else if (_sIdx < 30) { _spIdleMin = 40; _spIdleMax = 70; }    // D3: lurk in maze
+    else if (_sIdx < 40) { _spIdleMin = 10; _spIdleMax = 25; }    // D4: relentless
+    else { _spIdleMin = 25; _spIdleMax = 45; }                    // D5: normal
     const _spIdle = _spIdleMin + Math.floor(Math.random() * (_spIdleMax - _spIdleMin));
     // No early nerfs — full strength from section 0
     const _earlyHp = 1.0;
     const _earlySpd = 0;
     // Visual scaling: enemies in later domains grow larger and glow brighter.
     // _tier 0 = base (domain 1), 1 = domain 2-3, 2 = domain 4-5
-    const _tier = idx < 10 ? 0 : idx < 30 ? 1 : 2;
+    const _tier = _sIdx < 10 ? 0 : _sIdx < 30 ? 1 : 2;
     const _radiusScale = 1 + _tier * 0.12; // +12% per tier
     // Dormant enemies: dungeon enemies always start unaware. Expedition
     // enemies also always start dormant (they're inhabitants of sub-rooms,
@@ -7465,17 +7489,19 @@ function spawnTrenchSection(idx) {
       }
     }
   }
-  // Boss spawns once with the first wave (uses the same per-section scaling)
+  // Boss spawns once with the first wave (uses the same per-section scaling).
+  // STACK boss nodes ride the curve at sec._diffIdx (undefined in trench → idx).
   if (sec.isBoss) {
+    const _bIdx = (sec._diffIdx != null) ? sec._diffIdx : idx;
     // Domain-specific boss (4 domains)
     let bossType = 'boss'; // default Warden
-    if (idx >= 10 && idx < 20) bossType = 'boss_firewall';
-    else if (idx >= 20 && idx < 30) bossType = 'boss_archivist';
-    else if (idx >= 30) bossType = ['boss_watchdog', 'boss', 'boss_firewall', 'boss_archivist'][(idx - 30) % 4] || 'boss_watchdog';
+    if (_bIdx >= 10 && _bIdx < 20) bossType = 'boss_firewall';
+    else if (_bIdx >= 20 && _bIdx < 30) bossType = 'boss_archivist';
+    else if (_bIdx >= 30) bossType = ['boss_watchdog', 'boss', 'boss_firewall', 'boss_archivist'][(_bIdx - 30) % 4] || 'boss_watchdog';
     const bt = ZOMBIE_TYPES[bossType];
-    const tier = Math.floor(idx / 10);
-    const bossHp = (bt.hp + tier * 200) * (1 + idx * 0.10);
-    const bossDmg = Math.round(bt.damage * (1 + idx * 0.04));
+    const tier = Math.floor(_bIdx / 10);
+    const bossHp = (bt.hp + tier * 200) * (1 + _bIdx * 0.10);
+    const bossDmg = Math.round(bt.damage * (1 + _bIdx * 0.04));
     const _bossX = sec.x + TW * 0.7, _bossY = cy;
     zombies.push({ zid: _nextZombieId++, x: _bossX, y: _bossY, vx: 0, vy: 0, hp: bossHp, maxHp: bossHp, speed: bt.speed, radius: bt.radius, color: bt.color, damage: bossDmg, score: bt.score * (1 + tier), type: bossType, attackCooldown: 0, hitFlash: 0, ranged: false, fireRate: bt.fireRate||300, lastFired: 0, explodeOnDeath: true, explosionRadius: 90, angle: 0, staggerTimer: 0, aware: true, wanderAngle: 0, wanderTimer: 0, stuckTimer: 0, lastX: 0, lastY: 0, boss: true, summoner: bt.summoner||false, firewall: bt.firewall||false, archivist: bt.archivist||false, watchdog: bt.watchdog||false, _spawnAnim: 90, _spawnAnimMax: 90 });
     // ---- BOSS INTRO ----
@@ -13313,7 +13339,7 @@ function renderLighting(lights, camX, camY) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lightFBOTexA, 0);
   gl.viewport(0, 0, w, h);
   gl.disable(gl.BLEND);
-  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench';
+  const _brightMode = gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench' || gameMode === 'stack';
   const baseBright = _brightMode ? 0.35 : 0.25;
   gl.clearColor(baseBright, baseBright, baseBright, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
@@ -14663,6 +14689,8 @@ function renderPauseContent() {
     if (ws) ws.close();
     // ROOM RUSH abandons back to its ladder, not the Shell.
     if (gameMode === 'roomrush') { openRoomRushLadder(); return; }
+    // STACK abandons to the menu (P1: the map), not the Shell.
+    if (gameMode === 'stack') { _stackExitToMenu(); return; }
     enterShell(false);
   });
   _wire('btn-quit-menu', () => {
@@ -16808,6 +16836,11 @@ function showDeathToShell() {
     _roomRushDeath();
     return;
   }
+  // STACK: death = fault beat → result overlay with one-tap RETRY in place.
+  if (gameMode === 'stack' && !isMultiplayer) {
+    _stackDeath();
+    return;
+  }
   // BLITZ: death ends the timed run → score result overlay.
   if (gameMode === 'blitz' && !isMultiplayer) {
     _endBlitz(true);
@@ -16961,8 +16994,8 @@ function startSoloGame() {
   // Narrative splash: "THE REVENANT — instance #N" fades in as the run starts
   showRunStartSplash();
   // Arsenal meta node: grant +1..+3 random starting upgrades.
-  // ROOM RUSH skips this — it's a pure base-loadout execution challenge.
-  if (gameMode !== 'roomrush') {
+  // ROOM RUSH and STACK skip this — deterministic base-loadout grading.
+  if (gameMode !== 'roomrush' && gameMode !== 'stack') {
     const arsenalLevels = getMetaLevel('arsenal');
     for (let i = 0; i < arsenalLevels; i++) {
       const pool = UPGRADE_POOL.filter(u => u.rarity !== 'legendary' && (runUpgrades[u.id] || 0) < u.max && (!_SPECIAL_CARD_MAP[u.id] || _SPECIAL_CARD_MAP[u.id] === selectedSpecial) && _passesWeaponGate(u));
@@ -17023,6 +17056,12 @@ function startSoloGame() {
     exitPos = null;   // no door — clearing the room shows the result instead
     // Restore the climb's accumulated mod build (drafted between rooms).
     runUpgrades = { ..._roomRushBuild }; rebuildRunMods();
+  } else if (gameMode === 'stack') {
+    // Deterministic per-stage seed → identical layout every attempt (fair pars).
+    // Seed is an argument (not read inside) so future co-op can pass lobbySeed.
+    window._currentLevelSeed = _stackSeed(_stackStageIdx);
+    generateStackStage(STACK_STAGE_DEFS[_stackStageIdx], window._currentLevelSeed);
+    exitPos = null;   // no door — clearing the stage shows the result instead
   } else {
     generateDungeon(window._currentLevelSeed);
   }
@@ -17030,7 +17069,7 @@ function startSoloGame() {
   const marginX = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
   const _sec0X = (_sectionXPositions[0] || 0) * CELL_SIZE;
   const _sec0Y = (_sectionYPositions[0] || 0) * CELL_SIZE;
-  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : (gameMode === 'trench' || gameMode === 'breach') ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : ((gameMode === 'gauntlet' || gameMode === 'roomrush') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
+  const c = gameMode === 'descent' ? { x: (marginX + DESCENT_WIDTH/2) * CELL_SIZE, y: 3 * CELL_SIZE } : (gameMode === 'trench' || gameMode === 'breach') ? { x: _sec0X + 2.5 * CELL_SIZE, y: _sec0Y + (_secH(0)/2) * CELL_SIZE } : gameMode === 'siege' ? { x: (siegeWallLeftX + siegeWallRightX) / 2, y: ARENA_H / 2 } : ((gameMode === 'gauntlet' || gameMode === 'roomrush' || gameMode === 'stack') && _spawnArena._spawnX) ? { x: _spawnArena._spawnX, y: _spawnArena._spawnY } : getRoomCenter(rooms[0]);
   players = [createPlayerObj(0, 'You', PLAYER_COLORS[0], c.x, c.y)];
   localPlayerIdx = 0;
   bullets = []; zombies = []; particles = _installParticleThrottle([]); pickups = []; decals = []; _coldFrontParticles = []; floatingTexts = []; explosions = []; barrels = [];
@@ -17039,7 +17078,7 @@ function startSoloGame() {
   if (gameMode === 'dungeon') placeExit();
   showScreen(null);
   ambientDripTimer = 100; zombieGroanTimer = 200; healthLowTimer = 0;
-  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade' || gameMode === 'roomrush' || gameMode === 'blitz') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
+  playMusic((gameMode === 'horde' || gameMode === 'siege' || gameMode === 'arcade' || gameMode === 'roomrush' || gameMode === 'blitz' || gameMode === 'stack') ? pickRandomTrack(COMBAT_TRACKS, _lastCombatTrack) : pickRandomTrack(AMBIENT_TRACKS, _lastAmbientTrack), 2.0);
   document.activeElement?.blur(); canvas.focus();
   if (gameMode === 'descent') startDescent();
   else if (gameMode === 'trench' || gameMode === 'breach') startTrench();
@@ -17050,6 +17089,7 @@ function startSoloGame() {
   else if (gameMode === 'gauntlet') startGauntlet();
   else if (gameMode === 'roomrush') startRoomRush();
   else if (gameMode === 'blitz') startBlitz();
+  else if (gameMode === 'stack') startStack();
   else startLevel();
 }
 
@@ -27060,6 +27100,379 @@ addBtn('btn-blitz', () => { startBlitzRun(); });
 addBtn('bz-retry', () => { _hideBlitzResult(); startBlitzRun(); });
 addBtn('bz-menu', () => { _hideBlitzResult(); gameState = 'menu'; showScreen('start-screen'); playMusic('music_menu', 1.5); });
 
+// ============================================================
+// THE STACK — the saga-map stage runtime.
+// A stage = trench's designed-wave machinery (spawnTrenchWave + ONE synthetic
+// trenchSections[0]) running inside roomrush's bounded lifecycle: seeded
+// single-arena, intro→fighting→draft→done state machine, ★/★★/★★★ grading
+// (clear / under par / + no damage), frozen-world result overlay, one-tap
+// retry. Node types: 'standard' (clear all waves), 'surge' (survive the
+// timer, blitz-style escalation), 'boss' (domain boss + guard wave).
+// Single-player for now, but grading + spawn paths are host-authoritative
+// so co-op nodes can light up later (see CLAUDE.md multiplayer rules).
+// ============================================================
+
+// Stage defs — CONTENT IS PLACEHOLDER/TUNABLE. Schema:
+//   id/name     display identity ('EC' = Entry Cache)
+//   domain      0-3 → TRENCH_DOMAINS palette + roster era
+//   type        'standard' | 'surge' | 'boss'
+//   template    TRENCH_TEMPLATES key (fixed geometry → fair pars)
+//   waves       WAVE_COMPOSITIONS keys, spawned in order (surge: cycled)
+//   diffIdx     virtual trench section 0-49 — master difficulty knob; drives
+//               hp/speed/dmg/armor curves + ranged/elite caps + boss pick
+//   par         seconds — ★★ threshold (standard/boss) or DURATION (surge)
+//   surgeEvery  seconds between surge spawn pulses (surge only)
+//   draftAfter  wave indices that trigger the 1-of-3 mod draft after clearing
+//   hpMult/dmgMult/spdAdd  optional fine-grain overrides (default 1/1/0)
+//   seed        optional fixed seed (DAILY DROP hook); null → per-index seed
+const STACK_STAGE_DEFS = [
+  { id: 'EC-01', name: 'HANDSHAKE', domain: 0, type: 'standard',
+    template: 'arena', waves: ['PATROL_SCOUTS', 'PATROL_MAIN'],
+    diffIdx: 0, par: 40, draftAfter: [0], seed: null },
+  { id: 'EC-02', name: 'PACKET SURGE', domain: 0, type: 'surge',
+    template: 'tight_pillars', waves: ['RUSH_SWARM', 'PATROL_MAIN', 'PROWLER_PACK'],
+    diffIdx: 4, par: 60, surgeEvery: 8, draftAfter: [], seed: null },
+  { id: 'EC-03', name: 'GATE: THE WARDEN', domain: 0, type: 'boss',
+    template: 'arena', waves: ['PATROL_MAIN'],
+    diffIdx: 9, par: 90, draftAfter: [], seed: null },
+];
+
+// Distinct seed stride from roomrush (1000 + i*99991) so layouts never collide.
+function _stackSeed(idx) {
+  const def = STACK_STAGE_DEFS[idx];
+  return (def && def.seed != null) ? def.seed : (358336 + idx * 99991);
+}
+
+let _stackStageIdx = 0;        // index into STACK_STAGE_DEFS
+let _stackState = 'intro';     // 'intro' | 'fighting' | 'draft' | 'done'
+let _stackTimer = 0;           // intro countdown frames
+let _stackStartFrame = 0;      // gameTime snapshot when the fight begins
+let _stackTookDamage = false;  // host-set for ANY player (co-op-correct ★★★)
+let _stackDone = false;        // one-shot guard for the result
+let _stackSurgeTimer = 0;      // surge countdown frames
+let _stackSurgeWaveIdx = 0;    // next comp to pulse in (cycles def.waves)
+
+// Persistence: best stars per stage index — {idx: 0-3} under 'necrowave_stack'.
+function _loadStack() { try { return JSON.parse(localStorage.getItem('necrowave_stack') || '{}'); } catch (e) { return {}; } }
+function _saveStack(d) { try { localStorage.setItem('necrowave_stack', JSON.stringify(d)); } catch (e) {} }
+function _stackBest(idx) { const d = _loadStack(); return d[idx] || 0; }
+
+// THE single gate function — P1 replaces with star-threshold gates.
+function _stackUnlocked(idx) { return idx === 0 || _stackBest(idx - 1) >= 1; }
+
+// Domain-tinted ROOM_THEMES pick for the gauntlet-style room renderer.
+const _STACK_DOMAIN_THEME = [7, 4, 2, 5]; // ruin(magenta) furnace(orange) tile(cyan) storage(gold)
+
+// ---- STAGE GEOMETRY ----
+// Carve a TRENCH_TEMPLATES interior as a single bounded arena. Deterministic:
+// template walls are fixed; the seed is reserved for future scatter/daily
+// variation. secY=1 keeps the trench pipeline's "(_curSecH()/2)*CELL_SIZE
+// measured from y=0" quirk (boss Y, wave text) within one cell of true center.
+function generateStackStage(def, seed) {
+  setArenaDimensions(DEFAULT_ARENA_W, DEFAULT_ARENA_H);
+  dungeonGrid = [];
+  for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
+  rooms = [];
+  const tmpl = TRENCH_TEMPLATES[def.template] || TRENCH_TEMPLATES.arena;
+  const w = tmpl.w || TRENCH_SECTION_W;
+  const h = tmpl.h || TRENCH_HEIGHT;
+  const secX = Math.max(1, Math.floor((GRID_W - w) / 2));
+  const secY = 1;
+  const arena = { x: secX, y: secY, w, h };
+  carveRoom(arena);
+  rooms.push(arena);
+  // Template obstacles (section-local offsets → wall cells).
+  const walls = tmpl.build ? tmpl.build() : [];
+  for (const c of walls) {
+    const gx = secX + c.x, gy = secY + c.y;
+    if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) dungeonGrid[gy][gx] = false;
+  }
+  arena._spawnX = (secX + 2.5) * CELL_SIZE;
+  arena._spawnY = (secY + Math.floor(h / 2)) * CELL_SIZE;
+  exitPos = null; // no door — clearing the stage shows the result instead
+  // Synthetic trench section so spawnTrenchSection/spawnTrenchWave run unmodified.
+  trenchSection = 0;
+  _sectionWidths = [w]; _sectionHeights = [h];
+  _sectionXPositions = [secX]; _sectionYPositions = [secY];
+  trenchSections = [{
+    x: secX * CELL_SIZE, y: secY * CELL_SIZE, width: w * CELL_SIZE, height: h * CELL_SIZE,
+    waves: def.waves.map(k => (WAVE_COMPOSITIONS[k] ? WAVE_COMPOSITIONS[k].enemies.length : 3)),
+    waveComps: def.waves.slice(),
+    _soloType: def.soloType || null, currentWave: 0, waveSpawnTimer: 0,
+    types: ['normal', 'fast', 'drone'],   // cap-reroll fallback pool
+    spawned: false, cleared: false,
+    multiDoor: null, doorReward: null, isBoss: def.type === 'boss', isDark: false,
+    hazards: [], modifier: null,
+    domain: TRENCH_DOMAINS[Math.min(def.domain || 0, TRENCH_DOMAINS.length - 1)],
+    _isDungeon: !!tmpl._dungeon, _isExpedition: false, _theme: null,
+    _diffIdx: (def.diffIdx != null) ? def.diffIdx : 0,
+    _hpMult: def.hpMult || 1, _dmgMult: def.dmgMult || 1, _spdAdd: def.spdAdd || 0,
+  }];
+  // Gauntlet-style room render data, tinted to the stage's domain.
+  arena.theme = ROOM_THEMES[_STACK_DOMAIN_THEME[Math.min(def.domain || 0, 3)]] || ROOM_THEMES[0];
+  arena.brightness = 1.0;
+  arena.flicker = false;
+  roomDetails = [{ ri: 0, theme: arena.theme, details: [], brightness: 1.0, flicker: false }];
+  buildRoomGrid();
+  obstacles = [];
+  for (let y = 0; y < GRID_H; y++) { let rs = -1; for (let x = 0; x <= GRID_W; x++) { const isW = x < GRID_W ? !dungeonGrid[y][x] : true; if (isW && rs === -1) rs = x; else if (!isW && rs !== -1) { obstacles.push({ x: rs * CELL_SIZE, y: y * CELL_SIZE, w: (x - rs) * CELL_SIZE, h: CELL_SIZE, color: '#0c0a08' }); rs = -1; } } }
+  uploadDungeonGrid();
+}
+
+// ---- ENTER A STAGE ----
+function startStackStage(idx) {
+  if (idx < 0 || idx >= STACK_STAGE_DEFS.length) return;
+  if (!_stackUnlocked(idx)) return;
+  _stackStageIdx = idx;
+  isMultiplayer = false;
+  gameMode = 'stack';
+  window._deathBeatPlaying = false;
+  _hideStackResult();
+  _setPlayHUD(true);
+  startSoloGame();   // map generated by the 'stack' branch; dispatches startStack()
+}
+
+// Mode-start dispatch (map already generated in startSoloGame's branch).
+function startStack() {
+  const def = STACK_STAGE_DEFS[_stackStageIdx];
+  _stackState = 'intro';
+  _stackTimer = 120;
+  _stackDone = false;
+  _stackTookDamage = false;
+  _stackStartFrame = 0;
+  _stackSurgeTimer = 0;
+  _stackSurgeWaveIdx = 0;
+  trenchFadeDir = 0;
+  _checkpointRoomActive = false;
+  _descentTerminal = null;
+  _dlChoicePending = false;
+  const isSurge = def.type === 'surge';
+  const sub = isSurge
+    ? `survive ${def.par}s · ★★ clean board · ★★★ no damage`
+    : `★★ under ${def.par}s · ★★★ no damage`;
+  showSectionTitleCard(`${def.id} · ${def.name}`, sub, def.type === 'boss');
+  playWaveStartSound();
+}
+
+// ---- HOST-AUTHORITATIVE PER-FRAME LOGIC ----
+function updateStack() {
+  const def = STACK_STAGE_DEFS[_stackStageIdx];
+  const sec = trenchSections[0];
+  if (!def || !sec || _stackDone) return;
+  if (_stackState === 'intro') {
+    _stackTimer--;
+    if (_stackTimer <= 0) {
+      _stackState = 'fighting';
+      _stackStartFrame = gameTime;
+      _stackTookDamage = false;
+      spawnTrenchSection(0);   // wave 0 (+ boss on boss nodes) + decor/lights/barrels
+      if (def.type === 'surge') {
+        _stackSurgeTimer = Math.max(60, Math.round(def.par * 60));
+        _stackSurgeWaveIdx = 1;   // wave 0 just spawned; pulses cycle from the next comp
+      }
+    }
+    return;
+  }
+  if (_stackState !== 'fighting') return; // 'draft' owns the frame via gameState='levelup'
+  // SURGE: survive the countdown; comps pulse in on an interval, capped.
+  if (def.type === 'surge') {
+    _stackSurgeTimer--;
+    if (_stackSurgeTimer <= 0) { _finishStackStage('surge_end'); return; }
+    const interval = Math.max(60, Math.round((def.surgeEvery || 8) * 60));
+    const cap = (typeof isMobile !== 'undefined' && isMobile) ? 14 : 20;
+    if (_stackSurgeTimer % interval === 0 && zombies.length < cap) {
+      spawnTrenchWave(0, _stackSurgeWaveIdx % sec.waves.length);
+      _stackSurgeWaveIdx++;
+    }
+    return;
+  }
+  // STANDARD/BOSS: designed waves in order, clear when the last one falls.
+  if (sec.waveSpawnTimer > 0) {
+    sec.waveSpawnTimer--;
+    if (sec.waveSpawnTimer === 0) {
+      sec.currentWave++;
+      const TW = ((_sectionWidths && _sectionWidths[0]) || TRENCH_SECTION_W) * CELL_SIZE;
+      addFloatingText(sec.x + TW / 2, (_curSecH() / 2) * CELL_SIZE - 60, `WAVE ${sec.currentWave + 1}/${sec.waves.length}`, '#ff8040');
+      playWaveStartSound();
+      spawnTrenchWave(0, sec.currentWave);
+    }
+    return;
+  }
+  if (sec.spawned && zombies.length === 0) {
+    if (sec.currentWave < sec.waves.length - 1) {
+      // Wave cleared — micro-draft beat on flagged waves, then a breather.
+      if (!isMultiplayer && def.draftAfter && def.draftAfter.indexOf(sec.currentWave) !== -1) {
+        _stackState = 'draft';
+        _stackModDraft(() => {
+          if (gameState === 'levelup') gameState = 'playing';
+          _stackState = 'fighting';
+          sec.waveSpawnTimer = 45;   // ~0.75s rest beat (TUNABLE)
+        });
+        return;
+      }
+      sec.waveSpawnTimer = 45;
+      return;
+    }
+    _finishStackStage('clear');
+  }
+}
+
+// 1-of-3 mod draft between waves (descent's picker flow, stage-scoped build —
+// startSoloGame wipes runUpgrades on every stage entry, so nothing carries).
+function _stackModDraft(onDone) {
+  if (isMultiplayer) { if (onDone) onDone(); return; }
+  pendingLevelUps = 1;
+  _levelupOnComplete = onDone || null;
+  triggerLevelUpPicker();
+  const lv = document.getElementById('levelup-level'); if (lv) lv.textContent = 'DRAFT MOD';
+  const bn = document.getElementById('levelup-banner'); if (bn) bn.textContent = '▼ WAVE CLEARED ▼';
+  // Pool exhausted → picker never opened; continue immediately.
+  if (gameState !== 'levelup') { pendingLevelUps = 0; _levelupOnComplete = null; if (onDone) onDone(); }
+}
+
+// ---- GRADING + THE META BOUNDARY ----
+// outcome: 'clear' | 'surge_end' | 'death'
+function _finishStackStage(outcome) {
+  if (_stackDone) return;
+  _stackDone = true;
+  _stackState = 'done';
+  const def = STACK_STAGE_DEFS[_stackStageIdx];
+  const clearSec = Math.max(0, (gameTime - _stackStartFrame) / 60);
+  const boardClean = zombies.length === 0;
+  let stars = 0;
+  let secondStar = false;
+  if (outcome !== 'death') {
+    stars = 1;
+    secondStar = (def.type === 'surge') ? boardClean : (clearSec <= def.par);
+    if (secondStar) stars++;
+    if (secondStar && !_stackTookDamage) stars++;
+  }
+  const result = {
+    stageId: def.id, stageIdx: _stackStageIdx, type: def.type, domain: def.domain,
+    outcome, stars, secondStar, clearSec, par: def.par, tookDamage: _stackTookDamage,
+    kills, score, draftedMods: { ...runUpgrades },
+    prevBest: _stackBest(_stackStageIdx),
+  };
+  completeStackStage(result);   // META BOUNDARY — economy/unlocks layer extends this
+  _presentStackResult(result);  // VFX + overlay (client-safe path for future co-op)
+}
+
+// META BOUNDARY STUB — P2 replaces the internals with payouts/unlocks/streaks.
+// Contract: called exactly once per attempt (clear OR death), synchronously
+// before the overlay renders; may mutate `result` (bitsAwarded etc.).
+function completeStackStage(result) {
+  if (result.stars > 0) {
+    const d = _loadStack();
+    d[result.stageIdx] = Math.max(d[result.stageIdx] || 0, result.stars);
+    _saveStack(d);
+  }
+  result.newBest = _stackBest(result.stageIdx);
+  result.newStars = Math.max(0, result.stars - result.prevBest);
+  result.bitsAwarded = 0;   // per-kill BITS already banked live via grantXP
+}
+
+// ---- RESULT PRESENTATION (world frozen behind the overlay) ----
+function _presentStackResult(result) {
+  const def = STACK_STAGE_DEFS[result.stageIdx];
+  const died = result.outcome === 'death';
+  if (!died) {
+    triggerGlitchSurge(0.3, 36);
+    screenShake.intensity = Math.max(screenShake.intensity, 6);
+    playSfx('level_up', 0.4) || playSound(1200, 0.12, 'sine', 0.18);
+  }
+  gameState = 'dying';
+  window._deathBeatPlaying = true;
+  if (typeof stopSunbeamLoop === 'function') stopSunbeamLoop();
+  if (typeof stopWeaponLoop === 'function') stopWeaponLoop();
+  _setPlayHUD(false);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  const title = document.getElementById('sk-title');
+  if (title) {
+    title.textContent = died ? 'PROCESS FAULT' : (def.type === 'boss' ? 'GATE BREACHED' : 'NODE CLEAR');
+    title.style.color = died ? '#f44' : '#f06';
+    title.style.textShadow = died ? '0 0 14px rgba(255,68,68,0.6)' : '0 0 14px rgba(255,0,102,0.6)';
+  }
+  const starsEl = document.getElementById('sk-stars');
+  if (starsEl) starsEl.textContent = died ? '· · ·' : _starString(result.stars);
+  const ck = ok => ok ? '<span style="color:#0f8">✓</span>' : '<span style="color:#f66">✗</span>';
+  const detailEl = document.getElementById('sk-detail');
+  if (detailEl) {
+    if (died) {
+      detailEl.innerHTML = 'signal terminated — the node holds';
+    } else if (def.type === 'surge') {
+      detailEl.innerHTML =
+        `<div style="display:inline-flex;flex-direction:column;gap:4px;text-align:left;margin:2px auto 0">` +
+        `<div>★ &nbsp;Survived ${def.par}s ${ck(true)}</div>` +
+        `<div>★★ &nbsp;Clean board ${ck(result.secondStar)}</div>` +
+        `<div>★★★ &nbsp;No damage ${ck(result.secondStar && !result.tookDamage)}</div>` +
+        `</div>`;
+    } else {
+      detailEl.innerHTML =
+        `<div style="display:inline-flex;flex-direction:column;gap:4px;text-align:left;margin:2px auto 0">` +
+        `<div>★ &nbsp;Cleared ${ck(true)}</div>` +
+        `<div>★★ &nbsp;Under ${Number(def.par).toFixed(0)}s &nbsp;<span style="color:#cff">(${result.clearSec.toFixed(1)}s)</span> ${ck(result.secondStar)}</div>` +
+        `<div>★★★ &nbsp;No damage ${ck(result.secondStar && !result.tookDamage)}</div>` +
+        `</div>`;
+    }
+  }
+  // P2 wires real payout rows here; per-kill BITS are already banked live.
+  set('sk-bits', result.bitsAwarded > 0 ? `+${result.bitsAwarded} ◆` : '');
+  set('sk-best', died ? `BEST ${_starString(result.prevBest)}` : ((result.newStars > 0) ? 'NEW BEST!' : `BEST ${_starString(result.newBest)}`));
+  const nextBtn = document.getElementById('sk-next');
+  if (nextBtn) nextBtn.style.display = (!died && result.stageIdx + 1 < STACK_STAGE_DEFS.length) ? '' : 'none';
+  const el = document.getElementById('stack-result');
+  if (el) el.style.display = 'flex';
+}
+function _hideStackResult() {
+  const el = document.getElementById('stack-result');
+  if (el) el.style.display = 'none';
+  window._deathBeatPlaying = false;
+}
+
+// Death in a STACK stage = brief fault beat, then the result overlay with
+// one-tap RETRY in place (NOT a kick back to the map — that's only via ▦ MAP).
+function _stackDeath() {
+  if (window._deathBeatPlaying) return;
+  window._deathBeatPlaying = true;
+  gameState = 'dying';
+  if (typeof stopSunbeamLoop === 'function') stopSunbeamLoop();
+  if (typeof stopWeaponLoop === 'function') stopWeaponLoop();
+  triggerHitStop(500);
+  triggerGlitchSurge(0.6, 80);
+  screenShake.intensity = Math.max(screenShake.intensity, 14);
+  if (typeof hapticDeath === 'function') hapticDeath();
+  playSfx('game_over', 0.5) || playSound(70, 0.5, 'sawtooth', 0.2);
+  const lp = getLocalPlayer();
+  if (lp) {
+    addFloatingText(lp.x, lp.y - 40, 'PROCESS FAULT', '#f66');
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 4;
+      particles.push({ x: lp.x + (Math.random() - 0.5) * 20, y: lp.y + (Math.random() - 0.5) * 20, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 30 + Math.random() * 20, maxLife: 50, size: 2 + Math.random() * 3, color: Math.random() < 0.5 ? '#f06' : '#f0f', type: 'spark' });
+    }
+  }
+  setTimeout(() => { _finishStackStage('death'); }, 1400);
+}
+
+// P0 exit — P1 replaces with openStackMap().
+function _stackExitToMenu() {
+  _hideStackResult();
+  gameState = 'menu';
+  showScreen('start-screen');
+  playMusic('music_menu', 1.5);
+}
+
+// Wire STACK static buttons.
+addBtn('btn-stack', () => {
+  isMultiplayer = false;
+  // Dev entry: jump to the first stage without a star (RETRY/NEXT covers the rest).
+  let i = 0;
+  while (i < STACK_STAGE_DEFS.length - 1 && _stackBest(i) >= 1) i++;
+  startStackStage(i);
+});
+addBtn('sk-retry', () => { _hideStackResult(); startStackStage(_stackStageIdx); });
+addBtn('sk-next', () => { _hideStackResult(); startStackStage(_stackStageIdx + 1); });
+addBtn('sk-map', () => { _stackExitToMenu(); });
+
 function spawnSurvivalZombie() {
   const ts = getZombieTypesForWave(survivalWave);
   const tk = ts[Math.floor(Math.random() * ts.length)];
@@ -28457,6 +28870,10 @@ function damagePlayerObj(p,damage,attacker) {
   // ROOM RUSH: any damage during the fight forfeits the ★★★ no-hit star.
   if (gameMode === 'roomrush' && p === getLocalPlayer() && gauntletState === 'fighting') {
     _roomRushTookDamage = true;
+  }
+  // STACK: host-authoritative for ANY player (co-op ★★★ = "nobody got hit").
+  if (gameMode === 'stack' && isHost && _stackState === 'fighting') {
+    _stackTookDamage = true;
   }
   // Player damage label (red, follows player)
   if (damage >= 1) { p.radius = p.radius || PLAYER_RADIUS; addDamageNumber(p, damage, false); if (p._dmgLabel) p._dmgLabel.color = '#f44'; }
@@ -31329,6 +31746,8 @@ function update() {
       updateRoomRush();
     } else if (gameMode === 'blitz') {
       updateBlitz();
+    } else if (gameMode === 'stack') {
+      updateStack();
     } else if (gameMode === 'survival') {
       updateSurvivalWaves();
     } else if (gameMode === 'arcade') {
@@ -33942,7 +34361,7 @@ function update() {
     // player drift to the edge — keep them centered instead). Other modes
     // center on the arena.
     let _camTX = ARENA_W / 2, _camTY = ARENA_H / 2;
-    if (gameMode === 'trench' || gameMode === 'arcade' || gameMode === 'descent') {
+    if (gameMode === 'trench' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'stack') {
       // Follow the player like mobile does — the playfield is larger than the
       // screen. DESCENT keeps the player centered with NO look-ahead pan
       // (_camOff = 0); the clamp below keeps the column framed at the edges.
@@ -33969,8 +34388,10 @@ function update() {
       const _mx = Math.floor((GRID_W - DESCENT_WIDTH) / 2);
       _minX = _mx * CELL_SIZE;
       _maxX = (_mx + DESCENT_WIDTH) * CELL_SIZE;
-    } else if (gameMode === 'trench' || gameMode === 'breach') {
-      // Clamp to current section bounds (variable height rooms)
+    } else if (gameMode === 'trench' || gameMode === 'breach' || gameMode === 'stack') {
+      // Clamp to current section bounds (variable height rooms).
+      // STACK's synthetic section (index 0, room at top of grid) rides the
+      // same clamp so the camera frames the stage instead of the arena center.
       const _tSec = trenchSections && trenchSections[trenchSection];
       if (_tSec) {
         const _tSecW = ((_sectionWidths && _sectionWidths[trenchSection]) || TRENCH_SECTION_W) * CELL_SIZE;
@@ -34807,6 +35228,20 @@ function updateHUD() {
         if (labEl && labEl.textContent !== 'TIME LEFT') labEl.textContent = 'TIME LEFT';
         const stEl = ap.querySelector('.ap-streak');
         if (stEl) { const s = `SCORE ${(score | 0).toLocaleString()}`; if (stEl.textContent !== s) stEl.textContent = s; }
+      } else if (gameMode === 'stack' && _stackState === 'fighting' && STACK_STAGE_DEFS[_stackStageIdx] && STACK_STAGE_DEFS[_stackStageIdx].type === 'surge') {
+        // STACK surge node: the survival COUNTDOWN is the hero number (blitz style).
+        if (ap.style.display !== 'block') ap.style.display = 'block';
+        const secs = Math.max(0, Math.ceil(_stackSurgeTimer / 60));
+        const valEl = ap.querySelector('.ap-value');
+        if (valEl) {
+          const s = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+          if (valEl.textContent !== s) valEl.textContent = s;
+          valEl.style.color = secs <= 10 ? '#f44' : '#f06';
+        }
+        const labEl = ap.querySelector('.ap-label');
+        if (labEl && labEl.textContent !== 'SURVIVE') labEl.textContent = 'SURVIVE';
+        const stEl = ap.querySelector('.ap-streak');
+        if (stEl) { const s = STACK_STAGE_DEFS[_stackStageIdx].id; if (stEl.textContent !== s) stEl.textContent = s; }
       } else if (ap.style.display !== 'none') {
         ap.style.display = 'none';
       }
@@ -41024,7 +41459,7 @@ function render() {
   // Shell: skip fog entirely — room is fully lit
   if (gameState !== 'shell')
   {
-    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench') ? 1200 : 900;
+    var spotRadius = (gameMode === 'horde' || gameMode === 'gauntlet' || gameMode === 'survival' || gameMode === 'arcade' || gameMode === 'descent' || gameMode === 'trench' || gameMode === 'stack') ? 1200 : 900;
     // BLACKOUT modifier: halve flashlight range
     if (gameMode === 'trench' && trenchSections[trenchSection] && trenchSections[trenchSection].modifier && trenchSections[trenchSection].modifier.id === 'blackout') spotRadius = Math.floor(spotRadius * 0.5);
     // THE CORE domain: self-lit, no fog (expand radius massively)
