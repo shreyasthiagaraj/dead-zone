@@ -7,8 +7,15 @@ const PORT = process.env.PORT || 3000;
 
 // ---- HTTP server to serve static files ----
 const server = http.createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
-  filePath = path.join(__dirname, filePath);
+  // Strip the query string (share links: ?daily= / ?stage= / ?join=) and
+  // contain the resolved path to this directory (no ../ traversal).
+  let pathname = '/';
+  try { pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (e) {}
+  if (pathname === '/') pathname = '/index.html';
+  let filePath = path.join(__dirname, path.normalize(pathname));
+  if (!filePath.startsWith(__dirname + path.sep) && filePath !== path.join(__dirname, 'index.html')) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
   const ext = path.extname(filePath);
   const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg' };
   const contentType = mimeTypes[ext] || 'application/octet-stream';
