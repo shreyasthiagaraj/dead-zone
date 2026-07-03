@@ -1043,6 +1043,37 @@ body.mobile #mobile-buttons { display: block; }
   </div>
 </div>
 
+<!-- ---- THE STACK — saga map (the front door) ---- -->
+<style>
+@keyframes skNodePulse { 0%,100% { box-shadow:0 0 10px rgba(255,0,102,0.35), inset 0 0 6px rgba(255,0,102,0.15); } 50% { box-shadow:0 0 26px rgba(255,0,102,0.75), inset 0 0 14px rgba(255,0,102,0.3); } }
+.stack-node { display:flex; align-items:center; gap:12px; width:100%; padding:12px 14px; margin:0 0 10px; border-radius:12px; border:2px solid #333; background:linear-gradient(180deg, rgba(20,20,28,0.6), rgba(3,6,14,0.6)); color:#556; font-family:'Courier New',monospace; cursor:default; text-align:left; -webkit-tap-highlight-color:transparent; }
+.stack-node.sk-open { cursor:pointer; }
+.stack-node.sk-next { animation: skNodePulse 1.6s ease-in-out infinite; }
+.stack-node .sk-num { font-size:20px; font-weight:bold; min-width:44px; text-align:center; line-height:1.1; }
+.stack-node .sk-name { font-size:12px; letter-spacing:2px; font-weight:bold; }
+.stack-node .sk-sub { font-size:11px; letter-spacing:2px; margin-top:3px; color:#456; }
+.stack-band-head { display:flex; justify-content:space-between; align-items:baseline; padding:4px 2px 10px; letter-spacing:3px; font-size:12px; font-weight:bold; }
+</style>
+<div id="stack-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:120;background:linear-gradient(180deg,#07030a 0%,#030308 40%,#000 100%);font-family:'Courier New',monospace;flex-direction:column;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch">
+  <div id="stack-hud" style="position:sticky;top:0;z-index:5;background:rgba(3,3,10,0.92);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,0,102,0.25);padding:10px 12px 8px;box-sizing:border-box">
+    <div style="max-width:640px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div id="stack-hud-bits" style="color:#fd0;font-size:12px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 8px rgba(255,221,0,0.5)">◆ 0</div>
+      <div style="color:#f06;font-size:13px;letter-spacing:4px;font-weight:bold;text-shadow:0 0 10px rgba(255,0,102,0.6)">THE STACK</div>
+      <div id="stack-hud-stars" style="color:#ff0;font-size:12px;letter-spacing:2px;font-weight:bold;text-shadow:0 0 8px rgba(255,255,0,0.5)">★ 0</div>
+    </div>
+    <div style="max-width:640px;margin:8px auto 0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      <button class="menu-btn" id="stack-loadout-chip" style="padding:6px 14px;font-size:11px;letter-spacing:2px;margin:0;color:#0cf;border-color:#0cf6">⌖ LOADOUT</button>
+      <button class="menu-btn" id="stack-forge-chip" style="padding:6px 14px;font-size:11px;letter-spacing:2px;margin:0;color:#fd0;border-color:#fd06">⚒ FORGE</button>
+      <button class="menu-btn" id="stack-codex-chip" style="padding:6px 14px;font-size:11px;letter-spacing:2px;margin:0;color:#9fd;border-color:#9fd6">▤ CODEX</button>
+      <button class="menu-btn" id="stack-daily-slot" style="padding:6px 14px;font-size:11px;letter-spacing:2px;margin:0;color:#556;border-color:#333;background:transparent;cursor:default" disabled>◈ DAILY — SOON</button>
+    </div>
+  </div>
+  <div id="stack-scroll" style="width:100%;max-width:640px;margin:0 auto;padding:14px 14px 60px;box-sizing:border-box">
+    <div style="text-align:center;color:#f068;font-size:10px;letter-spacing:3px;margin:4px 0 16px">DESCEND · BREACH THE GATES · REACH THE CORE</div>
+    <div id="stack-bands"></div>
+  </div>
+</div>
+
 <!-- ---- STACK NODE RESULT (clear / fault / stars) ---- -->
 <div id="stack-result" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:135;background:rgba(3,3,12,0.9);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:'Courier New',monospace;align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
   <div style="width:100%;max-width:340px;text-align:center;border:2px solid rgba(255,0,102,0.4);border-radius:16px;padding:26px 18px;background:linear-gradient(180deg,rgba(255,0,102,0.08),rgba(3,6,14,0.78));box-shadow:0 0 30px rgba(255,0,102,0.22),inset 0 0 16px rgba(255,0,102,0.06)">
@@ -13789,6 +13820,12 @@ addBtn('btn-play', () => {
     // Resume failed (corrupt save) — fall through to fresh start
     clearMidRunSession();
   }
+  // STACK front door: PLAY opens the map (legacy trench sessions above still
+  // resume directly — never strand a mid-campaign player).
+  if (typeof STACK_FRONT_DOOR !== 'undefined' && STACK_FRONT_DOOR) {
+    openStackMap();
+    return;
+  }
   gameMode = 'trench';
   enterShell(false);
 });
@@ -13816,7 +13853,13 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
   // Re-theme the shared picker for whichever quick-play mode opened it.
   const titleEl = document.getElementById('arcade-picker-title');
   if (titleEl) {
-    if (mode === 'descent') {
+    if (mode === 'loadout') {
+      // STACK map's LOADOUT chip: equip-only — pick swaps the primary bundle
+      // and returns to the map instead of starting a run.
+      titleEl.textContent = 'LOADOUT';
+      titleEl.style.color = '#f06';
+      titleEl.style.textShadow = '0 0 12px rgba(255,0,102,0.55)';
+    } else if (mode === 'descent') {
       titleEl.textContent = 'DESCENT';
       titleEl.style.color = '#0f0';
       titleEl.style.textShadow = '0 0 12px rgba(0,255,0,0.55)';
@@ -13852,6 +13895,7 @@ function _openArcadeWeaponPicker(mode = 'arcade') {
       _setPrimaryBundle(pk);
       playSfx('ui_click', 0.25) || playSound(900, 0.05, 'sine', 0.12);
       el.style.display = 'none';
+      if (mode === 'loadout') { _renderStackMap(); return; }   // equip-only (STACK map chip)
       _beginModeRun(mode);
     };
     card.addEventListener('click', _pick);
@@ -13927,6 +13971,13 @@ _refreshPlayButton();
 addBtn('btn-challenges', () => { openSoloPicker(); });
 addBtn('btn-crypt', () => { openCryptMenu(); });
 addBtn('btn-back-crypt', () => {
+  if (typeof _returnToStack !== 'undefined' && _returnToStack) {
+    // Opened from the STACK map's FORGE chip — return to the map.
+    _returnToStack = false;
+    closeCryptMenu();
+    openStackMap();
+    return;
+  }
   if (_returnToShell) {
     _returnToShell = false;
     closeCryptMenu();
@@ -14689,8 +14740,8 @@ function renderPauseContent() {
     if (ws) ws.close();
     // ROOM RUSH abandons back to its ladder, not the Shell.
     if (gameMode === 'roomrush') { openRoomRushLadder(); return; }
-    // STACK abandons to the menu (P1: the map), not the Shell.
-    if (gameMode === 'stack') { _stackExitToMenu(); return; }
+    // STACK abandons to the map, not the Shell.
+    if (gameMode === 'stack') { openStackMap(); return; }
     enterShell(false);
   });
   _wire('btn-quit-menu', () => {
@@ -27125,17 +27176,63 @@ addBtn('bz-menu', () => { _hideBlitzResult(); gameState = 'menu'; showScreen('st
 //   draftAfter  wave indices that trigger the 1-of-3 mod draft after clearing
 //   hpMult/dmgMult/spdAdd  optional fine-grain overrides (default 1/1/0)
 //   seed        optional fixed seed (DAILY DROP hook); null → per-index seed
+// Entry Cache (domain 0) — 15 nodes, diffIdx ramps 0→9 across the band,
+// EC-15 is the domain gate. Domains 1-3 render as locked bands until their
+// node lists ship. ALL numbers/comps/templates below are placeholder [TUNABLE].
 const STACK_STAGE_DEFS = [
   { id: 'EC-01', name: 'HANDSHAKE', domain: 0, type: 'standard',
     template: 'arena', waves: ['PATROL_SCOUTS', 'PATROL_MAIN'],
     diffIdx: 0, par: 40, draftAfter: [0], seed: null },
-  { id: 'EC-02', name: 'PACKET SURGE', domain: 0, type: 'surge',
-    template: 'tight_pillars', waves: ['RUSH_SWARM', 'PATROL_MAIN', 'PROWLER_PACK'],
-    diffIdx: 4, par: 60, surgeEvery: 8, draftAfter: [], seed: null },
-  { id: 'EC-03', name: 'GATE: THE WARDEN', domain: 0, type: 'boss',
+  { id: 'EC-02', name: 'FIRST CONTACT', domain: 0, type: 'standard',
+    template: 'tight', waves: ['PATROL_MAIN', 'PATROL_SCOUTS'],
+    diffIdx: 1, par: 40, draftAfter: [0], seed: null },
+  { id: 'EC-03', name: 'SWARM ALERT', domain: 0, type: 'standard',
+    template: 'wide_arena', waves: ['RUSH_SWARM', 'PATROL_MAIN'],
+    diffIdx: 2, par: 50, draftAfter: [0], seed: null },
+  { id: 'EC-04', name: 'SURGE: INTAKE FLOOD', domain: 0, type: 'surge',
+    template: 'tight_pillars', waves: ['RUSH_SWARM', 'PATROL_MAIN', 'PATROL_SCOUTS'],
+    diffIdx: 3, par: 45, surgeEvery: 9, draftAfter: [], seed: null },
+  { id: 'EC-05', name: 'PROWLER DEN', domain: 0, type: 'standard',
+    template: 'pillars', waves: ['PROWLER_PACK', 'PATROL_MAIN'],
+    diffIdx: 4, par: 50, draftAfter: [0], seed: null },
+  { id: 'EC-06', name: 'SPECIMEN: SPITTER', domain: 0, type: 'standard',
+    template: 'corridor', waves: ['SCOUT_LINE', 'SCOUT_LINE'],
+    diffIdx: 5, par: 45, draftAfter: [0], soloType: 'spitter', seed: null },
+  { id: 'EC-07', name: 'CROSSFIRE', domain: 0, type: 'standard',
+    template: 'crossroads', waves: ['SCOUT_LINE', 'PROWLER_PACK'],
+    diffIdx: 5, par: 55, draftAfter: [0], seed: null },
+  { id: 'EC-08', name: 'AMBUSH PROTOCOL', domain: 0, type: 'standard',
+    template: 'islands', waves: ['AMBUSH_LITE', 'PATROL_MAIN'],
+    diffIdx: 6, par: 55, draftAfter: [0], seed: null },
+  { id: 'EC-09', name: 'SURGE: MEMORY LEAK', domain: 0, type: 'surge',
+    template: 'bunker', waves: ['RUSH_SWARM', 'PROWLER_PACK', 'PATROL_MAIN'],
+    diffIdx: 6, par: 60, surgeEvery: 8, draftAfter: [], seed: null },
+  { id: 'EC-10', name: 'STALKER NEST', domain: 0, type: 'standard',
+    template: 'lshape', waves: ['AMBUSH_LITE', 'AMBUSH_LITE'],
+    diffIdx: 7, par: 55, draftAfter: [0], seed: null },
+  { id: 'EC-11', name: 'SPLIT DECISION', domain: 0, type: 'standard',
+    template: 'split', waves: ['PROWLER_PACK', 'SCOUT_LINE', 'PATROL_MAIN'],
+    diffIdx: 7, par: 70, draftAfter: [0, 1], seed: null },
+  { id: 'EC-12', name: 'GAUNTLET RUN', domain: 0, type: 'standard',
+    template: 'gauntlet', waves: ['RUSH_SWARM', 'AMBUSH_LITE'],
+    diffIdx: 8, par: 60, draftAfter: [0], seed: null },
+  { id: 'EC-13', name: 'KILLBOX', domain: 0, type: 'standard',
+    template: 'tight_corridor', waves: ['PATROL_MAIN', 'PROWLER_PACK', 'RUSH_SWARM'],
+    diffIdx: 8, par: 70, draftAfter: [0, 1], seed: null },
+  { id: 'EC-14', name: 'LAST CACHE', domain: 0, type: 'standard',
+    template: 'wide_pillars', waves: ['AMBUSH_LITE', 'SCOUT_LINE', 'PROWLER_PACK'],
+    diffIdx: 9, par: 70, draftAfter: [0, 1], seed: null },
+  { id: 'EC-15', name: 'GATE: THE WARDEN', domain: 0, type: 'boss',
     template: 'arena', waves: ['PATROL_MAIN'],
     diffIdx: 9, par: 90, draftAfter: [], seed: null },
 ];
+
+// Front-door flag: ON → PLAY opens the map and the legacy mode buttons hide.
+// OFF → the exact 7-button menu returns (all handlers/DOM stay intact).
+const STACK_FRONT_DOOR = true;
+// Set when FORGE is opened from the map so its back button returns here
+// (crypt-screen sits at z-58, below the map — the map hides while it's open).
+let _returnToStack = false;
 
 // Distinct seed stride from roomrush (1000 + i*99991) so layouts never collide.
 function _stackSeed(idx) {
@@ -27228,6 +27325,7 @@ function startStackStage(idx) {
   gameMode = 'stack';
   window._deathBeatPlaying = false;
   _hideStackResult();
+  closeStackMap();
   _setPlayHUD(true);
   startSoloGame();   // map generated by the 'stack' branch; dispatches startStack()
 }
@@ -27453,25 +27551,145 @@ function _stackDeath() {
   setTimeout(() => { _finishStackStage('death'); }, 1400);
 }
 
-// P0 exit — P1 replaces with openStackMap().
-function _stackExitToMenu() {
-  _hideStackResult();
+// ---- THE MAP (the front door) ----
+// Placeholder counts for the not-yet-authored domains so the whole journey
+// is visible from day one. [TUNABLE]
+const _STACK_FUTURE_DOMAIN_NODES = [0, 15, 15, 15];
+
+function openStackMap() {
   gameState = 'menu';
-  showScreen('start-screen');
-  playMusic('music_menu', 1.5);
+  gamePaused = false;
+  isMultiplayer = false;
+  window._deathBeatPlaying = false;
+  if (typeof stopSunbeamLoop === 'function') stopSunbeamLoop();
+  if (typeof stopWeaponLoop === 'function') stopWeaponLoop();
+  const ps = document.getElementById('pause-screen'); if (ps) { ps.style.display = 'none'; ps.classList.remove('visible'); }
+  _hideStackResult();
+  showScreen(null);
+  _setPlayHUD(false);
+  _renderStackMap();
+  const el = document.getElementById('stack-screen');
+  if (el) el.style.display = 'flex';
+  playMusic('music_menu', 1.2);
+  // Land the view on the next node (the "what am I doing? THIS." beat).
+  const nxt = document.getElementById('stack-next-node');
+  if (nxt) setTimeout(() => { try { nxt.scrollIntoView({ block: 'center', behavior: 'instant' in document.documentElement.style ? 'auto' : 'auto' }); } catch (e) {} }, 30);
+}
+function closeStackMap() {
+  const el = document.getElementById('stack-screen');
+  if (el) el.style.display = 'none';
+}
+
+function _renderStackMap() {
+  const bands = document.getElementById('stack-bands');
+  if (!bands) return;
+  const data = _loadStack();
+  let totalStars = 0;
+  for (let i = 0; i < STACK_STAGE_DEFS.length; i++) totalStars += (data[i] || 0);
+  const bitsEl = document.getElementById('stack-hud-bits');
+  if (bitsEl) bitsEl.textContent = `◆ ${metaShards}`;
+  const starsEl = document.getElementById('stack-hud-stars');
+  if (starsEl) starsEl.textContent = `★ ${totalStars} / ${STACK_STAGE_DEFS.length * 3}`;
+  const loEl = document.getElementById('stack-loadout-chip');
+  if (loEl) {
+    const pw = PRIMARY_WEAPON_OPTIONS[selectedPrimary];
+    loEl.textContent = pw ? `${pw.icon} ${pw.name}` : '⌖ LOADOUT';
+  }
+  bands.innerHTML = '';
+  // Find the "next" node: first unlocked node without a star.
+  let nextIdx = -1;
+  for (let i = 0; i < STACK_STAGE_DEFS.length; i++) {
+    if (_stackUnlocked(i) && (data[i] || 0) === 0) { nextIdx = i; break; }
+  }
+  for (let d = 0; d < TRENCH_DOMAINS.length; d++) {
+    const dom = TRENCH_DOMAINS[d];
+    const acc = dom.accentColor;
+    const band = document.createElement('div');
+    band.style.cssText = `margin:0 0 22px;padding:12px 12px 4px;border-left:3px solid ${acc};border-radius:4px 14px 14px 4px;background:linear-gradient(90deg, ${acc}0d, transparent 60%)`;
+    const defsInBand = STACK_STAGE_DEFS.map((def, i) => ({ def, i })).filter(x => x.def.domain === d);
+    let bandStars = 0; for (const x of defsInBand) bandStars += (data[x.i] || 0);
+    const head = document.createElement('div');
+    head.className = 'stack-band-head';
+    head.innerHTML = `<span style="color:${acc};text-shadow:0 0 10px ${acc}88">${dom.name}</span>` +
+      (defsInBand.length
+        ? `<span style="color:#ff0;font-size:11px">★ ${bandStars} / ${defsInBand.length * 3}</span>`
+        : `<span style="color:#556;font-size:10px">SIGNAL LOST</span>`);
+    band.appendChild(head);
+    if (!defsInBand.length) {
+      // Future domain — locked silhouette so the journey's full depth reads.
+      const ph = document.createElement('div');
+      ph.style.cssText = 'padding:16px 8px 22px;text-align:center;color:#445;font-size:11px;letter-spacing:3px';
+      ph.textContent = `🔒 ${_STACK_FUTURE_DOMAIN_NODES[d] || 15} NODES — ENCRYPTED`;
+      band.appendChild(ph);
+      bands.appendChild(band);
+      continue;
+    }
+    for (const { def, i } of defsInBand) {
+      const stars = data[i] || 0;
+      const unlocked = _stackUnlocked(i);
+      const isBossNode = def.type === 'boss';
+      const isNext = i === nextIdx;
+      const btn = document.createElement('button');
+      btn.className = 'stack-node' + (unlocked ? ' sk-open' : '') + (isNext ? ' sk-next' : '');
+      if (isNext) btn.id = 'stack-next-node';
+      const col = unlocked ? acc : '#333';
+      btn.style.borderColor = col;
+      if (unlocked) {
+        btn.style.color = acc;
+        btn.style.background = `linear-gradient(180deg, ${acc}14, rgba(3,6,14,0.6))`;
+        if (!isNext) btn.style.boxShadow = `0 0 10px ${acc}22, inset 0 0 6px ${acc}0d`;
+      }
+      if (isBossNode) {
+        btn.style.padding = '18px 14px';
+        btn.style.borderWidth = '2px';
+        btn.style.borderStyle = unlocked ? 'double' : 'solid';
+      }
+      const glyph = def.type === 'surge' ? '⏱' : (isBossNode ? '☣' : '');
+      const starRow = unlocked
+        ? `<span style="color:${stars > 0 ? '#ff0' : '#456'};letter-spacing:3px">${_starString(stars)}</span>`
+        : `<span style="color:#456">LOCKED</span>`;
+      btn.innerHTML =
+        `<div class="sk-num">${unlocked ? (isNext ? '▶' : String(i + 1).padStart(2, '0')) : '🔒'}</div>` +
+        `<div style="flex:1;min-width:0">` +
+          `<div class="sk-name" style="color:${unlocked ? '#fff' : '#556'}">${isBossNode ? '▓▓ ' : ''}${def.name}${glyph ? ' ' + glyph : ''}</div>` +
+          `<div class="sk-sub">${def.id} · ${starRow}</div>` +
+        `</div>`;
+      if (unlocked) {
+        const go = () => { playSfx('ui_click', 0.3); startStackStage(i); };
+        btn.addEventListener('click', e => { e.preventDefault(); go(); });
+        btn.addEventListener('touchstart', e => { e.preventDefault(); btn.classList.add('tapped'); }, { passive: false });
+        btn.addEventListener('touchend', e => {
+          e.preventDefault(); btn.classList.remove('tapped');
+          const t = e.changedTouches[0]; if (!t) return;
+          const r = btn.getBoundingClientRect();
+          if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) return;
+          go();
+        }, { passive: false });
+        btn.addEventListener('touchcancel', () => btn.classList.remove('tapped'));
+      }
+      band.appendChild(btn);
+    }
+    bands.appendChild(band);
+  }
 }
 
 // Wire STACK static buttons.
-addBtn('btn-stack', () => {
-  isMultiplayer = false;
-  // Dev entry: jump to the first stage without a star (RETRY/NEXT covers the rest).
-  let i = 0;
-  while (i < STACK_STAGE_DEFS.length - 1 && _stackBest(i) >= 1) i++;
-  startStackStage(i);
-});
+addBtn('btn-stack', () => { openStackMap(); });
 addBtn('sk-retry', () => { _hideStackResult(); startStackStage(_stackStageIdx); });
 addBtn('sk-next', () => { _hideStackResult(); startStackStage(_stackStageIdx + 1); });
-addBtn('sk-map', () => { _stackExitToMenu(); });
+addBtn('sk-map', () => { openStackMap(); });
+addBtn('stack-loadout-chip', () => { _openArcadeWeaponPicker('loadout'); });
+addBtn('stack-forge-chip', () => { _returnToStack = true; closeStackMap(); openCryptMenu(); });
+addBtn('stack-codex-chip', () => { openCodex(); });   // codex is z-200, layers over the map
+
+// Front-door flip: hide the legacy mode buttons while the map is the door.
+// DOM + handlers stay intact — setting STACK_FRONT_DOOR = false restores the
+// exact 7-button menu with zero other changes.
+if (STACK_FRONT_DOOR) {
+  ['btn-arcade', 'btn-arcade-lb', 'btn-descent', 'btn-breach', 'btn-roomrush', 'btn-blitz', 'btn-stack'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+}
 
 function spawnSurvivalZombie() {
   const ts = getZombieTypesForWave(survivalWave);
