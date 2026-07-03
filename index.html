@@ -2093,7 +2093,7 @@ const UPGRADE_POOL = [
   { id:'arc_rounds', name:'ARC INFUSION', rarity:'common', max:1, icon:'⚡', color:'#fe6',
     descs:['Your hits call down a LIGHTNING STRIKE — heavy bonus damage + small splash. +22% damage.'], flavor:'overvoltage request granted. the grid answers from above.' },
   { id:'pulse_shot', name:'PULSE INFUSION', rarity:'common', max:1, icon:'💨', color:'#cef',
-    descs:['Your ATTACK arms a KINETIC TIME BOMB — hits charge the enemy, then ~0.5s later it DETONATES for a damage burst + AoE and LAUNCHES (slam into walls for bonus damage).'], flavor:'kinetic payload. impact registered.' },
+    descs:['Your ATTACK builds a KINETIC CHARGE on the enemy (shown as a ring). Keep hitting to stack more; stop and the whole charge RELEASES at once — a big damage burst + AoE and a LAUNCH (slam into walls for bonus damage).'], flavor:'kinetic payload. impact registered.' },
   { id:'viral_payload', name:'VIRAL INFUSION', rarity:'common', max:1, icon:'☣', color:'#a4f',
     descs:['Your ATTACK applies CORRUPT and blooms a CORRUPTION CLOUD over the target — anything inside takes ongoing damage (~10/s) and corruption spreads to nearby enemies. Corrupted enemies take escalating bonus damage from ALL sources. +22% damage.'], flavor:'injected malware. it eats them from the inside.' },
   { id:'cloud_toxin', name:'VIRULENCE', rarity:'rare', max:3, icon:'☣', color:'#a4f',
@@ -2861,7 +2861,7 @@ const _TERM_GLOSSARY = {
   CHILLED:      { color: '#8ef', desc: 'Enemy is slowed by Chill stacks. Stacks up to 5 before freezing.' },
   FROZEN:       { color: '#aef', desc: 'Hard CC. Enemy cannot move or attack. Takes 2x damage from the next hit.' },
   SHOCKED:      { color: '#ff4', desc: 'Arc conduit mark. Stuns the enemy for 1 second. Arc procs chain through Shocked enemies at longer range.' },
-  SLIDE:        { color: '#cef', desc: 'Pulse kinetic state. A bomb arming: hits charge it, then ~0.5s later it DETONATES (damage burst + AoE) and LAUNCHES the enemy — a flying hazard that wall-slams and crashes into others for impact damage. Spreads SLIDE.' },
+  SLIDE:        { color: '#cef', desc: 'Pulse kinetic state. Hits BUILD a kinetic charge (ring meter) up to a max; keep attacking to stack it. Stop and it RELEASES at once — a damage burst + AoE and a LAUNCH. The launched enemy is a flying hazard that wall-slams + crashes into others. Spreads SLIDE.' },
   COMPROMISED:  { color: '#c8f', desc: 'Corrupt threshold state. Takes ~2x damage from all sources. Enemies deal 40% less while active.' },
   CORRUPT:      { color: '#a4f', desc: 'Stacking vulnerability (0-5). Each stack = more damage taken. At threshold, becomes COMPROMISED. Hits bloom a CORRUPTION CLOUD that damages + spreads corruption to anything inside.' },
   BEACON:       { color: '#0ff', desc: 'Deployable turret. Fires at nearby enemies for 4 seconds. Element depends on Protocol card.' },
@@ -9497,11 +9497,7 @@ function updateBurnoutPuddles() {
             if (p._glitchLv >= 2) damageZombie(z, 15, 0, 0, true); // BLIGHT ZONE DoT
             if (p._corruptCloud && (gameTime - (z._cloudDotFrame || -999) >= 60)) {
               z._cloudDotFrame = gameTime;
-              const _cd = p._cloudDoT || 10;
-              window._suppressSilentDmgNum = true;
-              damageZombie(z, _cd, 0, 0, true);   // silent: HP / death / scoring, no hit reaction
-              window._suppressSilentDmgNum = false;
-              addFloatingText(z.x + (Math.random()-0.5)*10, z.y - (z.radius||14) - 18, '-' + _cd, '#d6f');
+              damageZombie(z, p._cloudDoT || 10, 0, 0, true); // DoT — shows a normal damage number
             }
           }
         }
@@ -10020,13 +10016,18 @@ function applyExposed(z) {
 // ~0.5s after the window's first hit the enemy is LAUNCHED by a class-colored
 // pulsewave with force proportional to the damage taken. Host-authoritative
 // (mirrors the delayed-charge synergy); the per-zombie tick fires the launch.
-const PULSE_LAUNCH_DELAY = 30; // frames (~0.5s @60fps)
+const PULSE_RELEASE_DELAY = 30; // frames after the LAST hit before the built charge releases (~0.5s)
+const PULSE_CHARGE_MAX = 300;   // max built-up detonation damage (the meter's max)
 let _pulseFxQueue = []; // host→client one-shot pulse-detonation VFX events (drained each broadcast)
+// PULSE is a BUILD-AND-RELEASE bonus: each hit adds its damage into a stored
+// charge (capped) and REFRESHES the release timer — so while you keep attacking
+// the enemy it keeps building and never detonates. Stop hitting it for
+// PULSE_RELEASE_DELAY and the whole stored charge releases at once (+launch).
 function _chargePulse(z, dmg, ang) {
   if (!z || z.hp <= 0) return;
-  z._pulseCharge = (z._pulseCharge || 0) + Math.max(1, dmg || 1);
+  z._pulseCharge = Math.min(PULSE_CHARGE_MAX, (z._pulseCharge || 0) + Math.max(1, dmg || 1));
   if (typeof ang === 'number') z._pulseChargeAng = ang;  // launch in the latest hit direction
-  if (!(z._pulseChargeTimer > 0)) z._pulseChargeTimer = PULSE_LAUNCH_DELAY;
+  z._pulseChargeTimer = PULSE_RELEASE_DELAY;             // refresh on EVERY hit: keep attacking = keep building
 }
 function _firePulseLaunch(z) {
   const dmg = z._pulseCharge || 0;
@@ -10035,9 +10036,9 @@ function _firePulseLaunch(z) {
   const _m = runMods || {};
   const vsMult = 1 + 0.5 * (_m.vectorSnap || 0);
   const _k = (typeof _kbSizeScale === 'function') ? _kbSizeScale(z) : 1;
-  // Launch force scales with the damage fed into the bomb during the window.
-  // Punchier than before (cap 72, base 12) so the launch reads as DRAMATIC.
-  const vel = Math.min(72, 12 + dmg * 0.55) * vsMult * _k;
+  // Launch force scales with the stored charge (charge can build to 300, so a
+  // gentler slope + a slightly higher cap for a big built-up release).
+  const vel = Math.min(84, 12 + dmg * 0.28) * vsMult * _k;
   let ang = z._pulseChargeAng;
   if (typeof ang !== 'number') {
     // No directional hit recorded (e.g. zero-knockback damage like the pulse
@@ -10048,12 +10049,12 @@ function _firePulseLaunch(z) {
     const _lp = _np || (typeof getLocalPlayer === 'function' ? getLocalPlayer() : null);
     ang = (_lp && typeof _lp.x === 'number') ? Math.atan2(z.y - _lp.y, z.x - _lp.x) : (z.angle || 0);
   }
-  // ---- TIME-BOMB DETONATION: the bomb GOES OFF. A direct burst to the host +
-  // an AoE shockwave to neighbors, scaling with the damage fed in. Silent so it
-  // can't re-charge the pulse (charge routing requires a non-silent hit). This is
-  // the "damage after a delay" — the launch alone was too subtle.
+  // ---- RELEASE: the whole stored charge detonates AT ONCE — a direct burst to
+  // the host (= all the damage that built up while you attacked) + an AoE to
+  // neighbors. Silent so it can't re-charge the pulse (charge needs a non-silent
+  // hit). This is the "damage bonus that builds up and hits after a short delay."
   const detoR = 72 + (_m.pulseShotLv >= 3 ? 34 : 0);
-  const detoDmg = 25 + Math.min(70, Math.floor(dmg * 0.5));
+  const detoDmg = Math.max(20, Math.floor(dmg)); // release the full built charge
   _pulseLaunchVFX(z.x, z.y, ang, vel, dmg);          // explosion at the bomb (before body flies off)
   addFloatingText(z.x, z.y - (z.radius || 12) - 16, 'DETONATE', '#cef');
   // Multiplayer: queue the blast so non-host clients replay it (the launch runs
@@ -27516,6 +27517,33 @@ function _hitReactVisual(z) {
     st: 1 + _o * 0.46,                 // bulge perpendicular
   };
 }
+// PULSE charge meter — a ring around a charging enemy that fills as the stored
+// pulse charge builds toward PULSE_CHARGE_MAX. Fills clockwise from the top;
+// glows/pulses white when full (about to release). World-space (call after the
+// body's ctx.restore). No shadowBlur — fake glow via a wider, dimmer stroke.
+function _drawPulseMeter(z, _zr) {
+  const c = z._pulseCharge || 0;
+  if (c <= 0) return;
+  const frac = Math.min(1, c / PULSE_CHARGE_MAX);
+  const R = (_zr || z.radius || 13) + 7;
+  const start = -Math.PI / 2;
+  const end = start + frac * Math.PI * 2;
+  const nearFull = frac >= 0.97;
+  const pulse = 0.55 + 0.45 * Math.sin(performance.now() * 0.013 + (z.zid || 0));
+  // Background track (faint full ring)
+  ctx.globalAlpha = 0.25; ctx.strokeStyle = '#123'; ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.arc(z.x, z.y, R, 0, Math.PI * 2); ctx.stroke();
+  // Fake-glow under the fill (wider + dimmer, behind the bright arc)
+  ctx.globalAlpha = 0.35 * (nearFull ? pulse : 0.85); ctx.strokeStyle = '#8cf'; ctx.lineWidth = 6.5;
+  ctx.beginPath(); ctx.arc(z.x, z.y, R, start, end); ctx.stroke();
+  // Bright fill arc = current charge
+  ctx.globalAlpha = 0.95 * (nearFull ? pulse : 1); ctx.strokeStyle = nearFull ? '#fff' : '#cef'; ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.arc(z.x, z.y, R, start, end); ctx.stroke();
+  // Leading head dot
+  ctx.globalAlpha = nearFull ? pulse : 0.95; ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(z.x + Math.cos(end) * R, z.y + Math.sin(end) * R, 2.4, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
 function _drawTelegraph(z, _zr) {
   const te = z._tele; if (!te) return;
   // Auto-clear stale telegraphs: if this telegraph wasn't refreshed in the
@@ -28311,17 +28339,11 @@ function damageZombie(z,damage,kbx=0,kby=0,silent=false) {
     else playHitSound();
   }
   // Damage number popup — gun damage accumulates on sticky label; DOT/status creates separate drifting text
-  if(damage>=1) {
-    if (silent) {
-      // Non-gun damage (DoT/status/AoE): a SMALL separate label that uses the
-      // SAME font system as hit numbers, floating straight up + slightly aside.
-      // _suppressSilentDmgNum lets a caller (e.g. the CORRUPTION CLOUD) spawn its
-      // own distinct label instead of this generic one.
-      if (!window._suppressSilentDmgNum) floatingTexts.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - (z.radius||14) - 19, text: Math.floor(damage)+'', color: '#fa0', _dmgNum: true, _small: true, _crit: false, _dmgPhase: 'float', _floatTimer: 24, _spawnPulse: 3, _pulse: 0, _vx: 0.4 + Math.random()*0.6, _vy: -1.1 - Math.random()*0.6, life: 1, maxLife: 1 });
-    } else {
-      addDamageNumber(z, damage, false);
-    }
-  }
+  // ALL damage — gun hits AND status/DoT/AoE (fire, corruption cloud, PULSE
+  // detonation, wall slam, etc.) — uses the same accumulating damage-number
+  // label, so status damage reads with the exact same font + pop/float behavior
+  // as a normal hit (it just accumulates onto the enemy's active label).
+  if(damage>=1) addDamageNumber(z, damage, false);
 }
 function damagePlayerObj(p,damage,attacker) {
   if(p.invincible>0) return;
@@ -31474,10 +31496,10 @@ function update() {
       // z.vx the same frame, so the enemy just nudged and resumed chasing.)
       if (z._pulseChargeTimer > 0 && isHost) {
         z._pulseChargeTimer--;
-        // Wind-up telegraph — the bomb ARMING. Inward-converging sparks intensify
-        // as it nears detonation; a contracting warning ring in the final moments
-        // reads as "about to blow". (Host-side visual; non-host sees the blast.)
-        const _ct = 1 - z._pulseChargeTimer / PULSE_LAUNCH_DELAY; // 0→1 over the wind-up
+        // Release telegraph — once you STOP attacking, the timer counts down and
+        // inward-converging sparks intensify ("about to release"); while you keep
+        // attacking the timer stays refreshed near max so _ct sits near 0.
+        const _ct = 1 - z._pulseChargeTimer / PULSE_RELEASE_DELAY; // 0→1 over the release wind-down
         if (z._pulseChargeTimer % 3 === 0) {
           const _n = 1 + Math.floor(_ct * 2);
           for (let _pi = 0; _pi < _n; _pi++) {
@@ -34024,6 +34046,7 @@ function update() {
       if (z._vulnTimer > 0) fl |= 32; // boss vulnerability — for non-host visual parity
       if (z._fwShieldUp) fl |= 64;    // firewall shield-up dome
       const _zRow = { zid:z.zid,x:Math.round(z.x),y:Math.round(z.y),hp:Math.round(z.hp),maxHp:Math.round(z.maxHp),radius:z.radius,color:z.color,type:z.type,angle:+(z.angle.toFixed(2)),aware:z.aware,hitFlash:z.hitFlash,boss:z.boss||false,fl,oh:z._overheat||0 };
+      if (z._pulseCharge > 0) _zRow.pc = Math.round(z._pulseCharge); // PULSE build-up meter (non-host render)
       // ARTILLERY: include locked-target + progress so non-host renders the
       // ground reticle + shell arc at the same position the host is animating.
       if (z.type === 'artillery' && z._artState === 'telegraph') {
@@ -34427,6 +34450,7 @@ function applyHostState(msg) {
       const _fl = nz.fl || 0;
       oz._invader = (_fl & 1) !== 0;
       oz._overheat = nz.oh || 0;
+      oz._pulseCharge = nz.pc || 0; // synced PULSE build-up for the meter ring
       oz._overheatTimer = oz._overheat > 0 ? Math.max(oz._overheatTimer || 0, 60) : 0;
       if (_fl & 4) { oz._slowTimer = Math.max(oz._slowTimer || 0, 10); }
       // bit 8 = electric (shocked OR charged) — keep both flags aligned on non-host for VFX
@@ -34459,6 +34483,7 @@ function applyHostState(msg) {
       const _fl = nz.fl || 0;
       fresh._invader = (_fl & 1) !== 0;
       if (nz.oh > 0) { fresh._overheat = nz.oh; fresh._overheatTimer = 60; }
+      if (nz.pc > 0) fresh._pulseCharge = nz.pc;
       if (_fl & 4) fresh._slowTimer = 10;
       if (_fl & 8) { fresh._shocked = 10; fresh._charged = true; }
       if (_fl & 16) { fresh._spawnAnim = 30; fresh._spawnAnimMax = 30; }
@@ -39319,6 +39344,8 @@ function render() {
     ctx.restore();
     // Unified attack telegraph (color flush + charge ring + directional tell)
     _drawTelegraph(z, _zr);
+    // PULSE build-up meter ring
+    _drawPulseMeter(z, _zr);
     if(z.hp<z.maxHp&&z.hp>=1){
       // Health bar proportional to maxHp — bigger enemies get wider bars
       const _isBoss = z.boss||z.type==='boss';
