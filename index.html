@@ -10909,7 +10909,10 @@ let aimLineAlpha = 0; // smooth fade for aim line visibility
 // field. Applied as a multiplier on top of cameraZoom at every world-transform
 // site, so transient zoom punches still work relative to it. 0.9 ≈ ~23% more
 // visible area without making things feel tiny.
-const _BASE_ZOOM = 0.9;
+// let (not const): ONSLAUGHT sets this to 1.0 — its lane is sized to the exact
+// viewport, so the world must render 1:1 (a 0.9 zoom-out would show a border
+// beyond the walls). Every other mode keeps the 0.9 wide view.
+let _BASE_ZOOM = 0.9;
 // Camera zoom: world transform scales around screen center. Used for crit
 // punch-in (1.025x), section-clear punch (1.06x), and boss reveal (0.78x out).
 // Eases toward cameraZoomTarget; target auto-resets when cameraZoomReleaseMs
@@ -12864,12 +12867,20 @@ function resetScrollState() {
   scrollLevel = 1; scrollDist = 0; _scrollSpawnTimer = 60;
   _scrollFiring = false; _scrollTouchId = null; _scrollAimAngle = -Math.PI / 2;
 }
-// Thumb/mouse x → fire angle. Absolute mapping (screen left = full left tilt,
-// center = straight up) — predictable, no drift, ideal for one-thumb play.
+// Desktop mouse x → fire angle (absolute: pointer position IS the aim).
 function _scrollAimFromClientX(clientX) {
   const w = window.innerWidth || 1;
   const t = Math.max(0, Math.min(1, clientX / w));
   _scrollAimAngle = -Math.PI / 2 + (t - 0.5) * 2 * SCROLL_MAX_AIM;
+}
+// Touch = RELATIVE aim: touch-down captures the current aim wherever it is;
+// dragging left/right steers from there (full-screen-width drag = the full
+// 180° sweep). No snap on touch — plan a shot, adjust, hold to fire.
+let _scrollAimStartX = 0, _scrollAimStartAngle = -Math.PI / 2;
+function _scrollAimRelative(clientX) {
+  const w = window.innerWidth || 1;
+  const delta = ((clientX - _scrollAimStartX) / w) * 2 * SCROLL_MAX_AIM;
+  _scrollAimAngle = Math.max(-Math.PI, Math.min(0, _scrollAimStartAngle + delta));
 }
 // Open vertical corridor — no cover (clear sightlines are the whole game).
 // THE STAGE IS THE VIEWPORT: lane width = the FULL current screen width, with
@@ -15710,6 +15721,7 @@ document.getElementById('btn-shoot').addEventListener('mouseup', () => { shootBu
 // ============================================================
 function enterShell(fromDeath) {
   initAudio(); loadSfx();
+  _BASE_ZOOM = 0.9; // restore the wide view (a prior ONSLAUGHT run sets 1.0)
   isMultiplayer = false; isHost = true;
   // Clear all run-state FIRST, then build the shell room (which populates
   // decor[]). Previously the order was reversed and the decor was wiped.
@@ -17175,6 +17187,8 @@ function startSoloGame() {
   // ONSLAUGHT plays portrait; every other mode locks landscape. Covers all
   // solo starts AND retries (both funnel through here).
   _lockOrientation(gameMode === 'scroll' ? 'portrait' : 'landscape');
+  // ONSLAUGHT renders 1:1 (lane = exact viewport); other modes zoom out 0.9.
+  _BASE_ZOOM = gameMode === 'scroll' ? 1.0 : 0.9;
   initAudio(); loadSfx(); isMultiplayer = false; isHost = true;
   gameState = 'playing'; score = 0; kills = 0; runBitsEarned = 0; gameTime = 0; level = 1; spawnTimer = 0; gamePaused = false;
   activePowerUp = null; activePowerUps = []; activeElement = null; elementZones = []; burnoutPuddles = []; decor = []; hazeParticles = []; activeBeacon = null; _beacons = [];
@@ -17513,11 +17527,12 @@ canvas.addEventListener('mousedown', () => canvas.focus());
 // Single joystick: left side of screen = movement/aim joystick. Right side = buttons only.
 function handleTouchStart(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) { const tx=t.clientX,ty=t.clientY,el=document.elementFromPoint(tx,ty); if (el&&(el.classList.contains('weapon-slot')||el.classList.contains('mobile-btn'))) continue;
   // ONSLAUGHT (scroll): the whole screen is the one-thumb aim/fire zone —
-  // first touch steers the fire angle and holds the trigger.
-  if (gameMode === 'scroll') { if (_scrollTouchId === null) { _scrollTouchId = t.identifier; _scrollFiring = true; _scrollAimFromClientX(tx); } continue; }
+  // first touch holds the trigger and captures the CURRENT aim (relative
+  // steering: drag left/right from wherever the thumb lands).
+  if (gameMode === 'scroll') { if (_scrollTouchId === null) { _scrollTouchId = t.identifier; _scrollFiring = true; _scrollAimStartX = tx; _scrollAimStartAngle = _scrollAimAngle; } continue; }
   if(gameState==='shell'&&tx>=window.innerWidth/2&&_shellNearTerminal&&_shellInteractCooldown<=0){shellInteract(_shellNearTerminal);continue;} if (!leftJoystick.active) { leftJoystick.active=true;leftJoystick.id=t.identifier;leftJoystick.cx=tx;leftJoystick.cy=ty;leftJoystick.dx=0;leftJoystick.dy=0;leftJoystick.nx=0;leftJoystick.ny=0; } } }
 function handleTouchMove(e) { if (gameState !== 'playing' && gameState !== 'shell') return; if (_debugPickerOpen) return; e.preventDefault(); for (const t of e.changedTouches) {
-  if (gameMode === 'scroll') { if (t.identifier === _scrollTouchId) _scrollAimFromClientX(t.clientX); continue; }
+  if (gameMode === 'scroll') { if (t.identifier === _scrollTouchId) _scrollAimRelative(t.clientX); continue; }
   if (leftJoystick.active&&t.identifier===leftJoystick.id) { let dx=t.clientX-leftJoystick.cx,dy=t.clientY-leftJoystick.cy; const d=Math.sqrt(dx*dx+dy*dy); if (d>JOYSTICK_LEFT_MAX){dx=dx/d*JOYSTICK_LEFT_MAX;dy=dy/d*JOYSTICK_LEFT_MAX;} leftJoystick.dx=dx;leftJoystick.dy=dy;leftJoystick.nx=dx/JOYSTICK_LEFT_MAX;leftJoystick.ny=dy/JOYSTICK_LEFT_MAX; } } }
 function handleTouchEnd(e) { for (const t of e.changedTouches) {
   if (gameMode === 'scroll' && t.identifier === _scrollTouchId) { _scrollTouchId = null; _scrollFiring = false; continue; }
@@ -31662,6 +31677,10 @@ function update() {
       updateSurvivalWaves();
     } else if (gameMode === 'arcade') {
       updateArcadeWaves();
+    } else if (gameMode === 'scroll') {
+      // ONSLAUGHT: pin turret + sectors + squad director. Without this branch
+      // scroll fell through to the generic dungeon spawner below, which
+      // spawned enemies anywhere in the room (including next to the player).
       updateScrollMode();
     } else if (gameMode !== 'shell') {
       // Continuous zombie spawning based on level (skip Shell — staging only).
