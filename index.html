@@ -12880,7 +12880,9 @@ function _scrollAimFromClientX(clientX) {
 function generateScrollArena(seed) {
   const _laneW = isMobile ? canvas.width : Math.min(canvas.width, 1200);
   const _laneH = Math.max(1800, Math.floor(Math.max(canvas.width, canvas.height) * 1.8));
-  setArenaDimensions(Math.max(320, Math.floor(_laneW)), _laneH);
+  // +2 wall cells OUTSIDE the lane: the playable interior spans the FULL screen
+  // width and the wall faces sit exactly at the viewport edges.
+  setArenaDimensions(Math.max(320, Math.floor(_laneW)) + CELL_SIZE * 2, _laneH);
   const rng = seededRandom(seed || Date.now());
   dungeonGrid = [];
   for (let y = 0; y < GRID_H; y++) { dungeonGrid[y] = []; for (let x = 0; x < GRID_W; x++) dungeonGrid[y][x] = false; }
@@ -17598,7 +17600,10 @@ function fireWeaponForPlayer(p) {
   if (p === getLocalPlayer()) _fireDashStrikeCone(p);
   if (p.weapons && p.weapons[p.currentWeapon]) p.weapons[p.currentWeapon].muzzleFlash = 6;
   // ====== HITSCAN FORCE BLAST — muzzle detonation + beam flash + smoke trail ======
-  { const _shotSeed = Math.random(); // per-shot variance seed
+  // ONSLAUGHT (scroll) skips the whole hitscan-beam VFX layer: this mode fires
+  // VISIBLE fast projectiles (see BULLET CREATION below), so a beam that lands
+  // instantly would contradict the traveling bullet.
+  if (gameMode !== 'scroll') { const _shotSeed = Math.random(); // per-shot variance seed
     const _shotWiggle = (Math.random() - 0.5) * 0.08; // visual beam angle variance
     const _ma = p.angle + _shotWiggle, _mc = Math.cos(_ma), _ms = Math.sin(_ma);
     const _mx = p.x + _mc * (PLAYER_RADIUS + 14), _my = p.y + _ms * (PLAYER_RADIUS + 14);
@@ -17986,18 +17991,25 @@ function fireWeaponForPlayer(p) {
   const _baseFan = extraProj > 0 ? 0.25 : 0; // angle between each extra projectile (wide_spread)
   // Pure delta burst: 3 bullets in ~30° total (0.26 rad step)
   const fanSpread = (_deltaExtra > 0 && extraProj === 0) ? 0.26 : _baseFan;
+  // ONSLAUGHT (scroll): the sidearm fires VISIBLE fast projectiles — real
+  // traveling bullets (speed 16/frame, tighter spread) with life sized to
+  // cross the whole screen height. Everywhere else it stays hitscan (speed
+  // 300, life 2) with the beam VFX carrying the read.
+  const _scrollProj = gameMode === 'scroll';
+  const _sbSpd = _scrollProj ? 16 : gun.bulletSpeed;
+  const _sbLife = _scrollProj ? Math.ceil((canvas.height * 1.15) / 16) : (gun._pierceRangeBoost ? GUN_BULLET_RANGE + 10 : GUN_BULLET_RANGE);
   for (let pi = 0; pi < totalProj; pi++) {
     const angleOffset = extraProj > 0 ? (pi - (totalProj - 1) / 2) * fanSpread : 0;
     // Gun variance: noticeable angle wiggle + speed variation per shot
-    const _wiggle = (Math.random() - 0.5) * 0.14; // ±0.07 rad visible drift
-    const _spdVar = 0.8 + Math.random() * 0.4; // 80-120% speed variance
+    const _wiggle = (Math.random() - 0.5) * (_scrollProj ? 0.05 : 0.14); // scroll: tight — aim IS the game
+    const _spdVar = _scrollProj ? 1 : (0.8 + Math.random() * 0.4); // 80-120% speed variance
     const ba = a + angleOffset + _wiggle, bc = Math.cos(ba), bs = Math.sin(ba);
     bullets.push({
-      x: p.x+bc*22, y: p.y+bs*22, vx: bc*gun.bulletSpeed*_spdVar, vy: bs*gun.bulletSpeed*_spdVar,
-      damage: dmgPerBullet, color: _buildColor, size: gun.bulletSize,
-      _glowBoost: 0.15,
+      x: p.x+bc*22, y: p.y+bs*22, vx: bc*_sbSpd*_spdVar, vy: bs*_sbSpd*_spdVar,
+      damage: dmgPerBullet, color: _buildColor, size: _scrollProj ? gun.bulletSize + 1 : gun.bulletSize,
+      _glowBoost: _scrollProj ? 0.3 : 0.15,
       knockback: gun.knockback, pierce: gun.pierce + ((_rm.predatorPierce && p._postDashTimer > 0) ? 1 : 0), pierced: 0,
-      life: gun._pierceRangeBoost ? GUN_BULLET_RANGE + 10 : GUN_BULLET_RANGE, maxLife: gun._pierceRangeBoost ? GUN_BULLET_RANGE + 10 : GUN_BULLET_RANGE,
+      life: _sbLife, maxLife: _sbLife,
       flame: false, explosive: false, explosionRadius: 0,
       tracer: false, chain: false, chainRange: 0, chainCount: 0,
       laserGlow: false, grenade: false,
