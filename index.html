@@ -12864,7 +12864,7 @@ const SCROLL_SPEED = 1.6;                   // visual scroll px/frame (~96px/s)
 const SCROLL_LEVEL_DIST = 2400;             // scroll px per sector (~25s)
 const SCROLL_ZOMBIE_CAP = 42;               // perf guard (mobile)
 function resetScrollState() {
-  scrollLevel = 1; scrollDist = 0; _scrollSpawnTimer = 60;
+  scrollLevel = 1; scrollDist = 0; _scrollSpawnTimer = 110; // ~2s beat before the first enemy
   _scrollFiring = false; _scrollTouchId = null; _scrollAimAngle = -Math.PI / 2;
 }
 // Desktop mouse x → fire angle (absolute: pointer position IS the aim).
@@ -13021,16 +13021,17 @@ function updateScrollMode() {
       triggerLevelUpPicker(); // pauses the game (gameState 'levelup') until picked
     }
   }
-  // Squad spawner — INFINITE ramp: cadence tightens and squads grow with the
+  // Squad spawner — INFINITE ramp with a GENTLE start: sector 1 is a trickle
+  // (solo enemies ~3s apart), then cadence tightens and squads grow with the
   // sector, forever. The active-enemy cap creeps up too (perf-bounded) so late
   // sectors feel like a flood, and per-enemy HP keeps scaling underneath.
   _scrollSpawnTimer--;
   if (_scrollSpawnTimer <= 0) {
-    _scrollSpawnTimer = Math.max(20, 108 - scrollLevel * 4) + Math.floor(Math.random() * 20);
+    _scrollSpawnTimer = Math.max(24, 175 - scrollLevel * 9) + Math.floor(Math.random() * 30);
     const _cap = Math.min(56, SCROLL_ZOMBIE_CAP + scrollLevel);
     if (zombies.length < _cap) {
       const ts = _scrollTierTypes(scrollLevel);
-      const squad = 2 + Math.floor(scrollLevel * 0.7) + Math.floor(Math.random() * 2);
+      const squad = 1 + Math.floor(scrollLevel * 0.6) + Math.floor(Math.random() * 2);
       for (let i = 0; i < squad && zombies.length < _cap; i++) {
         spawnScrollZombie(ts[Math.floor(Math.random() * ts.length)]);
       }
@@ -17579,11 +17580,15 @@ function fireWeaponForPlayer(p) {
   // ---- HEAT / COOLDOWN SYSTEM ----
   // Gun heats up with each shot. When heat capacity is depleted = overheated.
   // Cooldown starts after 1.5s of not firing. Firing during cooldown cancels it.
+  // ONSLAUGHT (scroll): INFINITE ammo — no heat, no overheat, no cooldown. The
+  // trigger is the whole game; interrupting it feels like a control failure.
+  const _infiniteAmmo = gameMode === 'scroll';
   if (_gunReloading) {
+    if (_infiniteAmmo) { _gunReloading = false; _gunAmmo = GUN_MAG_SIZE; }
     // Overheated — must cool down, can't fire
-    return;
+    else return;
   }
-  if (_gunAmmo <= 0) {
+  if (_gunAmmo <= 0 && !_infiniteAmmo) {
     // Overheated — force cooldown
     _gunReloading = true;
     _gunReloadTimer = Math.max(6, Math.floor(GUN_RELOAD_TIME * _reloadTimeScale()));
@@ -17598,7 +17603,7 @@ function fireWeaponForPlayer(p) {
   if (p._pyroBoost > 0) effectiveFireRate *= (1 - p._pyroBoost);
   if (now - _weaponLastFired < effectiveFireRate) return;
   _weaponLastFired = now;
-  _gunAmmo--;
+  if (!_infiniteAmmo) _gunAmmo--;
   _gunIdleTimer = 0;
   hapticShot();
   // SHOT BOB — small BACKWARD recoil kick per shot (sidearm), so the body
@@ -18006,13 +18011,13 @@ function fireWeaponForPlayer(p) {
   const _baseFan = extraProj > 0 ? 0.25 : 0; // angle between each extra projectile (wide_spread)
   // Pure delta burst: 3 bullets in ~30° total (0.26 rad step)
   const fanSpread = (_deltaExtra > 0 && extraProj === 0) ? 0.26 : _baseFan;
-  // ONSLAUGHT (scroll): the sidearm fires VISIBLE fast projectiles — real
-  // traveling bullets (speed 16/frame, tighter spread) with life sized to
-  // cross the whole screen height. Everywhere else it stays hitscan (speed
-  // 300, life 2) with the beam VFX carrying the read.
+  // ONSLAUGHT (scroll): the sidearm fires VISIBLE fast projectiles — small,
+  // FORCEFUL neon tracers (speed 22/frame, 1.5x damage → 30 base, 1.6x
+  // knockback, tight spread) with life sized to cross the whole screen height.
+  // Everywhere else it stays hitscan (speed 300, life 2) with the beam VFX.
   const _scrollProj = gameMode === 'scroll';
-  const _sbSpd = _scrollProj ? 16 : gun.bulletSpeed;
-  const _sbLife = _scrollProj ? Math.ceil((canvas.height * 1.15) / 16) : (gun._pierceRangeBoost ? GUN_BULLET_RANGE + 10 : GUN_BULLET_RANGE);
+  const _sbSpd = _scrollProj ? 22 : gun.bulletSpeed;
+  const _sbLife = _scrollProj ? Math.ceil((canvas.height * 1.15) / 22) : (gun._pierceRangeBoost ? GUN_BULLET_RANGE + 10 : GUN_BULLET_RANGE);
   for (let pi = 0; pi < totalProj; pi++) {
     const angleOffset = extraProj > 0 ? (pi - (totalProj - 1) / 2) * fanSpread : 0;
     // Gun variance: noticeable angle wiggle + speed variation per shot
@@ -18021,12 +18026,15 @@ function fireWeaponForPlayer(p) {
     const ba = a + angleOffset + _wiggle, bc = Math.cos(ba), bs = Math.sin(ba);
     bullets.push({
       x: p.x+bc*22, y: p.y+bs*22, vx: bc*_sbSpd*_spdVar, vy: bs*_sbSpd*_spdVar,
-      damage: dmgPerBullet, color: _buildColor, size: _scrollProj ? gun.bulletSize + 1 : gun.bulletSize,
-      _glowBoost: _scrollProj ? 0.3 : 0.15,
-      knockback: gun.knockback, pierce: gun.pierce + ((_rm.predatorPierce && p._postDashTimer > 0) ? 1 : 0), pierced: 0,
+      damage: _scrollProj ? Math.floor(dmgPerBullet * 1.5) : dmgPerBullet, // scroll: 20 base → 30/bullet (mods still scale)
+      color: _scrollProj && _buildColor === '#ff0' ? '#0ff' : _buildColor,  // scroll default = neon cyan
+      size: _scrollProj ? 3 : gun.bulletSize,                               // scroll: small hot slug
+      _glowBoost: _scrollProj ? 0.5 : 0.15,
+      knockback: _scrollProj ? Math.ceil(gun.knockback * 1.6) : gun.knockback, // scroll: forceful impact
+      pierce: gun.pierce + ((_rm.predatorPierce && p._postDashTimer > 0) ? 1 : 0), pierced: 0,
       life: _sbLife, maxLife: _sbLife,
       flame: false, explosive: false, explosionRadius: 0,
-      tracer: false, chain: false, chainRange: 0, chainCount: 0,
+      tracer: _scrollProj, chain: false, chainRange: 0, chainCount: 0,      // scroll: neon streak trail
       laserGlow: false, grenade: false,
       owner: 'player', ownerId: p.id, trail: [], crit: false,
       _element: activeElement?.id || null, _homing: false, _bouncing: gun.bounceCount || 0,
